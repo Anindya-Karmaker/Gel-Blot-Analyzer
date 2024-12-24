@@ -632,7 +632,7 @@ class CombinedSDSApp(QWidget):
             
             try:
                 # Save both the marker values and top label (under new_name) to the config file
-                with open("Properties_viewer.txt", "w") as f:
+                with open("Imaging_assistant_config.txt", "w") as f:
                     config = {
                         "marker_values": self.marker_values_dict,
                         "top_label": self.top_label_dict  # Save top_label_dict as a dictionary with new_name as key
@@ -650,7 +650,7 @@ class CombinedSDSApp(QWidget):
     def load_config(self):
         """Load the configuration from the file."""
         try:
-            with open("Properties_viewer.txt", "r") as f:
+            with open("Imaging_assistant_config.txt", "r") as f:
                 config = json.load(f)
                 print("Loaded config:", config)
                 
@@ -745,7 +745,7 @@ class CombinedSDSApp(QWidget):
         self.reset_image()
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Image File", "", "Image Files (*.png *.jpg *.bmp)", options=options
+            self, "Open Image File", "", "Image Files (*.png *.jpg *.bmp *.tif)", options=options
         )
         if file_path:
             self.image_path = file_path
@@ -1187,6 +1187,7 @@ class CombinedSDSApp(QWidget):
         if cropped_image:
             self.image = cropped_image
             self.image_before_padding = self.image
+            self.image_contrasted=self.image.copy()
             self.update_live_view()
     
         # Reapply the saved configuration
