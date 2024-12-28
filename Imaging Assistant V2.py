@@ -54,6 +54,7 @@ class CombinedSDSApp(QWidget):
         self.font_color = QColor(0, 0, 0)  # Default to black
         self.font_family = "Arial"  # Default font family
         self.font_size = 12  # Default font size
+        self.image_array_backup= None
     
         # Connect UI elements to update the font parameters
         
@@ -1222,10 +1223,21 @@ class CombinedSDSApp(QWidget):
             self, "Save Image", "", "Image Files (*.png *.jpg *.bmp)", options=options
         )
         if base_save_path:
-            # Define file names for original, modified, and config
-            original_save_path = os.path.splitext(base_save_path)[0] + "_original.png"
-            modified_save_path = os.path.splitext(base_save_path)[0] + "_modified.png"
-            config_save_path = os.path.splitext(base_save_path)[0] + "_config.txt"
+            # Check if the base name already contains "_original"
+            if "_original" not in os.path.splitext(base_save_path)[0]:
+                original_save_path = os.path.splitext(base_save_path)[0] + "_original.png"
+                modified_save_path = os.path.splitext(base_save_path)[0] + "_modified.png"
+                config_save_path = os.path.splitext(base_save_path)[0] + "_config.txt"
+            else:
+                original_save_path = base_save_path
+                modified_save_path = os.path.splitext(base_save_path)[0].replace("_original", "") + "_modified.png"
+                config_save_path = os.path.splitext(base_save_path)[0].replace("_original", "") + "_config.txt"
+    
+                # Check if "_modified" and "_config" already exist, and overwrite them if so
+                if os.path.exists(modified_save_path):
+                    os.remove(modified_save_path)
+                if os.path.exists(config_save_path):
+                    os.remove(config_save_path)
     
             # Save original image (cropped and aligned)
             self.original_image = self.image.copy()  # Save the current (cropped and aligned) image as original
@@ -1272,6 +1284,7 @@ class CombinedSDSApp(QWidget):
                 QMessageBox.warning(self, "Error", f"Failed to save config file: {e}")
     
             QMessageBox.information(self, "Saved", f"Files saved successfully.")
+
     
     
     def copy_to_clipboard(self):
@@ -1315,6 +1328,7 @@ class CombinedSDSApp(QWidget):
     
     def reset_image(self):
         # Reset the image to original
+        self.image_array_backup= None
         if self.image != None:
             self.image = self.image_master.copy()
             self.image_before_padding = self.image.copy()
