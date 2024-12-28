@@ -10,7 +10,7 @@ import json
 import os
 import numpy as np
 from PIL import Image, ImageQt
-
+import time
 
 class CombinedSDSApp(QWidget):
     def __init__(self):
@@ -463,7 +463,9 @@ class CombinedSDSApp(QWidget):
         try:
             
             # Ensure that the top_markers list only updates the top_label values serially
-            for i in range(min(len(self.top_markers), len(self.top_label))):
+            if len(self.top_label) < len(self.top_markers):
+                self.top_markers = self.top_markers[:len(self.top_label)]
+            for i in range(0, len(self.top_markers)):
                 self.top_markers[i] = (self.top_markers[i][0], self.top_label[i])
             
             # If self.top_label has more entries than current top_markers, add them
@@ -473,26 +475,23 @@ class CombinedSDSApp(QWidget):
             #     self.top_markers.extend(additional_markers)
             
             # If self.top_label has fewer entries, truncate the list
-            if len(self.top_label) < len(self.top_markers):
-                self.top_markers = self.top_markers[:len(self.top_label)]
+            
         except:
-            pass
+            print("ERROR ON UPDATE_TOP_LABELS")
         try:
-            for i in range(min(len(self.left_markers), len(self.marker_values))):
+            #min(len(self.left_markers)
+            for i in range(0, len(self.marker_values)):
                 self.left_markers[i] = (self.left_markers[i][0], self.marker_values[i])
             if len(self.marker_values) < len(self.left_markers):
                 self.left_markers = self.left_markers[:len(self.marker_values)]
-                
-            for i in range(min(len(self.right_markers), len(self.marker_values))):
+                #min(len(self.right_markers)
+            for i in range(0, len(self.marker_values)):
                 self.right_markers[i] = (self.right_markers[i][0], self.marker_values[i])
             if len(self.marker_values) < len(self.right_markers):
                 self.right_markers = self.right_markers[:len(self.marker_values)]
                 
         except:
-            pass
-        print("Updated Top Markers:", self.top_markers)  # Debugging
-        print("Updated Left Markers:", self.left_markers)  # Debugging
-        print("Updated Left Markers:", self.right_markers)  # Debugging
+            print("ERROR ON UPDATE_TOP_LABELS")
         
         # Trigger a refresh of the live view
         self.update_live_view()
@@ -525,7 +524,9 @@ class CombinedSDSApp(QWidget):
         # Call update live view after duplicating markers
         self.update_live_view()
         
-    def on_combobox_changed(self, text):
+    def on_combobox_changed(self):
+        
+        text=self.combo_box.currentText()
         """Handle the ComboBox change event to update marker values."""
         if text == "Custom":
             # Enable the textbox for custom values when "Custom" is selected
@@ -544,7 +545,7 @@ class CombinedSDSApp(QWidget):
             try:
                 
                 # Ensure that the top_markers list only updates the top_label values serially
-                for i in range(min(len(self.top_markers), len(self.top_label))):
+                for i in range(0, len(self.top_markers)):
                     self.top_markers[i] = (self.top_markers[i][0], self.top_label[i])
                 
                 # # If self.top_label has more entries than current top_markers, add them
@@ -565,7 +566,7 @@ class CombinedSDSApp(QWidget):
                 self.marker_values_textbox.setText(str(self.marker_values_dict[self.combo_box.currentText()]))
             except:
                 pass
-    
+
     # Functions for updating contrast and gamma
     
     def reset_gamma_contrast(self):
@@ -661,11 +662,8 @@ class CombinedSDSApp(QWidget):
                 
                 # Retrieve top_label list from the dictionary using the new_name key
                 new_name = self.rename_input.text().strip()  # Assuming `new_name` is defined here; otherwise, set it manually
-                self.top_label_dict = config.get("top_label", {
-                    "Precision Plus All Blue/Unstained": ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"],
-                    "1 kB Plus": ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"],
-                })  # Default if not found
-                self.top_label = self.top_label_dict.get(new_name, ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"])  # Default if not found
+                self.top_label_dict = config.get("top_label", {})  # Default if not found
+                # self.top_label = self.top_label_dict.get(new_name, ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"])  # Default if not found
                 print("Top labels:", self.top_label)
                 
         except FileNotFoundError:
