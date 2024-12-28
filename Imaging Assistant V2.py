@@ -69,7 +69,7 @@ class CombinedSDSApp(QWidget):
         self.live_view_label = QLabel("Load an SDS-PAGE image to preview")
         self.live_view_label.setAlignment(Qt.AlignCenter)
         self.live_view_label.setStyleSheet("border: 1px solid black;")
-        self.live_view_label.setFixedSize(500, 400) # Change for windows/macos viewing
+        self.live_view_label.setFixedSize(600,450) # Change for windows/macos viewing
         self.live_view_label.mousePressEvent = self.add_band
         extra_layout.addWidget(self.live_view_label)
         
@@ -145,23 +145,23 @@ class CombinedSDSApp(QWidget):
         font_options_layout.addWidget(contrast_label, 3, 0)
         font_options_layout.addWidget(self.contrast_slider, 3, 1, 1, 2)
         
-        # Brightness slider
-        brightness_label = QLabel("Brightness:")
-        self.brightness_slider = QSlider(Qt.Horizontal)
-        self.brightness_slider.setRange(0, 200)  # Range for brightness adjustment (0%-200%)
-        self.brightness_slider.setValue(100)  # Default value (100% = no change)
-        self.brightness_slider.valueChanged.connect(self.update_image_brightness)
-        font_options_layout.addWidget(brightness_label, 4, 0)
-        font_options_layout.addWidget(self.brightness_slider, 4, 1, 1, 2)
+        # gamma slider
+        gamma_label = QLabel("Gamma:")
+        self.gamma_slider = QSlider(Qt.Horizontal)
+        self.gamma_slider.setRange(0, 200)  # Range for gamma adjustment (0%-200%)
+        self.gamma_slider.setValue(100)  # Default value (100% = no change)
+        self.gamma_slider.valueChanged.connect(self.update_image_gamma)
+        font_options_layout.addWidget(gamma_label, 4, 0)
+        font_options_layout.addWidget(self.gamma_slider, 4, 1, 1, 2)
         
-        # Apply button brightness and contrast button
-        apply_button = QPushButton("Apply Brightness and Contrast Settings")
+        # Apply button gamma and contrast button
+        apply_button = QPushButton("Apply Gamma and Contrast Settings")
         apply_button.clicked.connect(self.save_contrast_options)
         font_options_layout.addWidget(apply_button, 5, 0, 1, 3)  # Span all columns
         
-        # Reset brightness and contrast button
-        reset_button = QPushButton("Reset Brightness and Contrast Settings")
-        reset_button.clicked.connect(self.reset_brightness_contrast)
+        # Reset gamma and contrast button
+        reset_button = QPushButton("Reset Gamma and Contrast Settings")
+        reset_button.clicked.connect(self.reset_gamma_contrast)
         font_options_layout.addWidget(reset_button, 6, 0, 1, 3)  # Span all columns
         
         # Connect signals for dynamic updates
@@ -566,11 +566,11 @@ class CombinedSDSApp(QWidget):
             except:
                 pass
     
-    # Functions for updating contrast and brightness
+    # Functions for updating contrast and gamma
     
-    def reset_brightness_contrast(self):
+    def reset_gamma_contrast(self):
         self.contrast_slider.setValue(100)  # Reset contrast to default
-        self.brightness_slider.setValue(100)  # Reset brightness to default
+        self.gamma_slider.setValue(100)  # Reset gamma to default
         self.image = self.image_master.copy()  # Restore the original image
         self.image_contrasted=self.image.copy()
         self.update_live_view()
@@ -579,27 +579,28 @@ class CombinedSDSApp(QWidget):
     def update_image_contrast(self):
         if self.image:
             contrast_factor = self.contrast_slider.value() / 100.0
-            brightness_factor = self.brightness_slider.value() / 100.0
-            self.image = self.apply_contrast_brightness(self.image_contrasted, contrast=contrast_factor, brightness=brightness_factor)
+            gamma_factor = self.gamma_slider.value() / 100.0
+            self.image = self.apply_contrast_gamma(self.image_contrasted, contrast=contrast_factor, gamma=gamma_factor)
             self.update_live_view()
     
-    def update_image_brightness(self):
+    def update_image_gamma(self):
         if self.image:
             contrast_factor = self.contrast_slider.value() / 100.0
-            brightness_factor = self.brightness_slider.value() / 100.0
-            self.image = self.apply_contrast_brightness(self.image_contrasted, contrast=contrast_factor, brightness=brightness_factor)            
+            gamma_factor = self.gamma_slider.value() / 100.0
+            self.image = self.apply_contrast_gamma(self.image_contrasted, contrast=contrast_factor, gamma=gamma_factor)            
             self.update_live_view()
     
-    def apply_contrast_brightness(self, image, contrast, brightness):
+    def apply_contrast_gamma(self, image, contrast, gamma):
         # Convert QImage to PIL Image
         pil_image = ImageQt.fromqimage(image)
     
         # Convert PIL Image to numpy array
         img_array = np.asarray(pil_image, dtype=np.float32)
     
-        # Apply contrast and brightness adjustments
+        # Apply contrast and gamma adjustments
         img_array = (img_array - 127.5) * contrast + 127.5  # Contrast adjustment
-        img_array = img_array * brightness  # Brightness adjustment
+        # img_array = img_array * gamma  # gamma adjustment
+        img_array = np.power(img_array / 255.0, gamma) * 255.0  # Gamma adjustment
     
         # Clip values to valid range [0, 255]
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
@@ -1332,7 +1333,7 @@ class CombinedSDSApp(QWidget):
         if self.image != None:
             self.image = self.image_master.copy()
             self.image_before_padding = self.image.copy()
-            self.reset_brightness_contrast()
+            self.reset_gamma_contrast()
         self.left_markers.clear()  # Clear left markers
         self.right_markers.clear()  # Clear right markers
         self.top_markers.clear()
