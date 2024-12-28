@@ -499,16 +499,16 @@ class CombinedSDSApp(QWidget):
     def reset_marker(self, marker_type):
         if marker_type == 'left':
             self.left_markers.clear()  # Clear left markers
-            self.left_padding_slider.setValue(0)
+            # self.left_padding_slider.setValue(0)
             self.current_marker_index = 0           
         elif marker_type == 'right':
             self.right_markers.clear()  # Clear right markers
             self.current_marker_index = 0
-            self.right_padding_slider.setValue(0)
+            # self.right_padding_slider.setValue(0)
         elif marker_type == 'top':
             self.top_markers.clear()  # Clear top markers
             self.current_top_label_index = 0
-            self.top_padding_slider.setValue(0)
+            # self.top_padding_slider.setValue(0)
     
         # Call update live view after resetting markers
         self.update_live_view()
@@ -925,7 +925,6 @@ class CombinedSDSApp(QWidget):
         # Ensure self.image_before_padding is initialized
         if self.image_before_padding is None:
             self.image_before_padding = self.image_contrasted.copy()
-            
     
         # Reset to the original image if padding inputs have changed
         if self.image_padded:
@@ -949,6 +948,15 @@ class CombinedSDSApp(QWidget):
         self.image = padded_image
         self.image_padded = True
         self.image_contrasted = self.image
+    
+        # Adjust marker shifts to account for padding
+        self.left_marker_shift += padding_left
+        # self.right_marker_shift += padding_right
+    
+        # Update slider values to match the new shifts
+        self.left_padding_slider.setValue(self.left_marker_shift)
+        # self.right_padding_slider.setValue(self.right_marker_shift_added + self.right_marker_shift)
+    
         self.update_live_view()
     
     def update_left_padding(self):
@@ -969,6 +977,10 @@ class CombinedSDSApp(QWidget):
     def update_live_view(self):
         if not self.image:
             return
+    
+        # Adjust slider maximum ranges based on the current image width
+        self.left_padding_slider.setRange(-self.image.width(), self.image.width())
+        self.right_padding_slider.setRange(-self.image.width(), self.image.width())
     
         # Define a higher resolution for processing (e.g., 2x or 3x label size)
         render_scale = 3  # Scale factor for rendering resolution
@@ -1029,14 +1041,6 @@ class CombinedSDSApp(QWidget):
         
 
     def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
-        """
-        Render the scaled image and annotations on the provided canvas.
-        :param canvas: QImage to render on.
-        :param scaled_image: QImage containing the scaled version of the cropped and rotated image.
-        :param x_start: X-coordinate of cropping start.
-        :param y_start: Y-coordinate of cropping start.
-        :param render_scale: Scale factor for high-resolution rendering.
-        """
         painter = QPainter(canvas)
         x_offset = (canvas.width() - scaled_image.width()) // 2
         y_offset = (canvas.height() - scaled_image.height()) // 2
@@ -1049,34 +1053,41 @@ class CombinedSDSApp(QWidget):
         painter.setFont(font)
         painter.setPen(font_color)  # Set the font color
     
-        # Draw the left markers
+        # Measure text height for vertical alignment
+        font_metrics = painter.fontMetrics()
+        text_height = font_metrics.height()
+        line_padding = 5 * render_scale  # Space between text and line
+    
+        # Draw the left markers (aligned right)
         for y_pos, marker_value in self.left_markers:
             y_pos_cropped = (y_pos - y_start) * (scaled_image.height() / self.image.height())
             if 0 <= y_pos_cropped <= scaled_image.height():
+                text = f"{marker_value} ⎯ "  ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
+                text_width = font_metrics.horizontalAdvance(text)  # Get text width
                 painter.drawText(
-                    x_offset + self.left_marker_shift,
-                    y_offset + y_pos_cropped,
-                    f"{marker_value}",
+                    x_offset + self.left_marker_shift - text_width,
+                    y_offset + y_pos_cropped + text_height / 4,  # Adjust for proper text placement
+                    text,
                 )
     
-        # Draw the right markers
-
+        # Draw the right markers (aligned left)
         for y_pos, marker_value in self.right_markers:
             y_pos_cropped = (y_pos - y_start) * (scaled_image.height() / self.image.height())
             if 0 <= y_pos_cropped <= scaled_image.height():
+                text = f" ⎯ {marker_value}" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
                 painter.drawText(
-                    x_offset+self.right_marker_shift+self.right_marker_shift_added,
-                    y_offset + y_pos_cropped,
-                    f"{marker_value}",
+                    x_offset + self.right_marker_shift + self.right_marker_shift_added + line_padding,
+                    y_offset + y_pos_cropped + text_height / 4,  # Adjust for proper text placement
+                    text,
                 )
     
-        # Draw the top markers
+        # Draw the top markers (if needed)
         for x_pos, top_label in self.top_markers:
             x_pos_cropped = (x_pos - x_start) * (scaled_image.width() / self.image.width())
             if 0 <= x_pos_cropped <= scaled_image.width():
                 painter.save()
                 label_x = x_offset + x_pos_cropped
-                label_y = y_offset + self.top_marker_shift * render_scale 
+                label_y = y_offset + self.top_marker_shift * render_scale
                 painter.translate(label_x, label_y)
                 painter.rotate(self.font_rotation)
                 painter.drawText(0, 0, f"{top_label}")
@@ -1092,6 +1103,7 @@ class CombinedSDSApp(QWidget):
             painter.drawLine(0, center_y, canvas.width(), center_y)  # Horizontal line
     
         painter.end()
+
      
     def crop_image(self):
         """Function to crop the current image."""
@@ -1316,9 +1328,9 @@ class CombinedSDSApp(QWidget):
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
         self.orientation_slider.setValue(0)
-        self.top_padding_slider.setValue(0)
-        self.left_padding_slider.setValue(0)
-        self.right_padding_slider.setValue(0)
+        # self.top_padding_slider.setValue(0)
+        # self.left_padding_slider.setValue(0)
+        # self.right_padding_slider.setValue(0)
         self.marker_mode = None
         self.current_marker_index = 0
         self.current_top_label_index = 0
