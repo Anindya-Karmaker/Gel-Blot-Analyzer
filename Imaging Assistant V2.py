@@ -393,7 +393,7 @@ class CombinedSDSApp(QWidget):
         
         reset_left_button = QPushButton("Reset")
         reset_left_button.clicked.connect(lambda: self.reset_marker('left'))
-        duplicate_left_button = QPushButton("Duplicate Left")
+        duplicate_left_button = QPushButton("Duplicate Right")
         duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left'))
         
         # Add left marker widgets to the grid layout
@@ -412,7 +412,7 @@ class CombinedSDSApp(QWidget):
         
         reset_right_button = QPushButton("Reset")
         reset_right_button.clicked.connect(lambda: self.reset_marker('right'))
-        duplicate_right_button = QPushButton("Duplicate Right")
+        duplicate_right_button = QPushButton("Duplicate Left")
         duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right'))
         
         # Add right marker widgets to the grid layout
@@ -480,12 +480,12 @@ class CombinedSDSApp(QWidget):
             print("ERROR ON UPDATE_TOP_LABELS")
         try:
             #min(len(self.left_markers)
-            for i in range(0, len(self.marker_values)):
+            for i in range(0, len(self.left_markers)):
                 self.left_markers[i] = (self.left_markers[i][0], self.marker_values[i])
             if len(self.marker_values) < len(self.left_markers):
                 self.left_markers = self.left_markers[:len(self.marker_values)]
                 #min(len(self.right_markers)
-            for i in range(0, len(self.marker_values)):
+            for i in range(0, len(self.right_markers)):
                 self.right_markers[i] = (self.right_markers[i][0], self.marker_values[i])
             if len(self.marker_values) < len(self.right_markers):
                 self.right_markers = self.right_markers[:len(self.marker_values)]
@@ -541,6 +541,7 @@ class CombinedSDSApp(QWidget):
             self.rename_input.setEnabled(False)
             self.top_label = self.top_label_dict.get(text, [])
             print("TOP LABEL:",self.top_label)
+            self.top_label = [str(item) if not isinstance(item, str) else item for item in self.top_label]
             self.top_marker_input.setText(", ".join(self.top_label))
             try:
                 
