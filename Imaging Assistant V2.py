@@ -11,6 +11,7 @@ import os
 import numpy as np
 from PIL import Image, ImageQt
 import matplotlib.pyplot as plt
+# import qdarktheme
 
 class CombinedSDSApp(QWidget):
     def __init__(self):
@@ -1075,8 +1076,8 @@ class CombinedSDSApp(QWidget):
                 text = f"{marker_value} ⎯ "  ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
                 text_width = font_metrics.horizontalAdvance(text)  # Get text width
                 painter.drawText(
-                    x_offset + self.left_marker_shift - text_width,
-                    y_offset + y_pos_cropped + y_offset_global,  # Adjust for proper text placement
+                    int(x_offset + self.left_marker_shift - text_width),
+                    int(y_offset + y_pos_cropped + y_offset_global),  # Adjust for proper text placement
                     text,
                 )
         
@@ -1087,8 +1088,8 @@ class CombinedSDSApp(QWidget):
             if 0 <= y_pos_cropped <= scaled_image.height():
                 text = f" ⎯ {marker_value}" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
                 painter.drawText(
-                    x_offset + self.right_marker_shift + self.right_marker_shift_added + line_padding,
-                    y_offset + y_pos_cropped + y_offset_global,  # Adjust for proper text placement
+                    int(x_offset + self.right_marker_shift + self.right_marker_shift_added + line_padding),
+                    int(y_offset + y_pos_cropped + y_offset_global),  # Adjust for proper text placement
                     text,
                 )
                 
@@ -1117,7 +1118,7 @@ class CombinedSDSApp(QWidget):
         # Draw the protein location marker (*)
         if hasattr(self, "protein_location") and self.run_predict_MW==False:
             x, y = self.protein_location
-            painter.drawText(x * render_scale - y_offset_global, y * render_scale + y_offset_global, "⎯⎯")
+            painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), "⎯⎯")
         
         
         #TRY NEW:
@@ -1525,6 +1526,7 @@ class CombinedSDSApp(QWidget):
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     window = CombinedSDSApp()
     window.show()
     sys.exit(app.exec_())
