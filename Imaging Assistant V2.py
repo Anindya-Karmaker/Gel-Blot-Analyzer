@@ -10,7 +10,7 @@ import json
 import os
 import numpy as np
 from PIL import Image, ImageQt
-import time
+import matplotlib.pyplot as plt
 
 class CombinedSDSApp(QWidget):
     def __init__(self):
@@ -55,6 +55,8 @@ class CombinedSDSApp(QWidget):
         self.font_family = "Arial"  # Default font family
         self.font_size = 12  # Default font size
         self.image_array_backup= None
+        self.run_predict_MW=False
+        
     
         # Connect UI elements to update the font parameters
         
@@ -71,6 +73,8 @@ class CombinedSDSApp(QWidget):
         self.live_view_label.setStyleSheet("border: 1px solid black;")
         self.live_view_label.setFixedSize(600,450) # Change for windows/macos viewing
         self.live_view_label.mousePressEvent = self.add_band
+        # Set the cursor to a cross when hovering over the preview window
+        self.live_view_label.setCursor(Qt.CrossCursor)
         extra_layout.addWidget(self.live_view_label)
         
         
@@ -97,6 +101,12 @@ class CombinedSDSApp(QWidget):
         save_button = QPushButton("Save Processed Image")
         save_button.clicked.connect(self.save_image)
         buttons_layout.addWidget(save_button)
+        
+        predict_button = QPushButton("Predict Molecular Weight")
+        predict_button.setEnabled(False)  # Initially disabled
+        predict_button.clicked.connect(self.predict_molecular_weight)
+        buttons_layout.addWidget(predict_button)
+        self.predict_button = predict_button
     
         extra_layout.addLayout(buttons_layout)
         
@@ -477,7 +487,7 @@ class CombinedSDSApp(QWidget):
             # If self.top_label has fewer entries, truncate the list
             
         except:
-            print("ERROR ON UPDATE_TOP_LABELS")
+            pass
         try:
             #min(len(self.left_markers)
             for i in range(0, len(self.left_markers)):
@@ -491,7 +501,7 @@ class CombinedSDSApp(QWidget):
                 self.right_markers = self.right_markers[:len(self.marker_values)]
                 
         except:
-            print("ERROR ON UPDATE_TOP_LABELS")
+            pass
         
         # Trigger a refresh of the live view
         self.update_live_view()
@@ -540,7 +550,6 @@ class CombinedSDSApp(QWidget):
             self.marker_values_textbox.setEnabled(False)  # Disable the textbox
             self.rename_input.setEnabled(False)
             self.top_label = self.top_label_dict.get(text, [])
-            print("TOP LABEL:",self.top_label)
             self.top_label = [str(item) if not isinstance(item, str) else item for item in self.top_label]
             self.top_marker_input.setText(", ".join(self.top_label))
             try:
@@ -627,13 +636,10 @@ class CombinedSDSApp(QWidget):
         if self.rename_input.text() != "Enter new name for Custom" and self.rename_input.text() != "":  # Correct condition
             # Save marker values list
             self.marker_values_dict[new_name] = [int(num) if num.strip().isdigit() else num.strip() for num in self.marker_values_textbox.text().strip("[]").split(",")]
-            print(self.marker_values_dict)
             
             # Save top_label list under the new_name key
             self.top_label_dict[new_name] = [int(num) if num.strip().isdigit() else num.strip() for num in self.top_marker_input.toPlainText().strip("[]").split(",")]
 
-            print("Top labels:", self.top_label_dict)
-            
             try:
                 # Save both the marker values and top label (under new_name) to the config file
                 with open("Imaging_assistant_config.txt", "w") as f:
@@ -642,11 +648,9 @@ class CombinedSDSApp(QWidget):
                         "top_label": self.top_label_dict  # Save top_label_dict as a dictionary with new_name as key
                     }
                     json.dump(config, f)  # Save both marker_values and top_label_dict
-                print("Config saved successfully.")
             except Exception as e:
                 print(f"Error saving config: {e}")
-        else:
-            print("COULD NOT SAVE")
+
         
         self.load_config()  # Reload the configuration after saving
     
@@ -656,7 +660,6 @@ class CombinedSDSApp(QWidget):
         try:
             with open("Imaging_assistant_config.txt", "r") as f:
                 config = json.load(f)
-                print("Loaded config:", config)
                 
                 # Load marker values and top label from the file
                 self.marker_values_dict = config.get("marker_values", {})
@@ -665,10 +668,8 @@ class CombinedSDSApp(QWidget):
                 new_name = self.rename_input.text().strip()  # Assuming `new_name` is defined here; otherwise, set it manually
                 self.top_label_dict = config.get("top_label", {})  # Default if not found
                 # self.top_label = self.top_label_dict.get(new_name, ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"])  # Default if not found
-                print("Top labels:", self.top_label)
                 
         except FileNotFoundError:
-            print("Config file not found, using default options.")
             # Set default marker values and top_label if config is not found
             self.marker_values_dict = {
                 "Precision Plus All Blue/Unstained": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
@@ -696,7 +697,6 @@ class CombinedSDSApp(QWidget):
         self.combo_box.clear()
         self.combo_box.addItems(self.marker_values_dict.keys())
         self.combo_box.addItem("Custom")
-        print("LOADED TOP LABELS:", self.top_label)
     
     def paste_image(self):
         """Handle pasting image from clipboard."""
@@ -718,8 +718,6 @@ class CombinedSDSApp(QWidget):
             self.image_contrasted= self.image.copy()
             self.image_master=self.image.copy()
             # self.save_right_shift_marker(self.image)
-        else:
-            print("No image found in clipboard.")
             
         
     def update_font(self):
@@ -893,19 +891,21 @@ class CombinedSDSApp(QWidget):
         
     def save_right_shift_marker(self, image):
         self.right_marker_shift=image.width()*0.9
-        # print("RIGHT MARKER SHIFT: ", self.right_marker_shift)
         
     def enable_left_marker_mode(self):
         self.marker_mode = "left"
         self.current_marker_index = 0
+        self.live_view_label.mousePressEvent = self.add_band
 
     def enable_right_marker_mode(self):
         self.marker_mode = "right"
         self.current_marker_index = 0
+        self.live_view_label.mousePressEvent = self.add_band
     
     def enable_top_marker_mode(self):
         self.marker_mode = "top"
         self.current_top_label_index
+        self.live_view_label.mousePressEvent = self.add_band
         
     def remove_padding(self):
         self.image= self.image_before_padding.copy()
@@ -978,6 +978,12 @@ class CombinedSDSApp(QWidget):
     def update_live_view(self):
         if not self.image:
             return
+        
+        # Enable the "Predict Molecular Weight" button if markers are present
+        if self.left_markers or self.right_markers:
+            self.predict_button.setEnabled(True)
+        else:
+            self.predict_button.setEnabled(False)
     
         # Adjust slider maximum ranges based on the current image width
         self.left_padding_slider.setRange(-self.image.width(), self.image.width())
@@ -1032,6 +1038,7 @@ class CombinedSDSApp(QWidget):
         self.save_right_shift_marker(scaled_image)
         self.render_image_on_canvas(canvas, scaled_image, x_start, y_start, render_scale)
         
+                
         # Scale the high-resolution canvas down to the label's size for display
         pixmap = QPixmap.fromImage(canvas).scaled(
             self.live_view_label.size(),
@@ -1058,6 +1065,8 @@ class CombinedSDSApp(QWidget):
         font_metrics = painter.fontMetrics()
         text_height = font_metrics.height()
         line_padding = 5 * render_scale  # Space between text and line
+        
+        y_offset_global = text_height / 4
     
         # Draw the left markers (aligned right)
         for y_pos, marker_value in self.left_markers:
@@ -1067,10 +1076,11 @@ class CombinedSDSApp(QWidget):
                 text_width = font_metrics.horizontalAdvance(text)  # Get text width
                 painter.drawText(
                     x_offset + self.left_marker_shift - text_width,
-                    y_offset + y_pos_cropped + text_height / 4,  # Adjust for proper text placement
+                    y_offset + y_pos_cropped + y_offset_global,  # Adjust for proper text placement
                     text,
                 )
-    
+        
+        
         # Draw the right markers (aligned left)
         for y_pos, marker_value in self.right_markers:
             y_pos_cropped = (y_pos - y_start) * (scaled_image.height() / self.image.height())
@@ -1078,9 +1088,10 @@ class CombinedSDSApp(QWidget):
                 text = f" ⎯ {marker_value}" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
                 painter.drawText(
                     x_offset + self.right_marker_shift + self.right_marker_shift_added + line_padding,
-                    y_offset + y_pos_cropped + text_height / 4,  # Adjust for proper text placement
+                    y_offset + y_pos_cropped + y_offset_global,  # Adjust for proper text placement
                     text,
                 )
+                
     
         # Draw the top markers (if needed)
         for x_pos, top_label in self.top_markers:
@@ -1102,7 +1113,27 @@ class CombinedSDSApp(QWidget):
             center_y = canvas.height() // 2
             painter.drawLine(center_x, 0, center_x, canvas.height())  # Vertical line
             painter.drawLine(0, center_y, canvas.width(), center_y)  # Horizontal line
-    
+            
+        # Draw the protein location marker (*)
+        if hasattr(self, "protein_location") and self.run_predict_MW==False:
+            x, y = self.protein_location
+            painter.drawText(x * render_scale - y_offset_global, y * render_scale + y_offset_global, "⎯⎯")
+        
+        
+        #TRY NEW:
+        # Draw the right markers (aligned left)
+        # if hasattr(self, "protein_location") and self.run_predict_MW==False:
+        #     x, y = self.protein_location
+        #     y_pos_cropped = (y - 0) * (scaled_image.height() / self.image.height())
+        #     x_pos_cropped = (x - 0) * (scaled_image.width() / self.image.width())
+        #     if 0 <= y_pos_cropped <= scaled_image.height():
+        #         text = f"*" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
+        #         painter.drawText(
+        #             x_offset + x_pos_cropped,
+        #             y_offset + y_pos_cropped + y_offset_global,  # Adjust for proper text placement
+        #             text,
+        #         )
+                
         painter.end()
 
      
@@ -1324,8 +1355,150 @@ class CombinedSDSApp(QWidget):
         # Copy the high-resolution image to the clipboard
         clipboard = QApplication.clipboard()
         clipboard.setImage(high_res_canvas)  # Copy the rendered image
-        print("Image copied to clipboard.")
+        
+    def predict_molecular_weight(self):
+        # Determine which markers to use (left or right)
+        self.run_predict_MW=False
+        if self.run_predict_MW!=True:
+            markers_not_rounded = self.left_markers if self.left_markers else self.right_markers
+            markers = [[round(value, 2) for value in sublist] for sublist in markers_not_rounded]
+            if not markers:
+                QMessageBox.warning(self, "Error", "No markers available for prediction.")
+                return
+        
+            # Get marker positions and values
+            marker_positions = np.array([pos for pos, _ in markers])
+            marker_values = np.array([val for _, val in markers])
+        
+            # Ensure there are at least two markers for linear regression
+            if len(marker_positions) < 2:
+                QMessageBox.warning(self, "Error", "At least two markers are needed for prediction.")
+                return
+        
+            # Normalize distances
+            min_position = np.min(marker_positions)
+            max_position = np.max(marker_positions)
+            normalized_distances = (marker_positions - min_position) / (max_position - min_position)
+            # normalized_distances = (marker_positions) / (min_position)
+            print("MARKERS: ", markers)
+            
+        
+            # Allow the user to select a point for prediction
+            QMessageBox.information(self, "Instruction", "Click on the protein location in the preview window.")
+            self.live_view_label.mousePressEvent = lambda event: self.get_protein_location(
+                event, normalized_distances, marker_values, min_position, max_position
+            )
+
+            
+
+
+        
+    def get_protein_location(self, event, normalized_distances, marker_values, min_position, max_position):
+        # Get cursor position from the event
+        pos = event.pos()
+        cursor_x, cursor_y = pos.x(), pos.y()
     
+        # Dimensions of the displayed image
+        displayed_width = self.live_view_label.width()
+        displayed_height = self.live_view_label.height()
+    
+        # Dimensions of the actual image
+        image_width = self.image.width()
+        image_height = self.image.height()
+    
+        # Calculate scaling factors
+        scale = min(displayed_width / image_width, displayed_height / image_height)
+    
+        # Calculate offsets
+        x_offset = (displayed_width - image_width * scale) / 2
+        y_offset = (displayed_height - image_height * scale) / 2
+    
+        # Transform cursor position to image space
+        protein_position = round((cursor_y - y_offset) / scale,2)
+        # protein_position=cursor_y
+        print("PROTEIN POSITION: ", protein_position)
+        
+        
+        
+    
+        # Normalize the protein position
+        normalized_protein_position = (protein_position - min_position) / (max_position - min_position)
+        # normalized_protein_position = (protein_position) / (min_position)
+    
+        # Perform linear regression on the log-transformed data
+        log_marker_values = np.log10(marker_values)
+        
+        #LOG_FIT
+        coefficients = np.polyfit(normalized_distances, log_marker_values, 1)
+        #Polynomial Fit 6th order
+        # coefficients = np.polyfit(normalized_distances, log_marker_values, 6)  # Fit a quadratic curve
+        
+        # Predict molecular weight
+        predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
+        predicted_weight = 10 ** predicted_log10_weight
+    
+        # Store the protein location in pixel coordinates
+        self.protein_location = (cursor_x, cursor_y)
+
+        
+    
+        # Update the live view to draw the *
+        self.update_live_view()
+    
+        # Plot the graph with the clicked position
+        self.plot_molecular_weight_graph(
+            normalized_distances,
+            marker_values,
+            10 ** np.polyval(coefficients, normalized_distances),
+            normalized_protein_position,
+            predicted_weight,
+            r_squared=1 - (np.sum((log_marker_values - np.polyval(coefficients, normalized_distances)) ** 2) /
+                           np.sum((log_marker_values - np.mean(log_marker_values)) ** 2))
+        )
+
+        
+        
+    def plot_molecular_weight_graph(
+        self, normalized_distances, marker_values, fitted_values, protein_position, predicted_weight, r_squared
+    ):
+        import matplotlib.pyplot as plt
+        from io import BytesIO
+        from PyQt5.QtGui import QPixmap
+    
+        plt.figure(figsize=(5, 3))
+        plt.scatter(normalized_distances, marker_values, color="red", label="Marker Data")
+        plt.plot(normalized_distances, fitted_values, color="blue", label=f"Fit (R²={r_squared:.3f})")
+        plt.axvline(protein_position, color="green", linestyle="--", label=f"Protein Position\n({predicted_weight:.2f} kDa)")
+        plt.xlabel("Normalized Relative Distance")
+        plt.ylabel("Molecular Weight (kDa)")
+        plt.yscale("log")  # Log scale for molecular weight
+        plt.legend()
+        plt.title("Molecular Weight Prediction")
+    
+        # Convert the plot to a pixmap
+        buffer = BytesIO()
+        plt.savefig(buffer, format="png", bbox_inches="tight")
+        buffer.seek(0)
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+        buffer.close()
+        plt.close()
+    
+        # Display the plot and results in a message box
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle("Prediction Result")
+        message_box.setText(
+            f"The predicted molecular weight is approximately {predicted_weight:.2f} kDa.\n"
+            f"R-squared value of the fit: {r_squared:.3f}"
+        )
+        label = QLabel()
+        label.setPixmap(pixmap)
+        message_box.layout().addWidget(label, 1, 0, 1, message_box.layout().columnCount())
+        message_box.exec()
+        # self.run_predict_MW=True
+
+  
+        
     def reset_image(self):
         # Reset the image to original
         self.image_array_backup= None
