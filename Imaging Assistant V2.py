@@ -5,11 +5,10 @@ from PyQt5.QtWidgets import (
     QApplication, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QBuffer
 import json
 import os
 import numpy as np
-from PIL import Image, ImageQt
 import matplotlib.pyplot as plt
 # import qdarktheme
 
@@ -602,26 +601,42 @@ class CombinedSDSApp(QWidget):
             self.image = self.apply_contrast_gamma(self.image_contrasted, contrast=contrast_factor, gamma=gamma_factor)            
             self.update_live_view()
     
-    def apply_contrast_gamma(self, image, contrast, gamma):
-        # Convert QImage to PIL Image
-        pil_image = ImageQt.fromqimage(image)
-    
-        # Convert PIL Image to numpy array
-        img_array = np.asarray(pil_image, dtype=np.float32)
-    
-        # Apply contrast and gamma adjustments
+    def apply_contrast_gamma(self, qimage, contrast, gamma):
+        """
+        Applies contrast and gamma adjustments to a QImage.
+        Converts the QImage to RGBA format, performs the adjustments, and returns the modified QImage.
+        """
+        # Ensure the image is in the correct format (RGBA8888)
+        if qimage.format() != QImage.Format_RGBA8888:
+            qimage = qimage.convertToFormat(QImage.Format_RGBA8888)
+
+        # Get the dimensions of the image
+        width = qimage.width()
+        height = qimage.height()
+
+        # Get the raw byte data from QImage
+        ptr = qimage.bits()
+        ptr.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
+
+        # Create a NumPy array from the pointer (for RGBA format)
+        img_array = np.array(ptr).reshape(height, width, 4)
+
+        # Normalize the image for contrast and gamma adjustments
+        img_array = img_array.astype(np.float32)
+
+        # Apply contrast adjustment (similar to the formula used in your code)
         img_array = (img_array - 127.5) * contrast + 127.5  # Contrast adjustment
-        # img_array = img_array * gamma  # gamma adjustment
+
+        # Apply gamma correction
         img_array = np.power(img_array / 255.0, gamma) * 255.0  # Gamma adjustment
-    
-        # Clip values to valid range [0, 255]
+
+        # Clip values to valid range [0, 255] and convert to uint8
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
-    
-        # Convert back to PIL Image
-        adjusted_image = Image.fromarray(img_array)
-    
+
         # Convert back to QImage
-        return ImageQt.toqimage(adjusted_image)
+        qimage = QImage(img_array.data, width, height, img_array.strides[0], QImage.Format_RGBA8888)
+
+        return qimage
     
 
     def save_contrast_options(self):
