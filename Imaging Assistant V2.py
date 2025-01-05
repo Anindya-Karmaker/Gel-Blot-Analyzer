@@ -15,13 +15,15 @@ import matplotlib.pyplot as plt
 class CombinedSDSApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("IMAGING ASSISTANT BY AK V2.00")
+        self.setWindowTitle("IMAGING ASSISTANT BY AK V2.5")
         self.resize(700, 950) # Change for windows/macos viewing
         self.image_path = None
         self.image = None
         self.image_master= None
         self.image_before_padding = None
         self.image_contrasted=None
+        self.image_before_contrast=None
+        self.contrast_applied=False
         self.image_padded=False
         self.left_markers = []
         self.right_markers = []
@@ -94,6 +96,8 @@ class CombinedSDSApp(QWidget):
         reset_button.clicked.connect(self.reset_image)  # Connect the reset functionality
         buttons_layout.addWidget(reset_button)
         
+        
+        
         copy_button = QPushButton('Copy Image to Clipboard')
         copy_button.clicked.connect(self.copy_to_clipboard)
         buttons_layout.addWidget(copy_button)
@@ -102,11 +106,19 @@ class CombinedSDSApp(QWidget):
         save_button.clicked.connect(self.save_image)
         buttons_layout.addWidget(save_button)
         
+        prediction_layout=QHBoxLayout()
+        
         predict_button = QPushButton("Predict Molecular Weight")
         predict_button.setEnabled(False)  # Initially disabled
         predict_button.clicked.connect(self.predict_molecular_weight)
-        buttons_layout.addWidget(predict_button)
+        prediction_layout.addWidget(predict_button)
         self.predict_button = predict_button
+        
+        clear_predict_button = QPushButton("Clear Prediction Marker")
+        clear_predict_button.setEnabled(True)  # Initially disabled
+        clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
+        prediction_layout.addWidget(clear_predict_button)
+        buttons_layout.addLayout(prediction_layout)
     
         extra_layout.addLayout(buttons_layout)
         
@@ -146,14 +158,23 @@ class CombinedSDSApp(QWidget):
         font_options_layout.addWidget(font_rotation_label, 2, 0)  # Row 2, Column 0
         font_options_layout.addWidget(self.font_rotation_input, 2, 1, 1, 2)  # Row 2, Column 1-2
         
-        # Contrast slider
-        contrast_label = QLabel("Contrast:")
-        self.contrast_slider = QSlider(Qt.Horizontal)
-        self.contrast_slider.setRange(0, 200)  # Range for contrast adjustment (0%-200%)
-        self.contrast_slider.setValue(100)  # Default value (100% = no change)
-        self.contrast_slider.valueChanged.connect(self.update_image_contrast)
-        font_options_layout.addWidget(contrast_label, 3, 0)
-        font_options_layout.addWidget(self.contrast_slider, 3, 1, 1, 2)
+        # Contrast High slider
+        high_contrast_label = QLabel("High:")
+        self.high_slider = QSlider(Qt.Horizontal)
+        self.high_slider.setRange(0, 100)  # Range for contrast adjustment (0%-200%)
+        self.high_slider.setValue(100)  # Default value (100% = no change)
+        self.high_slider.valueChanged.connect(self.update_image_contrast)
+        font_options_layout.addWidget(high_contrast_label, 3, 0)
+        font_options_layout.addWidget(self.high_slider, 3, 1, 1, 2)
+        
+        # Contrast Low slider
+        low_contrast_label = QLabel("Low:")
+        self.low_slider = QSlider(Qt.Horizontal)
+        self.low_slider.setRange(0, 100)  # Range for contrast adjustment (0%-200%)
+        self.low_slider.setValue(0)  # Default value (100% = no change)
+        self.low_slider.valueChanged.connect(self.update_image_contrast)
+        font_options_layout.addWidget(low_contrast_label, 4, 0)
+        font_options_layout.addWidget(self.low_slider, 4, 1, 1, 2)
         
         # gamma slider
         gamma_label = QLabel("Gamma:")
@@ -161,18 +182,18 @@ class CombinedSDSApp(QWidget):
         self.gamma_slider.setRange(0, 200)  # Range for gamma adjustment (0%-200%)
         self.gamma_slider.setValue(100)  # Default value (100% = no change)
         self.gamma_slider.valueChanged.connect(self.update_image_gamma)
-        font_options_layout.addWidget(gamma_label, 4, 0)
-        font_options_layout.addWidget(self.gamma_slider, 4, 1, 1, 2)
+        font_options_layout.addWidget(gamma_label, 5, 0)
+        font_options_layout.addWidget(self.gamma_slider, 5, 1, 1, 2)
         
-        # Apply button gamma and contrast button
-        apply_button = QPushButton("Apply Gamma and Contrast Settings")
-        apply_button.clicked.connect(self.save_contrast_options)
-        font_options_layout.addWidget(apply_button, 5, 0, 1, 3)  # Span all columns
+        # # Apply button gamma and contrast button
+        # apply_button = QPushButton("Apply Gamma and Contrast Settings")
+        # apply_button.clicked.connect(self.save_contrast_options)
+        # font_options_layout.addWidget(apply_button, 6, 0, 1, 3)  # Span all columns
         
         # Reset gamma and contrast button
         reset_button = QPushButton("Reset Gamma and Contrast Settings")
         reset_button.clicked.connect(self.reset_gamma_contrast)
-        font_options_layout.addWidget(reset_button, 6, 0, 1, 3)  # Span all columns
+        font_options_layout.addWidget(reset_button, 7, 0, 1, 3)  # Span all columns
         
         # Connect signals for dynamic updates
         self.font_combo_box.currentFontChanged.connect(self.update_font)
@@ -236,7 +257,7 @@ class CombinedSDSApp(QWidget):
         self.top_marker_input.setMinimumHeight(40)
         
         # Button to update Top Marker Labels
-        self.update_top_labels_button = QPushButton("Update Labels")
+        self.update_top_labels_button = QPushButton("Update All Labels")
         self.update_top_labels_button.clicked.connect(self.update_top_labels)
         
         # Add widgets to the top marker layout
@@ -580,37 +601,50 @@ class CombinedSDSApp(QWidget):
     # Functions for updating contrast and gamma
     
     def reset_gamma_contrast(self):
-        self.contrast_slider.setValue(100)  # Reset contrast to default
+        if self.image_before_contrast==None:
+            self.image_before_contrast=self.image_master.copy()
+        self.image_contrasted = self.image_before_contrast.copy()  # Update the contrasted image
+        self.image_before_padding = self.image_before_contrast.copy()  # Ensure padding resets use the correct base
+        self.high_slider.setValue(100)  # Reset contrast to default
+        self.low_slider.setValue(0)  # Reset contrast to default
         self.gamma_slider.setValue(100)  # Reset gamma to default
-        self.image = self.image_master.copy()  # Restore the original image
-        self.image_contrasted=self.image.copy()
         self.update_live_view()
 
     
     def update_image_contrast(self):
+        if self.contrast_applied==False:
+            self.image_before_contrast=self.image.copy()
+            self.contrast_applied=True
+        
         if self.image:
-            contrast_factor = self.contrast_slider.value() / 100.0
+            high_contrast_factor = self.high_slider.value() / 100.0
+            low_contrast_factor = self.low_slider.value() / 100.0
             gamma_factor = self.gamma_slider.value() / 100.0
-            self.image = self.apply_contrast_gamma(self.image_contrasted, contrast=contrast_factor, gamma=gamma_factor)
+            self.image = self.apply_contrast_gamma(self.image_contrasted, high_contrast_factor, low_contrast_factor, gamma=gamma_factor)  
             self.update_live_view()
     
     def update_image_gamma(self):
+        if self.contrast_applied==False:
+            self.image_before_contrast=self.image.copy()
+            self.contrast_applied=True
+            
         if self.image:
-            contrast_factor = self.contrast_slider.value() / 100.0
+            high_contrast_factor = self.high_slider.value() / 100.0
+            low_contrast_factor = self.low_slider.value() / 100.0
             gamma_factor = self.gamma_slider.value() / 100.0
-            self.image = self.apply_contrast_gamma(self.image_contrasted, contrast=contrast_factor, gamma=gamma_factor)            
+            self.image = self.apply_contrast_gamma(self.image_contrasted, high_contrast_factor, low_contrast_factor, gamma=gamma_factor)            
             self.update_live_view()
     
-    def apply_contrast_gamma(self, qimage, contrast, gamma):
+    def apply_contrast_gamma(self, qimage, high, low, gamma):
         """
         Applies contrast and gamma adjustments to a QImage.
         Converts the QImage to RGBA format, performs the adjustments, and returns the modified QImage.
         """
-        # Ensure the image is in the correct format (RGBA8888)
+        #Ensure the image is in the correct format (RGBA8888)
         if qimage.format() != QImage.Format_RGBA8888:
             qimage = qimage.convertToFormat(QImage.Format_RGBA8888)
 
-        # Get the dimensions of the image
+        # Convert the QImage to a NumPy array
         width = qimage.width()
         height = qimage.height()
 
@@ -619,19 +653,19 @@ class CombinedSDSApp(QWidget):
         ptr.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
 
         # Create a NumPy array from the pointer (for RGBA format)
-        img_array = np.array(ptr).reshape(height, width, 4)
+        img_array = np.array(ptr).reshape(height, width, 4).astype(np.float32)
 
         # Normalize the image for contrast and gamma adjustments
-        img_array = img_array.astype(np.float32)
+        img_array = img_array / 255.0
 
-        # Apply contrast adjustment (similar to the formula used in your code)
-        img_array = (img_array - 127.5) * contrast + 127.5  # Contrast adjustment
+        # Apply contrast adjustment
+        img_array = np.clip((img_array - low) / (high - low), 0, 1)
 
         # Apply gamma correction
-        img_array = np.power(img_array / 255.0, gamma) * 255.0  # Gamma adjustment
+        img_array = np.power(img_array, gamma)
 
-        # Clip values to valid range [0, 255] and convert to uint8
-        img_array = np.clip(img_array, 0, 255).astype(np.uint8)
+        # Scale back to [0, 255] range
+        img_array = (img_array * 255).astype(np.uint8)
 
         # Convert back to QImage
         qimage = QImage(img_array.data, width, height, img_array.strides[0], QImage.Format_RGBA8888)
@@ -640,8 +674,11 @@ class CombinedSDSApp(QWidget):
     
 
     def save_contrast_options(self):
-        self.image_contrasted=self.image.copy()
-        self.image_before_padding=self.image_contrasted.copy()
+        if self.image:
+            self.image_contrasted = self.image.copy()  # Save the current image as the contrasted image
+            self.image_before_padding = self.image.copy()  # Ensure the pre-padding state is also updated
+        else:
+            QMessageBox.warning(self, "Error", "No image is loaded to save contrast options.")
 
 
     def save_config(self):
@@ -924,8 +961,10 @@ class CombinedSDSApp(QWidget):
         self.live_view_label.mousePressEvent = self.add_band
         
     def remove_padding(self):
-        self.image= self.image_before_padding.copy()
-        self.image_padded=False
+        if self.image_before_padding:
+            self.image = self.image_before_padding.copy()  # Revert to the image before padding
+            self.image_contrasted = self.image.copy()  # Sync the contrasted image
+            self.image_padded = False  # Reset the padding state
         self.update_live_view()
         
     def finalize_image(self):
@@ -964,7 +1003,7 @@ class CombinedSDSApp(QWidget):
     
         self.image = padded_image
         self.image_padded = True
-        self.image_contrasted = self.image
+        self.image_contrasted = self.image.copy()
     
         # Adjust marker shifts to account for padding
         self.left_marker_shift += padding_left
@@ -1134,6 +1173,7 @@ class CombinedSDSApp(QWidget):
         if hasattr(self, "protein_location") and self.run_predict_MW==False:
             x, y = self.protein_location
             painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), "⎯⎯")
+
         
         
         #TRY NEW:
@@ -1219,6 +1259,7 @@ class CombinedSDSApp(QWidget):
         self.image = high_res_canvas
         self.image_before_padding = self.image
         self.image_contrasted=self.image.copy()
+        self.image_before_contrast=self.image.copy()
     
         # Create a low-resolution preview for display in `live_view_label`
         preview = high_res_canvas.scaled(
@@ -1248,6 +1289,7 @@ class CombinedSDSApp(QWidget):
             self.image = cropped_image
             self.image_before_padding = self.image
             self.image_contrasted=self.image.copy()
+            self.image_before_contrast=self.image.copy()
             self.update_live_view()
     
         # Reapply the saved configuration
@@ -1258,7 +1300,7 @@ class CombinedSDSApp(QWidget):
         self.crop_x_end_slider.setValue(100)
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
-        self.image_contrasted = self.image
+
         
     def save_image(self):
         if not self.image:
@@ -1371,6 +1413,11 @@ class CombinedSDSApp(QWidget):
         # Copy the high-resolution image to the clipboard
         clipboard = QApplication.clipboard()
         clipboard.setImage(high_res_canvas)  # Copy the rendered image
+        
+    def clear_predict_molecular_weight(self):
+        if hasattr(self, "protein_location"):
+            del self.protein_location  # Clear the protein location marker
+        self.update_live_view()  # Update the display
         
     def predict_molecular_weight(self):
         # Determine which markers to use (left or right)
@@ -1517,11 +1564,11 @@ class CombinedSDSApp(QWidget):
         
     def reset_image(self):
         # Reset the image to original
-        self.image_array_backup= None
         if self.image != None:
             self.image = self.image_master.copy()
             self.image_before_padding = self.image.copy()
-            self.reset_gamma_contrast()
+            self.image_contrasted = self.image.copy() # Update the contrasted image
+            self.image_before_padding = self.image.copy()
         self.left_markers.clear()  # Clear left markers
         self.right_markers.clear()  # Clear right markers
         self.top_markers.clear()
