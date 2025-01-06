@@ -425,7 +425,7 @@ class CombinedSDSApp(QWidget):
         self.left_padding_slider.setValue(0)
         self.left_padding_slider.valueChanged.connect(self.update_left_padding)
         
-        reset_left_button = QPushButton("Reset")
+        reset_left_button = QPushButton("Remove Last Entry")
         reset_left_button.clicked.connect(lambda: self.reset_marker('left'))
         duplicate_left_button = QPushButton("Duplicate Right")
         duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left'))
@@ -434,7 +434,7 @@ class CombinedSDSApp(QWidget):
         padding_layout.addWidget(left_marker_button, 0, 0)
         padding_layout.addWidget(reset_left_button, 0, 1)
         padding_layout.addWidget(duplicate_left_button, 0, 2)
-        padding_layout.addWidget(self.left_padding_slider, 0, 3)
+        padding_layout.addWidget(self.left_padding_slider, 0, 3,1,2)
         
         # Right marker: Button, slider, reset, and duplicate in the same row
         right_marker_button = QPushButton("Right Markers")
@@ -444,7 +444,7 @@ class CombinedSDSApp(QWidget):
         self.right_padding_slider.setValue(0)
         self.right_padding_slider.valueChanged.connect(self.update_right_padding)
         
-        reset_right_button = QPushButton("Reset")
+        reset_right_button = QPushButton("Remove Last Entry")
         reset_right_button.clicked.connect(lambda: self.reset_marker('right'))
         duplicate_right_button = QPushButton("Duplicate Left")
         duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right'))
@@ -453,7 +453,7 @@ class CombinedSDSApp(QWidget):
         padding_layout.addWidget(right_marker_button, 1, 0)
         padding_layout.addWidget(reset_right_button, 1, 1)
         padding_layout.addWidget(duplicate_right_button, 1, 2)
-        padding_layout.addWidget(self.right_padding_slider, 1, 3)
+        padding_layout.addWidget(self.right_padding_slider, 1, 3,1,2)
         
         # Top marker: Button, slider, and reset in the same row
         top_marker_button = QPushButton("Top Markers")
@@ -463,36 +463,81 @@ class CombinedSDSApp(QWidget):
         self.top_padding_slider.setValue(self.top_padding)
         self.top_padding_slider.valueChanged.connect(self.update_top_padding)
         
-        reset_top_button = QPushButton("Reset")
+        reset_top_button = QPushButton("Remove Last Entry")
         reset_top_button.clicked.connect(lambda: self.reset_marker('top'))
         
         # Add top marker widgets to the grid layout
         padding_layout.addWidget(top_marker_button, 2, 0)
         padding_layout.addWidget(reset_top_button, 2, 1)
-        padding_layout.addWidget(self.top_padding_slider, 2, 2, 1, 2)  # Slider spans 2 columns for better alignment
+        padding_layout.addWidget(self.top_padding_slider, 2, 2, 1, 3)  # Slider spans 2 columns for better alignment
         
         
         # Add button and QLineEdit for the custom marker
         self.custom_marker_button = QPushButton("Custom Marker", self)
         self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
         
+        self.custom_marker_button_left_arrow = QPushButton("←", self)
+        
+        self.custom_marker_button_right_arrow = QPushButton("→", self)
+        
+        self.custom_marker_button_top_arrow = QPushButton("↑", self)
+        
+        self.custom_marker_button_bottom_arrow = QPushButton("↓", self)
+        
+        
         
         self.custom_marker_text_entry = QLineEdit(self)
         self.custom_marker_text_entry.setPlaceholderText("Enter custom marker text")
         self.custom_marker_text_entry.textChanged.connect(self.enable_custom_marker_mode)
         
-        self.remove_custom_marker_button = QPushButton("Remove Custom Markers", self)
+        self.remove_custom_marker_button = QPushButton("Remove Last Entry", self)
         self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
         
         # Add color selection button for custom markers
         self.custom_marker_color_button = QPushButton("Custom Marker Color")
         self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
         
-        # Add to the layout (adjust according to your layout structure)
-        padding_layout.addWidget(self.custom_marker_button,3,0)
-        padding_layout.addWidget(self.custom_marker_text_entry, 3,1)
-        padding_layout.addWidget(self.remove_custom_marker_button, 3,2,1,1)
-        padding_layout.addWidget(self.custom_marker_color_button, 3, 3, 1, 2)  # Add below custom marker widgets
+        marker_buttons_layout = QHBoxLayout()
+        
+        # Add the arrow buttons with fixed sizes to the marker buttons layout
+        self.custom_marker_button_left_arrow.setFixedSize(30, 30)
+
+        marker_buttons_layout.addWidget(self.custom_marker_button_left_arrow)
+        
+        self.custom_marker_button_right_arrow.setFixedSize(30, 30)
+        marker_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
+        
+        self.custom_marker_button_top_arrow.setFixedSize(30, 30)
+        marker_buttons_layout.addWidget(self.custom_marker_button_top_arrow)
+        
+        self.custom_marker_button_bottom_arrow.setFixedSize(30, 30)
+        marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
+        
+        #Assign functions to the buttons
+        self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
+        self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
+        self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
+        self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
+
+        
+        # Create a QWidget to hold the QHBoxLayout
+        marker_buttons_widget = QWidget()
+        marker_buttons_widget.setLayout(marker_buttons_layout)
+        
+        # Add the custom marker button
+        padding_layout.addWidget(self.custom_marker_button, 3, 0)
+        
+        # Add the text entry for the custom marker
+        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1)
+        
+        # Add the marker buttons widget to the layout
+        padding_layout.addWidget(marker_buttons_widget, 3, 2, 1, 1)  # Spanning 2 columns
+        
+        # Add the remove button
+        padding_layout.addWidget(self.remove_custom_marker_button, 3, 3)
+        
+        # Add the color button
+        padding_layout.addWidget(self.custom_marker_color_button, 3, 4)
 
         
         
@@ -510,21 +555,22 @@ class CombinedSDSApp(QWidget):
     
 
         self.setLayout(layout)
-        self.load_config() 
+        self.load_config()
+    
+    def arrow_marker(self, text: str):
+        self.custom_marker_text_entry.clear()
+        self.custom_marker_text_entry.setText(text)
     
     def enable_custom_marker_mode(self):
         """Enable the custom marker mode and set the mouse event."""
         custom_text = self.custom_marker_text_entry.text().strip()
-        if not custom_text:
-            QMessageBox.warning(self, "Warning", "Please enter custom text for the marker.")
-            return
         
         self.marker_mode = "custom"  # Indicate custom marker mode
         self.live_view_label.mousePressEvent = lambda event: self.place_custom_marker(event, custom_text)
         
     def remove_custom_marker_mode(self):
-        if hasattr(self, "custom_markers"):
-            del self.custom_markers  # Clear the protein location marker
+        if hasattr(self, "custom_markers") and isinstance(self.custom_markers, list) and self.custom_markers:
+            self.custom_markers.pop()  # Remove the last entry from the list           
         self.update_live_view()  # Update the display
         
     
@@ -613,9 +659,9 @@ class CombinedSDSApp(QWidget):
         
     def reset_marker(self, marker_type):
         if marker_type == 'left':
-            self.left_markers.clear()  # Clear left markers
+            self.left_markers.pop()  # Clear left markers
             # self.left_padding_slider.setValue(0)
-            self.current_marker_index = 0           
+            self.current_marker_index = 0   
         elif marker_type == 'right':
             self.right_markers.clear()  # Clear right markers
             self.current_marker_index = 0
@@ -952,7 +998,7 @@ class CombinedSDSApp(QWidget):
         self.update_live_view()
         
     def get_current_config(self):
-        return {
+        config = {
             "adding_white_space": {
                 "left": self.left_padding_input.text(),
                 "right": self.right_padding_input.text(),
@@ -972,7 +1018,7 @@ class CombinedSDSApp(QWidget):
             "marker_labels": {
                 "top": self.top_label,
                 "left": [marker[1] for marker in self.left_markers],
-                "right": [marker[1] for marker in self.right_markers]
+                "right": [marker[1] for marker in self.right_markers],
             },
             "marker_padding": {
                 "top": self.top_padding_slider.value(),
@@ -985,11 +1031,19 @@ class CombinedSDSApp(QWidget):
                 "font_rotation": self.font_rotation,
                 "font_color": self.font_color.name(),
             },
-            "custom_markers": [
-            {"x": x, "y": y, "text": text, "color": color.name()}
-            for x, y, text, color in self.custom_markers
-        ],
         }
+    
+        try:
+            # Add custom markers if available and valid
+            config["custom_markers"] = [
+                {"x": x, "y": y, "text": text, "color": color.name()}
+                for x, y, text, color in self.custom_markers
+            ]
+        except AttributeError:
+            # Handle the case where self.custom_markers is not defined or invalid
+            config["custom_markers"] = []
+    
+        return config
     
     def add_band(self, event):
         # Ensure there's an image loaded and marker mode is active
