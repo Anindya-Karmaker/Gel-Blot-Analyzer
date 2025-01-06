@@ -28,6 +28,7 @@ class CombinedSDSApp(QWidget):
         self.left_markers = []
         self.right_markers = []
         self.top_markers = []
+        self.custom_markers=[]
         self.current_marker_index = 0
         self.current_top_label_index = 0
         self.font_rotation=-45
@@ -931,6 +932,13 @@ class CombinedSDSApp(QWidget):
         self.top_padding_slider.setValue(config_data["marker_padding"]["top"])
         self.left_padding_slider.setValue(config_data["marker_padding"]["left"])
         self.right_padding_slider.setValue(config_data["marker_padding"]["right"])
+        try:
+            self.custom_markers = [
+                (marker["x"], marker["y"], marker["text"], QColor(marker["color"]))
+                for marker in config_data.get("custom_markers", [])
+            ]
+        except:
+            pass
         
         #DO NOT KNOW WHY THIS WORKS BUT DIRECT VARIABLE ASSIGNING DOES NOT WORK
         
@@ -977,7 +985,11 @@ class CombinedSDSApp(QWidget):
                 "font_rotation": self.font_rotation,
                 "font_color": self.font_color.name(),
             },
-        }   
+            "custom_markers": [
+            {"x": x, "y": y, "text": text, "color": color.name()}
+            for x, y, text, color in self.custom_markers
+        ],
+        }
     
     def add_band(self, event):
         # Ensure there's an image loaded and marker mode is active
