@@ -9,7 +9,8 @@ Have option to predict the molecular weight of the protein once the ladder marke
 <img width="947" alt="image" src="https://github.com/user-attachments/assets/04f4809b-ab81-4384-a2b7-a8d730179a69" />
 
 Can also add custom markers with custom colors, lables or arrows (USE WEBDINGS FONT)
-<img width="944" alt="image" src="https://github.com/user-attachments/assets/df83d59e-1a95-4e4c-9952-b8d42d0dde62" />
+<img width="946" alt="image" src="https://github.com/user-attachments/assets/7cf09d64-9b43-4495-88da-426fa6636110" />
+
 
 
 
