@@ -10,7 +10,7 @@ import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-# import qdarktheme
+
 
 class CombinedSDSApp(QWidget):
     def __init__(self):
@@ -54,6 +54,7 @@ class CombinedSDSApp(QWidget):
         self.top_marker_shift= 10
         self.top_padding = 0
         self.font_color = QColor(0, 0, 0)  # Default to black
+        self.custom_marker_color = QColor(0, 0, 0)  # Default to black
         self.font_family = "Arial"  # Default font family
         self.font_size = 12  # Default font size
         self.image_array_backup= None
@@ -64,7 +65,8 @@ class CombinedSDSApp(QWidget):
         
         self.init_ui()
         
-
+    
+    
     def init_ui(self):
         layout = QVBoxLayout()
         extra_layout = QHBoxLayout()
@@ -468,6 +470,31 @@ class CombinedSDSApp(QWidget):
         padding_layout.addWidget(reset_top_button, 2, 1)
         padding_layout.addWidget(self.top_padding_slider, 2, 2, 1, 2)  # Slider spans 2 columns for better alignment
         
+        
+        # Add button and QLineEdit for the custom marker
+        self.custom_marker_button = QPushButton("Custom Marker", self)
+        self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
+        
+        
+        self.custom_marker_text_entry = QLineEdit(self)
+        self.custom_marker_text_entry.setPlaceholderText("Enter custom marker text")
+        self.custom_marker_text_entry.textChanged.connect(self.enable_custom_marker_mode)
+        
+        self.remove_custom_marker_button = QPushButton("Remove Custom Markers", self)
+        self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
+        
+        # Add color selection button for custom markers
+        self.custom_marker_color_button = QPushButton("Custom Marker Color")
+        self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
+        
+        # Add to the layout (adjust according to your layout structure)
+        padding_layout.addWidget(self.custom_marker_button,3,0)
+        padding_layout.addWidget(self.custom_marker_text_entry, 3,1)
+        padding_layout.addWidget(self.remove_custom_marker_button, 3,2,1,1)
+        padding_layout.addWidget(self.custom_marker_color_button, 3, 3, 1, 2)  # Add below custom marker widgets
+
+        
+        
         # Set the layout for the marker group box
         padding_params_group.setLayout(padding_layout)
         
@@ -483,6 +510,62 @@ class CombinedSDSApp(QWidget):
 
         self.setLayout(layout)
         self.load_config() 
+    
+    def enable_custom_marker_mode(self):
+        """Enable the custom marker mode and set the mouse event."""
+        custom_text = self.custom_marker_text_entry.text().strip()
+        if not custom_text:
+            QMessageBox.warning(self, "Warning", "Please enter custom text for the marker.")
+            return
+        
+        self.marker_mode = "custom"  # Indicate custom marker mode
+        self.live_view_label.mousePressEvent = lambda event: self.place_custom_marker(event, custom_text)
+        
+    def remove_custom_marker_mode(self):
+        if hasattr(self, "custom_markers"):
+            del self.custom_markers  # Clear the protein location marker
+        self.update_live_view()  # Update the display
+        
+    
+    def place_custom_marker(self, event, custom_text):
+        """Place a custom marker at the cursor location."""
+        # Get cursor position from the event
+        pos = event.pos()
+        cursor_x, cursor_y = pos.x(), pos.y()
+    
+        # Dimensions of the displayed image
+        displayed_width = self.live_view_label.width()
+        displayed_height = self.live_view_label.height()
+    
+        # Dimensions of the actual image
+        image_width = self.image.width()
+        image_height = self.image.height()
+    
+        # Calculate scaling factors
+        scale = min(displayed_width / image_width, displayed_height / image_height)
+    
+        # Calculate offsets
+        x_offset = (displayed_width - image_width * scale) / 2
+        y_offset = (displayed_height - image_height * scale) / 2
+    
+        # Transform cursor position to image space
+        image_x = (cursor_x - x_offset) / scale
+        image_y = (cursor_y - y_offset) / scale
+    
+
+    
+        # Store the custom marker's position and text
+        self.custom_markers = getattr(self, "custom_markers", [])
+        self.custom_markers.append((cursor_x, cursor_y, custom_text, self.custom_marker_color))
+    
+        # Update the live view to render the custom marker
+        self.update_live_view()
+        
+    def select_custom_marker_color(self):
+        """Open a color picker dialog to select the color for custom markers."""
+        color = QColorDialog.getColor(self.custom_marker_color, self, "Select Custom Marker Color")
+        if color.isValid():
+            self.custom_marker_color = color  # Update the custom marker color
     
     def update_top_labels(self):
         # Retrieve the multiline text from QTextEdit
@@ -1169,26 +1252,36 @@ class CombinedSDSApp(QWidget):
             painter.drawLine(center_x, 0, center_x, canvas.height())  # Vertical line
             painter.drawLine(0, center_y, canvas.width(), center_y)  # Horizontal line
             
-        # Draw the protein location marker (*)
-        if hasattr(self, "protein_location") and self.run_predict_MW==False:
-            x, y = self.protein_location
-            painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), "⎯⎯")
-
-        
-        
-        #TRY NEW:
-        # Draw the right markers (aligned left)
+        # # Draw the protein location marker (*)
         # if hasattr(self, "protein_location") and self.run_predict_MW==False:
         #     x, y = self.protein_location
-        #     y_pos_cropped = (y - 0) * (scaled_image.height() / self.image.height())
-        #     x_pos_cropped = (x - 0) * (scaled_image.width() / self.image.width())
-        #     if 0 <= y_pos_cropped <= scaled_image.height():
-        #         text = f"*" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
-        #         painter.drawText(
-        #             x_offset + x_pos_cropped,
-        #             y_offset + y_pos_cropped + y_offset_global,  # Adjust for proper text placement
-        #             text,
-        #         )
+        #     painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), "⎯⎯")
+
+        # if hasattr(self, "custom_markers"):
+        #     for x, y, text in self.custom_markers:
+        #         painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), text)
+                
+        # Draw the protein location marker (*)
+        if hasattr(self, "protein_location") and self.run_predict_MW == False:
+            x, y = self.protein_location
+            text = "⎯⎯"
+            text_width = font_metrics.horizontalAdvance(text)
+            painter.drawText(
+                int(x * render_scale),  #Currently left edge # FOR Center horizontally use int(x * render_scale - text_width / 2)
+                int(y * render_scale + text_height / 4),  # Center vertically
+                text
+            )
+        
+        if hasattr(self, "custom_markers"):
+            for x, y, text, color in self.custom_markers:
+                painter.setPen(color)  # Use the selected custom marker color
+                text_width = font_metrics.horizontalAdvance(text)
+                painter.drawText(
+                    int(x * render_scale),  #Currently left edge # FOR Center horizontally use int(x * render_scale - text_width / 2)
+                    int(y * render_scale + text_height / 4),  # Center vertically
+                    text
+                )
+
                 
         painter.end()
 
@@ -1572,6 +1665,8 @@ class CombinedSDSApp(QWidget):
         self.left_markers.clear()  # Clear left markers
         self.right_markers.clear()  # Clear right markers
         self.top_markers.clear()
+        self.remove_custom_marker_mode()
+        self.clear_predict_molecular_weight()
         self.update_live_view()  # Update the live view
         self.crop_x_start_slider.setValue(0)
         self.crop_x_end_slider.setValue(100)
