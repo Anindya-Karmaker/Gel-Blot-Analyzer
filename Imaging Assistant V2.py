@@ -663,11 +663,11 @@ class CombinedSDSApp(QWidget):
             # self.left_padding_slider.setValue(0)
             self.current_marker_index = 0   
         elif marker_type == 'right':
-            self.right_markers.clear()  # Clear right markers
+            self.right_markers.pop()  # Clear right markers
             self.current_marker_index = 0
             # self.right_padding_slider.setValue(0)
         elif marker_type == 'top':
-            self.top_markers.clear()  # Clear top markers
+            self.top_markers.pop()  # Clear top markers
             self.current_top_label_index = 0
             # self.top_padding_slider.setValue(0)
     
@@ -1079,14 +1079,23 @@ class CombinedSDSApp(QWidget):
     
         # Add the band marker based on the active marker mode
         if self.marker_mode == "left" and self.current_marker_index < len(self.marker_values):
-            self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
-            self.current_marker_index += 1
+            if len(self.left_markers)!=0:
+                self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))
+            else:
+                self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
+                self.current_marker_index += 1
         elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
-            self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
-            self.current_marker_index += 1
+            if len(self.right_markers)!=0:
+                self.right_markers.append((image_y, self.marker_values[len(self.left_markers)]))
+            else:
+                self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
+                self.current_marker_index += 1
         elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
-            self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
-            self.current_top_label_index += 1
+            if len(self.top_markers)!=0:
+                self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
+            else:
+                self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
+                self.current_top_label_index += 1
     
         # Update the live view with the new markers
         self.update_live_view()
