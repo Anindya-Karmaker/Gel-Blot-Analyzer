@@ -2,7 +2,7 @@ from PIL import ImageGrab  # Import Pillow's ImageGrab for clipboard access
 import sys
 from io import BytesIO
 from PyQt5.QtWidgets import (
-    QApplication, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
+    QDesktopWidget, QScrollArea, QApplication, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform
 from PyQt5.QtCore import Qt, QBuffer
@@ -15,8 +15,14 @@ import matplotlib.pyplot as plt
 class CombinedSDSApp(QWidget):
     def __init__(self):
         super().__init__()
+        self.screen = QDesktopWidget().screenGeometry()
+        self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
+        window_width = int(self.screen_width * 0.6)  # 60% of screen width
+        window_height = int(self.screen_height * 0.95)  # 60% of screen height
         self.setWindowTitle("IMAGING ASSISTANT BY AK V2.9")
-        self.resize(700, 950) # Change for windows/macos viewing
+        self.resize(window_width, window_height)
+        self.setFixedSize(window_width, window_height)
+        # self.resize(700, 950) # Change for windows/macos viewing
         self.image_path = None
         self.image = None
         self.image_master= None
@@ -69,14 +75,23 @@ class CombinedSDSApp(QWidget):
     
     
     def init_ui(self):
+           
         layout = QVBoxLayout()
+        
+        main_widget = QWidget()
+        master_layout = QVBoxLayout(main_widget)
+        
         extra_layout = QHBoxLayout()
+        
+        label_width = int(self.screen_width * 0.3)  # 30% of screen width
+        label_height = int(self.screen_height * 0.35)  # 40% of screen height
     
         # Image display
         self.live_view_label = QLabel("Load an SDS-PAGE image to preview")
         self.live_view_label.setAlignment(Qt.AlignCenter)
         self.live_view_label.setStyleSheet("border: 1px solid black;")
-        self.live_view_label.setFixedSize(600,450) # Change for windows/macos viewing
+        # self.live_view_label.setFixedSize(600,450) # Change for windows/macos viewing
+        self.live_view_label.setFixedSize(label_width, label_height)
         self.live_view_label.mousePressEvent = self.add_band
         # Set the cursor to a cross when hovering over the preview window
         self.live_view_label.setCursor(Qt.CrossCursor)
@@ -206,7 +221,7 @@ class CombinedSDSApp(QWidget):
         font_options_group.setLayout(font_options_layout)
         buttons_layout.addWidget(font_options_group)
         
-        layout.addLayout(extra_layout)
+        master_layout.addLayout(extra_layout)
         self.setLayout(layout)
         
         marker_options_layout = QHBoxLayout()
@@ -271,14 +286,14 @@ class CombinedSDSApp(QWidget):
         top_marker_group.setLayout(top_marker_layout)
         
         # Add the group box to the main layout
-        layout.addWidget(top_marker_group)
+        master_layout.addWidget(top_marker_group)
         
         # Add both groups to the horizontal layout
         marker_options_layout.addWidget(left_right_marker_group)
         marker_options_layout.addWidget(top_marker_group)
         
         # Add the horizontal layout to the main layout
-        layout.addLayout(marker_options_layout)
+        master_layout.addLayout(marker_options_layout)
         
         main_layout = QHBoxLayout()
 
@@ -405,7 +420,7 @@ class CombinedSDSApp(QWidget):
         main_layout.addWidget(padding_params_group)
         
         # Set the main layout for the parent widget
-        layout.addLayout(main_layout)
+        master_layout.addLayout(main_layout)
 
         # Create a horizontal layout to hold the marker and font options side by side
         main_layout = QHBoxLayout()
@@ -587,7 +602,16 @@ class CombinedSDSApp(QWidget):
 
         
         # Add the layout to the main layout of the parent widget
-        layout.addLayout(main_layout) 
+        master_layout.addLayout(main_layout) 
+        
+        # Create a QScrollArea to wrap the main widget
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(main_widget)
+        scroll_area.setWidgetResizable(True)
+    
+        # Add the QScrollArea to the main layout
+        layout.addWidget(scroll_area)
+
 
     
 
@@ -1637,58 +1661,42 @@ class CombinedSDSApp(QWidget):
     
     
     def copy_to_clipboard(self):
-        """Copy the image or its directory to the clipboard."""
+        """Copy the image from live view label to the clipboard."""
+        if not self.image:
+            print("No image to copy.")
+            return
+    
+        # Define a high-resolution canvas for clipboard copy
+        render_scale = 3
+        high_res_canvas_width = self.live_view_label.width() * render_scale
+        high_res_canvas_height = self.live_view_label.height() * render_scale
+        high_res_canvas = QImage(
+            high_res_canvas_width, high_res_canvas_height, QImage.Format_RGB888
+        )
+        high_res_canvas.fill(QColor(255, 255, 255))  # White background
+    
+        # Define cropping boundaries
+        x_start_percent = self.crop_x_start_slider.value() / 100
+        y_start_percent = self.crop_y_start_slider.value() / 100
+        x_start = int(self.image.width() * x_start_percent)
+        y_start = int(self.image.height() * y_start_percent)
+    
+        # Create a scaled version of the image
+        scaled_image = self.image.scaled(
+            high_res_canvas_width,
+            high_res_canvas_height,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+    
+        # Render the high-resolution canvas without guides for clipboard
+        self.render_image_on_canvas(
+            high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
+        )
+        
+        # Copy the high-resolution image to the clipboard
         clipboard = QApplication.clipboard()
-        mime_data = clipboard.mimeData()
-        
-        # Check if the clipboard contains a file path
-        if mime_data.hasUrls():
-            urls = mime_data.urls()
-            if urls and urls[0].isLocalFile():
-                file_path = urls[0].toLocalFile()
-                if os.path.isfile(file_path) and file_path.lower().endswith(('.png', '.jpg', '.bmp', '.tif')):
-                    # Load the image from the directory
-                    self.image_path = file_path
-                    self.image = QImage(self.image_path)
-                    self.image_master = self.image.copy()
-                    self.update_live_view()
-                    QMessageBox.information(self, "Clipboard", f"Image loaded from: {file_path}")
-                    return
-        
-        # If the clipboard contains an image, copy it
-        if mime_data.hasImage():
-            render_scale = 3
-            high_res_canvas_width = self.live_view_label.width() * render_scale
-            high_res_canvas_height = self.live_view_label.height() * render_scale
-            high_res_canvas = QImage(
-                high_res_canvas_width, high_res_canvas_height, QImage.Format_RGB888
-            )
-            high_res_canvas.fill(QColor(255, 255, 255))  # White background
-    
-            # Define cropping boundaries
-            x_start_percent = self.crop_x_start_slider.value() / 100
-            y_start_percent = self.crop_y_start_slider.value() / 100
-            x_start = int(self.image.width() * x_start_percent)
-            y_start = int(self.image.height() * y_start_percent)
-    
-            # Create a scaled version of the image
-            scaled_image = self.image.scaled(
-                high_res_canvas_width,
-                high_res_canvas_height,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-    
-            # Render the high-resolution canvas
-            self.render_image_on_canvas(
-                high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
-            )
-    
-            # Copy to the clipboard
-            clipboard.setImage(high_res_canvas)
-            QMessageBox.information(self, "Clipboard", "Image copied to clipboard.")
-        else:
-            QMessageBox.warning(self, "Clipboard", "No valid image or file path found.")
+        clipboard.setImage(high_res_canvas)  # Copy the rendered image
 
         
     def clear_predict_molecular_weight(self):
