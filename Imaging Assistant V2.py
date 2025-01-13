@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 class CombinedSDSApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("IMAGING ASSISTANT BY AK V2.5")
+        self.setWindowTitle("IMAGING ASSISTANT BY AK V2.9")
         self.resize(700, 950) # Change for windows/macos viewing
         self.image_path = None
         self.image = None
@@ -425,16 +425,21 @@ class CombinedSDSApp(QWidget):
         self.left_padding_slider.setValue(0)
         self.left_padding_slider.valueChanged.connect(self.update_left_padding)
         
-        reset_left_button = QPushButton("Remove Last Entry")
-        reset_left_button.clicked.connect(lambda: self.reset_marker('left'))
+        remove_left_button = QPushButton("Remove Last")
+        remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove'))
+        
+        reset_left_button = QPushButton("Reset")
+        reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
+        
         duplicate_left_button = QPushButton("Duplicate Right")
         duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left'))
         
         # Add left marker widgets to the grid layout
         padding_layout.addWidget(left_marker_button, 0, 0)
-        padding_layout.addWidget(reset_left_button, 0, 1)
-        padding_layout.addWidget(duplicate_left_button, 0, 2)
-        padding_layout.addWidget(self.left_padding_slider, 0, 3,1,2)
+        padding_layout.addWidget(remove_left_button, 0, 1)
+        padding_layout.addWidget(reset_left_button, 0, 2)
+        padding_layout.addWidget(duplicate_left_button, 0, 3)
+        padding_layout.addWidget(self.left_padding_slider, 0, 4,1,2)
         
         # Right marker: Button, slider, reset, and duplicate in the same row
         right_marker_button = QPushButton("Right Markers")
@@ -444,16 +449,21 @@ class CombinedSDSApp(QWidget):
         self.right_padding_slider.setValue(0)
         self.right_padding_slider.valueChanged.connect(self.update_right_padding)
         
-        reset_right_button = QPushButton("Remove Last Entry")
-        reset_right_button.clicked.connect(lambda: self.reset_marker('right'))
+        remove_right_button = QPushButton("Remove Last")
+        remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove'))
+        
+        reset_right_button = QPushButton("Reset")
+        reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
+        
         duplicate_right_button = QPushButton("Duplicate Left")
         duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right'))
         
         # Add right marker widgets to the grid layout
         padding_layout.addWidget(right_marker_button, 1, 0)
-        padding_layout.addWidget(reset_right_button, 1, 1)
-        padding_layout.addWidget(duplicate_right_button, 1, 2)
-        padding_layout.addWidget(self.right_padding_slider, 1, 3,1,2)
+        padding_layout.addWidget(remove_right_button, 1, 1)
+        padding_layout.addWidget(reset_right_button, 1, 2)
+        padding_layout.addWidget(duplicate_right_button, 1, 3)
+        padding_layout.addWidget(self.right_padding_slider, 1, 4,1,2)
         
         # Top marker: Button, slider, and reset in the same row
         top_marker_button = QPushButton("Top Markers")
@@ -463,14 +473,20 @@ class CombinedSDSApp(QWidget):
         self.top_padding_slider.setValue(self.top_padding)
         self.top_padding_slider.valueChanged.connect(self.update_top_padding)
         
-        reset_top_button = QPushButton("Remove Last Entry")
-        reset_top_button.clicked.connect(lambda: self.reset_marker('top'))
+        remove_top_button = QPushButton("Remove Last")
+        remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove'))
+        
+        reset_top_button = QPushButton("Reset")
+        reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
         
         # Add top marker widgets to the grid layout
         padding_layout.addWidget(top_marker_button, 2, 0)
-        padding_layout.addWidget(reset_top_button, 2, 1)
-        padding_layout.addWidget(self.top_padding_slider, 2, 2, 1, 3)  # Slider spans 2 columns for better alignment
+        padding_layout.addWidget(remove_top_button, 2, 1)
+        padding_layout.addWidget(reset_top_button, 2, 2)
+        padding_layout.addWidget(self.top_padding_slider, 2, 3, 1, 3)  # Slider spans 2 columns for better alignment
         
+        for i in range(6):  # Assuming 6 columns in the grid
+            padding_layout.setColumnStretch(i, 1)
         
         # Add button and QLineEdit for the custom marker
         self.custom_marker_button = QPushButton("Custom Marker", self)
@@ -486,11 +502,11 @@ class CombinedSDSApp(QWidget):
         
         
         
-        self.custom_marker_text_entry = QLineEdit(self)
+        self.custom_marker_text_entry = QLineEdit(self)        
         self.custom_marker_text_entry.setPlaceholderText("Enter custom marker text")
         self.custom_marker_text_entry.textChanged.connect(self.enable_custom_marker_mode)
         
-        self.remove_custom_marker_button = QPushButton("Remove Last Entry", self)
+        self.remove_custom_marker_button = QPushButton("Remove Last", self)
         self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
         
         # Add color selection button for custom markers
@@ -513,6 +529,7 @@ class CombinedSDSApp(QWidget):
         self.custom_marker_button_bottom_arrow.setFixedSize(30, 30)
         marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
         
+        
         #Assign functions to the buttons
         self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
         self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
@@ -528,16 +545,36 @@ class CombinedSDSApp(QWidget):
         padding_layout.addWidget(self.custom_marker_button, 3, 0)
         
         # Add the text entry for the custom marker
-        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1)
+        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1,1,2)
         
         # Add the marker buttons widget to the layout
-        padding_layout.addWidget(marker_buttons_widget, 3, 2, 1, 1)  # Spanning 2 columns
+        padding_layout.addWidget(marker_buttons_widget, 3, 3)  
         
         # Add the remove button
-        padding_layout.addWidget(self.remove_custom_marker_button, 3, 3)
+        padding_layout.addWidget(self.remove_custom_marker_button, 3, 4)
         
         # Add the color button
-        padding_layout.addWidget(self.custom_marker_color_button, 3, 4)
+        padding_layout.addWidget(self.custom_marker_color_button, 3, 5)
+        
+        self.custom_font_type_label = QLabel("Custom Marker Font Type:", self)
+        self.custom_font_type_dropdown = QFontComboBox()
+        self.custom_font_type_dropdown.setCurrentFont(QFont("Arial"))
+        self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
+        # self.font_type_dropdown.currentIndexChanged.connect(self.update_font_type)
+        
+        # Font size selector
+        self.custom_font_size_label = QLabel("Custom Marker Font Size:", self)
+        self.custom_font_size_spinbox = QSpinBox(self)
+        self.custom_font_size_spinbox.setRange(8, 72)  # Allow font sizes from 8 to 72
+        self.custom_font_size_spinbox.setValue(24)  # Default font size
+        # self.font_size_spinbox.valueChanged.connect(self.update_font_size)
+        
+        # Add font type and size widgets to the layout
+        padding_layout.addWidget(self.custom_font_type_label, 4, 0,)
+        padding_layout.addWidget(self.custom_font_type_dropdown, 4, 1,1,2)  # Span 2 columns
+        
+        padding_layout.addWidget(self.custom_font_size_label, 4, 3)
+        padding_layout.addWidget(self.custom_font_size_spinbox, 4, 4,1,2)
 
         
         
@@ -556,6 +593,19 @@ class CombinedSDSApp(QWidget):
 
         self.setLayout(layout)
         self.load_config()
+    
+    def update_marker_text_font(self, font: QFont):
+        """
+        Updates the font of self.custom_marker_text_entry based on the selected font
+        from self.custom_font_type_dropdown.
+    
+        :param font: QFont object representing the selected font from the combobox.
+        """
+        # Get the name of the selected font
+        selected_font_name = font.family()
+        
+        # Set the font of the QLineEdit
+        self.custom_marker_text_entry.setFont(QFont(selected_font_name))
     
     def arrow_marker(self, text: str):
         self.custom_marker_text_entry.clear()
@@ -603,8 +653,8 @@ class CombinedSDSApp(QWidget):
     
         # Store the custom marker's position and text
         self.custom_markers = getattr(self, "custom_markers", [])
-        self.custom_markers.append((cursor_x, cursor_y, custom_text, self.custom_marker_color))
-    
+        self.custom_markers.append((cursor_x, cursor_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value()))
+        # print("CUSTOM_MARKER: ",self.custom_markers)
         # Update the live view to render the custom marker
         self.update_live_view()
         
@@ -657,18 +707,28 @@ class CombinedSDSApp(QWidget):
         # Trigger a refresh of the live view
         self.update_live_view()
         
-    def reset_marker(self, marker_type):
+    def reset_marker(self, marker_type, param):
         if marker_type == 'left':
-            self.left_markers.pop()  # Clear left markers
-            # self.left_padding_slider.setValue(0)
-            self.current_marker_index = 0   
-        elif marker_type == 'right':
-            self.right_markers.pop()  # Clear right markers
-            self.current_marker_index = 0
-            # self.right_padding_slider.setValue(0)
-        elif marker_type == 'top':
-            self.top_markers.pop()  # Clear top markers
-            self.current_top_label_index = 0
+            if param == 'remove' and len(self.left_markers)!=0:
+                self.left_markers.pop()  
+            elif param == 'reset':
+                self.left_markers.clear()
+                self.current_marker_index = 0  
+
+             
+        elif marker_type == 'right' and len(self.right_markers)!=0:
+            if param == 'remove':
+                self.right_markers.pop()  
+            elif param == 'reset':
+                self.right_markers.clear()
+                self.current_marker_index = 0
+
+        elif marker_type == 'top' and len(self.top_markers)!=0:
+            if param == 'remove':
+                self.top_markers.pop()  
+            elif param == 'reset':
+                self.top_markers.clear()
+                self.current_top_label_index = 0
             # self.top_padding_slider.setValue(0)
     
         # Call update live view after resetting markers
@@ -895,7 +955,7 @@ class CombinedSDSApp(QWidget):
         # Check if the clipboard contains an image
         if mime_data.hasImage():
             image = clipboard.image()  # Get image from clipboard
-            print("Image pasted from clipboard.")
+            # print("Image pasted from clipboard.")
             self.image = image  # Store the image in self.image
             self.original_image = self.image.copy()
             self.image_contrasted= self.image.copy()
@@ -974,17 +1034,21 @@ class CombinedSDSApp(QWidget):
         self.font_size = config_data["font_options"]["font_size"]
         self.font_rotation = config_data["font_options"]["font_rotation"]
         self.font_color = QColor(config_data["font_options"]["font_color"])
-        
+    
         self.top_padding_slider.setValue(config_data["marker_padding"]["top"])
         self.left_padding_slider.setValue(config_data["marker_padding"]["left"])
         self.right_padding_slider.setValue(config_data["marker_padding"]["right"])
+    
         try:
             self.custom_markers = [
-                (marker["x"], marker["y"], marker["text"], QColor(marker["color"]))
+                (marker["x"], marker["y"], marker["text"], QColor(marker["color"]), marker["font"], marker["font_size"])
                 for marker in config_data.get("custom_markers", [])
             ]
         except:
             pass
+        
+        # Apply font settings
+
         
         #DO NOT KNOW WHY THIS WORKS BUT DIRECT VARIABLE ASSIGNING DOES NOT WORK
         
@@ -1034,10 +1098,10 @@ class CombinedSDSApp(QWidget):
         }
     
         try:
-            # Add custom markers if available and valid
+            # Add custom markers with font and font size
             config["custom_markers"] = [
-                {"x": x, "y": y, "text": text, "color": color.name()}
-                for x, y, text, color in self.custom_markers
+                {"x": x, "y": y, "text": text, "color": color.name(), "font": font, "font_size": font_size}
+                for x, y, text, color, font, font_size in self.custom_markers
             ]
         except AttributeError:
             # Handle the case where self.custom_markers is not defined or invalid
@@ -1133,7 +1197,7 @@ class CombinedSDSApp(QWidget):
             padding_top = int(self.top_padding_input.text())
         except ValueError:
             # Handle invalid input (non-integer value)
-            print("Please enter valid integers for padding.")
+            # print("Please enter valid integers for padding.")
             return
     
         # Ensure self.image_before_padding is initialized
@@ -1341,6 +1405,7 @@ class CombinedSDSApp(QWidget):
             x, y = self.protein_location
             text = "⎯⎯"
             text_width = font_metrics.horizontalAdvance(text)
+            text_height= font_metrics.height()
             painter.drawText(
                 int(x * render_scale),  #Currently left edge # FOR Center horizontally use int(x * render_scale - text_width / 2)
                 int(y * render_scale + text_height / 4),  # Center vertically
@@ -1348,11 +1413,38 @@ class CombinedSDSApp(QWidget):
             )
         
         if hasattr(self, "custom_markers"):
-            for x, y, text, color in self.custom_markers:
+            # Get default font type and size
+            default_font_type = QFont(self.custom_font_type_dropdown.currentText())
+            default_font_size = int(self.custom_font_size_spinbox.value())
+        
+
+        
+            for x, y, text, color, *optional in self.custom_markers:
+                # Use provided font type and size if available, otherwise use defaults
+                marker_font_type = optional[0] if len(optional) > 0 else default_font_type
+                marker_font_size = optional[1] if len(optional) > 1 else default_font_size
+                
+                # If marker_font_type is not already a QFont, create a QFont instance
+                if isinstance(marker_font_type, str):
+                    font = QFont(marker_font_type)
+                else:
+                    font = QFont(marker_font_type)  # Clone the font to avoid modifying the original
+                
+                # Adjust font size for rendering scale
+                font.setPointSize(marker_font_size * render_scale)
+        
+                # Apply the font to the painter
+                painter.setFont(font)
                 painter.setPen(color)  # Use the selected custom marker color
+        
+                # Create font metrics to calculate text width and height
+                font_metrics = painter.fontMetrics()
                 text_width = font_metrics.horizontalAdvance(text)
+                text_height = font_metrics.height()
+        
+                # Draw text, center it horizontally and vertically
                 painter.drawText(
-                    int(x * render_scale),  #Currently left edge # FOR Center horizontally use int(x * render_scale - text_width / 2)
+                    int(x * render_scale - text_width / 2),  # Center horizontally 
                     int(y * render_scale + text_height / 4),  # Center vertically
                     text
                 )
@@ -1545,42 +1637,59 @@ class CombinedSDSApp(QWidget):
     
     
     def copy_to_clipboard(self):
-        """Copy the image from live view label to the clipboard."""
-        if not self.image:
-            print("No image to copy.")
-            return
-    
-        # Define a high-resolution canvas for clipboard copy
-        render_scale = 3
-        high_res_canvas_width = self.live_view_label.width() * render_scale
-        high_res_canvas_height = self.live_view_label.height() * render_scale
-        high_res_canvas = QImage(
-            high_res_canvas_width, high_res_canvas_height, QImage.Format_RGB888
-        )
-        high_res_canvas.fill(QColor(255, 255, 255))  # White background
-    
-        # Define cropping boundaries
-        x_start_percent = self.crop_x_start_slider.value() / 100
-        y_start_percent = self.crop_y_start_slider.value() / 100
-        x_start = int(self.image.width() * x_start_percent)
-        y_start = int(self.image.height() * y_start_percent)
-    
-        # Create a scaled version of the image
-        scaled_image = self.image.scaled(
-            high_res_canvas_width,
-            high_res_canvas_height,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-    
-        # Render the high-resolution canvas without guides for clipboard
-        self.render_image_on_canvas(
-            high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
-        )
-        
-        # Copy the high-resolution image to the clipboard
+        """Copy the image or its directory to the clipboard."""
         clipboard = QApplication.clipboard()
-        clipboard.setImage(high_res_canvas)  # Copy the rendered image
+        mime_data = clipboard.mimeData()
+        
+        # Check if the clipboard contains a file path
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls and urls[0].isLocalFile():
+                file_path = urls[0].toLocalFile()
+                if os.path.isfile(file_path) and file_path.lower().endswith(('.png', '.jpg', '.bmp', '.tif')):
+                    # Load the image from the directory
+                    self.image_path = file_path
+                    self.image = QImage(self.image_path)
+                    self.image_master = self.image.copy()
+                    self.update_live_view()
+                    QMessageBox.information(self, "Clipboard", f"Image loaded from: {file_path}")
+                    return
+        
+        # If the clipboard contains an image, copy it
+        if mime_data.hasImage():
+            render_scale = 3
+            high_res_canvas_width = self.live_view_label.width() * render_scale
+            high_res_canvas_height = self.live_view_label.height() * render_scale
+            high_res_canvas = QImage(
+                high_res_canvas_width, high_res_canvas_height, QImage.Format_RGB888
+            )
+            high_res_canvas.fill(QColor(255, 255, 255))  # White background
+    
+            # Define cropping boundaries
+            x_start_percent = self.crop_x_start_slider.value() / 100
+            y_start_percent = self.crop_y_start_slider.value() / 100
+            x_start = int(self.image.width() * x_start_percent)
+            y_start = int(self.image.height() * y_start_percent)
+    
+            # Create a scaled version of the image
+            scaled_image = self.image.scaled(
+                high_res_canvas_width,
+                high_res_canvas_height,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+    
+            # Render the high-resolution canvas
+            self.render_image_on_canvas(
+                high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
+            )
+    
+            # Copy to the clipboard
+            clipboard.setImage(high_res_canvas)
+            QMessageBox.information(self, "Clipboard", "Image copied to clipboard.")
+        else:
+            QMessageBox.warning(self, "Clipboard", "No valid image or file path found.")
+
         
     def clear_predict_molecular_weight(self):
         if hasattr(self, "protein_location"):
@@ -1611,7 +1720,7 @@ class CombinedSDSApp(QWidget):
             max_position = np.max(marker_positions)
             normalized_distances = (marker_positions - min_position) / (max_position - min_position)
             # normalized_distances = (marker_positions) / (min_position)
-            print("MARKERS: ", markers)
+            # print("MARKERS: ", markers)
             
         
             # Allow the user to select a point for prediction
@@ -1646,8 +1755,8 @@ class CombinedSDSApp(QWidget):
     
         # Transform cursor position to image space
         protein_position = round((cursor_y - y_offset) / scale,2)
-        # protein_position=cursor_y
-        print("PROTEIN POSITION: ", protein_position)
+        # protein_positio
+        # print("PROTEIN POSITION: ", protein_position)
         
         
         
@@ -1699,9 +1808,9 @@ class CombinedSDSApp(QWidget):
         plt.figure(figsize=(5, 3))
         plt.scatter(normalized_distances, marker_values, color="red", label="Marker Data")
         plt.plot(normalized_distances, fitted_values, color="blue", label=f"Fit (R²={r_squared:.3f})")
-        plt.axvline(protein_position, color="green", linestyle="--", label=f"Protein Position\n({predicted_weight:.2f} kDa)")
+        plt.axvline(protein_position, color="green", linestyle="--", label=f"Protein Position\n({predicted_weight:.2f} units)")
         plt.xlabel("Normalized Relative Distance")
-        plt.ylabel("Molecular Weight (kDa)")
+        plt.ylabel("Molecular Weight (units)")
         plt.yscale("log")  # Log scale for molecular weight
         plt.legend()
         plt.title("Molecular Weight Prediction")
@@ -1719,7 +1828,7 @@ class CombinedSDSApp(QWidget):
         message_box = QMessageBox(self)
         message_box.setWindowTitle("Prediction Result")
         message_box.setText(
-            f"The predicted molecular weight is approximately {predicted_weight:.2f} kDa.\n"
+            f"The predicted molecular weight is approximately {predicted_weight:.2f} units.\n"
             f"R-squared value of the fit: {r_squared:.3f}"
         )
         label = QLabel()
