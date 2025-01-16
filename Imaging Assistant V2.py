@@ -1438,11 +1438,11 @@ class CombinedSDSApp(QWidget):
                 painter.save()
                 text_width = font_metrics.horizontalAdvance(text)
                 text_height= font_metrics.height()
-                label_x = x_offset + x_pos_cropped
+                label_x = x_offset + x_pos_cropped # - text_width/2
                 label_y = y_offset + self.top_marker_shift * render_scale
-                # painter.translate(label_x, label_y)
+                painter.translate(label_x, label_y)
                 painter.rotate(self.font_rotation)
-                painter.drawText(int(label_x - text_width/2), int(label_y), f"{top_label}")
+                painter.drawText(int(0 - text_width/2),0, f"{top_label}")
                 painter.restore()
     
         # Draw guide lines
@@ -1559,6 +1559,8 @@ class CombinedSDSApp(QWidget):
     
         self.draw_guides = False
         self.show_guides_checkbox.setChecked(False)
+        self.show_grid_checkbox.setChecked(False)
+        self.update_live_view()
     
         # Get the orientation value from the slider
         angle = self.orientation_slider.value()
@@ -1609,10 +1611,13 @@ class CombinedSDSApp(QWidget):
     def update_crop(self):
         """Update the image based on current crop sliders. First align, then crop the image."""
         # Save current configuration
+        self.show_grid_checkbox.setChecked(False)
+        self.update_live_view()
         config = self.get_current_config()
     
         # Align the image first (rotate it)
         self.align_image()
+        
     
         # Now apply cropping
         cropped_image = self.crop_image()
