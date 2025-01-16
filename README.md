@@ -6,7 +6,8 @@ Example output from the software:
 
 
 Have option to predict the molecular weight of the protein once the ladder markers (left/right) are placed (Accurarcy can vary anywhere from 5 to 10% depending on the quality of the gel):
-<img width="1075" alt="image" src="https://github.com/user-attachments/assets/85ad0955-6146-4341-b34a-fe52bf03e137" />
+<img width="990" alt="image" src="https://github.com/user-attachments/assets/fa752c32-b6f9-4958-b94f-19de955fbfb6" />
+
 
 
 Please see the Instruction Video for more details on how to use the software.
