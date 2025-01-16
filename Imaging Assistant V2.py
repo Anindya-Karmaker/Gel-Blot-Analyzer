@@ -18,8 +18,8 @@ class CombinedSDSApp(QWidget):
         self.screen = QDesktopWidget().screenGeometry()
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         window_width = int(self.screen_width * 0.6)  # 60% of screen width
-        window_height = int(self.screen_height * 0.95)  # 60% of screen height
-        self.setWindowTitle("IMAGING ASSISTANT BY AK V2.9")
+        window_height = int(self.screen_height * 0.95)  # 95% of screen height
+        self.setWindowTitle("IMAGING ASSISTANT BY AK V2.95")
         self.resize(window_width, window_height)
         self.setFixedSize(window_width, window_height)
         # self.resize(700, 950) # Change for windows/macos viewing
@@ -137,7 +137,8 @@ class CombinedSDSApp(QWidget):
         clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
         prediction_layout.addWidget(clear_predict_button)
         buttons_layout.addLayout(prediction_layout)
-    
+        
+   
         extra_layout.addLayout(buttons_layout)
         
         # Font options group
@@ -298,11 +299,25 @@ class CombinedSDSApp(QWidget):
         main_layout = QHBoxLayout()
 
         # Cropping parameters group
-        cropping_params_group = QGroupBox("Cropping Parameters")
+        cropping_params_group = QGroupBox("Cropping and Snapping Parameters")
         cropping_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         
         # Layout for the cropping group box
         cropping_layout = QVBoxLayout()
+        
+        # Grid checkbox
+        self.show_grid_checkbox = QCheckBox("Show Snapping Grid", self)
+        self.show_grid_checkbox.setChecked(False)  # Default: Grid is off
+        self.show_grid_checkbox.stateChanged.connect(self.update_live_view)
+        cropping_layout.addWidget(self.show_grid_checkbox)
+        
+        # Grid size input (optional)
+        self.grid_size_input = QSpinBox(self)
+        self.grid_size_input.setRange(5, 100)  # Grid cell size in pixels
+        self.grid_size_input.setValue(20)  # Default grid size
+        self.grid_size_input.setPrefix("Grid Size (px): ")
+        self.grid_size_input.valueChanged.connect(self.update_live_view)
+        cropping_layout.addWidget(self.grid_size_input)
         
         self.orientation_label = QLabel("Rotation Angle")
         self.orientation_slider = QSlider(Qt.Horizontal)
@@ -383,17 +398,17 @@ class CombinedSDSApp(QWidget):
         # Left space input and label
         left_padding_label = QLabel("Left Space (px):")
         self.left_padding_input = QLineEdit()
-        self.left_padding_input.setText("0")  # Default value
+        self.left_padding_input.setText("100")  # Default value
         
         # Right space input and label
         right_padding_label = QLabel("Right Space (px):")
         self.right_padding_input = QLineEdit()
-        self.right_padding_input.setText("0")  # Default value
+        self.right_padding_input.setText("100")  # Default value
         
         # Top space input and label
         top_padding_label = QLabel("Top Space (px):")
         self.top_padding_input = QLineEdit()
-        self.top_padding_input.setText("50")  # Default value
+        self.top_padding_input.setText("100")  # Default value
         
         # Finalize image button
         self.finalize_button = QPushButton("Add White Space")
@@ -672,6 +687,12 @@ class CombinedSDSApp(QWidget):
         # Transform cursor position to image space
         image_x = (cursor_x - x_offset) / scale
         image_y = (cursor_y - y_offset) / scale
+        
+        # Adjust for snapping to grid
+        if self.show_grid_checkbox.isChecked():
+            grid_size = self.grid_size_input.value()
+            cursor_x = round(cursor_x / grid_size) * grid_size
+            cursor_y = round(cursor_y / grid_size) * grid_size
     
 
     
@@ -984,6 +1005,7 @@ class CombinedSDSApp(QWidget):
             self.original_image = self.image.copy()
             self.image_contrasted= self.image.copy()
             self.image_master=self.image.copy()
+            self.image_before_padding=None
             # self.save_right_shift_marker(self.image)
             
         
@@ -1020,6 +1042,10 @@ class CombinedSDSApp(QWidget):
             self.image_master= self.original_image.copy()  
             self.image_contrasted= self.original_image.copy()  
             self.update_live_view()
+
+            text_title="IMAGING ASSISTANT BY AK V2.9: "
+            text_title+=str(self.image_path)
+            self.setWindowTitle(text_title)
     
             # Determine associated config file
             base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -1141,6 +1167,11 @@ class CombinedSDSApp(QWidget):
         # Get the cursor position from the event
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
+        
+        if self.show_grid_checkbox.isChecked():
+            grid_size = self.grid_size_input.value()
+            cursor_x = round(cursor_x / grid_size) * grid_size
+            cursor_y = round(cursor_y / grid_size) * grid_size
     
         # Get the dimensions of the displayed image
         displayed_width = self.live_view_label.width()
@@ -1164,27 +1195,28 @@ class CombinedSDSApp(QWidget):
         # Validate that the transformed coordinates are within image bounds
         if not (0 <= image_y <= image_height):
             return  # Ignore clicks outside the image bounds
-    
-        # Add the band marker based on the active marker mode
-        if self.marker_mode == "left" and self.current_marker_index < len(self.marker_values):
-            if len(self.left_markers)!=0:
-                self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))
-            else:
-                self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
-                self.current_marker_index += 1
-        elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
-            if len(self.right_markers)!=0:
-                self.right_markers.append((image_y, self.marker_values[len(self.left_markers)]))
-            else:
-                self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
-                self.current_marker_index += 1
-        elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
-            if len(self.top_markers)!=0:
-                self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
-            else:
-                self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
-                self.current_top_label_index += 1
-    
+        try:
+            # Add the band marker based on the active marker mode
+            if self.marker_mode == "left" and self.current_marker_index < len(self.marker_values):
+                if len(self.left_markers)!=0:
+                    self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))
+                else:
+                    self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
+                    self.current_marker_index += 1
+            elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
+                if len(self.right_markers)!=0:
+                    self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
+                else:
+                    self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
+                    self.current_marker_index += 1
+            elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
+                if len(self.top_markers)!=0:
+                    self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
+                else:
+                    self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
+                    self.current_top_label_index += 1
+        except:
+            pass            
         # Update the live view with the new markers
         self.update_live_view()
         
@@ -1211,6 +1243,7 @@ class CombinedSDSApp(QWidget):
             self.image = self.image_before_padding.copy()  # Revert to the image before padding
             self.image_contrasted = self.image.copy()  # Sync the contrasted image
             self.image_padded = False  # Reset the padding state
+        self.reset_image()
         self.update_live_view()
         
     def finalize_image(self):
@@ -1339,7 +1372,8 @@ class CombinedSDSApp(QWidget):
         self.save_right_shift_marker(scaled_image)
         self.render_image_on_canvas(canvas, scaled_image, x_start, y_start, render_scale)
         
-                
+          
+        
         # Scale the high-resolution canvas down to the label's size for display
         pixmap = QPixmap.fromImage(canvas).scaled(
             self.live_view_label.size(),
@@ -1347,6 +1381,8 @@ class CombinedSDSApp(QWidget):
             Qt.SmoothTransformation,
         )
         self.live_view_label.setPixmap(pixmap)
+        
+        
         
 
     def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
@@ -1398,12 +1434,15 @@ class CombinedSDSApp(QWidget):
         for x_pos, top_label in self.top_markers:
             x_pos_cropped = (x_pos - x_start) * (scaled_image.width() / self.image.width())
             if 0 <= x_pos_cropped <= scaled_image.width():
+                text = f"{top_label}"
                 painter.save()
+                text_width = font_metrics.horizontalAdvance(text)
+                text_height= font_metrics.height()
                 label_x = x_offset + x_pos_cropped
                 label_y = y_offset + self.top_marker_shift * render_scale
-                painter.translate(label_x, label_y)
+                # painter.translate(label_x, label_y)
                 painter.rotate(self.font_rotation)
-                painter.drawText(0, 0, f"{top_label}")
+                painter.drawText(int(label_x - text_width/2), int(label_y), f"{top_label}")
                 painter.restore()
     
         # Draw guide lines
@@ -1415,15 +1454,9 @@ class CombinedSDSApp(QWidget):
             painter.drawLine(center_x, 0, center_x, canvas.height())  # Vertical line
             painter.drawLine(0, center_y, canvas.width(), center_y)  # Horizontal line
             
-        # # Draw the protein location marker (*)
-        # if hasattr(self, "protein_location") and self.run_predict_MW==False:
-        #     x, y = self.protein_location
-        #     painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), "⎯⎯")
-
-        # if hasattr(self, "custom_markers"):
-        #     for x, y, text in self.custom_markers:
-        #         painter.drawText(int(x * render_scale - y_offset_global), int(y * render_scale + y_offset_global), text)
-                
+        
+        
+        
         # Draw the protein location marker (*)
         if hasattr(self, "protein_location") and self.run_predict_MW == False:
             x, y = self.protein_location
@@ -1431,7 +1464,7 @@ class CombinedSDSApp(QWidget):
             text_width = font_metrics.horizontalAdvance(text)
             text_height= font_metrics.height()
             painter.drawText(
-                int(x * render_scale),  #Currently left edge # FOR Center horizontally use int(x * render_scale - text_width / 2)
+                int(x * render_scale - text_width / 2),  #Currently left edge # FOR Center horizontally use int(x * render_scale - text_width / 2)
                 int(y * render_scale + text_height / 4),  # Center vertically
                 text
             )
@@ -1473,6 +1506,21 @@ class CombinedSDSApp(QWidget):
                     text
                 )
 
+        # Draw the grid (if enabled)
+        if self.show_grid_checkbox.isChecked():
+            grid_size = self.grid_size_input.value() * render_scale
+            pen = QPen(Qt.red)
+            pen.setStyle(Qt.DashLine)
+            painter.setPen(pen)
+    
+            # Draw vertical grid lines
+            for x in range(0, canvas.width(), grid_size):
+                painter.drawLine(x, 0, x, canvas.height())
+    
+            # Draw horizontal grid lines
+            for y in range(0, canvas.height(), grid_size):
+                painter.drawLine(0, y, canvas.width(), y)
+                
                 
         painter.end()
 
@@ -1592,6 +1640,7 @@ class CombinedSDSApp(QWidget):
             return
     
         options = QFileDialog.Options()
+        save_path=""
         base_save_path, _ = QFileDialog.getSaveFileName(
             self, "Save Image", "", "Image Files (*.png *.jpg *.bmp)", options=options
         )
@@ -1601,11 +1650,13 @@ class CombinedSDSApp(QWidget):
                 original_save_path = os.path.splitext(base_save_path)[0] + "_original.png"
                 modified_save_path = os.path.splitext(base_save_path)[0] + "_modified.png"
                 config_save_path = os.path.splitext(base_save_path)[0] + "_config.txt"
+                save_path=original_save_path
+                
             else:
                 original_save_path = base_save_path
                 modified_save_path = os.path.splitext(base_save_path)[0].replace("_original", "") + "_modified.png"
                 config_save_path = os.path.splitext(base_save_path)[0].replace("_original", "") + "_config.txt"
-    
+                save_path=original_save_path
                 # Check if "_modified" and "_config" already exist, and overwrite them if so
                 if os.path.exists(modified_save_path):
                     os.remove(modified_save_path)
@@ -1639,7 +1690,9 @@ class CombinedSDSApp(QWidget):
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-    
+            
+            self.show_grid_checkbox.setChecked(False)
+            self.update_live_view()
             # Render the high-resolution canvas without guides for saving
             self.render_image_on_canvas(
                 high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
@@ -1657,6 +1710,11 @@ class CombinedSDSApp(QWidget):
                 QMessageBox.warning(self, "Error", f"Failed to save config file: {e}")
     
             QMessageBox.information(self, "Saved", f"Files saved successfully.")
+            
+            text_title="IMAGING ASSISTANT BY AK V2.9: "
+            text_title+=str(save_path)
+            self.setWindowTitle(text_title)
+            
 
     
     
@@ -1688,7 +1746,8 @@ class CombinedSDSApp(QWidget):
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
-    
+        self.show_grid_checkbox.setChecked(False)
+        self.update_live_view()
         # Render the high-resolution canvas without guides for clipboard
         self.render_image_on_canvas(
             high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
