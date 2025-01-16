@@ -1921,6 +1921,7 @@ class CombinedSDSApp(QWidget):
         self.left_markers.clear()  # Clear left markers
         self.right_markers.clear()  # Clear right markers
         self.top_markers.clear()
+        self.custom_markers.clear()
         self.remove_custom_marker_mode()
         self.clear_predict_molecular_weight()
         self.update_live_view()  # Update the live view
