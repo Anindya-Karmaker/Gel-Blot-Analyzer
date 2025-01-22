@@ -73,6 +73,7 @@ class CombinedSDSApp(QMainWindow):
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
         self.setWindowTitle("IMAGING ASSISTANT V3")
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
+        
         # self.resize(window_width, window_height)
         # self.setFixedSize(window_width, window_height)
         # self.setFixedWidth(window_width)
@@ -1491,11 +1492,16 @@ class CombinedSDSApp(QMainWindow):
             # print("Please enter valid integers for padding.")
             return
         
-        self.left_marker_shift=padding_left+20
+        self.left_padding_slider.setValue(int(padding_left+20))
+        self.right_padding_slider.setValue(int(self.image.width()*0.75))
+        self.top_padding_slider.setValue(int(padding_top-30))
+                                          
         
-        self.right_marker_shift = self.image.width()*0.75
+        self.left_marker_shift= 0 #int(padding_left+20)
         
-        self.top_marker_shift=(padding_top-30)
+        self.right_marker_shift = 0 # int(self.image.width()*0.75)
+        
+        self.top_marker_shift= 0 #int(padding_top-30)
         
     
         # Ensure self.image_before_padding is initialized
