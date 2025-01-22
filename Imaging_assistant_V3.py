@@ -98,6 +98,7 @@ class CombinedSDSApp(QMainWindow):
         self.image_height=0
         self.new_image_width=0
         self.new_image_height=0
+        self.base_name=""
         # Initialize self.marker_values to None initially
         self.marker_values_dict = {
             "Precision Plus All Blue/Unstained": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
@@ -113,9 +114,15 @@ class CombinedSDSApp(QMainWindow):
         self.marker_mode = None
         self.left_marker_shift = 0   # Additional shift for marker text
         self.right_marker_shift = 0   # Additional shift for marker tex
-        self.top_marker_shift=0
+        self.top_marker_shift=0 
+        self.left_marker_shift_added=0
         self.right_marker_shift_added=0
         self.top_marker_shift_added= 0
+        self.left_slider_range=[-1000,1000]
+        self.right_slider_range=[-1000,1000]
+        self.top_slider_range=[-1000,1000]
+               
+        
         self.top_padding = 0
         self.font_color = QColor(0, 0, 0)  # Default to black
         self.custom_marker_color = QColor(0, 0, 0)  # Default to black
@@ -564,7 +571,7 @@ class CombinedSDSApp(QMainWindow):
         left_marker_button = QPushButton("Left Markers")
         left_marker_button.clicked.connect(self.enable_left_marker_mode)
         self.left_padding_slider = QSlider(Qt.Horizontal)
-        self.left_padding_slider.setRange(-1000, 1000)
+        self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
         self.left_padding_slider.setValue(0)
         self.left_padding_slider.valueChanged.connect(self.update_left_padding)
         
@@ -588,7 +595,7 @@ class CombinedSDSApp(QMainWindow):
         right_marker_button = QPushButton("Right Markers")
         right_marker_button.clicked.connect(self.enable_right_marker_mode)
         self.right_padding_slider = QSlider(Qt.Horizontal)
-        self.right_padding_slider.setRange(-1000, 1000)
+        self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
         self.right_padding_slider.setValue(0)
         self.right_padding_slider.valueChanged.connect(self.update_right_padding)
         
@@ -612,7 +619,7 @@ class CombinedSDSApp(QMainWindow):
         top_marker_button = QPushButton("Top Markers")
         top_marker_button.clicked.connect(self.enable_top_marker_mode)
         self.top_padding_slider = QSlider(Qt.Horizontal)
-        self.top_padding_slider.setRange(-1000, 1000)
+        self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
         self.top_padding_slider.setValue(0)
         self.top_padding_slider.valueChanged.connect(self.update_top_padding)
         
@@ -1221,11 +1228,11 @@ class CombinedSDSApp(QMainWindow):
             self.setWindowTitle(text_title)
     
             # Determine associated config file
-            base_name = os.path.splitext(os.path.basename(file_path))[0]
-            if base_name.endswith("_original"):
-                config_name = base_name.replace("_original", "_config.txt")
+            self.base_name = os.path.splitext(os.path.basename(file_path))[0]
+            if self.base_name.endswith("_original"):
+                config_name = self.base_name.replace("_original", "_config.txt")
             else:
-                config_name = base_name + "_config.txt"
+                config_name = self.base_name + "_config.txt"
             config_path = os.path.join(os.path.dirname(file_path), config_name)
     
             if os.path.exists(config_path):
@@ -1235,11 +1242,6 @@ class CombinedSDSApp(QMainWindow):
                     self.apply_config(config_data)
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to load config file: {e}")
-        try:
-            self.left_padding_slider.setRange(-int(self.image.width()),int(self.image.width()))
-            self.right_padding_slider.setRange(-int(self.image.width()),int(self.image.width()))
-        except:
-            pass
     
     def apply_config(self, config_data):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
@@ -1278,7 +1280,30 @@ class CombinedSDSApp(QMainWindow):
             ]
         except:
             pass
+        # Set slider ranges from config_data
+        try:
+            self.left_padding_slider.setRange(
+                int(config_data["slider_ranges"]["left"][0]), int(config_data["slider_ranges"]["left"][1])
+            )
+            self.right_padding_slider.setRange(
+                int(config_data["slider_ranges"]["right"][0]), int(config_data["slider_ranges"]["right"][1])
+            )
+            self.top_padding_slider.setRange(
+                int(config_data["slider_ranges"]["top"][0]), int(config_data["slider_ranges"]["top"][1])
+            )
+        except KeyError:
+            # Handle missing or incomplete slider_ranges data
+            print("Error: Slider ranges not found in config_data.")
         
+        try:
+            self.left_marker_shift_added=int(config_data["added_shift"]["left"])
+            self.right_marker_shift_added=int(config_data["added_shift"]["right"])
+            self.top_marker_shift_added=int(config_data["added_shift"]["top"])
+            
+        except KeyError:
+            # Handle missing or incomplete slider_ranges data
+            print("Error: Added Shift not found in config_data.")
+            
         # Apply font settings
 
         
@@ -1339,6 +1364,27 @@ class CombinedSDSApp(QMainWindow):
         except AttributeError:
             # Handle the case where self.custom_markers is not defined or invalid
             config["custom_markers"] = []
+        try:
+            config["slider_ranges"] = {
+                    "left": self.left_slider_range,
+                    "right": self.right_slider_range,
+                    "top": self.top_slider_range,
+                }
+            
+        except AttributeError:
+            # Handle the case where slider ranges are not defined
+            config["slider_ranges"] = []
+            
+        try:
+            config["added_shift"] = {
+                    "left": self.left_marker_shift_added,
+                    "right": self.right_marker_shift_added,
+                    "top": self.top_marker_shift_added,
+                }
+            
+        except AttributeError:
+            # Handle the case where slider ranges are not defined
+            config["added_shift"] = []
     
         return config
     
@@ -1448,7 +1494,7 @@ class CombinedSDSApp(QMainWindow):
         
         self.right_marker_shift = self.image.width()*0.75
         
-        self.top_marker_shift_added=(padding_top-30)
+        self.top_marker_shift=(padding_top-30)
         
     
         # Ensure self.image_before_padding is initialized
@@ -1491,7 +1537,7 @@ class CombinedSDSApp(QMainWindow):
     
     def update_left_padding(self):
         # Update left padding when slider value changes
-        self.left_marker_shift = self.left_padding_slider.value()
+        self.left_marker_shift_added = self.left_padding_slider.value()
         self.update_live_view()
 
     def update_right_padding(self):
@@ -1501,7 +1547,7 @@ class CombinedSDSApp(QMainWindow):
         
     def update_top_padding(self):
         # Update top padding when slider value changes
-        self.top_marker_shift = self.top_padding_slider.value()
+        self.top_marker_shift_added = self.top_padding_slider.value()
         self.update_live_view()
 
     def update_live_view(self):
@@ -1515,9 +1561,13 @@ class CombinedSDSApp(QMainWindow):
             self.predict_button.setEnabled(False)
     
         # Adjust slider maximum ranges based on the current image width
-        self.left_padding_slider.setRange(-int(self.image.width()+500), int(self.image.width()+500))
-        self.right_padding_slider.setRange(-int(self.image.width()+500), int(self.image.width()+500))
-        self.top_padding_slider.setRange(-int(self.image.height()+500), int(self.image.height()+500))
+        self.left_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
+        self.right_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
+        self.top_slider_range=[-int(self.image.height()+500),int(self.image.height()+500)]
+        
+        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
     
         # Define a higher resolution for processing (e.g., 2x or 3x label size)
         render_scale = 3  # Scale factor for rendering resolution
@@ -1607,7 +1657,7 @@ class CombinedSDSApp(QMainWindow):
                 text = f"{marker_value} ⎯ "  ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
                 text_width = font_metrics.horizontalAdvance(text)  # Get text width
                 painter.drawText(
-                    int(x_offset + self.left_marker_shift - text_width),
+                    int(x_offset + self.left_marker_shift + self.left_marker_shift_added - text_width),
                     int(y_offset + y_pos_cropped + y_offset_global),  # Adjust for proper text placement
                     text,
                 )
@@ -1841,8 +1891,15 @@ class CombinedSDSApp(QMainWindow):
     
         options = QFileDialog.Options()
         save_path=""
+        
+        # Set default save directory and file name
+        if hasattr(self, "image_path") and hasattr(self, "base_name"):
+            default_file_name = os.path.join(self.image_path, f"{self.base_name}.png")
+        else:
+            default_file_name = ""
+        
         base_save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Image", "", "Image Files (*.png *.jpg *.bmp)", options=options
+            self, "Save Image", default_file_name, "Image Files (*.png *.jpg *.bmp)", options=options
         )
         if base_save_path:
             # Check if the base name already contains "_original"
@@ -2132,6 +2189,15 @@ class CombinedSDSApp(QMainWindow):
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
         self.orientation_slider.setValue(0)
+        self.left_marker_shift = 0   # Additional shift for marker text
+        self.right_marker_shift = 0   # Additional shift for marker tex
+        self.top_marker_shift=0 
+        self.left_marker_shift_added=0
+        self.right_marker_shift_added=0
+        self.top_marker_shift_added= 0
+        self.left_slider_range=[-1000,1000]
+        self.right_slider_range=[-1000,1000]
+        self.top_slider_range=[-1000,1000]
         # self.top_padding_slider.setValue(0)
         # self.left_padding_slider.setValue(0)
         # self.right_padding_slider.setValue(0)
