@@ -98,7 +98,8 @@ class CombinedSDSApp(QMainWindow):
         self.image_height=0
         self.new_image_width=0
         self.new_image_height=0
-        self.base_name=""
+        self.base_name="Image"
+        self.image_path=""
         # Initialize self.marker_values to None initially
         self.marker_values_dict = {
             "Precision Plus All Blue/Unstained": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
