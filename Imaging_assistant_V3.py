@@ -872,19 +872,21 @@ class CombinedSDSApp(QMainWindow):
         except:
             pass
         try:
-            #min(len(self.left_markers)
-            for i in range(0, len(self.left_markers)):
-                self.left_markers[i] = (self.left_markers[i][0], self.marker_values[i])
             if len(self.marker_values) < len(self.left_markers):
                 self.left_markers = self.left_markers[:len(self.marker_values)]
-                #min(len(self.right_markers)
-            for i in range(0, len(self.right_markers)):
-                self.right_markers[i] = (self.right_markers[i][0], self.marker_values[i])
-            if len(self.marker_values) < len(self.right_markers):
-                self.right_markers = self.right_markers[:len(self.marker_values)]
-                
+            for i in range(0, len(self.left_markers)):
+                self.left_markers[i] = (self.left_markers[i][0], self.marker_values[i])
         except:
             pass
+        try:
+            if len(self.marker_values) < len(self.right_markers):
+                self.right_markers = self.right_markers[:len(self.marker_values)]
+            for i in range(0, len(self.right_markers)):
+                self.right_markers[i] = (self.right_markers[i][0], self.marker_values[i])
+        except:
+            pass
+            
+        
         
         # Trigger a refresh of the live view
         self.update_live_view()
@@ -1168,8 +1170,7 @@ class CombinedSDSApp(QMainWindow):
                     # Update the window title with the image path
                     self.setWindowTitle(f"IMAGING ASSISTANT V3: {file_path}")
 
-
-
+        
             
         
     def update_font(self):
@@ -1467,10 +1468,7 @@ class CombinedSDSApp(QMainWindow):
         self.image = padded_image
         self.image_padded = True
         self.image_contrasted = self.image.copy()
-        
-        self.top_padding_slider.setRange((-self.image.height()+100), (self.image.height()+100))
-        self.left_padding_slider.setRange((-self.image.width()+100), (self.image.width()+100))
-        self.right_padding_slider.setRange((-self.image.width()+100), (self.image.width()+100))
+
     
         # Adjust marker shifts to account for padding
         # self.left_marker_shift += padding_left
@@ -1508,8 +1506,9 @@ class CombinedSDSApp(QMainWindow):
             self.predict_button.setEnabled(False)
     
         # Adjust slider maximum ranges based on the current image width
-        self.left_padding_slider.setRange(-int(self.image.width()), int(self.image.width()))
-        self.right_padding_slider.setRange(-int(self.image.width()), int(self.image.width()))
+        self.left_padding_slider.setRange(-int(self.image.width()+500), int(self.image.width()+500))
+        self.right_padding_slider.setRange(-int(self.image.width()+500), int(self.image.width()+500))
+        self.top_padding_slider.setRange(-int(self.image.height()+500), int(self.image.height()+500))
     
         # Define a higher resolution for processing (e.g., 2x or 3x label size)
         render_scale = 3  # Scale factor for rendering resolution
