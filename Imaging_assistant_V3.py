@@ -112,9 +112,10 @@ class CombinedSDSApp(QMainWindow):
         
         self.marker_mode = None
         self.left_marker_shift = 0   # Additional shift for marker text
-        self.right_marker_shift = 0   # Additional shift for marker text
+        self.right_marker_shift = 0   # Additional shift for marker tex
+        self.top_marker_shift=0
         self.right_marker_shift_added=0
-        self.top_marker_shift= 10
+        self.top_marker_shift_added= 0
         self.top_padding = 0
         self.font_color = QColor(0, 0, 0)  # Default to black
         self.custom_marker_color = QColor(0, 0, 0)  # Default to black
@@ -292,11 +293,16 @@ class CombinedSDSApp(QMainWindow):
         self.gamma_slider.valueChanged.connect(self.update_image_gamma)
         contrast_gamma_layout.addWidget(gamma_label, 2, 0)
         contrast_gamma_layout.addWidget(self.gamma_slider, 2, 1, 1, 2)
+        
+        #Invert the image
+        invert_button = QPushButton("Invert Image")
+        invert_button.clicked.connect(self.invert_image)
+        contrast_gamma_layout.addWidget(invert_button, 3, 0, 1, 3)
     
         # Reset Button
         reset_button = QPushButton("Reset Contrast and Gamma")
         reset_button.clicked.connect(self.reset_gamma_contrast)
-        contrast_gamma_layout.addWidget(reset_button, 3, 0, 1, 3)  # Span all columns
+        contrast_gamma_layout.addWidget(reset_button, 4, 0, 1, 3)  # Span all columns
         
         # Connect signals for dynamic updates
         self.font_combo_box.currentFontChanged.connect(self.update_font)
@@ -607,7 +613,7 @@ class CombinedSDSApp(QMainWindow):
         top_marker_button.clicked.connect(self.enable_top_marker_mode)
         self.top_padding_slider = QSlider(Qt.Horizontal)
         self.top_padding_slider.setRange(-1000, 1000)
-        self.top_padding_slider.setValue(self.top_padding)
+        self.top_padding_slider.setValue(0)
         self.top_padding_slider.valueChanged.connect(self.update_top_padding)
         
         remove_top_button = QPushButton("Remove Last")
@@ -739,7 +745,15 @@ class CombinedSDSApp(QMainWindow):
         layout.addStretch()
         return tab
 
-    
+    def invert_image(self):
+        if self.image:
+            inverted_image = self.image.copy()
+            inverted_image.invertPixels()
+            self.image = inverted_image
+            self.update_live_view()
+        self.image_before_contrast=self.image.copy()
+        self.image_before_padding=self.image.copy()
+        self.image_contrasted=self.image.copy()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -1115,27 +1129,47 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()
     
     def load_image_from_clipboard(self):
-        try:
-            self.left_padding_slider.setRange(-int(self.image.width()),int(self.image.width()))
-            self.right_padding_slider.setRange(-int(self.image.width()),int(self.image.width()))
-        except:
-            pass
-                                          
-        self.reset_image()
         """Load an image from the clipboard into self.image."""
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
         
+        # print("Clipboard contains:")
+        # if mime_data.hasImage():
+        #     print("- An image (raw data)")
+        # if mime_data.hasUrls():
+        #     print("- URLs:", [url.toLocalFile() for url in mime_data.urls()])
+        # if mime_data.hasText():
+        #     print("- Text:", mime_data.text())
+    
         # Check if the clipboard contains an image
         if mime_data.hasImage():
-            image = clipboard.image()  # Get image from clipboard
-            # print("Image pasted from clipboard.")
+            image = clipboard.image()  # Get the image directly from the clipboard
             self.image = image  # Store the image in self.image
             self.original_image = self.image.copy()
-            self.image_contrasted= self.image.copy()
-            self.image_master=self.image.copy()
-            self.image_before_padding=None
-            # self.save_right_shift_marker(self.image)
+            self.image_contrasted = self.image.copy()
+            self.image_master = self.image.copy()
+            self.image_before_padding = None
+            self.update_live_view()
+    
+        # Check if the clipboard contains URLs (file paths)
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()  # Get the first file path
+                if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
+                    # Load the image from the file path
+                    self.image = QImage(file_path)
+                    self.original_image = self.image.copy()
+                    self.image_contrasted = self.image.copy()
+                    self.image_master = self.image.copy()
+                    self.image_before_padding = None
+                    self.update_live_view()
+    
+                    # Update the window title with the image path
+                    self.setWindowTitle(f"IMAGING ASSISTANT V3: {file_path}")
+
+
+
             
         
     def update_font(self):
@@ -1362,8 +1396,7 @@ class CombinedSDSApp(QMainWindow):
         # Update the live view with the new markers
         self.update_live_view()
         
-    def save_right_shift_marker(self, image):
-        self.right_marker_shift=self.image.width()*0.75
+
         
     def enable_left_marker_mode(self):
         self.marker_mode = "left"
@@ -1400,6 +1433,13 @@ class CombinedSDSApp(QMainWindow):
             # Handle invalid input (non-integer value)
             # print("Please enter valid integers for padding.")
             return
+        
+        self.left_marker_shift=padding_left+20
+        
+        self.right_marker_shift = self.image.width()*0.75
+        
+        self.top_marker_shift_added=(padding_top-30)
+        
     
         # Ensure self.image_before_padding is initialized
         if self.image_before_padding is None:
@@ -1427,12 +1467,14 @@ class CombinedSDSApp(QMainWindow):
         self.image = padded_image
         self.image_padded = True
         self.image_contrasted = self.image.copy()
+        
+        self.top_padding_slider.setRange((-self.image.height()+100), (self.image.height()+100))
+        self.left_padding_slider.setRange((-self.image.width()+100), (self.image.width()+100))
+        self.right_padding_slider.setRange((-self.image.width()+100), (self.image.width()+100))
     
         # Adjust marker shifts to account for padding
         # self.left_marker_shift += padding_left
-        self.left_marker_shift=self.image.width()*0.085
         
-        # self.right_marker_shift += padding_right
     
         # Update slider values to match the new shifts
         # self.left_padding_slider.setValue(self.left_marker_shift)
@@ -1515,7 +1557,6 @@ class CombinedSDSApp(QMainWindow):
         # Render on a high-resolution canvas
         canvas = QImage(render_width, render_height, QImage.Format_RGB888)
         canvas.fill(QColor(255, 255, 255))  # Fill with white background
-        self.save_right_shift_marker(scaled_image)
         self.render_image_on_canvas(canvas, scaled_image, x_start, y_start, render_scale)
         
           
@@ -1585,7 +1626,7 @@ class CombinedSDSApp(QMainWindow):
                 text_width = font_metrics.horizontalAdvance(text)
                 text_height= font_metrics.height()
                 label_x = x_offset + x_pos_cropped # - text_width/2
-                label_y = y_offset + self.top_marker_shift * render_scale
+                label_y = y_offset + self.top_marker_shift + self.top_marker_shift_added
                 painter.translate(label_x, label_y)
                 painter.rotate(self.font_rotation)
                 painter.drawText(int(0 - text_width/2),0, f"{top_label}")
