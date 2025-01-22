@@ -975,39 +975,48 @@ class CombinedSDSApp(QMainWindow):
     # Functions for updating contrast and gamma
     
     def reset_gamma_contrast(self):
-        if self.image_before_contrast==None:
-            self.image_before_contrast=self.image_master.copy()
-        self.image_contrasted = self.image_before_contrast.copy()  # Update the contrasted image
-        self.image_before_padding = self.image_before_contrast.copy()  # Ensure padding resets use the correct base
-        self.high_slider.setValue(100)  # Reset contrast to default
-        self.low_slider.setValue(0)  # Reset contrast to default
-        self.gamma_slider.setValue(100)  # Reset gamma to default
-        self.update_live_view()
+        try:
+            if self.image_before_contrast==None:
+                self.image_before_contrast=self.image_master.copy()
+            self.image_contrasted = self.image_before_contrast.copy()  # Update the contrasted image
+            self.image_before_padding = self.image_before_contrast.copy()  # Ensure padding resets use the correct base
+            self.high_slider.setValue(100)  # Reset contrast to default
+            self.low_slider.setValue(0)  # Reset contrast to default
+            self.gamma_slider.setValue(100)  # Reset gamma to default
+            self.update_live_view()
+        except:
+            pass
 
     
     def update_image_contrast(self):
-        if self.contrast_applied==False:
-            self.image_before_contrast=self.image.copy()
-            self.contrast_applied=True
-        
-        if self.image:
-            high_contrast_factor = self.high_slider.value() / 100.0
-            low_contrast_factor = self.low_slider.value() / 100.0
-            gamma_factor = self.gamma_slider.value() / 100.0
-            self.image = self.apply_contrast_gamma(self.image_contrasted, high_contrast_factor, low_contrast_factor, gamma=gamma_factor)  
-            self.update_live_view()
+        try:
+            if self.contrast_applied==False:
+                self.image_before_contrast=self.image.copy()
+                self.contrast_applied=True
+            
+            if self.image:
+                high_contrast_factor = self.high_slider.value() / 100.0
+                low_contrast_factor = self.low_slider.value() / 100.0
+                gamma_factor = self.gamma_slider.value() / 100.0
+                self.image = self.apply_contrast_gamma(self.image_contrasted, high_contrast_factor, low_contrast_factor, gamma=gamma_factor)  
+                self.update_live_view()
+        except:
+            pass
     
     def update_image_gamma(self):
-        if self.contrast_applied==False:
-            self.image_before_contrast=self.image.copy()
-            self.contrast_applied=True
-            
-        if self.image:
-            high_contrast_factor = self.high_slider.value() / 100.0
-            low_contrast_factor = self.low_slider.value() / 100.0
-            gamma_factor = self.gamma_slider.value() / 100.0
-            self.image = self.apply_contrast_gamma(self.image_contrasted, high_contrast_factor, low_contrast_factor, gamma=gamma_factor)            
-            self.update_live_view()
+        try:
+            if self.contrast_applied==False:
+                self.image_before_contrast=self.image.copy()
+                self.contrast_applied=True
+                
+            if self.image:
+                high_contrast_factor = self.high_slider.value() / 100.0
+                low_contrast_factor = self.low_slider.value() / 100.0
+                gamma_factor = self.gamma_slider.value() / 100.0
+                self.image = self.apply_contrast_gamma(self.image_contrasted, high_contrast_factor, low_contrast_factor, gamma=gamma_factor)            
+                self.update_live_view()
+        except:
+            pass
     
     def apply_contrast_gamma(self, qimage, high, low, gamma):
         """
@@ -2134,6 +2143,16 @@ class CombinedSDSApp(QMainWindow):
 if __name__ == "__main__":
     app = QApplication([])
     app.setStyle("Fusion")
+    app.setStyleSheet("""
+    QSlider::handle:horizontal {
+        width: 100px;
+        height: 100px;
+        margin: -5px 0;
+        background: #FFFFFF;
+        border: 2px solid #555;
+        border-radius: 20px;
+    }
+""")
     window = CombinedSDSApp()
     window.show()
     app.exec_()
