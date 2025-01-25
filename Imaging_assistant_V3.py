@@ -80,6 +80,7 @@ class CombinedSDSApp(QMainWindow):
         # self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         # self.setFixedSize(QSizePolicy.Fixed,QSizePolicy.Fixed)
         # self.resize(700, 950) # Change for windows/macos viewing
+        self.label_width=540
         self.image_path = None
         self.image = None
         self.image_master= None
@@ -142,13 +143,7 @@ class CombinedSDSApp(QMainWindow):
         # Upper section (Preview and buttons)
         upper_layout = QHBoxLayout()
 
-        # Preview window
-        if (int(self.screen_width * 0.3))<540:
-            label_width = 540
-            label_height = 409
-        else:
-            label_width = int(self.screen_width * 0.3)  # 30% of screen width
-            label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        label_height = int(self.screen_height * 0.35)  # 40% of screen height
     
         self.live_view_label = LiveViewLabel(
             font_type=QFont("Arial"),
@@ -159,7 +154,7 @@ class CombinedSDSApp(QMainWindow):
         # Image display
         self.live_view_label.setStyleSheet("border: 1px solid black;")
         # self.live_view_label.setCursor(Qt.CrossCursor)
-        self.live_view_label.setFixedSize(label_width, label_height)
+        self.live_view_label.setFixedSize(self.label_width, self.label_width)
         # self.live_view_label.mousePressEvent = self.add_band()
         # self.live_view_label.mousePressEvent = self.add_band
         
@@ -1187,14 +1182,15 @@ class CombinedSDSApp(QMainWindow):
     
                     # Update the window title with the image path
                     self.setWindowTitle(f"IMAGING ASSISTANT V3: {file_path}")
-        w=self.image.width()
-        h=self.image.height()
-        # Preview window
-        label_width = int(self.screen_width * 0.3)  # 30% of screen width
-        label_height = int(self.screen_height * 0.35)  # 40% of screen height
-        ratio=w/h
-        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
-        self.update_live_view()
+        try:
+            w=self.image.width()
+            h=self.image.height()
+            # Preview window
+            ratio=w/h
+            self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
+            self.update_live_view()
+        except:
+            pass
         
     def update_font(self):
         """Update the font settings based on UI inputs"""
@@ -1249,13 +1245,14 @@ class CombinedSDSApp(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to load config file: {e}")
         # Preview window
-        w=self.image.width()
-        h=self.image.height()
-        label_width = int(self.screen_width * 0.3)  # 30% of screen width
-        label_height = int(self.screen_height * 0.35)  # 35% of screen height
-        ratio=w/h
-        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
-        self.update_live_view()
+        try:
+            w=self.image.width()
+            h=self.image.height()
+            ratio=w/h
+            self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
+            self.update_live_view()
+        except:
+            pass
     
     def apply_config(self, config_data):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
@@ -1492,10 +1489,9 @@ class CombinedSDSApp(QMainWindow):
         self.image_padded = False  # Reset the padding state
         w=self.image.width()
         h=self.image.height()
-        label_width = int(self.screen_width * 0.3)  # 30% of screen width
-        label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        self.label_width = 540 #int(self.screen_width * 0.3)  # 30% of screen width
         ratio=w/h
-        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
+        self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
         self.update_live_view()
         
     def finalize_image(self):
@@ -1551,27 +1547,10 @@ class CombinedSDSApp(QMainWindow):
         w=self.image.width()
         h=self.image.height()
         # Preview window
-        label_width = int(self.screen_width * 0.3)  # 30% of screen width
-        label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        self.label_width = 540 #int(self.screen_width * 0.3)  # 30% of screen width
         ratio=w/h
-        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
+        self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
 
-    
-        # Adjust marker shifts to account for padding
-        # self.left_marker_shift += padding_left
-        
-    
-        # Update slider values to match the new shifts
-        # self.left_padding_slider.setValue(self.left_marker_shift)
-        # self.right_padding_slider.setValue(self.right_marker_shift_added + self.right_marker_shift)
-    
-        # Preview window
-        w=self.image.width()
-        h=self.image.height()
-        label_width = int(self.screen_width * 0.3)  # 30% of screen width
-        label_height = int(self.screen_height * 0.35)  # 35% of screen height
-        ratio=w/h
-        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
         self.update_live_view()
     
     def update_left_padding(self):
