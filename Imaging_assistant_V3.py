@@ -3,7 +3,7 @@ from PIL import ImageGrab  # Import Pillow's ImageGrab for clipboard access
 import sys
 from io import BytesIO
 from PyQt5.QtWidgets import (
-    QDesktopWidget, QScrollArea, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
+    QDesktopWidget, QScrollArea, QFrame, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform
 from PyQt5.QtCore import Qt, QBuffer
@@ -340,8 +340,9 @@ class CombinedSDSApp(QMainWindow):
         rotation_layout = QHBoxLayout()
         self.orientation_label = QLabel("Rotation Angle (Degrees)")
         self.orientation_slider = QSlider(Qt.Horizontal)
-        self.orientation_slider.setRange(-180, 180)
+        self.orientation_slider.setRange(-180, 180)  # Scale by 10 to allow decimals
         self.orientation_slider.setValue(0)
+        self.orientation_slider.setSingleStep(1)
         self.orientation_slider.valueChanged.connect(self.update_live_view)
     
         self.show_guides_checkbox = QCheckBox("Show Guide Lines", self)
@@ -751,7 +752,7 @@ class CombinedSDSApp(QMainWindow):
         # Add the font options group box to the main layout
         layout.addWidget(padding_params_group)
         
-        layout.addStretch()
+        # layout.addStretch()
         return tab
 
     def invert_image(self):
@@ -1169,7 +1170,6 @@ class CombinedSDSApp(QMainWindow):
             self.image_contrasted = self.image.copy()
             self.image_master = self.image.copy()
             self.image_before_padding = None
-            self.update_live_view()
     
         # Check if the clipboard contains URLs (file paths)
         if mime_data.hasUrls():
@@ -1183,13 +1183,18 @@ class CombinedSDSApp(QMainWindow):
                     self.image_contrasted = self.image.copy()
                     self.image_master = self.image.copy()
                     self.image_before_padding = None
-                    self.update_live_view()
+                    
     
                     # Update the window title with the image path
                     self.setWindowTitle(f"IMAGING ASSISTANT V3: {file_path}")
-
-        
-            
+        w=self.image.width()
+        h=self.image.height()
+        # Preview window
+        label_width = int(self.screen_width * 0.3)  # 30% of screen width
+        label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        ratio=w/h
+        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
+        self.update_live_view()
         
     def update_font(self):
         """Update the font settings based on UI inputs"""
@@ -1223,7 +1228,6 @@ class CombinedSDSApp(QMainWindow):
             self.image = self.original_image.copy()        # Start with a copy of the original
             self.image_master= self.original_image.copy()  
             self.image_contrasted= self.original_image.copy()  
-            self.update_live_view()
 
             text_title="IMAGING ASSISTANT V3: "
             text_title+=str(self.image_path)
@@ -1244,6 +1248,14 @@ class CombinedSDSApp(QMainWindow):
                     self.apply_config(config_data)
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to load config file: {e}")
+        # Preview window
+        w=self.image.width()
+        h=self.image.height()
+        label_width = int(self.screen_width * 0.3)  # 30% of screen width
+        label_height = int(self.screen_height * 0.35)  # 35% of screen height
+        ratio=w/h
+        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
+        self.update_live_view()
     
     def apply_config(self, config_data):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
@@ -1478,6 +1490,12 @@ class CombinedSDSApp(QMainWindow):
         self.image = self.image_before_padding.copy()  # Revert to the image before padding
         self.image_contrasted = self.image.copy()  # Sync the contrasted image
         self.image_padded = False  # Reset the padding state
+        w=self.image.width()
+        h=self.image.height()
+        label_width = int(self.screen_width * 0.3)  # 30% of screen width
+        label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        ratio=w/h
+        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
         self.update_live_view()
         
     def finalize_image(self):
@@ -1530,6 +1548,13 @@ class CombinedSDSApp(QMainWindow):
         self.image = padded_image
         self.image_padded = True
         self.image_contrasted = self.image.copy()
+        w=self.image.width()
+        h=self.image.height()
+        # Preview window
+        label_width = int(self.screen_width * 0.3)  # 30% of screen width
+        label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        ratio=w/h
+        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
 
     
         # Adjust marker shifts to account for padding
@@ -1540,6 +1565,13 @@ class CombinedSDSApp(QMainWindow):
         # self.left_padding_slider.setValue(self.left_marker_shift)
         # self.right_padding_slider.setValue(self.right_marker_shift_added + self.right_marker_shift)
     
+        # Preview window
+        w=self.image.width()
+        h=self.image.height()
+        label_width = int(self.screen_width * 0.3)  # 30% of screen width
+        label_height = int(self.screen_height * 0.35)  # 35% of screen height
+        ratio=w/h
+        self.live_view_label.setFixedSize(label_width, int(label_width/ratio))
         self.update_live_view()
     
     def update_left_padding(self):
@@ -1694,7 +1726,7 @@ class CombinedSDSApp(QMainWindow):
                 label_y = y_offset + self.top_marker_shift + self.top_marker_shift_added
                 painter.translate(label_x, label_y)
                 painter.rotate(self.font_rotation)
-                painter.drawText(int(0 - text_width/2),0, f"{top_label}")
+                painter.drawText(0,0, f"{top_label}")
                 painter.restore()
     
         # Draw guide lines
@@ -1720,43 +1752,73 @@ class CombinedSDSApp(QMainWindow):
                 int(y * render_scale + text_height / 4),  # Center vertically
                 text
             )
-        
         if hasattr(self, "custom_markers"):
+            
             # Get default font type and size
             default_font_type = QFont(self.custom_font_type_dropdown.currentText())
             default_font_size = int(self.custom_font_size_spinbox.value())
         
-
-        
-            for x, y, text, color, *optional in self.custom_markers:
+            for x_pos, y_pos, marker_text, color, *optional in self.custom_markers:
+                
+                if self.show_grid_checkbox.isChecked():
+                    grid_size = self.grid_size_input.value()
+                    cursor_x = round(x_pos / grid_size) * grid_size
+                    cursor_y = round(y_pos / grid_size) * grid_size
+                else:
+                    cursor_x=x_pos
+                    cursor_y=y_pos
+                    
+                # Get the dimensions of the displayed image
+                displayed_width = self.live_view_label.width()
+                displayed_height = self.live_view_label.height()
+            
+                # Get the actual dimensions of the loaded image
+                image_width = self.image.width()
+                image_height = self.image.height()
+            
+                # Calculate the scaling factor (assuming uniform scaling to maintain aspect ratio)
+                scale = min(displayed_width / image_width, displayed_height / image_height)
+            
+                # Calculate offsets if the image is centered in the live_view_label
+                offset_x = (displayed_width - image_width * scale) / 2
+                offset_y = (displayed_height - image_height * scale) / 2
+            
+                # Transform cursor coordinates to the image coordinate space
+                image_x = (cursor_x - offset_x) / scale
+                image_y = (cursor_y - offset_y) / scale
+                    
                 # Use provided font type and size if available, otherwise use defaults
                 marker_font_type = optional[0] if len(optional) > 0 else default_font_type
                 marker_font_size = optional[1] if len(optional) > 1 else default_font_size
-                
-                # If marker_font_type is not already a QFont, create a QFont instance
-                if isinstance(marker_font_type, str):
-                    font = QFont(marker_font_type)
-                else:
-                    font = QFont(marker_font_type)  # Clone the font to avoid modifying the original
-                
-                # Adjust font size for rendering scale
-                font.setPointSize(marker_font_size * render_scale)
         
-                # Apply the font to the painter
+                # Ensure marker_font_type is a QFont instance
+                font = QFont(marker_font_type) if isinstance(marker_font_type, str) else QFont(marker_font_type)
+                font.setPointSize(marker_font_size * render_scale)  # Adjust font size for rendering scale
+        
+                # Apply the font and pen settings
                 painter.setFont(font)
-                painter.setPen(color)  # Use the selected custom marker color
+                painter.setPen(color)
         
-                # Create font metrics to calculate text width and height
-                font_metrics = painter.fontMetrics()
-                text_width = font_metrics.horizontalAdvance(text)
-                text_height = font_metrics.height()
+                # Correct scaling and offsets
+                x_pos_cropped = (image_x - x_start) * (scaled_image.width() / self.image.width()) 
+                y_pos_cropped = (image_y - y_start) * (scaled_image.height() / self.image.height()) 
         
-                # Draw text, center it horizontally and vertically
-                painter.drawText(
-                    int(x * render_scale - text_width / 2),  # Center horizontally 
-                    int(y * render_scale + text_height / 4),  # Center vertically
-                    text
-                )
+                # Only draw markers if they fall within the visible scaled image area
+                if 0 <= x_pos_cropped <= scaled_image.width() and 0 <= y_pos_cropped <= scaled_image.height():
+                    # Calculate text dimensions for alignment
+                    font_metrics = painter.fontMetrics()
+                    text_width = font_metrics.horizontalAdvance(marker_text)
+                    text_height = font_metrics.height()
+        
+                    # Draw text centered horizontally and vertically
+                    painter.drawText(
+                        int(x_pos_cropped + x_offset- text_width / 2),  # Center horizontally
+                        int(y_pos_cropped + y_offset+ text_height / 4),  # Center vertically
+                        marker_text
+                    )
+            
+            
+    
 
         # Draw the grid (if enabled)
         if self.show_grid_checkbox.isChecked():
@@ -2223,7 +2285,7 @@ if __name__ == "__main__":
         margin: -5px 0;
         background: #FFFFFF;
         border: 2px solid #555;
-        border-radius: 20px;
+        border-radius: 30px;
     }
 """)
     window = CombinedSDSApp()
