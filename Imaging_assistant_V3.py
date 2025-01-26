@@ -343,10 +343,11 @@ class CombinedSDSApp(QMainWindow):
         self.show_guides_checkbox = QCheckBox("Show Guide Lines", self)
         self.show_guides_checkbox.setChecked(False)
         self.show_guides_checkbox.stateChanged.connect(self.update_live_view)
-    
+        
+        rotation_layout.addWidget(self.show_guides_checkbox)
         rotation_layout.addWidget(self.orientation_label)
         rotation_layout.addWidget(self.orientation_slider)
-        rotation_layout.addWidget(self.show_guides_checkbox)
+        
     
         # Align Button
         self.align_button = QPushButton("Align Image")
@@ -657,6 +658,9 @@ class CombinedSDSApp(QMainWindow):
         self.remove_custom_marker_button = QPushButton("Remove Last", self)
         self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
         
+        self.reset_custom_marker_button = QPushButton("Reset", self)
+        self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
+        
         # Add color selection button for custom markers
         self.custom_marker_color_button = QPushButton("Custom Marker Color")
         self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
@@ -693,13 +697,17 @@ class CombinedSDSApp(QMainWindow):
         padding_layout.addWidget(self.custom_marker_button, 3, 0)
         
         # Add the text entry for the custom marker
-        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1,1,2)
+        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1,1,1)
         
         # Add the marker buttons widget to the layout
-        padding_layout.addWidget(marker_buttons_widget, 3, 3)  
+        padding_layout.addWidget(marker_buttons_widget, 3, 2) 
         
         # Add the remove button
-        padding_layout.addWidget(self.remove_custom_marker_button, 3, 4)
+        padding_layout.addWidget(self.remove_custom_marker_button, 3, 3)
+        
+        # Add the reset button
+        padding_layout.addWidget(self.reset_custom_marker_button, 3, 4)
+                
         
         # Add the color button
         padding_layout.addWidget(self.custom_marker_color_button, 3, 5)
@@ -804,12 +812,23 @@ class CombinedSDSApp(QMainWindow):
             self.custom_markers.pop()  # Remove the last entry from the list           
         self.update_live_view()  # Update the display
         
+    def reset_custom_marker_mode(self):
+        if hasattr(self, "custom_markers") and isinstance(self.custom_markers, list) and self.custom_markers:
+            self.custom_markers=[]  # Remove the last entry from the list           
+        self.update_live_view()  # Update the display
+        
     
     def place_custom_marker(self, event, custom_text):
         """Place a custom marker at the cursor location."""
         # Get cursor position from the event
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
+        
+        # Adjust for snapping to grid
+        if self.show_grid_checkbox.isChecked():
+            grid_size = self.grid_size_input.value()
+            cursor_x = round(cursor_x / grid_size) * grid_size
+            cursor_y = round(cursor_y / grid_size) * grid_size
     
         # Dimensions of the displayed image
         displayed_width = self.live_view_label.width()
@@ -830,17 +849,10 @@ class CombinedSDSApp(QMainWindow):
         image_x = (cursor_x - x_offset) / scale
         image_y = (cursor_y - y_offset) / scale
         
-        # Adjust for snapping to grid
-        if self.show_grid_checkbox.isChecked():
-            grid_size = self.grid_size_input.value()
-            cursor_x = round(cursor_x / grid_size) * grid_size
-            cursor_y = round(cursor_y / grid_size) * grid_size
-    
-
-    
+            
         # Store the custom marker's position and text
         self.custom_markers = getattr(self, "custom_markers", [])
-        self.custom_markers.append((cursor_x, cursor_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value()))
+        self.custom_markers.append((image_x, image_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value()))
         # print("CUSTOM_MARKER: ",self.custom_markers)
         # Update the live view to render the custom marker
         self.update_live_view()
@@ -1739,33 +1751,7 @@ class CombinedSDSApp(QMainWindow):
         
             for x_pos, y_pos, marker_text, color, *optional in self.custom_markers:
                 
-                if self.show_grid_checkbox.isChecked():
-                    grid_size = self.grid_size_input.value()
-                    cursor_x = round(x_pos / grid_size) * grid_size
-                    cursor_y = round(y_pos / grid_size) * grid_size
-                else:
-                    cursor_x=x_pos
-                    cursor_y=y_pos
-                    
-                # Get the dimensions of the displayed image
-                displayed_width = self.live_view_label.width()
-                displayed_height = self.live_view_label.height()
-            
-                # Get the actual dimensions of the loaded image
-                image_width = self.image.width()
-                image_height = self.image.height()
-            
-                # Calculate the scaling factor (assuming uniform scaling to maintain aspect ratio)
-                scale = min(displayed_width / image_width, displayed_height / image_height)
-            
-                # Calculate offsets if the image is centered in the live_view_label
-                offset_x = (displayed_width - image_width * scale) / 2
-                offset_y = (displayed_height - image_height * scale) / 2
-            
-                # Transform cursor coordinates to the image coordinate space
-                image_x = (cursor_x - offset_x) / scale
-                image_y = (cursor_y - offset_y) / scale
-                    
+                   
                 # Use provided font type and size if available, otherwise use defaults
                 marker_font_type = optional[0] if len(optional) > 0 else default_font_type
                 marker_font_size = optional[1] if len(optional) > 1 else default_font_size
@@ -1779,8 +1765,8 @@ class CombinedSDSApp(QMainWindow):
                 painter.setPen(color)
         
                 # Correct scaling and offsets
-                x_pos_cropped = (image_x - x_start) * (scaled_image.width() / self.image.width()) 
-                y_pos_cropped = (image_y - y_start) * (scaled_image.height() / self.image.height()) 
+                x_pos_cropped = (x_pos - x_start) * (scaled_image.width() / self.image.width()) 
+                y_pos_cropped = (y_pos - y_start) * (scaled_image.height() / self.image.height()) 
         
                 # Only draw markers if they fall within the visible scaled image area
                 if 0 <= x_pos_cropped <= scaled_image.width() and 0 <= y_pos_cropped <= scaled_image.height():
