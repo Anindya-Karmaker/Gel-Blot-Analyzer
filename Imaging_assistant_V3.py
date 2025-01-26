@@ -1,4 +1,6 @@
-
+import svgwrite
+import tempfile
+import base64
 from PIL import ImageGrab  # Import Pillow's ImageGrab for clipboard access
 import sys
 from io import BytesIO
@@ -187,10 +189,15 @@ class CombinedSDSApp(QMainWindow):
         copy_button.clicked.connect(self.copy_to_clipboard)
         buttons_layout.addWidget(copy_button)
         
-        save_button = QPushButton("Save Processed Image")
+        save_button = QPushButton("Save Image with Configuration")
         save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         save_button.clicked.connect(self.save_image)
         buttons_layout.addWidget(save_button)
+        
+        save_svg_button = QPushButton("Save SVG Image (MS Word Import)")
+        save_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
+        save_svg_button.clicked.connect(self.save_image_svg)
+        buttons_layout.addWidget(save_svg_button)
         
 
         predict_button = QPushButton("Predict Molecular Weight")
@@ -331,7 +338,14 @@ class CombinedSDSApp(QMainWindow):
         alignment_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         alignment_layout = QVBoxLayout()
     
-        # Rotation Angle and Guide Lines
+        
+        #Guide Lines
+        self.show_guides_label = QLabel("Show Guide Lines")
+        self.show_guides_checkbox = QCheckBox("", self)
+        self.show_guides_checkbox.setChecked(False)
+        self.show_guides_checkbox.stateChanged.connect(self.update_live_view)
+        
+        # Rotation Angle 
         rotation_layout = QHBoxLayout()
         self.orientation_label = QLabel("Rotation Angle (Degrees)")
         self.orientation_slider = QSlider(Qt.Horizontal)
@@ -339,11 +353,8 @@ class CombinedSDSApp(QMainWindow):
         self.orientation_slider.setValue(0)
         self.orientation_slider.setSingleStep(1)
         self.orientation_slider.valueChanged.connect(self.update_live_view)
-    
-        self.show_guides_checkbox = QCheckBox("Show Guide Lines", self)
-        self.show_guides_checkbox.setChecked(False)
-        self.show_guides_checkbox.stateChanged.connect(self.update_live_view)
         
+        rotation_layout.addWidget(self.show_guides_label)
         rotation_layout.addWidget(self.show_guides_checkbox)
         rotation_layout.addWidget(self.orientation_label)
         rotation_layout.addWidget(self.orientation_slider)
@@ -1699,7 +1710,7 @@ class CombinedSDSApp(QMainWindow):
             if 0 <= y_pos_cropped <= scaled_image.height():
                 text = f" ⎯ {marker_value}" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
                 painter.drawText(
-                    int(x_offset + self.right_marker_shift + self.right_marker_shift_added + line_padding),
+                    int(x_offset + self.right_marker_shift_added),# + line_padding),
                     int(y_offset + y_pos_cropped + y_offset_global),  # Adjust for proper text placement
                     text,
                 )
@@ -1916,7 +1927,99 @@ class CombinedSDSApp(QMainWindow):
         self.crop_x_end_slider.setValue(100)
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
-
+    
+    def save_image_svg(self):
+        """Save the processed image along with markers and labels in SVG format containing EMF data."""
+        if not self.image:
+            QMessageBox.warning(self, "Warning", "No image to save.")
+            return
+    
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Image", "", "SVG Files (*.svg)", options=options
+        )
+    
+        if not file_path:
+            return
+    
+        if not file_path.endswith(".svg"):
+            file_path += ".svg"
+    
+        # Get scaling factors to match the live view window
+        view_width = self.live_view_label.width()
+        view_height = self.live_view_label.height()
+        scale_x = self.image.width() / view_width
+        scale_y = self.image.height() / view_height
+    
+        # Create an SVG file with svgwrite
+        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
+    
+        # Convert the QImage to a base64-encoded PNG for embedding
+        buffer = QBuffer()
+        buffer.open(QBuffer.ReadWrite)
+        self.image.save(buffer, "PNG")
+        image_data = base64.b64encode(buffer.data()).decode('utf-8')
+        buffer.close()
+    
+        # Embed the image as a base64 data URI
+        dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
+    
+        # Add custom markers to the SVG
+        for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(x,y),
+                    fill=color.name(),
+                    font_family=font,
+                    font_size=f"{font_size}px"
+                )
+            )
+    
+        # Adjust label positions to align with the live view
+        # Add left labels
+        for y, text in getattr(self, "left_markers", []):
+            final_text=f"{text} ⎯ "
+            dwg.add(
+                dwg.text(
+                    final_text,
+                    insert=(self.left_marker_shift_added / scale_x, y),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px"
+                )
+            )
+    
+        # Add right labels
+        for y, text in getattr(self, "right_markers", []):
+            final_text=f" ⎯ {text}"
+            dwg.add(
+                dwg.text(
+                    final_text,
+                    insert=((self.right_marker_shift_added), y),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px"
+                )
+            )
+    
+        # Add top labels
+        for x, text in getattr(self, "top_markers", []):
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(x, self.top_marker_shift_added),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px",
+                    transform=f"rotate({self.font_rotation}, {x}, {self.top_marker_shift_added / scale_y})"
+                )
+            )
+    
+        # Save the SVG file
+        dwg.save()
+    
+        QMessageBox.information(self, "Success", f"Image saved as SVG at {file_path}.")
         
     def save_image(self):
         if not self.image:
