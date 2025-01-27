@@ -13,6 +13,7 @@ import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import platform
 
 
 
@@ -193,6 +194,13 @@ class CombinedSDSApp(QMainWindow):
         save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         save_button.clicked.connect(self.save_image)
         buttons_layout.addWidget(save_button)
+        
+        if platform.system() == "Windows": # "Darwin" for MacOS # "Windows" for Windows
+            copy_svg_button = QPushButton('Copy SVG Image to Clipboard')
+            copy_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
+            copy_svg_button.clicked.connect(self.copy_to_clipboard_SVG)
+            buttons_layout.addWidget(copy_svg_button)
+            
         
         save_svg_button = QPushButton("Save SVG Image (MS Word Import)")
         save_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
@@ -1215,6 +1223,15 @@ class CombinedSDSApp(QMainWindow):
         except:
             pass
         
+        # Adjust slider maximum ranges based on the current image width
+        self.left_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
+        self.right_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
+        self.top_slider_range=[-int(self.image.height()+500),int(self.image.height()+500)]
+        
+        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+        
     def update_font(self):
         """Update the font settings based on UI inputs"""
         # Update font family from the combo box
@@ -1276,6 +1293,15 @@ class CombinedSDSApp(QMainWindow):
             self.update_live_view()
         except:
             pass
+        
+        # Adjust slider maximum ranges based on the current image width
+        self.left_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
+        self.right_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
+        self.top_slider_range=[-int(self.image.height()+500),int(self.image.height()+500)]
+        
+        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
     
     def apply_config(self, config_data):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
@@ -1464,11 +1490,13 @@ class CombinedSDSApp(QMainWindow):
         # Add the band marker based on the active marker mode
             if self.marker_mode == "left" and self.current_marker_index < len(self.marker_values):
                 if len(self.left_markers)!=0:
-                    self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))
+                    self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))                    
                     
                 else:
                     self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
                     self.current_marker_index += 1
+                self.left_padding_slider.setValue(int(image_x))
+                print("left_padding_slider: ",self.left_padding_slider.value())
             elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
                 if len(self.right_markers)!=0:
                     self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
@@ -1481,8 +1509,13 @@ class CombinedSDSApp(QMainWindow):
                 else:
                     self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
                     self.current_top_label_index += 1
+                self.top_padding_slider.setValue(int(image_y))
+                print("top_padding_slider: ",self.top_padding_slider.value())
         except:
-            pass            
+            pass     
+        
+        # self.right_padding_slider.setValue(int(padding_left + self.image_before_padding.width()))
+        # self.top_padding_slider.setValue(int(padding bottom + self.image_before_padding.
         # Update the live view with the new markers
         self.update_live_view()
         
@@ -1529,16 +1562,13 @@ class CombinedSDSApp(QMainWindow):
             # print("Please enter valid integers for padding.")
             return
         
-        self.left_padding_slider.setValue(int(padding_left+20))
-        self.right_padding_slider.setValue(int(self.image.width()*0.75))
-        self.top_padding_slider.setValue(int(padding_top-30))
-                                          
+                                                  
         
-        self.left_marker_shift= 0 #int(padding_left+20)
+        self.left_marker_shift= 0 
         
-        self.right_marker_shift = 0 # int(self.image.width()*0.75)
+        self.right_marker_shift = 0 
         
-        self.top_marker_shift= 0 #int(padding_top-30)
+        self.top_marker_shift= 0 
         
     
         # Ensure self.image_before_padding is initialized
@@ -1573,6 +1603,8 @@ class CombinedSDSApp(QMainWindow):
         self.label_width = 540 #int(self.screen_width * 0.3)  # 30% of screen width
         ratio=w/h
         self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
+        
+
 
         self.update_live_view()
     
@@ -1601,15 +1633,7 @@ class CombinedSDSApp(QMainWindow):
         else:
             self.predict_button.setEnabled(False)
     
-        # Adjust slider maximum ranges based on the current image width
-        self.left_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
-        self.right_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
-        self.top_slider_range=[-int(self.image.height()+500),int(self.image.height()+500)]
-        
-        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-    
+            
         # Define a higher resolution for processing (e.g., 2x or 3x label size)
         render_scale = 3  # Scale factor for rendering resolution
         render_width = self.live_view_label.width() * render_scale
@@ -2150,6 +2174,97 @@ class CombinedSDSApp(QMainWindow):
         # Copy the high-resolution image to the clipboard
         clipboard = QApplication.clipboard()
         clipboard.setImage(high_res_canvas)  # Copy the rendered image
+        
+    def copy_to_clipboard_SVG(self):
+        """Create a temporary SVG file with EMF data, copy it to clipboard."""
+        if not self.image:
+            QMessageBox.warning(self, "Warning", "No image to save.")
+            return
+    
+        # Get scaling factors to match the live view window
+        view_width = self.live_view_label.width()
+        view_height = self.live_view_label.height()
+        scale_x = self.image.width() / view_width
+        scale_y = self.image.height() / view_height
+    
+        # Create a temporary file to store the SVG
+        with NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
+            temp_file_path = temp_file.name
+    
+        # Create an SVG file with svgwrite
+        dwg = svgwrite.Drawing(temp_file_path, profile='tiny', size=(self.image.width(), self.image.height()))
+    
+        # Convert the QImage to a base64-encoded PNG for embedding
+        buffer = QBuffer()
+        buffer.open(QBuffer.ReadWrite)
+        self.image.save(buffer, "PNG")
+        image_data = base64.b64encode(buffer.data()).decode('utf-8')
+        buffer.close()
+    
+        # Embed the image as a base64 data URI
+        dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
+    
+        # Add custom markers to the SVG
+        for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(x * scale_x, y * scale_y),
+                    fill=color.name(),
+                    font_family=font,
+                    font_size=f"{font_size}px"
+                )
+            )
+    
+        # Add left labels
+        for y, text in getattr(self, "left_markers", []):
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(self.left_marker_shift_added / scale_x, y),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px"
+                )
+            )
+    
+        # Add right labels
+        for y, text in getattr(self, "right_markers", []):
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=((self.image.width() / scale_x + self.right_marker_shift_added / scale_x), y),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px"
+                )
+            )
+    
+        # Add top labels
+        for x, text in getattr(self, "top_markers", []):
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(x, self.top_marker_shift_added / scale_y),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px",
+                    transform=f"rotate({self.font_rotation}, {x}, {self.top_marker_shift_added / scale_y})"
+                )
+            )
+    
+        # Save the SVG to the temporary file
+        dwg.save()
+    
+        # Read the SVG content
+        with open(temp_file_path, "r", encoding="utf-8") as temp_file:
+            svg_content = temp_file.read()
+    
+        # Copy SVG content to clipboard (macOS-compatible approach)
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(svg_content, mode=clipboard.Clipboard)
+    
+        QMessageBox.information(self, "Success", "SVG content copied to clipboard.")
 
         
     def clear_predict_molecular_weight(self):
