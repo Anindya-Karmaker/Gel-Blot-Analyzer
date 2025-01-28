@@ -1,13 +1,14 @@
 import svgwrite
 import tempfile
+from tempfile import NamedTemporaryFile
 import base64
 from PIL import ImageGrab  # Import Pillow's ImageGrab for clipboard access
 import sys
 from io import BytesIO
 from PyQt5.QtWidgets import (
-    QDesktopWidget, QScrollArea, QFrame, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
+    QDesktopWidget, QScrollArea, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
 from PyQt5.QtCore import Qt, QBuffer
 import json
 import os
@@ -74,7 +75,8 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         window_width = int(self.screen_width * 0.5)  # 60% of screen width
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.setWindowTitle("IMAGING ASSISTANT V3")
+        self.window_title="IMAGING ASSISTANT V3.5"
+        self.setWindowTitle(self.window_title)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         
         # self.resize(window_width, window_height)
@@ -195,11 +197,11 @@ class CombinedSDSApp(QMainWindow):
         save_button.clicked.connect(self.save_image)
         buttons_layout.addWidget(save_button)
         
-        if platform.system() == "Windows": # "Darwin" for MacOS # "Windows" for Windows
-            copy_svg_button = QPushButton('Copy SVG Image to Clipboard')
-            copy_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-            copy_svg_button.clicked.connect(self.copy_to_clipboard_SVG)
-            buttons_layout.addWidget(copy_svg_button)
+        #if platform.system() == "Windows": # "Darwin" for MacOS # "Windows" for Windows
+        #    copy_svg_button = QPushButton('Copy SVG Image to Clipboard')
+        #    copy_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
+        #    copy_svg_button.clicked.connect(self.copy_to_clipboard_SVG)
+        #    buttons_layout.addWidget(copy_svg_button)
             
         
         save_svg_button = QPushButton("Save SVG Image (MS Word Import)")
@@ -1177,6 +1179,7 @@ class CombinedSDSApp(QMainWindow):
     
     def load_image_from_clipboard(self):
         """Load an image from the clipboard into self.image."""
+        self.reset_image()
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
         
@@ -1212,25 +1215,28 @@ class CombinedSDSApp(QMainWindow):
                     
     
                     # Update the window title with the image path
-                    self.setWindowTitle(f"IMAGING ASSISTANT V3: {file_path}")
+                    self.setWindowTitle(f"{self.window_title}: {file_path}")
         try:
             w=self.image.width()
             h=self.image.height()
             # Preview window
             ratio=w/h
             self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
-            self.update_live_view()
+
         except:
             pass
         
         # Adjust slider maximum ranges based on the current image width
-        self.left_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
-        self.right_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
-        self.top_slider_range=[-int(self.image.height()+500),int(self.image.height()+500)]
-        
-        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+        if self.image != None:
+            self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
+            self.right_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
+            self.top_slider_range=[-int(self.image.height()*2),int(self.image.height()*2)]
+            
+            self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+            self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+            self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+            
+        self.update_live_view()
         
     def update_font(self):
         """Update the font settings based on UI inputs"""
@@ -1265,9 +1271,9 @@ class CombinedSDSApp(QMainWindow):
             self.image_master= self.original_image.copy()  
             self.image_contrasted= self.original_image.copy()  
 
-            text_title="IMAGING ASSISTANT V3: "
-            text_title+=str(self.image_path)
-            self.setWindowTitle(text_title)
+            # text_title="IMAGING ASSISTANT V3.5: "
+            # text_title+=str(self.image_path)
+            self.setWindowTitle(f"{self.window_title}:{self.image_path}")
     
             # Determine associated config file
             self.base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -1290,18 +1296,20 @@ class CombinedSDSApp(QMainWindow):
             h=self.image.height()
             ratio=w/h
             self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
-            self.update_live_view()
         except:
             pass
         
         # Adjust slider maximum ranges based on the current image width
-        self.left_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
-        self.right_slider_range=[-int(self.image.width()+500),int(self.image.width()+500)]
-        self.top_slider_range=[-int(self.image.height()+500),int(self.image.height()+500)]
-        
-        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+        if self.image != None:
+            self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
+            self.right_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
+            self.top_slider_range=[-int(self.image.height()*2),int(self.image.height()*2)]
+            
+            self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+            self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+            self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+            
+        self.update_live_view()
     
     def apply_config(self, config_data):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
@@ -1474,14 +1482,31 @@ class CombinedSDSApp(QMainWindow):
     
         # Calculate the scaling factor (assuming uniform scaling to maintain aspect ratio)
         scale = min(displayed_width / image_width, displayed_height / image_height)
+        scale_x = displayed_width / image_width
+        scale_y = displayed_height / image_height
     
         # Calculate offsets if the image is centered in the live_view_label
-        offset_x = (displayed_width - image_width * scale) / 2
-        offset_y = (displayed_height - image_height * scale) / 2
+        offset_x = (displayed_width - image_width * scale_x) / 2
+        offset_y = (displayed_height - image_height * scale_y) / 2
     
         # Transform cursor coordinates to the image coordinate space
-        image_x = (cursor_x - offset_x) / scale
-        image_y = (cursor_y - offset_y) / scale
+        image_x = (cursor_x - offset_x) / scale_x
+        image_y = (cursor_y - offset_y) / scale_y
+        
+        x_start_percent = self.crop_x_start_slider.value() / 100
+        x_end_percent = self.crop_x_end_slider.value() / 100
+        y_start_percent = self.crop_y_start_slider.value() / 100
+        y_end_percent = self.crop_y_end_slider.value() / 100
+    
+        # Calculate the crop boundaries based on the percentages
+        x_start = int(self.image.width() * x_start_percent)
+        x_end = int(self.image.width() * x_end_percent)
+        y_start = int(self.image.height() * y_start_percent)
+        y_end = int(self.image.height() * y_end_percent)
+		
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
     
         # Validate that the transformed coordinates are within image bounds
         if not (0 <= image_y <= image_height):
@@ -1495,22 +1520,39 @@ class CombinedSDSApp(QMainWindow):
                 else:
                     self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
                     self.current_marker_index += 1
-                self.left_padding_slider.setValue(int(image_x))
-                print("left_padding_slider: ",self.left_padding_slider.value())
+                    padding_value=int((image_x - x_start) * (render_width / self.image.width()))
+                    self.left_padding_slider.setValue(0)
+                    self.left_slider_range=[-100,int(render_width)+100]
+                    self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+                    self.left_padding_slider.setValue(padding_value)
+                    self.left_marker_shift_added = self.left_padding_slider.value()                    
+                    print("left_padding_slider: ",self.left_padding_slider.value())
             elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
                 if len(self.right_markers)!=0:
                     self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
                 else:
                     self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
                     self.current_marker_index += 1
+                    padding_value=int((image_x - x_start) * (render_width / self.image.width()))
+                    self.right_padding_slider.setValue(0)
+                    self.right_slider_range=[-100,int(render_width)+100]
+                    self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+                    self.right_padding_slider.setValue(padding_value)
+                    self.right_marker_shift_added = self.right_padding_slider.value()
+                    print("right_padding_slider: ",self.right_padding_slider.value())
             elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
                 if len(self.top_markers)!=0:
                     self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
                 else:
                     self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
                     self.current_top_label_index += 1
-                self.top_padding_slider.setValue(int(image_y))
-                print("top_padding_slider: ",self.top_padding_slider.value())
+                    padding_value=int((image_y - y_start) * (render_height / self.image.height()))
+                    self.top_padding_slider.setValue(0)
+                    self.top_slider_range=[-100,int(render_height)+100]
+                    self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+                    self.top_padding_slider.setValue(padding_value)
+                    self.top_marker_shift_added = self.top_padding_slider.value()
+                    print("top_padding_slider: ",self.top_padding_slider.value())
         except:
             pass     
         
@@ -1604,6 +1646,15 @@ class CombinedSDSApp(QMainWindow):
         ratio=w/h
         self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
         
+        if self.image != None:
+            self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
+            self.right_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
+            self.top_slider_range=[-int(self.image.height()*2),int(self.image.height()*2)]
+            
+            self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+            self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+            self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+        
 
 
         self.update_live_view()
@@ -1696,6 +1747,7 @@ class CombinedSDSApp(QMainWindow):
         
 
     def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
+                
         painter = QPainter(canvas)
         x_offset = (canvas.width() - scaled_image.width()) // 2
         y_offset = (canvas.height() - scaled_image.height()) // 2
@@ -1733,6 +1785,7 @@ class CombinedSDSApp(QMainWindow):
             y_pos_cropped = (y_pos - y_start) * (scaled_image.height() / self.image.height())
             if 0 <= y_pos_cropped <= scaled_image.height():
                 text = f" ⎯ {marker_value}" ##CHANGE HERE IF YOU WANT TO REMOVE THE "-"
+                text_width = font_metrics.horizontalAdvance(text)  # Get text width
                 painter.drawText(
                     int(x_offset + self.right_marker_shift_added),# + line_padding),
                     int(y_offset + y_pos_cropped + y_offset_global),  # Adjust for proper text placement
@@ -1954,6 +2007,9 @@ class CombinedSDSApp(QMainWindow):
     
     def save_image_svg(self):
         """Save the processed image along with markers and labels in SVG format containing EMF data."""
+        # self.left_marker_shift_added = self.left_padding_slider.value()
+        # self.right_marker_shift_added = self.right_padding_slider.value()
+        # self.top_marker_shift_added = self.top_padding_slider.value()
         if not self.image:
             QMessageBox.warning(self, "Warning", "No image to save.")
             return
@@ -1969,11 +2025,23 @@ class CombinedSDSApp(QMainWindow):
         if not file_path.endswith(".svg"):
             file_path += ".svg"
     
-        # Get scaling factors to match the live view window
-        view_width = self.live_view_label.width()
-        view_height = self.live_view_label.height()
-        scale_x = self.image.width() / view_width
-        scale_y = self.image.height() / view_height
+        
+        x_start_percent = self.crop_x_start_slider.value() / 100
+        x_end_percent = self.crop_x_end_slider.value() / 100
+        y_start_percent = self.crop_y_start_slider.value() / 100
+        y_end_percent = self.crop_y_end_slider.value() / 100
+    
+        # Calculate the crop boundaries based on the percentages
+        x_start = int(self.image.width() * x_start_percent)
+        x_end = int(self.image.width() * x_end_percent)
+        y_start = int(self.image.height() * y_start_percent)
+        y_end = int(self.image.height() * y_end_percent)
+		
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
+        
+        
     
         # Create an SVG file with svgwrite
         dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
@@ -1990,10 +2058,16 @@ class CombinedSDSApp(QMainWindow):
     
         # Add custom markers to the SVG
         for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
+            # Adjust label positions to align with the live view
+            font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
+            text_width = int(font_metrics.horizontalAdvance(text))  # Get text width
+            text_height = font_metrics.height()
+            adjusted_shift_x=(x - x_start) * (render_width / self.image.width())
+            adjusted_shift_y=(y - y_start) * (render_height / self.image.height())
             dwg.add(
                 dwg.text(
                     text,
-                    insert=(x,y),
+                    insert=((adjusted_shift_x-text_width/2),(adjusted_shift_y+text_height/4)),
                     fill=color.name(),
                     font_family=font,
                     font_size=f"{font_size}px"
@@ -2001,13 +2075,17 @@ class CombinedSDSApp(QMainWindow):
             )
     
         # Adjust label positions to align with the live view
+        font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
         # Add left labels
         for y, text in getattr(self, "left_markers", []):
-            final_text=f"{text} ⎯ "
+            final_text=f"{text} ⎯ "            
+            text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
+            text_height = font_metrics.height()
+            adjusted_shift=(self.left_marker_shift_added - x_start) * (render_width / self.image.width())
             dwg.add(
                 dwg.text(
                     final_text,
-                    insert=(self.left_marker_shift_added / scale_x, y),
+                    insert=(adjusted_shift-text_width, y),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px"
@@ -2017,10 +2095,13 @@ class CombinedSDSApp(QMainWindow):
         # Add right labels
         for y, text in getattr(self, "right_markers", []):
             final_text=f" ⎯ {text}"
+            text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
+            text_height = font_metrics.height()
+            adjusted_shift=(self.right_marker_shift_added - x_start) * (render_width / self.image.width())
             dwg.add(
                 dwg.text(
                     final_text,
-                    insert=((self.right_marker_shift_added), y),
+                    insert=(adjusted_shift+text_width, y),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px"
@@ -2029,14 +2110,15 @@ class CombinedSDSApp(QMainWindow):
     
         # Add top labels
         for x, text in getattr(self, "top_markers", []):
+            adjusted_shift=(self.top_marker_shift_added - y_start) * (render_height / self.image.height())
             dwg.add(
                 dwg.text(
                     text,
-                    insert=(x, self.top_marker_shift_added),
+                    insert=(x, adjusted_shift),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
-                    transform=f"rotate({self.font_rotation}, {x}, {self.top_marker_shift_added / scale_y})"
+                    transform=f"rotate({self.font_rotation}, {x}, {self.top_marker_shift_added})"
                 )
             )
     
@@ -2129,9 +2211,9 @@ class CombinedSDSApp(QMainWindow):
     
             QMessageBox.information(self, "Saved", f"Files saved successfully.")
             
-            text_title="IMAGING ASSISTANT V3: "
-            text_title+=str(save_path)
-            self.setWindowTitle(text_title)
+            # text_title="IMAGING ASSISTANT V3.5: "
+            # text_title+=str(save_path)
+            self.setWindowTitle(f"{self.window_title}:{self.image_path}")
             
 
     
@@ -2261,7 +2343,7 @@ class CombinedSDSApp(QMainWindow):
             svg_content = temp_file.read()
     
         # Copy SVG content to clipboard (macOS-compatible approach)
-        clipboard = QGuiApplication.clipboard()
+        clipboard = QApplication.clipboard()
         clipboard.setText(svg_content, mode=clipboard.Clipboard)
     
         QMessageBox.information(self, "Success", "SVG content copied to clipboard.")
@@ -2447,9 +2529,9 @@ class CombinedSDSApp(QMainWindow):
         self.left_marker_shift_added=0
         self.right_marker_shift_added=0
         self.top_marker_shift_added= 0
-        self.left_slider_range=[-1000,1000]
-        self.right_slider_range=[-1000,1000]
-        self.top_slider_range=[-1000,1000]
+        self.left_padding_slider.setValue(0)
+        self.right_padding_slider.setValue(0)
+        self.top_padding_slider.setValue(0)
         # self.top_padding_slider.setValue(0)
         # self.left_padding_slider.setValue(0)
         # self.right_padding_slider.setValue(0)
