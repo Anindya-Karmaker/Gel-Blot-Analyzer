@@ -1,3 +1,4 @@
+svgwrite
 Pillow
 PyQt5
 numpy
