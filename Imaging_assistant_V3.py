@@ -1866,7 +1866,7 @@ class CombinedSDSApp(QMainWindow):
                     # Draw text centered horizontally and vertically
                     painter.drawText(
                         int(x_pos_cropped + x_offset- text_width / 2),  # Center horizontally
-                        int(y_pos_cropped + y_offset+ text_height / 4),  # Center vertically
+                        int(y_pos_cropped + y_offset+ text_height / 2),  # Center vertically
                         marker_text
                     )
             
@@ -2025,6 +2025,16 @@ class CombinedSDSApp(QMainWindow):
         if not file_path.endswith(".svg"):
             file_path += ".svg"
     
+    
+        # Create an SVG file with svgwrite
+        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
+    
+        # Convert the QImage to a base64-encoded PNG for embedding
+        buffer = QBuffer()
+        buffer.open(QBuffer.ReadWrite)
+        self.image.save(buffer, "PNG")
+        image_data = base64.b64encode(buffer.data()).decode('utf-8')
+        buffer.close()
         
         x_start_percent = self.crop_x_start_slider.value() / 100
         x_end_percent = self.crop_x_end_slider.value() / 100
@@ -2043,31 +2053,20 @@ class CombinedSDSApp(QMainWindow):
         
         
     
-        # Create an SVG file with svgwrite
-        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
-    
-        # Convert the QImage to a base64-encoded PNG for embedding
-        buffer = QBuffer()
-        buffer.open(QBuffer.ReadWrite)
-        self.image.save(buffer, "PNG")
-        image_data = base64.b64encode(buffer.data()).decode('utf-8')
-        buffer.close()
-    
         # Embed the image as a base64 data URI
         dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
     
         # Add custom markers to the SVG
         for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
             # Adjust label positions to align with the live view
-            font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
-            text_width = int(font_metrics.horizontalAdvance(text))  # Get text width
-            text_height = font_metrics.height()
-            adjusted_shift_x=(x - x_start) * (render_width / self.image.width())
-            adjusted_shift_y=(y - y_start) * (render_height / self.image.height())
+            font_metrics = QFontMetrics(QFont(font, font_size))
+            text_width = (font_metrics.horizontalAdvance(text))  # Get text width
+            text_height = (font_metrics.height())
             dwg.add(
                 dwg.text(
                     text,
-                    insert=((adjusted_shift_x-text_width/2),(adjusted_shift_y+text_height/4)),
+                    # insert=((adjusted_shift_x-text_width/2),(adjusted_shift_y+text_height/4)),
+                    insert=((x-text_width/2),(y-text_height/2)),
                     fill=color.name(),
                     font_family=font,
                     font_size=f"{font_size}px"
@@ -2081,14 +2080,16 @@ class CombinedSDSApp(QMainWindow):
             final_text=f"{text} ⎯ "            
             text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
             text_height = font_metrics.height()
-            adjusted_shift=(self.left_marker_shift_added - x_start) * (render_width / self.image.width())
+            adj_left=(self.left_marker_shift_added)/(render_width/self.image.width())+x_start
             dwg.add(
                 dwg.text(
                     final_text,
-                    insert=(adjusted_shift-text_width, y),
+                    # insert=(adjusted_shift-text_width, y),
+                    insert=(adj_left-text_width, y),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
-                    font_size=f"{self.font_size}px"
+                    font_size=f"{self.font_size}px",
+                    text_anchor="end"  # Aligns text to the right
                 )
             )
     
@@ -2097,24 +2098,27 @@ class CombinedSDSApp(QMainWindow):
             final_text=f" ⎯ {text}"
             text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
             text_height = font_metrics.height()
-            adjusted_shift=(self.right_marker_shift_added - x_start) * (render_width / self.image.width())
+            adj_right=(self.right_marker_shift_added)/(render_width/self.image.width())+x_start
             dwg.add(
                 dwg.text(
                     final_text,
-                    insert=(adjusted_shift+text_width, y),
+                    # insert=(adjusted_shift, y),
+                    insert=(adj_right+text_width, y),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
-                    font_size=f"{self.font_size}px"
+                    font_size=f"{self.font_size}px",
+                    text_anchor="start"  # Aligns text to the right
                 )
             )
     
         # Add top labels
         for x, text in getattr(self, "top_markers", []):
-            adjusted_shift=(self.top_marker_shift_added - y_start) * (render_height / self.image.height())
+            # adjusted_shift=(self.top_marker_shift_added - y_start) * (render_height / self.image.height())
             dwg.add(
                 dwg.text(
                     text,
-                    insert=(x, adjusted_shift),
+                    # insert=(x, adjusted_shift),
+                    insert=(x, self.top_marker_shift_added),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
