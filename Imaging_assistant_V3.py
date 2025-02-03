@@ -6,9 +6,9 @@ from PIL import ImageGrab  # Import Pillow's ImageGrab for clipboard access
 import sys
 from io import BytesIO
 from PyQt5.QtWidgets import (
-    QDesktopWidget, QScrollArea, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
+    QDesktopWidget, QScrollArea, QShortcut, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
+from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
 from PyQt5.QtCore import Qt, QBuffer
 import json
 import os
@@ -82,10 +82,10 @@ class CombinedSDSApp(QMainWindow):
         # self.resize(window_width, window_height)
         # self.setFixedSize(window_width, window_height)
         # self.setFixedWidth(window_width)
-        # self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         # self.setFixedSize(QSizePolicy.Fixed,QSizePolicy.Fixed)
         # self.resize(700, 950) # Change for windows/macos viewing
-        self.label_width=540
+        self.label_width=int(self.screen_width * 0.3)
         self.image_path = None
         self.image = None
         self.image_master= None
@@ -148,7 +148,7 @@ class CombinedSDSApp(QMainWindow):
         # Upper section (Preview and buttons)
         upper_layout = QHBoxLayout()
 
-        label_height = int(self.screen_height * 0.35)  # 40% of screen height
+        self.label_width=540
     
         self.live_view_label = LiveViewLabel(
             font_type=QFont("Arial"),
@@ -170,17 +170,20 @@ class CombinedSDSApp(QMainWindow):
         # Load, save, and crop buttons
         buttons_layout = QVBoxLayout()
         load_button = QPushButton("Load Image")
+        load_button.setToolTip("Load an image or a previously saved file. Shortcut: Ctrl+O or CMD+O")
         load_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         load_button.clicked.connect(self.load_image)
         buttons_layout.addWidget(load_button)
         
         paste_button = QPushButton('Paste Image')
+        paste_button.setToolTip("Paste an image from clipboard or folder. Shortcut: Ctrl+V or CMD+V")
         paste_button.clicked.connect(self.paste_image)  # Connect the button to the paste_image method
         paste_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         buttons_layout.addWidget(paste_button)
     
         
         reset_button = QPushButton("Reset Image")  # Add Reset Image button
+        reset_button.setToolTip("Reset all image manipulations and marker placements. Shortcut: Ctrl+R or CMD+R")
         reset_button.clicked.connect(self.reset_image)  # Connect the reset functionality
         reset_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         buttons_layout.addWidget(reset_button)
@@ -188,11 +191,13 @@ class CombinedSDSApp(QMainWindow):
         
         
         copy_button = QPushButton('Copy Image to Clipboard')
+        copy_button.setToolTip("Copy the modified image to clipboard. Shortcut: Ctrl+C or CMD+C")
         copy_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         copy_button.clicked.connect(self.copy_to_clipboard)
         buttons_layout.addWidget(copy_button)
         
         save_button = QPushButton("Save Image with Configuration")
+        save_button.setToolTip("Save the modified image with the configuration files. Shortcut: Ctrl+S or CMD+S")
         save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         save_button.clicked.connect(self.save_image)
         buttons_layout.addWidget(save_button)
@@ -205,12 +210,14 @@ class CombinedSDSApp(QMainWindow):
             
         
         save_svg_button = QPushButton("Save SVG Image (MS Word Import)")
+        save_svg_button.setToolTip("Save the modified image as an SVG file so that it can be modified in MS Word or similar. Shortcut: Ctrl+M or CMD+M")
         save_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         save_svg_button.clicked.connect(self.save_image_svg)
         buttons_layout.addWidget(save_svg_button)
         
 
         predict_button = QPushButton("Predict Molecular Weight")
+        predict_button.setToolTip("Predicts the size of the protein/DNA if the MW marker or ladder is labeled and puts a straight line marker on the image. Shortcut: Ctrl+P or CMD+P")
         predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         predict_button.setEnabled(False)  # Initially disabled
         predict_button.clicked.connect(self.predict_molecular_weight)
@@ -218,6 +225,7 @@ class CombinedSDSApp(QMainWindow):
         self.predict_button = predict_button
         
         clear_predict_button = QPushButton("Clear Prediction Marker")
+        clear_predict_button.setToolTip("Clears the straight line marker for predicting Molecular Weight/BP. Shortcut: Ctrl+Shift+P or CMD+Shift+P")
         clear_predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
         clear_predict_button.setEnabled(True)  # Initially disabled
         clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
@@ -237,6 +245,96 @@ class CombinedSDSApp(QMainWindow):
         self.tab_widget.addTab(self.create_markers_tab(), "Marker Parameters")
         
         layout.addWidget(self.tab_widget)
+        
+        # Example: Shortcut for loading an image (Ctrl + O)
+        self.load_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
+        self.load_shortcut.activated.connect(self.load_image)
+        
+        # Example: Shortcut for saving an image (Ctrl + S)
+        self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.save_shortcut.activated.connect(self.save_image)
+        
+        # Example: Shortcut for resetting the image (Ctrl + R)
+        self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self.reset_shortcut.activated.connect(self.reset_image)
+        
+        # Example: Shortcut for copying the image to clipboard (Ctrl + C)
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.activated.connect(self.copy_to_clipboard)
+        
+        # Example: Shortcut for pasting an image from clipboard (Ctrl + V)
+        self.paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
+        self.paste_shortcut.activated.connect(self.paste_image)
+        
+        # Example: Shortcut for predicting molecular weight (Ctrl + P)
+        self.predict_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.predict_shortcut.activated.connect(self.predict_molecular_weight)
+        
+        # Example: Shortcut for clearing the prediction marker (Ctrl + Shift + P)
+        self.clear_predict_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
+        self.clear_predict_shortcut.activated.connect(self.clear_predict_molecular_weight)
+        
+        # Example: Shortcut for saving SVG image (Ctrl + Shift + S)
+        self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
+        self.save_svg_shortcut.activated.connect(self.save_image_svg)
+        
+        # Example: Shortcut for enabling left marker mode (Ctrl + L)
+        self.left_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
+        self.left_marker_shortcut.activated.connect(self.enable_left_marker_mode)
+        
+        # Example: Shortcut for enabling right marker mode (Ctrl + R)
+        self.right_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
+        self.right_marker_shortcut.activated.connect(self.enable_right_marker_mode)
+        
+        # Example: Shortcut for enabling top marker mode (Ctrl + T)
+        self.top_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+T"), self)
+        self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
+        
+        # Example: Shortcut for toggling grid visibility (Ctrl + G)
+        self.grid_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
+        self.grid_shortcut.activated.connect(lambda: self.show_grid_checkbox.setChecked(not self.show_grid_checkbox.isChecked()))
+        
+        # Example: Shortcut for toggling grid visibility (Ctrl + G)
+        self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
+        self.guidelines_shortcut.activated.connect(lambda: self.show_guides_checkbox.setChecked(not self.show_guides_checkbox.isChecked()))
+        
+        # Example: Shortcut for increasing grid size (Ctrl + Shift + Up)
+        self.increase_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Up"), self)
+        self.increase_grid_size_shortcut.activated.connect(lambda: self.grid_size_input.setValue(self.grid_size_input.value() + 1))
+        
+        # Example: Shortcut for decreasing grid size (Ctrl + Shift + Down)
+        self.decrease_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Down"), self)
+        self.decrease_grid_size_shortcut.activated.connect(lambda: self.grid_size_input.setValue(self.grid_size_input.value() - 1))
+        
+        # # Example: Shortcut for increasing font size (Ctrl + Plus)
+        # self.increase_font_size_shortcut = QShortcut(QKeySequence("Ctrl+W+Up"), self)
+        # self.increase_font_size_shortcut.activated.connect(lambda: self.font_size_spinner.setValue(self.font_size_spinner.value() + 1))
+        
+        # # Example: Shortcut for decreasing font size (Ctrl + Minus)
+        # self.decrease_font_size_shortcut = QShortcut(QKeySequence("Ctrl+W+Down"), self)
+        # self.decrease_font_size_shortcut.activated.connect(lambda: self.font_size_spinner.setValue(self.font_size_spinner.value() - 1))
+        
+        # Example: Shortcut for custom marker left arrow (Ctrl + Left Arrow)
+        self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
+        self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("←"))
+        self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+        
+        # Example: Shortcut for custom marker right arrow (Ctrl + Right Arrow)
+        self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
+        self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("→"))
+        self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+        
+        # Example: Shortcut for custom marker top arrow (Ctrl + Up Arrow)
+        self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
+        self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↑"))
+        self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+        
+        # Example: Shortcut for custom marker bottom arrow (Ctrl + Down Arrow)
+        self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
+        self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↓"))
+        self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+        
+        
         self.load_config()
         
     
@@ -589,6 +687,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Left marker: Button, slider, reset, and duplicate in the same row
         left_marker_button = QPushButton("Left Markers")
+        left_marker_button.setToolTip("Places the left markers at the exact location of the mouse pointer on the left. Shortcut: Ctrl+Shift+L or CMD+Shift+L")
         left_marker_button.clicked.connect(self.enable_left_marker_mode)
         self.left_padding_slider = QSlider(Qt.Horizontal)
         self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
@@ -613,6 +712,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Right marker: Button, slider, reset, and duplicate in the same row
         right_marker_button = QPushButton("Right Markers")
+        right_marker_button.setToolTip("Places the right markers at the exact location of the mouse pointer on the right. Shortcut: Ctrl+Shift+R or CMD+Shift+R")
         right_marker_button.clicked.connect(self.enable_right_marker_mode)
         self.right_padding_slider = QSlider(Qt.Horizontal)
         self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
@@ -637,6 +737,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Top marker: Button, slider, and reset in the same row
         top_marker_button = QPushButton("Top Markers")
+        top_marker_button.setToolTip("Places the top markers at the exact location of the mouse pointer on the top. Shortcut: Ctrl+Shift+T or CMD+Shift+T")
         top_marker_button.clicked.connect(self.enable_top_marker_mode)
         self.top_padding_slider = QSlider(Qt.Horizontal)
         self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
@@ -660,6 +761,8 @@ class CombinedSDSApp(QMainWindow):
         
         # Add button and QLineEdit for the custom marker
         self.custom_marker_button = QPushButton("Custom Marker", self)
+        self.custom_marker_button.setToolTip("Places custom markers at the middle of the mouse pointer")
+
         self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
         
         self.custom_marker_button_left_arrow = QPushButton("←", self)
@@ -748,6 +851,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Grid checkbox
         self.show_grid_checkbox = QCheckBox("Show Snap Grid", self)
+        self.show_grid_checkbox.setToolTip("Places a snapping grid and the text or marker will be places at the center of the grid. Shortcut: Ctrl+G. To increase or decrease the grid size: Ctrl+Shift+Up or Down arrow or CMD+Shift+Up or Down arrow ")
         self.show_grid_checkbox.setChecked(False)  # Default: Grid is off
         self.show_grid_checkbox.stateChanged.connect(self.update_live_view)
         
@@ -776,7 +880,7 @@ class CombinedSDSApp(QMainWindow):
         # Add the font options group box to the main layout
         layout.addWidget(padding_params_group)
         
-        # layout.addStretch()
+        layout.addStretch()
         return tab
 
     def invert_image(self):
@@ -1216,16 +1320,20 @@ class CombinedSDSApp(QMainWindow):
     
                     # Update the window title with the image path
                     self.setWindowTitle(f"{self.window_title}: {file_path}")
-        try:
-            w=self.image.width()
-            h=self.image.height()
-            # Preview window
-            ratio=w/h
-            self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
 
-        except:
-            pass
-        
+        w=self.image.width()
+        h=self.image.height()
+        # Preview window
+        ratio=w/h
+        self.label_width = 540
+        label_height=int(self.label_width/ratio)
+        if label_height>self.label_width:
+            label_height=540
+            self.label_width=ratio*label_height
+        self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        print("HEIGHT:",label_height)
+        print("WIDTH:",self.label_width)
+       
         # Adjust slider maximum ranges based on the current image width
         if self.image != None:
             self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
@@ -1294,8 +1402,16 @@ class CombinedSDSApp(QMainWindow):
         try:
             w=self.image.width()
             h=self.image.height()
+            # Preview window
             ratio=w/h
-            self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
+            self.label_width = 540
+            label_height=int(self.label_width/ratio)
+            if label_height>self.label_width:
+                label_height=540
+                self.label_width=ratio*label_height
+            self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+            print("HEIGHT:",label_height)
+            print("WIDTH:",self.label_width)
         except:
             pass
         
@@ -1587,9 +1703,16 @@ class CombinedSDSApp(QMainWindow):
         self.image_padded = False  # Reset the padding state
         w=self.image.width()
         h=self.image.height()
-        self.label_width = 540 #int(self.screen_width * 0.3)  # 30% of screen width
+        # Preview window
         ratio=w/h
-        self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
+        self.label_width = 540
+        label_height=int(self.label_width/ratio)
+        if label_height>self.label_width:
+            label_height=540
+            self.label_width=ratio*label_height
+        self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        print("HEIGHT:",label_height)
+        print("WIDTH:",self.label_width)
         self.update_live_view()
         
     def finalize_image(self):
@@ -1642,9 +1765,15 @@ class CombinedSDSApp(QMainWindow):
         w=self.image.width()
         h=self.image.height()
         # Preview window
-        self.label_width = 540 #int(self.screen_width * 0.3)  # 30% of screen width
         ratio=w/h
-        self.live_view_label.setFixedSize(self.label_width, int(self.label_width/ratio))
+        self.label_width = 540
+        label_height=int(self.label_width/ratio)
+        if label_height>self.label_width:
+            label_height=540
+            self.label_width=ratio*label_height
+        self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        print("HEIGHT:",label_height)
+        print("WIDTH:",self.label_width)
         
         if self.image != None:
             self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
@@ -1866,7 +1995,7 @@ class CombinedSDSApp(QMainWindow):
                     # Draw text centered horizontally and vertically
                     painter.drawText(
                         int(x_pos_cropped + x_offset- text_width / 2),  # Center horizontally
-                        int(y_pos_cropped + y_offset+ text_height / 2),  # Center vertically
+                        int(y_pos_cropped + y_offset+ text_height / 4),  # Center vertically
                         marker_text
                     )
             
@@ -2016,7 +2145,7 @@ class CombinedSDSApp(QMainWindow):
     
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Image", "", "SVG Files (*.svg)", options=options
+            self, "Save Image as SVG for MS Word Image Editing", "", "SVG Files (*.svg)", options=options
         )
     
         if not file_path:
@@ -2080,12 +2209,12 @@ class CombinedSDSApp(QMainWindow):
             final_text=f"{text} ⎯ "            
             text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
             text_height = font_metrics.height()
-            adj_left=(self.left_marker_shift_added)/(render_width/self.image.width())+x_start
+            adj_left=(self.left_marker_shift_added-text_width)/(render_width/self.image.width())+x_start
             dwg.add(
                 dwg.text(
                     final_text,
                     # insert=(adjusted_shift-text_width, y),
-                    insert=(adj_left-text_width, y),
+                    insert=(adj_left, y),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -2098,31 +2227,32 @@ class CombinedSDSApp(QMainWindow):
             final_text=f" ⎯ {text}"
             text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
             text_height = font_metrics.height()
-            adj_right=(self.right_marker_shift_added)/(render_width/self.image.width())+x_start
+            adj_right=(self.right_marker_shift_added+text_width)/(render_width/self.image.width())+x_start
             dwg.add(
                 dwg.text(
                     final_text,
                     # insert=(adjusted_shift, y),
-                    insert=(adj_right+text_width, y),
+                    insert=(adj_right, y),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
-                    text_anchor="start"  # Aligns text to the right
+                    text_anchor="end"  # Aligns text to the right
                 )
             )
     
         # Add top labels
         for x, text in getattr(self, "top_markers", []):
             # adjusted_shift=(self.top_marker_shift_added - y_start) * (render_height / self.image.height())
+            adj_top=(self.top_marker_shift_added)/(render_height/self.image.height())+y_start
             dwg.add(
                 dwg.text(
                     text,
                     # insert=(x, adjusted_shift),
-                    insert=(x, self.top_marker_shift_added),
+                    insert=(x, adj_top),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
-                    transform=f"rotate({self.font_rotation}, {x}, {self.top_marker_shift_added})"
+                    transform=f"rotate({self.font_rotation}, {x}, {adj_top})"
                 )
             )
     
