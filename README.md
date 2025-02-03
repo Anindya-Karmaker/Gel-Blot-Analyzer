@@ -15,6 +15,7 @@ Other Features:
 * Option to add custom markers with custom font type, size and color
 * Inbuilt Snapping tool to help set markers in straight lines
 * Option to load image from clipboard and save to clipboard for faster operation
+* Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications 
 * Added Keyboard Shortcuts and Tooltips for major options
 
 To compile the code into an application:
