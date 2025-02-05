@@ -1335,15 +1335,15 @@ class CombinedSDSApp(QMainWindow):
         print("WIDTH:",self.label_width)
        
         # Adjust slider maximum ranges based on the current image width
-        if self.image != None:
-            self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
-            self.right_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
-            self.top_slider_range=[-int(self.image.height()*2),int(self.image.height()*2)]
-            
-            self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-            self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-            self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-            
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
+        self.left_slider_range=[-100,int(render_width)+100]
+        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+        self.right_slider_range=[-100,int(render_width)+100]
+        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+        self.top_slider_range=[-100,int(render_height)+100]
+        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
         self.update_live_view()
         
     def update_font(self):
@@ -1416,15 +1416,15 @@ class CombinedSDSApp(QMainWindow):
             pass
         
         # Adjust slider maximum ranges based on the current image width
-        if self.image != None:
-            self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
-            self.right_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
-            self.top_slider_range=[-int(self.image.height()*2),int(self.image.height()*2)]
-            
-            self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-            self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-            self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-            
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
+        self.left_slider_range=[-100,int(render_width)+100]
+        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+        self.right_slider_range=[-100,int(render_width)+100]
+        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+        self.top_slider_range=[-100,int(render_height)+100]
+        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
         self.update_live_view()
     
     def apply_config(self, config_data):
@@ -2195,7 +2195,7 @@ class CombinedSDSApp(QMainWindow):
                 dwg.text(
                     text,
                     # insert=((adjusted_shift_x-text_width/2),(adjusted_shift_y+text_height/4)),
-                    insert=((x-text_width/2),(y-text_height/2)),
+                    insert=((x-text_width/2),(y+text_height/4)),
                     fill=color.name(),
                     font_family=font,
                     font_size=f"{font_size}px"
@@ -2209,12 +2209,12 @@ class CombinedSDSApp(QMainWindow):
             final_text=f"{text} ⎯ "            
             text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
             text_height = font_metrics.height()
-            adj_left=(self.left_marker_shift_added-text_width)/(render_width/self.image.width())+x_start
+            adj_left=(self.left_marker_shift_added)/(render_width/self.image.width())+x_start
             dwg.add(
                 dwg.text(
                     final_text,
                     # insert=(adjusted_shift-text_width, y),
-                    insert=(adj_left, y),
+                    insert=(adj_left, y+text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -2227,12 +2227,12 @@ class CombinedSDSApp(QMainWindow):
             final_text=f" ⎯ {text}"
             text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
             text_height = font_metrics.height()
-            adj_right=(self.right_marker_shift_added+text_width)/(render_width/self.image.width())+x_start
+            adj_right=(self.right_marker_shift_added)/(render_width/self.image.width())+x_start
             dwg.add(
                 dwg.text(
                     final_text,
                     # insert=(adjusted_shift, y),
-                    insert=(adj_right, y),
+                    insert=(adj_right+text_width, y+text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
