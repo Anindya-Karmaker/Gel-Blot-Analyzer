@@ -21,14 +21,22 @@ Other Features:
 To compile the code into an application:
   1. You need to install pyinstaller: pip install pyinstaller
   2. Extract the files into your folder of choice and modify this command:
-    pyinstaller --noconfirm --windowed --distpath C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Application\dist --workpath C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Application --icon=C:\Imaging-Assistant-main_3\Imaging-Assistant-main\icon.ico --name=MyApp C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
-    
-    Here the directory is: C:\Imaging-Assistant-main_3\Imaging-Assistant-main\ (Change as needed)
-  3. Run the command
 
-To run the program in python:
-  1. Run the command: pip install -r C:\Imaging-Assistant-main_3\Imaging-Assistant-main\requirements.txt
-  2. python C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
+    pyinstaller --noconfirm --onefile --windowed --distpath C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Application\dist --workpath C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Application --icon=C:\Imaging-Assistant-main_3\Imaging-Assistant-main\icon.ico --name=MyApp C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
+
+  3. Modify the directory. For example:
+     
+    Here the directory is: C:\Imaging-Assistant-main_3\Imaging-Assistant-main\ (Change as needed)
+    
+  4. Run the command to get an executable so you can run the software on any PC without needing to install Python or Ananconda Distribution
+     
+To run the program in Python or Ananconda Distribution:
+
+  1. Run the command:
+     
+     pip install -r C:\Imaging-Assistant-main_3\Imaging-Assistant-main\requirements.txt
+
+     python C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
 
 
 
