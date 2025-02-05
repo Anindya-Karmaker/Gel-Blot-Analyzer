@@ -1775,17 +1775,16 @@ class CombinedSDSApp(QMainWindow):
         print("HEIGHT:",label_height)
         print("WIDTH:",self.label_width)
         
-        if self.image != None:
-            self.left_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
-            self.right_slider_range=[-int(self.image.width()*2),int(self.image.width()*2)]
-            self.top_slider_range=[-int(self.image.height()*2),int(self.image.height()*2)]
-            
-            self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-            self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-            self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-        
-
-
+        # Adjust slider maximum ranges based on the current image width
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
+        self.left_slider_range=[-100,int(render_width)+100]
+        self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
+        self.right_slider_range=[-100,int(render_width)+100]
+        self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
+        self.top_slider_range=[-100,int(render_height)+100]
+        self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
         self.update_live_view()
     
     def update_left_padding(self):
