@@ -239,6 +239,7 @@ class CombinedSDSApp(QMainWindow):
 
         # Lower section (Tabbed interface)
         self.tab_widget = QTabWidget()
+        self.tab_widget.setToolTip("Change the tabs quickly with shortcut: Ctrl+1,2,3 or 4 and CMD+1,2,3 or 4")
         self.tab_widget.addTab(self.font_and_image_tab(), "Font and Image Parameters")
         self.tab_widget.addTab(self.create_cropping_tab(), "Crop and Align Parameters")
         self.tab_widget.addTab(self.create_white_space_tab(), "White Space Parameters")
@@ -342,8 +343,26 @@ class CombinedSDSApp(QMainWindow):
         self.invert_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
         self.invert_shortcut.activated.connect(self.convert_to_black_and_white)
         
+        # Example: Move quickly between tabs (Ctrl + 1,2,3,4)
+        self.move_tab_1_shortcut = QShortcut(QKeySequence("Ctrl+1"), self)
+        self.move_tab_1_shortcut.activated.connect(lambda: self.move_tab(0))
+        
+        self.move_tab_2_shortcut = QShortcut(QKeySequence("Ctrl+2"), self)
+        self.move_tab_2_shortcut.activated.connect(lambda: self.move_tab(1))
+        
+        self.move_tab_3_shortcut = QShortcut(QKeySequence("Ctrl+3"), self)
+        self.move_tab_3_shortcut.activated.connect(lambda: self.move_tab(2))
+        
+        self.move_tab_4_shortcut = QShortcut(QKeySequence("Ctrl+4"), self)
+        self.move_tab_4_shortcut.activated.connect(lambda: self.move_tab(3))
+        
+        
+        
         
         self.load_config()
+    
+    def move_tab(self,tab):
+        self.tab_widget.setCurrentIndex(tab)
         
     
     def font_and_image_tab(self):
@@ -366,7 +385,7 @@ class CombinedSDSApp(QMainWindow):
         # Font size selection (QSpinBox)
         font_size_label = QLabel("Font Size:")
         self.font_size_spinner = QSpinBox()
-        self.font_size_spinner.setRange(8, 72)  # Set a reasonable font size range
+        self.font_size_spinner.setRange(2,150)  # Set a reasonable font size range
         self.font_size_spinner.setValue(12)  # Default font size
         font_options_layout.addWidget(font_size_label, 1, 0)  # Row 1, Column 0
         font_options_layout.addWidget(self.font_size_spinner, 1, 1)  # Row 1, Column 1
@@ -865,7 +884,7 @@ class CombinedSDSApp(QMainWindow):
         # Font size selector
         self.custom_font_size_label = QLabel("Custom Marker Size:", self)
         self.custom_font_size_spinbox = QSpinBox(self)
-        self.custom_font_size_spinbox.setRange(8, 72)  # Allow font sizes from 8 to 72
+        self.custom_font_size_spinbox.setRange(2, 150)  # Allow font sizes from 8 to 72
         self.custom_font_size_spinbox.setValue(12)  # Default font size
         # self.font_size_spinbox.valueChanged.connect(self.update_font_size)
         
