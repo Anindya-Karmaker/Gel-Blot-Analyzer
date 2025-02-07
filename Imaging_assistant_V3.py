@@ -291,11 +291,11 @@ class CombinedSDSApp(QMainWindow):
         self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
         
         # Example: Shortcut for toggling grid visibility (Ctrl + G)
-        self.grid_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
+        self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
         self.grid_shortcut.activated.connect(lambda: self.show_grid_checkbox.setChecked(not self.show_grid_checkbox.isChecked()))
         
         # Example: Shortcut for toggling grid visibility (Ctrl + G)
-        self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
+        self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
         self.guidelines_shortcut.activated.connect(lambda: self.show_guides_checkbox.setChecked(not self.show_guides_checkbox.isChecked()))
         
         # Example: Shortcut for increasing grid size (Ctrl + Shift + Up)
@@ -333,6 +333,14 @@ class CombinedSDSApp(QMainWindow):
         self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
         self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↓"))
         self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+        
+        # Example: Shortcut for inverting image (Ctrl + T)
+        self.invert_shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
+        self.invert_shortcut.activated.connect(self.invert_image)
+        
+        # Example: Shortcut for converting to grayscale (Ctrl + T)
+        self.invert_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
+        self.invert_shortcut.activated.connect(self.convert_to_black_and_white)
         
         
         self.load_config()
@@ -413,16 +421,28 @@ class CombinedSDSApp(QMainWindow):
         contrast_gamma_layout.addWidget(gamma_label, 2, 0)
         contrast_gamma_layout.addWidget(self.gamma_slider, 2, 1, 1, 2)
         
+        # Black & White Button
+        self.bw_button = QPushButton("Convert to Grayscale")
+        self.bw_button.clicked.connect(self.convert_to_black_and_white)
+        self.bw_button.setToolTip("Converts the image to grayscale. Shortcut: Ctrl+B or CMD+B")
+
+        contrast_gamma_layout.addWidget(self.bw_button, 3, 0, 1, 3)
+        
         #Invert the image
         invert_button = QPushButton("Invert Image")
         invert_button.clicked.connect(self.invert_image)
-        contrast_gamma_layout.addWidget(invert_button, 3, 0, 1, 3)
+        invert_button.setToolTip("Inverts the image. Shortcut: Ctrl+I or CMD+I")
+        contrast_gamma_layout.addWidget(invert_button, 4, 0, 1, 3)
+        
     
         # Reset Button
         reset_button = QPushButton("Reset Contrast and Gamma")
         reset_button.clicked.connect(self.reset_gamma_contrast)
-        contrast_gamma_layout.addWidget(reset_button, 4, 0, 1, 3)  # Span all columns
+        reset_button.setToolTip("Resets the contrast and gamma options. Does not undo invert or grayscale functions! Please use reset image option")
+        contrast_gamma_layout.addWidget(reset_button, 5, 0, 1, 3)  # Span all columns
         
+        
+
         # Connect signals for dynamic updates
         self.font_combo_box.currentFontChanged.connect(self.update_font)
         self.font_size_spinner.valueChanged.connect(self.update_font)
@@ -457,7 +477,7 @@ class CombinedSDSApp(QMainWindow):
         rotation_layout = QHBoxLayout()
         self.orientation_label = QLabel("Rotation Angle (Degrees)")
         self.orientation_slider = QSlider(Qt.Horizontal)
-        self.orientation_slider.setRange(-180, 180)  # Scale by 10 to allow decimals
+        self.orientation_slider.setRange(-3600, 3600)  # Scale by 10 to allow decimals
         self.orientation_slider.setValue(0)
         self.orientation_slider.setSingleStep(1)
         self.orientation_slider.valueChanged.connect(self.update_live_view)
@@ -571,7 +591,7 @@ class CombinedSDSApp(QMainWindow):
         # Bottom space input and label
         bottom_padding_label = QLabel("Bottom Padding (px):")
         self.bottom_padding_input = QLineEdit()
-        self.bottom_padding_input.setText("50")  # Default value
+        self.bottom_padding_input.setText("0")  # Default value
         self.bottom_padding_input.setPlaceholderText("Enter padding for the bottom")
         self.bottom_padding_input.setToolTip("Enter the number of pixels to add to the bottom of the image.")
         padding_layout.addWidget(bottom_padding_label, 1, 2)
@@ -851,7 +871,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Grid checkbox
         self.show_grid_checkbox = QCheckBox("Show Snap Grid", self)
-        self.show_grid_checkbox.setToolTip("Places a snapping grid and the text or marker will be places at the center of the grid. Shortcut: Ctrl+G. To increase or decrease the grid size: Ctrl+Shift+Up or Down arrow or CMD+Shift+Up or Down arrow ")
+        self.show_grid_checkbox.setToolTip("Places a snapping grid and the text or marker will be places at the center of the grid. Shortcut: Ctrl+Shift+G. To increase or decrease the grid size: Ctrl+Shift+Up or Down arrow or CMD+Shift+Up or Down arrow ")
         self.show_grid_checkbox.setChecked(False)  # Default: Grid is off
         self.show_grid_checkbox.stateChanged.connect(self.update_live_view)
         
@@ -882,6 +902,17 @@ class CombinedSDSApp(QMainWindow):
         
         layout.addStretch()
         return tab
+    
+    def convert_to_black_and_white(self):
+        """Convert the image to black and white."""
+        if self.image:
+            grayscale_image = self.image.convertToFormat(QImage.Format_Grayscale8)
+            self.image = grayscale_image
+            self.image_before_contrast=self.image.copy()
+            self.image_before_padding=self.image.copy()
+            self.image_contrasted=self.image.copy()
+            self.update_live_view()
+
 
     def invert_image(self):
         if self.image:
@@ -1331,8 +1362,6 @@ class CombinedSDSApp(QMainWindow):
             label_height=540
             self.label_width=ratio*label_height
         self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-        print("HEIGHT:",label_height)
-        print("WIDTH:",self.label_width)
        
         # Adjust slider maximum ranges based on the current image width
         render_scale = 3  # Scale factor for rendering resolution
@@ -1344,6 +1373,9 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
         self.top_slider_range=[-100,int(render_height)+100]
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+        self.left_padding_input.setText(str(int(render_width*0.1)))
+        self.right_padding_input.setText(str(int(render_width*0.1)))
+        self.top_padding_input.setText(str(int(render_height*0.1)))
         self.update_live_view()
         
     def update_font(self):
@@ -1410,8 +1442,6 @@ class CombinedSDSApp(QMainWindow):
                 label_height=540
                 self.label_width=ratio*label_height
             self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-            print("HEIGHT:",label_height)
-            print("WIDTH:",self.label_width)
         except:
             pass
         
@@ -1425,6 +1455,9 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
         self.top_slider_range=[-100,int(render_height)+100]
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+        self.left_padding_input.setText(str(int(render_width*0.1)))
+        self.right_padding_input.setText(str(int(render_width*0.1)))
+        self.top_padding_input.setText(str(int(render_height*0.1)))
         self.update_live_view()
     
     def apply_config(self, config_data):
@@ -1675,6 +1708,7 @@ class CombinedSDSApp(QMainWindow):
         # self.right_padding_slider.setValue(int(padding_left + self.image_before_padding.width()))
         # self.top_padding_slider.setValue(int(padding bottom + self.image_before_padding.
         # Update the live view with the new markers
+        print("LM:",self.left_markers)
         self.update_live_view()
         
 
@@ -1698,7 +1732,8 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.setCursor(Qt.CrossCursor)
         
     def remove_padding(self):
-        self.image = self.image_before_padding.copy()  # Revert to the image before padding
+        if self.image_before_padding!=None:
+            self.image = self.image_before_padding.copy()  # Revert to the image before padding
         self.image_contrasted = self.image.copy()  # Sync the contrasted image
         self.image_padded = False  # Reset the padding state
         w=self.image.width()
@@ -1711,8 +1746,6 @@ class CombinedSDSApp(QMainWindow):
             label_height=540
             self.label_width=ratio*label_height
         self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-        print("HEIGHT:",label_height)
-        print("WIDTH:",self.label_width)
         self.update_live_view()
         
     def finalize_image(self):
@@ -1722,12 +1755,14 @@ class CombinedSDSApp(QMainWindow):
             padding_right = int(self.right_padding_input.text())
             padding_top = int(self.top_padding_input.text())
             padding_bottom = int(self.bottom_padding_input.text())
+            
         except ValueError:
-            # Handle invalid input (non-integer value)
-            # print("Please enter valid integers for padding.")
+            #Handle invalid input (non-integer value)
+            print("Please enter valid integers for padding.")
             return
         
-                                                  
+        # self.left_markers=[(t[0] + int(self.top_padding_input.text()) - int(self.bottom_padding_input.text()), t[1]) for t in self.left_markers]
+
         
         self.left_marker_shift= 0 
         
@@ -1772,8 +1807,6 @@ class CombinedSDSApp(QMainWindow):
             label_height=540
             self.label_width=ratio*label_height
         self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-        print("HEIGHT:",label_height)
-        print("WIDTH:",self.label_width)
         
         # Adjust slider maximum ranges based on the current image width
         render_scale = 3  # Scale factor for rendering resolution
@@ -1843,7 +1876,7 @@ class CombinedSDSApp(QMainWindow):
         cropped_image = self.image.copy(x_start, y_start, x_end - x_start, y_end - y_start)
     
         # Get the orientation value from the slider
-        orientation = self.orientation_slider.value()  # Orientation slider value
+        orientation = float(self.orientation_slider.value()/20)  # Orientation slider value
     
         # Apply the rotation to the cropped image
         rotated_image = cropped_image.transformed(QTransform().rotate(orientation))
@@ -2058,7 +2091,7 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()
     
         # Get the orientation value from the slider
-        angle = self.orientation_slider.value()
+        angle = float(self.orientation_slider.value()/20)
     
         # Perform rotation
         transform = QTransform()
