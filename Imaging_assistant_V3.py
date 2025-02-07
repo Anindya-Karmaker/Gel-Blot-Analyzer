@@ -673,11 +673,16 @@ class CombinedSDSApp(QMainWindow):
         self.save_button = QPushButton("Save Config", self)
         self.save_button.clicked.connect(self.save_config)
         
+        # Delete button 
+        self.remove_config_button = QPushButton("Remove Config", self)
+        self.remove_config_button.clicked.connect(self.remove_config)
+        
         # Add widgets to the Left/Right Marker Options layout
         left_right_marker_layout.addWidget(self.combo_box)
         left_right_marker_layout.addWidget(self.marker_values_textbox)
         left_right_marker_layout.addWidget(self.rename_input)
         left_right_marker_layout.addWidget(self.save_button)
+        left_right_marker_layout.addWidget(self.remove_config_button)
         
         # Set layout for the Left/Right Marker Options group
         left_right_marker_group.setLayout(left_right_marker_layout)
@@ -1255,6 +1260,46 @@ class CombinedSDSApp(QMainWindow):
         else:
             QMessageBox.warning(self, "Error", "No image is loaded to save contrast options.")
 
+    def remove_config(self):
+        try:
+            # Get the currently selected marker label
+            selected_marker = self.combo_box.currentText()
+    
+            # Ensure the selected marker is not "Custom" before deleting
+            if selected_marker == "Custom":
+                QMessageBox.warning(self, "Error", "Cannot remove the 'Custom' marker.")
+                return
+            
+            elif selected_marker == "Precision Plus All Blue/Unstained":
+                QMessageBox.warning(self, "Error", "Cannot remove the 'Inbuilt' marker.")
+                return
+            
+            elif selected_marker == "1 kB Plus":
+                QMessageBox.warning(self, "Error", "Cannot remove the 'Inbuilt' marker.")
+                return
+    
+            # Remove the marker label and top_label if they exist
+            if selected_marker in self.marker_values_dict:
+                del self.marker_values_dict[selected_marker]
+            if selected_marker in self.top_label_dict:
+                del self.top_label_dict[selected_marker]
+    
+            # Save the updated configuration
+            with open("Imaging_assistant_config.txt", "w") as f:
+                config = {
+                    "marker_values": self.marker_values_dict,
+                    "top_label": self.top_label_dict
+                }
+                json.dump(config, f)
+    
+            # Remove from the ComboBox and reset UI
+            self.combo_box.removeItem(self.combo_box.currentIndex())
+            self.top_marker_input.clear()
+    
+            QMessageBox.information(self, "Success", f"Configuration '{selected_marker}' removed.")
+    
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Error removing config: {e}")
 
     def save_config(self):
         """Rename the 'Custom' marker values option and save the configuration."""
@@ -1279,7 +1324,7 @@ class CombinedSDSApp(QMainWindow):
             except Exception as e:
                 print(f"Error saving config: {e}")
 
-        
+        self.combo_box.setCurrentText(new_name)
         self.load_config()  # Reload the configuration after saving
     
     
@@ -1499,6 +1544,17 @@ class CombinedSDSApp(QMainWindow):
     
         self.top_label = config_data["marker_labels"]["top"]
         self.top_marker_input.setText(", ".join(self.top_label))
+        
+        self.combo_box.setCurrentText("Custom")
+        self.marker_values_textbox.setEnabled(True)
+        try:
+            try:
+                self.marker_values_textbox.setText(str(config_data["marker_labels"]["left"]))
+            except:
+                self.marker_values_textbox.setText(str(config_data["marker_labels"]["right"]))
+        except:
+            print("ERROR LOADING MARKER VALUES")
+        
     
         self.font_family = config_data["font_options"]["font_family"]
         self.font_size = config_data["font_options"]["font_size"]
@@ -1723,11 +1779,7 @@ class CombinedSDSApp(QMainWindow):
                     print("top_padding_slider: ",self.top_padding_slider.value())
         except:
             pass     
-        
-        # self.right_padding_slider.setValue(int(padding_left + self.image_before_padding.width()))
-        # self.top_padding_slider.setValue(int(padding bottom + self.image_before_padding.
-        # Update the live view with the new markers
-        print("LM:",self.left_markers)
+
         self.update_live_view()
         
 
@@ -2265,7 +2317,7 @@ class CombinedSDSApp(QMainWindow):
                 dwg.text(
                     final_text,
                     # insert=(adjusted_shift-text_width, y),
-                    insert=(adj_left, y+text_height/4),
+                    insert=(adj_left-text_width, y+text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -2293,17 +2345,20 @@ class CombinedSDSApp(QMainWindow):
     
         # Add top labels
         for x, text in getattr(self, "top_markers", []):
+            final_text=f"{text}"
+            text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
+            text_height = font_metrics.height()
             # adjusted_shift=(self.top_marker_shift_added - y_start) * (render_height / self.image.height())
             adj_top=(self.top_marker_shift_added)/(render_height/self.image.height())+y_start
             dwg.add(
                 dwg.text(
                     text,
                     # insert=(x, adjusted_shift),
-                    insert=(x, adj_top),
+                    insert=(x, adj_top-text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
-                    transform=f"rotate({self.font_rotation}, {x}, {adj_top})"
+                    transform=f"rotate({self.font_rotation}, {x}, {adj_top-text_height/4})"
                 )
             )
     
