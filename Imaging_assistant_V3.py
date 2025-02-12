@@ -75,16 +75,12 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         window_width = int(self.screen_width * 0.5)  # 60% of screen width
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.window_title="IMAGING ASSISTANT V3.5"
+        self.window_title="IMAGING ASSISTANT V3.9"
         self.setWindowTitle(self.window_title)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
-        
-        # self.resize(window_width, window_height)
-        # self.setFixedSize(window_width, window_height)
-        # self.setFixedWidth(window_width)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
-        # self.setFixedSize(QSizePolicy.Fixed,QSizePolicy.Fixed)
-        # self.resize(700, 950) # Change for windows/macos viewing
+        self.undo_stack = []
+        self.redo_stack = []
         self.label_width=int(self.screen_width * 0.3)
         self.image_path = None
         self.image = None
@@ -230,16 +226,33 @@ class CombinedSDSApp(QMainWindow):
         clear_predict_button.setEnabled(True)  # Initially disabled
         clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
         buttons_layout.addWidget(clear_predict_button)
-        buttons_layout.addStretch()
+        
+        undo_redo_layout=QHBoxLayout()
+        
+        undo_button = QPushButton("Undo")
+        undo_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
+        undo_button.clicked.connect(self.undo_action)
+        undo_button.setToolTip("Undo settings related to image. Cannot Undo Marker Placement. Use remove last option. Shortcut: Ctrl+U or CMD+U")
+        undo_redo_layout.addWidget(undo_button)
+        
+        redo_button = QPushButton("Redo")
+        redo_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
+        redo_button.clicked.connect(self.redo_action)
+        redo_button.setToolTip("Redo settings related to image. Cannot Undo Marker Placement. Use remove last option.Shortcut: Ctrl+R or CMD+R")        
+        undo_redo_layout.addWidget(redo_button)
+        
+        buttons_layout.addLayout(undo_redo_layout)
+        
+        # buttons_layout.addStretch()
         
         
-        upper_layout.addWidget(self.live_view_label)
-        upper_layout.addLayout(buttons_layout)
+        upper_layout.addWidget(self.live_view_label, stretch=1)
+        upper_layout.addLayout(buttons_layout, stretch=1)
         layout.addLayout(upper_layout)
 
         # Lower section (Tabbed interface)
         self.tab_widget = QTabWidget()
-        self.tab_widget.setToolTip("Change the tabs quickly with shortcut: Ctrl+1,2,3 or 4 and CMD+1,2,3 or 4")
+        # self.tab_widget.setToolTip("Change the tabs quickly with shortcut: Ctrl+1,2,3 or 4 and CMD+1,2,3 or 4")
         self.tab_widget.addTab(self.font_and_image_tab(), "Font and Image Parameters")
         self.tab_widget.addTab(self.create_cropping_tab(), "Crop and Align Parameters")
         self.tab_widget.addTab(self.create_white_space_tab(), "White Space Parameters")
@@ -356,6 +369,12 @@ class CombinedSDSApp(QMainWindow):
         self.move_tab_4_shortcut = QShortcut(QKeySequence("Ctrl+4"), self)
         self.move_tab_4_shortcut.activated.connect(lambda: self.move_tab(3))
         
+        self.undo_shortcut = QShortcut(QKeySequence("Ctrl+U"), self)
+        self.undo_shortcut.activated.connect(self.undo_action)
+        
+        self.redo_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self.redo_shortcut.activated.connect(self.redo_action)
+        
         
         
         
@@ -363,6 +382,23 @@ class CombinedSDSApp(QMainWindow):
     
     def move_tab(self,tab):
         self.tab_widget.setCurrentIndex(tab)
+        
+    def save_state(self):
+        if self.image:
+            self.undo_stack.append(self.image.copy())
+            self.redo_stack.clear()
+    
+    def undo_action(self):
+        if self.undo_stack:
+            self.redo_stack.append(self.image.copy())
+            self.image = self.undo_stack.pop()
+            self.update_live_view()
+    
+    def redo_action(self):
+        if self.redo_stack:
+            self.undo_stack.append(self.image.copy())
+            self.image = self.redo_stack.pop()
+            self.update_live_view()
         
     
     def font_and_image_tab(self):
@@ -703,7 +739,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Button to update Top Marker Labels
         self.update_top_labels_button = QPushButton("Update All Labels")
-        self.update_top_labels_button.clicked.connect(self.update_top_labels)
+        self.update_top_labels_button.clicked.connect(self.update_all_labels)
         
         # Add widgets to the top marker layout
         top_marker_layout.addWidget(self.top_marker_input)
@@ -928,6 +964,7 @@ class CombinedSDSApp(QMainWindow):
         return tab
     
     def convert_to_black_and_white(self):
+        self.save_state()
         """Convert the image to black and white."""
         if self.image:
             grayscale_image = self.image.convertToFormat(QImage.Format_Grayscale8)
@@ -939,6 +976,7 @@ class CombinedSDSApp(QMainWindow):
 
 
     def invert_image(self):
+        self.save_state()
         if self.image:
             inverted_image = self.image.copy()
             inverted_image.invertPixels()
@@ -1043,7 +1081,7 @@ class CombinedSDSApp(QMainWindow):
         if color.isValid():
             self.custom_marker_color = color  # Update the custom marker color
     
-    def update_top_labels(self):
+    def update_all_labels(self):
         # Retrieve the multiline text from QTextEdit
         self.marker_values=[int(num) if num.strip().isdigit() else num.strip() for num in self.marker_values_textbox.text().strip("[]").split(",")]
         input_text = self.top_marker_input.toPlainText()
@@ -1186,6 +1224,7 @@ class CombinedSDSApp(QMainWindow):
 
     
     def update_image_contrast(self):
+        self.save_state()
         try:
             if self.contrast_applied==False:
                 self.image_before_contrast=self.image.copy()
@@ -1201,6 +1240,7 @@ class CombinedSDSApp(QMainWindow):
             pass
     
     def update_image_gamma(self):
+        self.save_state()
         try:
             if self.contrast_applied==False:
                 self.image_before_contrast=self.image.copy()
@@ -1441,6 +1481,7 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_input.setText(str(int(render_width*0.1)))
         self.top_padding_input.setText(str(int(render_height*0.1)))
         self.update_live_view()
+        self.save_state()
         
     def update_font(self):
         """Update the font settings based on UI inputs"""
@@ -1475,8 +1516,6 @@ class CombinedSDSApp(QMainWindow):
             self.image_master= self.original_image.copy()  
             self.image_contrasted= self.original_image.copy()  
 
-            # text_title="IMAGING ASSISTANT V3.5: "
-            # text_title+=str(self.image_path)
             self.setWindowTitle(f"{self.window_title}:{self.image_path}")
     
             # Determine associated config file
@@ -1523,6 +1562,7 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_input.setText(str(int(render_width*0.1)))
         self.top_padding_input.setText(str(int(render_height*0.1)))
         self.update_live_view()
+        self.save_state()
     
     def apply_config(self, config_data):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
@@ -1750,7 +1790,7 @@ class CombinedSDSApp(QMainWindow):
                     self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
                     self.left_padding_slider.setValue(padding_value)
                     self.left_marker_shift_added = self.left_padding_slider.value()                    
-                    print("left_padding_slider: ",self.left_padding_slider.value())
+                    # print("left_padding_slider: ",self.left_padding_slider.value())
             elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
                 if len(self.right_markers)!=0:
                     self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
@@ -1763,7 +1803,7 @@ class CombinedSDSApp(QMainWindow):
                     self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
                     self.right_padding_slider.setValue(padding_value)
                     self.right_marker_shift_added = self.right_padding_slider.value()
-                    print("right_padding_slider: ",self.right_padding_slider.value())
+                    # print("right_padding_slider: ",self.right_padding_slider.value())
             elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
                 if len(self.top_markers)!=0:
                     self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
@@ -1776,7 +1816,7 @@ class CombinedSDSApp(QMainWindow):
                     self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
                     self.top_padding_slider.setValue(padding_value)
                     self.top_marker_shift_added = self.top_padding_slider.value()
-                    print("top_padding_slider: ",self.top_padding_slider.value())
+                    # print("top_padding_slider: ",self.top_padding_slider.value())
         except:
             pass     
 
@@ -1820,6 +1860,7 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()
         
     def finalize_image(self):
+        self.save_state()
         # Get the padding values from the text inputs
         try:
             padding_left = int(self.left_padding_input.text())
@@ -2152,6 +2193,7 @@ class CombinedSDSApp(QMainWindow):
     
     # Modify align_image and update_crop to preserve settings
     def align_image(self):
+        self.save_state()
         """Align the image based on the orientation slider and keep high-resolution updates."""
         if not self.image:
             return
@@ -2208,6 +2250,7 @@ class CombinedSDSApp(QMainWindow):
     
     # Modify update_crop to include alignment and configuration preservation
     def update_crop(self):
+        self.save_state()
         """Update the image based on current crop sliders. First align, then crop the image."""
         # Save current configuration
         self.show_grid_checkbox.setChecked(False)
@@ -2451,8 +2494,6 @@ class CombinedSDSApp(QMainWindow):
     
             QMessageBox.information(self, "Saved", f"Files saved successfully.")
             
-            # text_title="IMAGING ASSISTANT V3.5: "
-            # text_title+=str(save_path)
             self.setWindowTitle(f"{self.window_title}:{self.image_path}")
             
 
