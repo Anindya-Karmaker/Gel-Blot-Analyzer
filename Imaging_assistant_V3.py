@@ -659,10 +659,10 @@ class CombinedSDSApp(QMainWindow):
         self.finalize_button.setToolTip("Click to apply the specified padding to the image.")
         button_layout.addWidget(self.finalize_button)
     
-        self.reset_padding_button = QPushButton("Remove Padding")
-        self.reset_padding_button.clicked.connect(self.remove_padding)
-        self.reset_padding_button.setToolTip("Click to remove all added padding and revert the image.")
-        button_layout.addWidget(self.reset_padding_button)
+        # self.reset_padding_button = QPushButton("Remove Padding")
+        # self.reset_padding_button.clicked.connect(self.remove_padding)
+        # self.reset_padding_button.setToolTip("Click to remove all added padding and revert the image.")
+        # button_layout.addWidget(self.reset_padding_button)
     
         # Add padding layout and buttons to the group box
         padding_params_group.setLayout(padding_layout)
@@ -1126,10 +1126,12 @@ class CombinedSDSApp(QMainWindow):
         # Trigger a refresh of the live view
         self.update_live_view()
         
-    def reset_marker(self, marker_type, param):
+    def reset_marker(self, marker_type, param):       
         if marker_type == 'left':
             if param == 'remove' and len(self.left_markers)!=0:
                 self.left_markers.pop()  
+                if self.current_marker_index > 0:
+                    self.current_marker_index -= 1
             elif param == 'reset':
                 self.left_markers.clear()
                 self.current_marker_index = 0  
@@ -1138,17 +1140,20 @@ class CombinedSDSApp(QMainWindow):
         elif marker_type == 'right' and len(self.right_markers)!=0:
             if param == 'remove':
                 self.right_markers.pop()  
+                if self.current_marker_index > 0:
+                    self.current_marker_index -= 1
             elif param == 'reset':
                 self.right_markers.clear()
                 self.current_marker_index = 0
 
         elif marker_type == 'top' and len(self.top_markers)!=0:
             if param == 'remove':
-                self.top_markers.pop()  
+                self.top_markers.pop() 
+                if self.current_top_label_index > 0:
+                    self.current_top_label_index -= 1
             elif param == 'reset':
                 self.top_markers.clear()
                 self.current_top_label_index = 0
-            # self.top_padding_slider.setValue(0)
     
         # Call update live view after resetting markers
         self.update_live_view()
@@ -1455,17 +1460,19 @@ class CombinedSDSApp(QMainWindow):
     
                     # Update the window title with the image path
                     self.setWindowTitle(f"{self.window_title}: {file_path}")
-
-        w=self.image.width()
-        h=self.image.height()
-        # Preview window
-        ratio=w/h
-        self.label_width = 540
-        label_height=int(self.label_width/ratio)
-        if label_height>self.label_width:
-            label_height=540
-            self.label_width=ratio*label_height
-        self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        try:
+            w=self.image.width()
+            h=self.image.height()
+            # Preview window
+            ratio=w/h
+            self.label_width = 540
+            label_height=int(self.label_width/ratio)
+            if label_height>self.label_width:
+                label_height=540
+                self.label_width=ratio*label_height
+            self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        except:
+            pass
        
         # Adjust slider maximum ranges based on the current image width
         render_scale = 3  # Scale factor for rendering resolution
@@ -1479,7 +1486,7 @@ class CombinedSDSApp(QMainWindow):
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
         self.left_padding_input.setText(str(int(render_width*0.1)))
         self.right_padding_input.setText(str(int(render_width*0.1)))
-        self.top_padding_input.setText(str(int(render_height*0.1)))
+        self.top_padding_input.setText(str(int(render_height*0.15)))
         self.update_live_view()
         self.save_state()
         
@@ -1560,7 +1567,7 @@ class CombinedSDSApp(QMainWindow):
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
         self.left_padding_input.setText(str(int(render_width*0.1)))
         self.right_padding_input.setText(str(int(render_width*0.1)))
-        self.top_padding_input.setText(str(int(render_height*0.1)))
+        self.top_padding_input.setText(str(int(render_height*0.15)))
         self.update_live_view()
         self.save_state()
     
@@ -1818,7 +1825,7 @@ class CombinedSDSApp(QMainWindow):
                     self.top_marker_shift_added = self.top_padding_slider.value()
                     # print("top_padding_slider: ",self.top_padding_slider.value())
         except:
-            pass     
+            print("ERROR ADDING BANDS")    
 
         self.update_live_view()
         
@@ -1842,22 +1849,22 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.mousePressEvent = self.add_band
         self.live_view_label.setCursor(Qt.CrossCursor)
         
-    def remove_padding(self):
-        if self.image_before_padding!=None:
-            self.image = self.image_before_padding.copy()  # Revert to the image before padding
-        self.image_contrasted = self.image.copy()  # Sync the contrasted image
-        self.image_padded = False  # Reset the padding state
-        w=self.image.width()
-        h=self.image.height()
-        # Preview window
-        ratio=w/h
-        self.label_width = 540
-        label_height=int(self.label_width/ratio)
-        if label_height>self.label_width:
-            label_height=540
-            self.label_width=ratio*label_height
-        self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-        self.update_live_view()
+    # def remove_padding(self):
+    #     if self.image_before_padding!=None:
+    #         self.image = self.image_before_padding.copy()  # Revert to the image before padding
+    #     self.image_contrasted = self.image.copy()  # Sync the contrasted image
+    #     self.image_padded = False  # Reset the padding state
+    #     w=self.image.width()
+    #     h=self.image.height()
+    #     # Preview window
+    #     ratio=w/h
+    #     self.label_width = 540
+    #     label_height=int(self.label_width/ratio)
+    #     if label_height>self.label_width:
+    #         label_height=540
+    #         self.label_width=ratio*label_height
+    #     self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+    #     self.update_live_view()
         
     def finalize_image(self):
         self.save_state()
