@@ -941,6 +941,7 @@ class CombinedSDSApp(QMainWindow):
         self.combo_box = QComboBox(self)
         self.combo_box.addItems(self.marker_values_dict.keys())
         self.combo_box.addItem("Custom")
+        self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
         self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
         
         # Textbox to allow modification of marker values (shown when "Custom" is selected)
@@ -1468,11 +1469,11 @@ class CombinedSDSApp(QMainWindow):
                 
                 
             except:
-                pass
+                print("CHECK ON_COMBOBOX_1st try")
             try:
                 self.marker_values_textbox.setText(str(self.marker_values_dict[self.combo_box.currentText()]))
             except:
-                pass
+                print("CHECK ON_COMBOBOX_2nd try")
 
     # Functions for updating contrast and gamma
     
@@ -2595,7 +2596,6 @@ class CombinedSDSApp(QMainWindow):
         # Save current configuration
         self.show_grid_checkbox.setChecked(False)
         self.update_live_view()
-        config = self.get_current_config()
     
         # Align the image first (rotate it)
         self.align_image()
@@ -2611,8 +2611,6 @@ class CombinedSDSApp(QMainWindow):
             self.image_before_contrast=self.image.copy()
             self.update_live_view()
     
-        # Reapply the saved configuration
-        self.apply_config(config)
     
         # Reset sliders
         self.crop_x_start_slider.setValue(0)
