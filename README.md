@@ -2,19 +2,21 @@
 This software makes it easy to modify SDS-PAGE, WB and other GEL images easily and add notations like label heading, molecular weight marker and so on. It can save the image with all of the options for easy editing and has copy/paste functionality for PRO users. I am not a professional coder and used ChatGPT to write most of the supporting code based on my algorithms and ideas. Please download the required libraries using requirements.txt. Used python version 3.9.13 on a M1 MacBook Pro to run and test the code.
 
 Example output from the software:
-<img width="967" alt="image" src="https://github.com/user-attachments/assets/51d92eb9-f487-4268-86b6-78857e6e378f" />
+<img width="971" alt="image" src="https://github.com/user-attachments/assets/175dc79f-c243-447b-a1d4-e1e90f6fef45" />
+
 
 
 
 Have option to predict the molecular weight of the protein/bp of DNA Gel once the ladder markers (left/right) are placed (Accurarcy can vary anywhere from 5 to 10% depending on the quality of the gel):
-<img width="968" alt="image" src="https://github.com/user-attachments/assets/04ab432f-a76f-4d0a-93a2-fe374296252d" />
+<img width="969" alt="image" src="https://github.com/user-attachments/assets/54a5a34b-2a11-4c18-b0fe-eda0816c60dc" />
+
 
 
 Other Features:
-* Fully integrated Image Cropping and Alignment tool
+* Fully integrated Image Cropping, Alignment and Skew Correction toolkit builtin
 * Adjust Low/High Image Contrast and Gamma (For visualizing proteins with faint bands)
 * Option to add custom markers with custom font type, size and color
-* Inbuilt Snapping tool to help set markers in straight lines
+* Inbuilt Snapping tool to help set markers 
 * Option to load image from clipboard and save to clipboard for faster operation
 * Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications 
 * Added Keyboard Shortcuts and Tooltips for major options
