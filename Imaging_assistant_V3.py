@@ -8,8 +8,8 @@ from io import BytesIO
 from PyQt5.QtWidgets import (
     QDesktopWidget, QScrollArea, QShortcut, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
-from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
-from PyQt5.QtCore import Qt, QBuffer
+from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
+from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF
 import json
 import os
 import numpy as np
@@ -75,7 +75,7 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         window_width = int(self.screen_width * 0.5)  # 60% of screen width
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.window_title="IMAGING ASSISTANT V3.9"
+        self.window_title="IMAGING ASSISTANT V3.99"
         self.setWindowTitle(self.window_title)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -144,7 +144,7 @@ class CombinedSDSApp(QMainWindow):
         # Upper section (Preview and buttons)
         upper_layout = QHBoxLayout()
 
-        self.label_width=540
+        self.label_width=int(self.screen_width * 0.3)
     
         self.live_view_label = LiveViewLabel(
             font_type=QFont("Arial"),
@@ -254,9 +254,10 @@ class CombinedSDSApp(QMainWindow):
         self.tab_widget = QTabWidget()
         # self.tab_widget.setToolTip("Change the tabs quickly with shortcut: Ctrl+1,2,3 or 4 and CMD+1,2,3 or 4")
         self.tab_widget.addTab(self.font_and_image_tab(), "Font and Image Parameters")
-        self.tab_widget.addTab(self.create_cropping_tab(), "Crop and Align Parameters")
+        self.tab_widget.addTab(self.create_cropping_tab(), "Align, Crop and Skew Parameters")
         self.tab_widget.addTab(self.create_white_space_tab(), "White Space Parameters")
         self.tab_widget.addTab(self.create_markers_tab(), "Marker Parameters")
+        self.tab_widget.addTab(self.combine_image_tab(), "Overlap Images")
         
         layout.addWidget(self.tab_widget)
         
@@ -369,6 +370,9 @@ class CombinedSDSApp(QMainWindow):
         self.move_tab_4_shortcut = QShortcut(QKeySequence("Ctrl+4"), self)
         self.move_tab_4_shortcut.activated.connect(lambda: self.move_tab(3))
         
+        self.move_tab_5_shortcut = QShortcut(QKeySequence("Ctrl+5"), self)
+        self.move_tab_5_shortcut.activated.connect(lambda: self.move_tab(4))
+        
         self.undo_shortcut = QShortcut(QKeySequence("Ctrl+U"), self)
         self.undo_shortcut.activated.connect(self.undo_action)
         
@@ -399,8 +403,218 @@ class CombinedSDSApp(QMainWindow):
             self.undo_stack.append(self.image.copy())
             self.image = self.redo_stack.pop()
             self.update_live_view()
+            
+    def combine_image_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        
+        render_scale=3
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
+    
+        # Group Box for Image 1
+        image1_group = QGroupBox("Image 1")
+        image1_layout = QVBoxLayout()
+        
+        load_layout_1=QHBoxLayout()
+        # Save Image 1 Button
+        save_image1_button = QPushButton("Copy Image")
+        save_image1_button.clicked.connect(self.save_image1)
+        load_layout_1.addWidget(save_image1_button)
+    
+        # Place Image 1 Button
+        place_image1_button = QPushButton("Place Image")
+        place_image1_button.clicked.connect(self.place_image1)
+        load_layout_1.addWidget(place_image1_button)
+    
+        # Remove Image 1 Button
+        remove_image1_button = QPushButton("Remove Image")
+        remove_image1_button.clicked.connect(self.remove_image1)
+        load_layout_1.addWidget(remove_image1_button)
+        
+        image1_layout.addLayout(load_layout_1)
         
     
+        # Sliders for Image 1 Position
+        self.image1_left_slider = QSlider(Qt.Horizontal)
+        self.image1_left_slider.setRange(-int(render_width+100), int(render_width+100))
+        self.image1_left_slider.setValue(0)
+        self.image1_left_slider.valueChanged.connect(self.update_live_view)
+        image1_layout.addWidget(QLabel("Horizontal Position"))
+        image1_layout.addWidget(self.image1_left_slider)
+    
+        self.image1_top_slider = QSlider(Qt.Horizontal)
+        self.image1_top_slider.setRange(-int(render_height+100), int(render_height+100))
+        self.image1_top_slider.setValue(0)
+        self.image1_top_slider.valueChanged.connect(self.update_live_view)
+        image1_layout.addWidget(QLabel("Vertical Position"))
+        image1_layout.addWidget(self.image1_top_slider)
+    
+        # Resize Slider for Image 1
+        self.image1_resize_slider = QSlider(Qt.Horizontal)
+        self.image1_resize_slider.setRange(10, 400)  # 10% to 200% scaling
+        self.image1_resize_slider.setValue(100)  # Default to 100% (no scaling)
+        self.image1_resize_slider.valueChanged.connect(self.update_live_view)
+        image1_layout.addWidget(QLabel("Resize Image (%)"))
+        image1_layout.addWidget(self.image1_resize_slider)
+    
+        image1_group.setLayout(image1_layout)
+        layout.addWidget(image1_group)
+    
+        # Group Box for Image 2
+        image2_group = QGroupBox("Image 2")
+        image2_layout = QVBoxLayout()
+        
+        load_layout_2=QHBoxLayout()
+    
+        # Save Image 2 Button
+        save_image2_button = QPushButton("Copy Image")
+        save_image2_button.clicked.connect(self.save_image2)
+        load_layout_2.addWidget(save_image2_button)
+    
+        # Place Image 2 Button
+        place_image2_button = QPushButton("Place Image")
+        place_image2_button.clicked.connect(self.place_image2)
+        load_layout_2.addWidget(place_image2_button)
+    
+        # Remove Image 2 Button
+        remove_image2_button = QPushButton("Remove Image")
+        remove_image2_button.clicked.connect(self.remove_image2)
+        load_layout_2.addWidget(remove_image2_button)
+        
+        image2_layout.addLayout(load_layout_2)
+    
+        # Sliders for Image 2 Position
+        self.image2_left_slider = QSlider(Qt.Horizontal)
+        self.image2_left_slider.setRange(-int(render_width+100), int(render_width+100))
+        self.image2_left_slider.setValue(0)
+        self.image2_left_slider.valueChanged.connect(self.update_live_view)
+        image2_layout.addWidget(QLabel("Horizontal Position"))
+        image2_layout.addWidget(self.image2_left_slider)
+    
+        self.image2_top_slider = QSlider(Qt.Horizontal)
+        self.image2_top_slider.setRange(-int(render_height+100), int(render_height+100))
+        self.image2_top_slider.setValue(0)
+        self.image2_top_slider.valueChanged.connect(self.update_live_view)
+        image2_layout.addWidget(QLabel("Vertical Position"))
+        image2_layout.addWidget(self.image2_top_slider)
+    
+        # Resize Slider for Image 2
+        self.image2_resize_slider = QSlider(Qt.Horizontal)
+        self.image2_resize_slider.setRange(10, 400)  # 10% to 200% scaling
+        self.image2_resize_slider.setValue(100)  # Default to 100% (no scaling)
+        self.image2_resize_slider.valueChanged.connect(self.update_live_view)
+        image2_layout.addWidget(QLabel("Resize Image(%)"))
+        image2_layout.addWidget(self.image2_resize_slider)
+    
+        image2_group.setLayout(image2_layout)
+        layout.addWidget(image2_group)
+    
+        # Finalize Image Button
+        finalize_button = QPushButton("Merge the images")
+        finalize_button.clicked.connect(self.finalize_combined_image)
+        layout.addWidget(finalize_button)
+        layout.addStretch()
+    
+        return tab
+    
+    def remove_image1(self):
+        """Remove Image 1 and reset its sliders."""
+        if hasattr(self, 'image1'):
+            # del self.image1
+            # del self.image1_original
+            del self.image1_position
+            self.image1_left_slider.setValue(0)
+            self.image1_top_slider.setValue(0)
+            self.image1_resize_slider.setValue(100)
+            self.update_live_view()
+    
+    def remove_image2(self):
+        """Remove Image 2 and reset its sliders."""
+        if hasattr(self, 'image2'):
+            # del self.image2
+            # del self.image2_original
+            del self.image2_position
+            self.image2_left_slider.setValue(0)
+            self.image2_top_slider.setValue(0)
+            self.image2_resize_slider.setValue(100)
+            self.update_live_view()
+    
+    def save_image1(self):
+        if self.image:
+            self.image1 = self.image.copy()
+            self.image1_original = self.image1.copy()  # Save the original image for resizing
+            QMessageBox.information(self, "Success", "Image 1 copied.")
+    
+    def save_image2(self):
+        if self.image:
+            self.image2 = self.image.copy()
+            self.image2_original = self.image2.copy()  # Save the original image for resizing
+            QMessageBox.information(self, "Success", "Image 2 copied.")
+    
+    def place_image1(self):
+        if hasattr(self, 'image1'):
+            self.image1_position = (self.image1_left_slider.value(), self.image1_top_slider.value())
+            self.update_live_view()
+    
+    def place_image2(self):
+        if hasattr(self, 'image2'):
+            self.image2_position = (self.image2_left_slider.value(), self.image2_top_slider.value())
+            self.update_live_view()
+    
+    # def update_combined_image(self):
+    #     if not hasattr(self, 'image1') and not hasattr(self, 'image2'):
+    #         return
+    
+    #     # Create a copy of the original image to avoid modifying it
+    #     combined_image = self.image.copy()
+    
+    #     painter = QPainter(combined_image)
+    
+    #     # Draw Image 1 if it exists
+    #     if hasattr(self, 'image1') and hasattr(self, 'image1_position'):
+    #         # Resize Image 1 based on the slider value
+    #         scale_factor = self.image1_resize_slider.value() / 100.0
+    #         width = int(self.image1_original.width() * scale_factor)
+    #         height = int(self.image1_original.height() * scale_factor)
+    #         resized_image1 = self.image1_original.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    #         painter.drawImage(self.image1_position[0], self.image1_position[1], resized_image1)
+    
+    #     # Draw Image 2 if it exists
+    #     if hasattr(self, 'image2') and hasattr(self, 'image2_position'):
+    #         # Resize Image 2 based on the slider value
+    #         scale_factor = self.image2_resize_slider.value() / 100.0
+    #         width = int(self.image2_original.width() * scale_factor)
+    #         height = int(self.image2_original.height() * scale_factor)
+    #         resized_image2 = self.image2_original.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    #         painter.drawImage(self.image2_position[0], self.image2_position[1], resized_image2)
+    
+    #     painter.end()
+    
+    #     # Update the live view with the combined image
+    #     self.live_view_label.setPixmap(QPixmap.fromImage(combined_image))
+    
+    def finalize_combined_image(self):
+        """Save whatever is displayed in live_view_label to self.image."""
+        if self.live_view_label.pixmap() is None:
+            QMessageBox.warning(self, "Warning", "No image displayed in the live view.")
+            return
+    
+        # Get the current pixmap from the label
+        pixmap = self.live_view_label.pixmap()
+    
+        # Convert QPixmap to QImage
+        self.image = pixmap.toImage()
+        self.remove_image1()
+        self.remove_image2()
+    
+        QMessageBox.information(self, "Success", "The displayed image has been finalized and saved in memory.")
+    
+        
+    
+
+
     def font_and_image_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -546,11 +760,44 @@ class CombinedSDSApp(QMainWindow):
         # Align Button
         self.align_button = QPushButton("Align Image")
         self.align_button.clicked.connect(self.align_image)
+        
+        # Flip Vertical Button
+        self.flip_vertical_button = QPushButton("Flip Vertical")
+        self.flip_vertical_button.clicked.connect(self.flip_vertical)
+    
+        # Flip Horizontal Button
+        self.flip_horizontal_button = QPushButton("Flip Horizontal")
+        self.flip_horizontal_button.clicked.connect(self.flip_horizontal)
     
         alignment_layout.addLayout(rotation_layout)
         alignment_layout.addWidget(self.align_button)
+        alignment_layout.addWidget(self.flip_vertical_button)  
+        alignment_layout.addWidget(self.flip_horizontal_button)  
         alignment_params_group.setLayout(alignment_layout)
+        
+        
+       # Add Tapering Skew Fix Group
+        taper_skew_group = QGroupBox("Skew Fix")
+        taper_skew_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        taper_skew_layout = QVBoxLayout()
     
+        # Taper Skew Slider
+        self.taper_skew_label = QLabel("Tapering Skew:")
+        self.taper_skew_slider = QSlider(Qt.Horizontal)
+        self.taper_skew_slider.setRange(-50, 50)  # Adjust as needed
+        self.taper_skew_slider.setValue(0)
+        self.taper_skew_slider.valueChanged.connect(self.update_live_view)
+        
+        # Align Button
+        self.skew_button = QPushButton("Skew Image")
+        self.skew_button.clicked.connect(self.update_skew)
+    
+        # Add widgets to taper skew layout
+        taper_skew_layout.addWidget(self.taper_skew_label)
+        taper_skew_layout.addWidget(self.taper_skew_slider)
+        taper_skew_layout.addWidget(self.skew_button)
+        taper_skew_group.setLayout(taper_skew_layout)
+        
         # Group Box for Cropping Options
         cropping_params_group = QGroupBox("Cropping Options")
         cropping_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -603,6 +850,7 @@ class CombinedSDSApp(QMainWindow):
         # Add both group boxes to the main layout
         layout.addWidget(alignment_params_group)
         layout.addWidget(cropping_params_group)
+        layout.addWidget(taper_skew_group)
         layout.addStretch()
     
         return tab
@@ -733,7 +981,6 @@ class CombinedSDSApp(QMainWindow):
         
         # Text input for Top Marker Labels
         self.top_marker_input = QTextEdit(self)
-        self.top_label = ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"]
         self.top_marker_input.setText(", ".join(self.top_label))  # Populate with initial values
         self.top_marker_input.setMinimumHeight(40)
         
@@ -962,6 +1209,21 @@ class CombinedSDSApp(QMainWindow):
         
         layout.addStretch()
         return tab
+
+    
+    def flip_vertical(self):
+        self.save_state()
+        """Flip the image vertically."""
+        if self.image:
+            self.image = self.image.mirrored(vertical=True, horizontal=False)
+            self.update_live_view()
+    
+    def flip_horizontal(self):
+        self.save_state()
+        """Flip the image horizontally."""
+        if self.image:
+            self.image = self.image.mirrored(vertical=False, horizontal=True)
+            self.update_live_view()
     
     def convert_to_black_and_white(self):
         self.save_state()
@@ -1465,10 +1727,10 @@ class CombinedSDSApp(QMainWindow):
             h=self.image.height()
             # Preview window
             ratio=w/h
-            self.label_width = 540
+            self.label_width=int(self.screen_width * 0.3)
             label_height=int(self.label_width/ratio)
             if label_height>self.label_width:
-                label_height=540
+                label_height=self.label_width
                 self.label_width=ratio*label_height
             self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
         except:
@@ -1546,10 +1808,10 @@ class CombinedSDSApp(QMainWindow):
             h=self.image.height()
             # Preview window
             ratio=w/h
-            self.label_width = 540
+            self.label_width=int(self.screen_width * 0.3)
             label_height=int(self.label_width/ratio)
             if label_height>self.label_width:
-                label_height=540
+                label_height=self.label_width
                 self.label_width=ratio*label_height
             self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
         except:
@@ -1585,23 +1847,18 @@ class CombinedSDSApp(QMainWindow):
         self.crop_y_start_slider.setValue(config_data["cropping_parameters"]["y_start_percent"])
         self.crop_y_end_slider.setValue(config_data["cropping_parameters"]["y_end_percent"])
     
-        self.left_markers = config_data["marker_positions"]["left"]
-        self.right_markers = config_data["marker_positions"]["right"]
-        self.top_markers = config_data["marker_positions"]["top"]
-    
-        self.top_label = config_data["marker_labels"]["top"]
-        self.top_marker_input.setText(", ".join(self.top_label))
-        
-        self.combo_box.setCurrentText("Custom")
-        self.marker_values_textbox.setEnabled(True)
         try:
-            try:
-                self.marker_values_textbox.setText(str(config_data["marker_labels"]["left"]))
-            except:
-                self.marker_values_textbox.setText(str(config_data["marker_labels"]["right"]))
-        except:
-            print("ERROR LOADING MARKER VALUES")
-        
+            self.left_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["left"]]
+            self.right_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["right"]]
+            self.top_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["top"]]
+        except (KeyError, ValueError) as e:
+            QMessageBox.warning(self, "Error", f"Invalid marker data in config: {e}")
+        try:
+            # print("TOP LABELS: ",config_data["marker_labels"]["top"])
+            self.top_label = [str(label) for label in config_data["marker_labels"]["top"]]
+            self.top_marker_input.setText(", ".join(self.top_label))
+        except KeyError as e:
+            QMessageBox.warning(self, "Error", f"Invalid marker labels in config: {e}")
     
         self.font_family = config_data["font_options"]["font_family"]
         self.font_size = config_data["font_options"]["font_size"]
@@ -1611,12 +1868,30 @@ class CombinedSDSApp(QMainWindow):
         self.top_padding_slider.setValue(config_data["marker_padding"]["top"])
         self.left_padding_slider.setValue(config_data["marker_padding"]["left"])
         self.right_padding_slider.setValue(config_data["marker_padding"]["right"])
+        
+        try:
+            try:
+                self.marker_values_textbox.setText(str(config_data["marker_labels"]["left"]))
+            except:
+                self.marker_values_textbox.setText(str(config_data["marker_labels"]["right"]))
+            if self.marker_values_textbox.text!="":
+                self.combo_box.setCurrentText("Custom")
+                self.marker_values_textbox.setEnabled(True)                
+            else:
+                self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
+                self.marker_values_textbox.setEnabled(False)
+                
+        except:
+            print("ERROR IN LEFT/RIGHT MARKER DATA")
     
         try:
             self.custom_markers = [
                 (marker["x"], marker["y"], marker["text"], QColor(marker["color"]), marker["font"], marker["font_size"])
                 for marker in config_data.get("custom_markers", [])
             ]
+                
+                
+                
         except:
             pass
         # Set slider ranges from config_data
@@ -1920,10 +2195,10 @@ class CombinedSDSApp(QMainWindow):
         h=self.image.height()
         # Preview window
         ratio=w/h
-        self.label_width = 540
+        self.label_width=int(self.screen_width * 0.3)
         label_height=int(self.label_width/ratio)
         if label_height>self.label_width:
-            label_height=540
+            label_height=self.label_width
             self.label_width=ratio*label_height
         self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
         
@@ -1957,14 +2232,13 @@ class CombinedSDSApp(QMainWindow):
     def update_live_view(self):
         if not self.image:
             return
-        
+    
         # Enable the "Predict Molecular Weight" button if markers are present
         if self.left_markers or self.right_markers:
             self.predict_button.setEnabled(True)
         else:
             self.predict_button.setEnabled(False)
     
-            
         # Define a higher resolution for processing (e.g., 2x or 3x label size)
         render_scale = 3  # Scale factor for rendering resolution
         render_width = self.live_view_label.width() * render_scale
@@ -1995,13 +2269,46 @@ class CombinedSDSApp(QMainWindow):
         cropped_image = self.image.copy(x_start, y_start, x_end - x_start, y_end - y_start)
     
         # Get the orientation value from the slider
-        orientation = float(self.orientation_slider.value()/20)  # Orientation slider value
+        orientation = float(self.orientation_slider.value() / 20)  # Orientation slider value
     
         # Apply the rotation to the cropped image
         rotated_image = cropped_image.transformed(QTransform().rotate(orientation))
+        
+        taper_value = self.taper_skew_slider.value() / 100  # Normalize taper value to a range of -1 to 1
+
+        width = self.image.width()
+        height = self.image.height()
+    
+        # Define corner points for perspective transformation
+        source_corners = QPolygonF([QPointF(0, 0), QPointF(width, 0), QPointF(0, height), QPointF(width, height)])
+    
+        # Initialize destination corners as a copy of source corners
+        destination_corners = QPolygonF(source_corners)
+    
+        # Adjust perspective based on taper value
+        if taper_value > 0:
+            # Narrower at the top, wider at the bottom
+            destination_corners[0].setX(width * taper_value / 2)  # Top-left
+            destination_corners[1].setX(width * (1 - taper_value / 2))  # Top-right
+        elif taper_value < 0:
+            # Wider at the top, narrower at the bottom
+            destination_corners[2].setX(width * (-taper_value / 2))  # Bottom-left
+            destination_corners[3].setX(width * (1 + taper_value / 2))  # Bottom-right
+    
+        # Create a perspective transformation using quadToQuad
+        transform = QTransform()
+        if not QTransform.quadToQuad(source_corners, destination_corners, transform):
+            print("Failed to create transformation matrix")
+            return
+    
+        # Apply the transformation
+        # self.image = self.image.transformed(transform, Qt.SmoothTransformation)
+
+ 
+        skewed_image = rotated_image.transformed(transform, Qt.SmoothTransformation)
     
         # Scale the rotated image to the rendering resolution
-        scaled_image = rotated_image.scaled(
+        scaled_image = skewed_image.scaled(
             render_width,
             render_height,
             Qt.KeepAspectRatio,
@@ -2009,12 +2316,12 @@ class CombinedSDSApp(QMainWindow):
         )
     
         # Render on a high-resolution canvas
-        canvas = QImage(render_width, render_height, QImage.Format_RGB888)
-        canvas.fill(QColor(255, 255, 255))  # Fill with white background
+        canvas = QImage(render_width, render_height, QImage.Format_ARGB32)
+        canvas.fill(Qt.transparent)  # Transparent background
+    
+        # Render the base image and overlays
         self.render_image_on_canvas(canvas, scaled_image, x_start, y_start, render_scale)
-        
-          
-        
+    
         # Scale the high-resolution canvas down to the label's size for display
         pixmap = QPixmap.fromImage(canvas).scaled(
             self.live_view_label.size(),
@@ -2022,16 +2329,42 @@ class CombinedSDSApp(QMainWindow):
             Qt.SmoothTransformation,
         )
         self.live_view_label.setPixmap(pixmap)
-        
-        
-        
-
+    
     def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
-                
         painter = QPainter(canvas)
         x_offset = (canvas.width() - scaled_image.width()) // 2
         y_offset = (canvas.height() - scaled_image.height()) // 2
+    
+        # Draw the base image
         painter.drawImage(x_offset, y_offset, scaled_image)
+    
+        # Draw Image 1 if it exists
+        if hasattr(self, 'image1') and hasattr(self, 'image1_position'):
+            self.image1_position = (self.image1_left_slider.value(), self.image1_top_slider.value())
+            # Resize Image 1 based on the slider value
+            scale_factor = self.image1_resize_slider.value() / 100.0
+            width = int(self.image1_original.width() * scale_factor)
+            height = int(self.image1_original.height() * scale_factor)
+            resized_image1 = self.image1_original.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    
+            # Calculate the position of Image 1
+            image1_x = x_offset + self.image1_position[0]
+            image1_y = y_offset + self.image1_position[1]
+            painter.drawImage(image1_x, image1_y, resized_image1)
+    
+        # Draw Image 2 if it exists
+        if hasattr(self, 'image2') and hasattr(self, 'image2_position'):
+            self.image2_position = (self.image2_left_slider.value(), self.image2_top_slider.value())
+            # Resize Image 2 based on the slider value
+            scale_factor = self.image2_resize_slider.value() / 100.0
+            width = int(self.image2_original.width() * scale_factor)
+            height = int(self.image2_original.height() * scale_factor)
+            resized_image2 = self.image2_original.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    
+            # Calculate the position of Image 2
+            image2_x = x_offset + self.image2_position[0]
+            image2_y = y_offset + self.image2_position[1]
+            painter.drawImage(image2_x, image2_y, resized_image2)
     
         # Get the selected font settings
         font = QFont(self.font_combo_box.currentFont().family(), self.font_size_spinner.value() * render_scale)
@@ -2168,8 +2501,8 @@ class CombinedSDSApp(QMainWindow):
             for y in range(0, canvas.height(), grid_size):
                 painter.drawLine(0, y, canvas.width(), y)
                 
-                
         painter.end()
+
 
      
     def crop_image(self):
@@ -2255,7 +2588,7 @@ class CombinedSDSApp(QMainWindow):
         # Reset the orientation slider
         self.orientation_slider.setValue(0)
     
-    # Modify update_crop to include alignment and configuration preservation
+    
     def update_crop(self):
         self.save_state()
         """Update the image based on current crop sliders. First align, then crop the image."""
@@ -2287,7 +2620,44 @@ class CombinedSDSApp(QMainWindow):
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
     
+    def update_skew(self):
+        self.save_state()
+        taper_value = self.taper_skew_slider.value() / 100  # Normalize taper value to a range of -1 to 1
+
+        width = self.image.width()
+        height = self.image.height()
+    
+        # Define corner points for perspective transformation
+        source_corners = QPolygonF([QPointF(0, 0), QPointF(width, 0), QPointF(0, height), QPointF(width, height)])
+    
+        # Initialize destination corners as a copy of source corners
+        destination_corners = QPolygonF(source_corners)
+    
+        # Adjust perspective based on taper value
+        if taper_value > 0:
+            # Narrower at the top, wider at the bottom
+            destination_corners[0].setX(width * taper_value / 2)  # Top-left
+            destination_corners[1].setX(width * (1 - taper_value / 2))  # Top-right
+        elif taper_value < 0:
+            # Wider at the top, narrower at the bottom
+            destination_corners[2].setX(width * (-taper_value / 2))  # Bottom-left
+            destination_corners[3].setX(width * (1 + taper_value / 2))  # Bottom-right
+    
+        # Create a perspective transformation using quadToQuad
+        transform = QTransform()
+        if not QTransform.quadToQuad(source_corners, destination_corners, transform):
+            print("Failed to create transformation matrix")
+            return
+    
+        # Apply the transformation
+        # self.image = self.image.transformed(transform, Qt.SmoothTransformation)
+
+ 
+        self.image = self.image.transformed(transform, Qt.SmoothTransformation)
+        self.taper_skew_slider.setValue(0)
+
     def save_image_svg(self):
+        self.finalize_combined_image()
         """Save the processed image along with markers and labels in SVG format containing EMF data."""
         # self.left_marker_shift_added = self.left_padding_slider.value()
         # self.right_marker_shift_added = self.right_padding_slider.value()
@@ -2418,6 +2788,7 @@ class CombinedSDSApp(QMainWindow):
         QMessageBox.information(self, "Success", f"Image saved as SVG at {file_path}.")
         
     def save_image(self):
+        self.finalize_combined_image()
         if not self.image:
             QMessageBox.warning(self, "Warning", "Please load an image first.")
             return
@@ -2798,7 +3169,10 @@ class CombinedSDSApp(QMainWindow):
             self.image = self.image_master.copy()
             self.image_before_padding = self.image.copy()
             self.image_contrasted = self.image.copy() # Update the contrasted image
-            self.image_before_padding = self.image.copy()
+        else:
+            self.image_before_padding = None
+            self.image_contrasted = None  
+            
         self.left_markers.clear()  # Clear left markers
         self.right_markers.clear()  # Clear right markers
         self.top_markers.clear()
@@ -2811,6 +3185,7 @@ class CombinedSDSApp(QMainWindow):
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
         self.orientation_slider.setValue(0)
+        self.taper_skew_slider.setValue(0)
         self.left_marker_shift = 0   # Additional shift for marker text
         self.right_marker_shift = 0   # Additional shift for marker tex
         self.top_marker_shift=0 
@@ -2820,12 +3195,11 @@ class CombinedSDSApp(QMainWindow):
         self.left_padding_slider.setValue(0)
         self.right_padding_slider.setValue(0)
         self.top_padding_slider.setValue(0)
-        # self.top_padding_slider.setValue(0)
-        # self.left_padding_slider.setValue(0)
-        # self.right_padding_slider.setValue(0)
         self.marker_mode = None
         self.current_marker_index = 0
         self.current_top_label_index = 0
+        self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
+        self.marker_values_textbox.setText(str(self.marker_values_dict[self.combo_box.currentText()]))
 
 
 if __name__ == "__main__":
