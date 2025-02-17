@@ -103,6 +103,8 @@ class CombinedSDSApp(QMainWindow):
         self.new_image_height=0
         self.base_name="Image"
         self.image_path=""
+        self.x_offset_s=0
+        self.y_offset_s=0
         # Initialize self.marker_values to None initially
         self.marker_values_dict = {
             "Precision Plus All Blue/Unstained": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
@@ -257,7 +259,7 @@ class CombinedSDSApp(QMainWindow):
         self.tab_widget.addTab(self.create_cropping_tab(), "Align, Crop and Skew Parameters")
         self.tab_widget.addTab(self.create_white_space_tab(), "White Space Parameters")
         self.tab_widget.addTab(self.create_markers_tab(), "Marker Parameters")
-        self.tab_widget.addTab(self.combine_image_tab(), "Overlap Images")
+        self.tab_widget.addTab(self.combine_image_tab(), "Overlap Parameters")
         
         layout.addWidget(self.tab_widget)
         
@@ -512,7 +514,8 @@ class CombinedSDSApp(QMainWindow):
         layout.addWidget(image2_group)
     
         # Finalize Image Button
-        finalize_button = QPushButton("Merge the images")
+        finalize_button = QPushButton("Rasterize the images")
+        finalize_button.setToolTip("Will merge all images, markers and texts that is on the visible on the screen")
         finalize_button.clicked.connect(self.finalize_combined_image)
         layout.addWidget(finalize_button)
         layout.addStretch()
@@ -524,7 +527,10 @@ class CombinedSDSApp(QMainWindow):
         if hasattr(self, 'image1'):
             # del self.image1
             # del self.image1_original
-            del self.image1_position
+            try:
+                del self.image1_position
+            except:
+                pass
             self.image1_left_slider.setValue(0)
             self.image1_top_slider.setValue(0)
             self.image1_resize_slider.setValue(100)
@@ -535,7 +541,10 @@ class CombinedSDSApp(QMainWindow):
         if hasattr(self, 'image2'):
             # del self.image2
             # del self.image2_original
-            del self.image2_position
+            try:
+                del self.image2_position
+            except:
+                pass
             self.image2_left_slider.setValue(0)
             self.image2_top_slider.setValue(0)
             self.image2_resize_slider.setValue(100)
@@ -596,20 +605,72 @@ class CombinedSDSApp(QMainWindow):
     #     self.live_view_label.setPixmap(QPixmap.fromImage(combined_image))
     
     def finalize_combined_image(self):
-        """Save whatever is displayed in live_view_label to self.image."""
-        if self.live_view_label.pixmap() is None:
-            QMessageBox.warning(self, "Warning", "No image displayed in the live view.")
-            return
+        """Overlap image1 and image2 on top of self.image and save the result as self.image."""
+        # if not hasattr(self, 'image1') and not hasattr(self, 'image2'):
+        #     QMessageBox.warning(self, "Warning", "No images to overlap.")
+        #     return
+        
+        # Define cropping boundaries
+        x_start_percent = self.crop_x_start_slider.value() / 100
+        y_start_percent = self.crop_y_start_slider.value() / 100
+        x_start = int(self.image.width() * x_start_percent)
+        y_start = int(self.image.height() * y_start_percent)
+        # Create a high-resolution canvas for the final image
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
     
-        # Get the current pixmap from the label
-        pixmap = self.live_view_label.pixmap()
+        # Create a blank high-resolution image with a white background
+        high_res_canvas = QImage(render_width, render_height, QImage.Format_RGB888)
+        high_res_canvas.fill(Qt.white)
     
-        # Convert QPixmap to QImage
-        self.image = pixmap.toImage()
+        # Create a QPainter to draw on the high-resolution canvas
+        painter = QPainter(high_res_canvas)
+    
+        # Draw the base image (self.image) onto the high-resolution canvas
+        scaled_base_image = self.image.scaled(render_width, render_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawImage(0, 0, scaled_base_image)
+    
+        # Draw Image 1 if it exists
+        if hasattr(self, 'image1') and hasattr(self, 'image1_position'):
+            scale_factor = self.image1_resize_slider.value() / 100.0
+            width = int(self.image1_original.width() * scale_factor)
+            height = int(self.image1_original.height() * scale_factor)
+            resized_image1 = self.image1_original.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            painter.drawImage(
+                int(self.image1_position[0] + self.x_offset_s),
+                int(self.image1_position[1] + self.y_offset_s),
+                resized_image1
+            )
+    
+        # Draw Image 2 if it exists
+        if hasattr(self, 'image2') and hasattr(self, 'image2_position'):
+            scale_factor = self.image2_resize_slider.value() / 100.0
+            width = int(self.image2_original.width() * scale_factor)
+            height = int(self.image2_original.height() * scale_factor)
+            resized_image2 = self.image2_original.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            painter.drawImage(
+                int(self.image2_position[0] + self.x_offset_s),
+                int(self.image2_position[1] + self.y_offset_s),
+                resized_image2
+            )
+    
+        # End painting
+        painter.end()
+        
+ 
+        self.render_image_on_canvas(
+                high_res_canvas, scaled_base_image, x_start, y_start, render_scale, draw_guides=False
+            )
+        
+        self.image=high_res_canvas
+        self.update_live_view()
+    
+        # Remove Image 1 and Image 2 after finalizing
         self.remove_image1()
         self.remove_image2()
     
-        QMessageBox.information(self, "Success", "The displayed image has been finalized and saved in memory.")
+        QMessageBox.information(self, "Success", "The images have been overlapped and saved in memory.")
     
         
     
@@ -1469,11 +1530,11 @@ class CombinedSDSApp(QMainWindow):
                 
                 
             except:
-                print("CHECK ON_COMBOBOX_1st try")
+                pass
             try:
                 self.marker_values_textbox.setText(str(self.marker_values_dict[self.combo_box.currentText()]))
             except:
-                print("CHECK ON_COMBOBOX_2nd try")
+                pass
 
     # Functions for updating contrast and gamma
     
@@ -1853,13 +1914,15 @@ class CombinedSDSApp(QMainWindow):
             self.right_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["right"]]
             self.top_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["top"]]
         except (KeyError, ValueError) as e:
-            QMessageBox.warning(self, "Error", f"Invalid marker data in config: {e}")
+            # QMessageBox.warning(self, "Error", f"Invalid marker data in config: {e}")
+            pass
         try:
             # print("TOP LABELS: ",config_data["marker_labels"]["top"])
             self.top_label = [str(label) for label in config_data["marker_labels"]["top"]]
             self.top_marker_input.setText(", ".join(self.top_label))
         except KeyError as e:
-            QMessageBox.warning(self, "Error", f"Invalid marker labels in config: {e}")
+            # QMessageBox.warning(self, "Error", f"Invalid marker labels in config: {e}")
+            pass
     
         self.font_family = config_data["font_options"]["font_family"]
         self.font_size = config_data["font_options"]["font_size"]
@@ -1883,7 +1946,8 @@ class CombinedSDSApp(QMainWindow):
                 self.marker_values_textbox.setEnabled(False)
                 
         except:
-            print("ERROR IN LEFT/RIGHT MARKER DATA")
+            # print("ERROR IN LEFT/RIGHT MARKER DATA")
+            pass
     
         try:
             self.custom_markers = [
@@ -1908,7 +1972,8 @@ class CombinedSDSApp(QMainWindow):
             )
         except KeyError:
             # Handle missing or incomplete slider_ranges data
-            print("Error: Slider ranges not found in config_data.")
+            # print("Error: Slider ranges not found in config_data.")
+            pass
         
         try:
             self.left_marker_shift_added=int(config_data["added_shift"]["left"])
@@ -1917,7 +1982,8 @@ class CombinedSDSApp(QMainWindow):
             
         except KeyError:
             # Handle missing or incomplete slider_ranges data
-            print("Error: Added Shift not found in config_data.")
+            # print("Error: Added Shift not found in config_data.");
+            pass
             
         # Apply font settings
 
@@ -2335,6 +2401,9 @@ class CombinedSDSApp(QMainWindow):
         painter = QPainter(canvas)
         x_offset = (canvas.width() - scaled_image.width()) // 2
         y_offset = (canvas.height() - scaled_image.height()) // 2
+        
+        self.x_offset_s=x_offset
+        self.y_offset_s=y_offset
     
         # Draw the base image
         painter.drawImage(x_offset, y_offset, scaled_image)
@@ -2611,7 +2680,6 @@ class CombinedSDSApp(QMainWindow):
             self.image_before_contrast=self.image.copy()
             self.update_live_view()
     
-    
         # Reset sliders
         self.crop_x_start_slider.setValue(0)
         self.crop_x_end_slider.setValue(100)
@@ -2654,139 +2722,9 @@ class CombinedSDSApp(QMainWindow):
         self.image = self.image.transformed(transform, Qt.SmoothTransformation)
         self.taper_skew_slider.setValue(0)
 
-    def save_image_svg(self):
-        self.finalize_combined_image()
-        """Save the processed image along with markers and labels in SVG format containing EMF data."""
-        # self.left_marker_shift_added = self.left_padding_slider.value()
-        # self.right_marker_shift_added = self.right_padding_slider.value()
-        # self.top_marker_shift_added = self.top_padding_slider.value()
-        if not self.image:
-            QMessageBox.warning(self, "Warning", "No image to save.")
-            return
     
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Image as SVG for MS Word Image Editing", "", "SVG Files (*.svg)", options=options
-        )
-    
-        if not file_path:
-            return
-    
-        if not file_path.endswith(".svg"):
-            file_path += ".svg"
-    
-    
-        # Create an SVG file with svgwrite
-        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
-    
-        # Convert the QImage to a base64-encoded PNG for embedding
-        buffer = QBuffer()
-        buffer.open(QBuffer.ReadWrite)
-        self.image.save(buffer, "PNG")
-        image_data = base64.b64encode(buffer.data()).decode('utf-8')
-        buffer.close()
-        
-        x_start_percent = self.crop_x_start_slider.value() / 100
-        x_end_percent = self.crop_x_end_slider.value() / 100
-        y_start_percent = self.crop_y_start_slider.value() / 100
-        y_end_percent = self.crop_y_end_slider.value() / 100
-    
-        # Calculate the crop boundaries based on the percentages
-        x_start = int(self.image.width() * x_start_percent)
-        x_end = int(self.image.width() * x_end_percent)
-        y_start = int(self.image.height() * y_start_percent)
-        y_end = int(self.image.height() * y_end_percent)
-		
-        render_scale = 3  # Scale factor for rendering resolution
-        render_width = self.live_view_label.width() * render_scale
-        render_height = self.live_view_label.height() * render_scale
-        
-        
-    
-        # Embed the image as a base64 data URI
-        dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
-    
-        # Add custom markers to the SVG
-        for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
-            # Adjust label positions to align with the live view
-            font_metrics = QFontMetrics(QFont(font, font_size))
-            text_width = (font_metrics.horizontalAdvance(text))  # Get text width
-            text_height = (font_metrics.height())
-            dwg.add(
-                dwg.text(
-                    text,
-                    # insert=((adjusted_shift_x-text_width/2),(adjusted_shift_y+text_height/4)),
-                    insert=((x-text_width/2),(y+text_height/4)),
-                    fill=color.name(),
-                    font_family=font,
-                    font_size=f"{font_size}px"
-                )
-            )
-    
-        # Adjust label positions to align with the live view
-        font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
-        # Add left labels
-        for y, text in getattr(self, "left_markers", []):
-            final_text=f"{text} ⎯ "            
-            text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
-            text_height = font_metrics.height()
-            adj_left=(self.left_marker_shift_added)/(render_width/self.image.width())+x_start
-            dwg.add(
-                dwg.text(
-                    final_text,
-                    # insert=(adjusted_shift-text_width, y),
-                    insert=(adj_left-text_width, y+text_height/4),
-                    fill=self.font_color.name(),
-                    font_family=self.font_family,
-                    font_size=f"{self.font_size}px",
-                    text_anchor="end"  # Aligns text to the right
-                )
-            )
-    
-        # Add right labels
-        for y, text in getattr(self, "right_markers", []):
-            final_text=f" ⎯ {text}"
-            text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
-            text_height = font_metrics.height()
-            adj_right=(self.right_marker_shift_added)/(render_width/self.image.width())+x_start
-            dwg.add(
-                dwg.text(
-                    final_text,
-                    # insert=(adjusted_shift, y),
-                    insert=(adj_right+text_width, y+text_height/4),
-                    fill=self.font_color.name(),
-                    font_family=self.font_family,
-                    font_size=f"{self.font_size}px",
-                    text_anchor="end"  # Aligns text to the right
-                )
-            )
-    
-        # Add top labels
-        for x, text in getattr(self, "top_markers", []):
-            final_text=f"{text}"
-            text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
-            text_height = font_metrics.height()
-            # adjusted_shift=(self.top_marker_shift_added - y_start) * (render_height / self.image.height())
-            adj_top=(self.top_marker_shift_added)/(render_height/self.image.height())+y_start
-            dwg.add(
-                dwg.text(
-                    text,
-                    # insert=(x, adjusted_shift),
-                    insert=(x, adj_top-text_height/4),
-                    fill=self.font_color.name(),
-                    font_family=self.font_family,
-                    font_size=f"{self.font_size}px",
-                    transform=f"rotate({self.font_rotation}, {x}, {adj_top-text_height/4})"
-                )
-            )
-    
-        # Save the SVG file
-        dwg.save()
-    
-        QMessageBox.information(self, "Success", f"Image saved as SVG at {file_path}.")
         
     def save_image(self):
-        self.finalize_combined_image()
         if not self.image:
             QMessageBox.warning(self, "Warning", "Please load an image first.")
             return
@@ -2872,7 +2810,132 @@ class CombinedSDSApp(QMainWindow):
             
             self.setWindowTitle(f"{self.window_title}:{self.image_path}")
             
-
+    def save_image_svg(self):
+        """Save the processed image along with markers and labels in SVG format containing EMF data."""
+        if not self.image:
+            QMessageBox.warning(self, "Warning", "No image to save.")
+            return
+        
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Image as SVG for MS Word Image Editing", "", "SVG Files (*.svg)", options=options
+        )
+    
+        if not file_path:
+            return
+    
+        if not file_path.endswith(".svg"):
+            file_path += ".svg"
+    
+        # Create an SVG file with svgwrite
+        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
+    
+        # Convert the QImage to a base64-encoded PNG for embedding
+        buffer = QBuffer()
+        buffer.open(QBuffer.ReadWrite)
+        self.image.save(buffer, "PNG")
+        image_data = base64.b64encode(buffer.data()).decode('utf-8')
+        buffer.close()
+    
+        # Embed the image as a base64 data URI
+        dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
+    
+        # Calculate scaling factors and offsets
+        render_scale = 3  # Scale factor for rendering resolution
+        render_width = self.live_view_label.width() * render_scale
+        render_height = self.live_view_label.height() * render_scale
+    
+        # Calculate the scaling factors between the live view and the actual image
+        scale_x = self.image.width() / render_width
+        scale_y = self.image.height() / render_height
+    
+        # Calculate the offsets for the live view
+        x_offset = (render_width - self.image.width() * scale_x) / 2
+        y_offset = (render_height - self.image.height() * scale_y) / 2
+    
+        # Add custom markers to the SVG
+        for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
+            font_metrics = QFontMetrics(QFont(font, font_size))
+            text_width = (font_metrics.horizontalAdvance(text))  # Get text width
+            text_height = (font_metrics.height())
+            # Adjust positions to match the live view
+            adjusted_x = (x * scale_x) + x_offset
+            adjusted_y = (y * scale_y) + y_offset
+    
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(adjusted_x-text_width/2, adjusted_y+text_height/4),
+                    fill=color.name(),
+                    font_family=font,
+                    font_size=f"{font_size}px"
+                )
+            )
+    
+        # Add left labels
+        for y, text in getattr(self, "left_markers", []):
+            font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
+            final_text=f"{text} ⎯ "            
+            text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
+            text_height = font_metrics.height()
+            adjusted_y = ((y)* scale_y) + y_offset
+            adjusted_shift = ((self.left_marker_shift_added) * scale_x) + x_offset
+    
+            dwg.add(
+                dwg.text(
+                    final_text,
+                    insert=(adjusted_shift-text_width, adjusted_y+text_height/4),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px",
+                    text_anchor="end"  # Aligns text to the right
+                )
+            )
+    
+        # Add right labels
+        for y, text in getattr(self, "right_markers", []):
+            font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
+            final_text=f"{text} ⎯ "            
+            text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
+            text_height = font_metrics.height()
+            adjusted_y = (y * scale_y) + y_offset
+            adjusted_shift = (self.right_marker_shift_added * scale_x) + x_offset
+    
+            dwg.add(
+                dwg.text(
+                    f" ⎯ {text}",
+                    insert=(adjusted_shift-text_width, adjusted_y+text_height/4),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px",
+                    text_anchor="start"  # Aligns text to the left
+                )
+            )
+    
+        # Add top labels
+        for x, text in getattr(self, "top_markers", []):
+            font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
+            final_text=f"{text}"
+            text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
+            text_height = font_metrics.height()
+            adjusted_x = (x * scale_x) + x_offset
+            adjusted_shift = (self.top_marker_shift_added * scale_y) + y_offset
+    
+            dwg.add(
+                dwg.text(
+                    text,
+                    insert=(adjusted_x-text_width, adjusted_shift-text_height/4),
+                    fill=self.font_color.name(),
+                    font_family=self.font_family,
+                    font_size=f"{self.font_size}px",
+                    transform=f"rotate({self.font_rotation}, {adjusted_x}, {adjusted_shift})"
+                )
+            )
+    
+        # Save the SVG file
+        dwg.save()
+    
+        QMessageBox.information(self, "Success", f"Image saved as SVG at {file_path}.")
     
     
     def copy_to_clipboard(self):
@@ -3167,9 +3230,11 @@ class CombinedSDSApp(QMainWindow):
             self.image = self.image_master.copy()
             self.image_before_padding = self.image.copy()
             self.image_contrasted = self.image.copy() # Update the contrasted image
+            self.image_before_contrast= self.image.copy()
         else:
             self.image_before_padding = None
             self.image_contrasted = None  
+            self.image_before_contrast=None
             
         self.left_markers.clear()  # Clear left markers
         self.right_markers.clear()  # Clear right markers
@@ -3184,6 +3249,9 @@ class CombinedSDSApp(QMainWindow):
         self.crop_y_end_slider.setValue(100)
         self.orientation_slider.setValue(0)
         self.taper_skew_slider.setValue(0)
+        self.high_slider.setValue(100)  # Reset contrast to default
+        self.low_slider.setValue(0)  # Reset contrast to default
+        self.gamma_slider.setValue(100)  # Reset gamma to default
         self.left_marker_shift = 0   # Additional shift for marker text
         self.right_marker_shift = 0   # Additional shift for marker tex
         self.top_marker_shift=0 
