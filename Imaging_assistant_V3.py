@@ -2,38 +2,54 @@ import svgwrite
 import tempfile
 from tempfile import NamedTemporaryFile
 import base64
-from PIL import ImageGrab  # Import Pillow's ImageGrab for clipboard access
+from PIL import ImageGrab, Image, ImageQt  # Import Pillow's ImageGrab for clipboard access
 import sys
 from io import BytesIO
 from PyQt5.QtWidgets import (
-    QDesktopWidget, QScrollArea, QShortcut, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
+    QDesktopWidget, QScrollArea, QInputDialog, QShortcut, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
 from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
-from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF
+from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF
 import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 import platform
+import ctypes
 
 
 
 class LiveViewLabel(QLabel):
     def __init__(self, font_type, font_size, marker_color, parent=None):
-        super().__init__(parent)
-        self.setMouseTracking(True)  # Enable mouse tracking
-        self.preview_marker_enabled = False
-        self.preview_marker_text = ""
-        self.preview_marker_position = None
-        self.marker_font_type = font_type
-        self.marker_font_size = font_size
-        self.marker_color = marker_color
-        self.setFocusPolicy(Qt.StrongFocus)
+           super().__init__(parent)
+           self.setMouseTracking(True)  # Enable mouse tracking
+           self.preview_marker_enabled = False
+           self.preview_marker_text = ""
+           self.preview_marker_position = None
+           self.marker_font_type = font_type
+           self.marker_font_size = font_size
+           self.marker_color = marker_color
+           self.setFocusPolicy(Qt.StrongFocus)
+           self.bounding_box_preview = None
+           self.measure_quantity_mode = False
+           self.bounding_box_start = None  # Initialize bounding box start position
+           self.counter=0
+           self.starting_box_size=None
+           self.ending_box_size=None
+           self.box_measurement_complete=False
 
     def mouseMoveEvent(self, event):
         if self.preview_marker_enabled:
             self.preview_marker_position = event.pos()
             self.update()  # Trigger repaint to show the preview
+        if self.measure_quantity_mode and self.bounding_box_start:
+            self.bounding_box_preview = (
+                self.bounding_box_start.x(),  # Start X
+                self.bounding_box_start.y(),  # Start Y
+                event.x(),  # Current X
+                event.y()   # Current Y
+            )
+            self.update()  # Trigger repaint to show the bounding box preview
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
@@ -41,14 +57,36 @@ class LiveViewLabel(QLabel):
             # Place the marker text permanently at the clicked position
             parent = self.parent()
             parent.place_custom_marker(event, self.preview_marker_text)
-            # self.preview_marker_enabled = False  # Disable the preview after placing
             self.update()  # Clear the preview
+        if self.measure_quantity_mode:
+            self.bounding_box_start = event.pos()
+            if self.counter==0:
+                self.starting_box_size=event.pos()                        
+            self.bounding_box_preview = None  # Clear any previous preview
+            self.counter+=1
+            print("COUNTER: ",self.counter)
+            if self.counter>1:
+                self.counter=0  
+                self.ending_box_size=event.pos()
+                self.box_measurement_complete=True
+                print("BOX MEASUREMENT COMPLETED")
+            self.update()  # Trigger repaint
         super().mousePressEvent(event)
 
+    
+    def mouseReleaseEvent(self, event):
+        if self.measure_quantity_mode and self.bounding_box_start:
+            self.bounding_box_preview = None  # Clear the preview
+            self.update()
+
+        super().mouseReleaseEvent(event)
+        
     def paintEvent(self, event):
         super().paintEvent(event)
+        painter = QPainter(self)
+        
+        # Draw the preview marker if enabled
         if self.preview_marker_enabled and self.preview_marker_position:
-            painter = QPainter(self)
             painter.setOpacity(0.5)  # Semi-transparent preview
             font = QFont(self.marker_font_type)
             font.setPointSize(self.marker_font_size)
@@ -59,13 +97,27 @@ class LiveViewLabel(QLabel):
             # Draw the text at the cursor's position
             x, y = self.preview_marker_position.x(), self.preview_marker_position.y()
             painter.drawText(int(x - text_width/2), int(y + text_height/4), self.preview_marker_text)
-            painter.end()
+
+        
+        if self.bounding_box_preview and self.counter<2:
+            painter.setPen(QPen(Qt.red, 1))  # Red border for the bounding box
+            start_x, start_y, end_x, end_y = self.bounding_box_preview
+            width = abs(end_x - start_x)
+            height = abs(end_y - start_y)
+            x = min(start_x, end_x)
+            y = min(start_y, end_y)
+            painter.drawRect(x, y, width, height)  # Draw the rectangle
+        painter.end()
             
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             if self.preview_marker_enabled:
                 self.preview_marker_enabled = False  # Turn off the preview
                 self.update()  # Clear the overlay
+            self.measure_quantity_mode = False
+            self.bounding_box_start = None   
+            self.bounding_box_preview = None
+                
         super().keyPressEvent(event)
 
 class CombinedSDSApp(QMainWindow):
@@ -90,6 +142,7 @@ class CombinedSDSApp(QMainWindow):
         self.image_before_contrast=None
         self.contrast_applied=False
         self.image_padded=False
+        self.predict_size=False
         self.left_markers = []
         self.right_markers = []
         self.top_markers = []
@@ -105,6 +158,13 @@ class CombinedSDSApp(QMainWindow):
         self.image_path=""
         self.x_offset_s=0
         self.y_offset_s=0
+        # Variables to store bounding boxes and quantities
+        self.bounding_boxes = []
+        self.up_bounding_boxes = []
+        self.standard_protein_areas=[]
+        self.quantities = []
+        self.protein_quantities = []
+        self.measure_quantity_mode = False
         # Initialize self.marker_values to None initially
         self.marker_values_dict = {
             "Precision Plus All Blue/Unstained": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
@@ -213,22 +273,6 @@ class CombinedSDSApp(QMainWindow):
         save_svg_button.clicked.connect(self.save_image_svg)
         buttons_layout.addWidget(save_svg_button)
         
-
-        predict_button = QPushButton("Predict Molecular Weight")
-        predict_button.setToolTip("Predicts the size of the protein/DNA if the MW marker or ladder is labeled and puts a straight line marker on the image. Shortcut: Ctrl+P or CMD+P")
-        predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        predict_button.setEnabled(False)  # Initially disabled
-        predict_button.clicked.connect(self.predict_molecular_weight)
-        buttons_layout.addWidget(predict_button)
-        self.predict_button = predict_button
-        
-        clear_predict_button = QPushButton("Clear Prediction Marker")
-        clear_predict_button.setToolTip("Clears the straight line marker for predicting Molecular Weight/BP. Shortcut: Ctrl+Shift+P or CMD+Shift+P")
-        clear_predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        clear_predict_button.setEnabled(True)  # Initially disabled
-        clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
-        buttons_layout.addWidget(clear_predict_button)
-        
         undo_redo_layout=QHBoxLayout()
         
         undo_button = QPushButton("Undo")
@@ -260,6 +304,7 @@ class CombinedSDSApp(QMainWindow):
         self.tab_widget.addTab(self.create_white_space_tab(), "White Space Parameters")
         self.tab_widget.addTab(self.create_markers_tab(), "Marker Parameters")
         self.tab_widget.addTab(self.combine_image_tab(), "Overlap Parameters")
+        self.tab_widget.addTab(self.analysis_tab(), "Analysis")
         
         layout.addWidget(self.tab_widget)
         
@@ -375,6 +420,9 @@ class CombinedSDSApp(QMainWindow):
         self.move_tab_5_shortcut = QShortcut(QKeySequence("Ctrl+5"), self)
         self.move_tab_5_shortcut.activated.connect(lambda: self.move_tab(4))
         
+        self.move_tab_6_shortcut = QShortcut(QKeySequence("Ctrl+6"), self)
+        self.move_tab_6_shortcut.activated.connect(lambda: self.move_tab(5))
+        
         self.undo_shortcut = QShortcut(QKeySequence("Ctrl+U"), self)
         self.undo_shortcut.activated.connect(self.undo_action)
         
@@ -385,6 +433,342 @@ class CombinedSDSApp(QMainWindow):
         
         
         self.load_config()
+    
+    def enable_standard_protein_mode(self):
+        """"Enable mode to define standard protein amounts for creating a standard curve."""
+        self.measure_quantity_mode = True
+        self.live_view_label.measure_quantity_mode = True
+        self.live_view_label.setCursor(Qt.CrossCursor)
+        self.live_view_label.setMouseTracking(True)  # Ensure mouse events are enabled
+        self.setMouseTracking(True)  # Ensure parent also tracks mouse
+        # Assign mouse event handlers for bounding box creation
+        self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
+        self.live_view_label.mouseReleaseEvent = lambda event: self.end_standard_bounding_box(event)
+        # self.bounding_box_start = None
+    
+    def enable_measure_protein_mode(self):
+        """Enable mode to measure protein quantity using the standard curve."""
+        if len(self.quantities) < 2:
+            QMessageBox.warning(self, "Error", "At least two standard protein amounts are needed to measure unknowns.")
+            return
+        self.measure_quantity_mode = True
+        self.live_view_label.measure_quantity_mode = True
+        self.live_view_label.setCursor(Qt.CrossCursor)
+        self.live_view_label.setMouseTracking(True)  # Ensure mouse events are enabled
+        self.setMouseTracking(True)  # Ensure parent also tracks mouse
+        self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
+        self.live_view_label.mouseReleaseEvent = lambda event: self.end_measure_bounding_box(event)
+
+
+    
+    def start_bounding_box(self, event):
+        """Record the start position of the bounding box."""
+        if self.measure_quantity_mode:
+            self.bounding_box_start = event.pos()
+            self.live_view_label.bounding_box_start = event.pos()
+            self.live_view_label.mousePressEvent 
+    
+    def end_standard_bounding_box(self, event):
+        """Record bounding box and store known protein quantity for the standard curve."""
+        self.create_bounding_box(event, standard=True)
+        self.live_view_label.mouseReleaseEvent
+        
+    def end_measure_bounding_box(self, event):
+        """Record bounding box and estimate protein quantity based on the standard curve."""
+        self.create_bounding_box(event, standard=False)
+        self.live_view_label.mouseReleaseEvent
+    
+    def create_bounding_box(self, event, standard):
+        self.predict_size=True
+        """General method to create bounding boxes."""
+        if not self.bounding_box_start:
+            return
+            
+        start_x, start_y = self.bounding_box_start.x(), self.bounding_box_start.y()
+        end_x, end_y = event.pos().x(), event.pos().y()
+        width, height = abs(end_x - start_x), abs(end_y - start_y)
+        x, y = min(start_x, end_x), min(start_y, end_y)
+        
+        # Convert coordinates to image space
+        displayed_width = self.live_view_label.width()
+        displayed_height = self.live_view_label.height()
+        image_width = self.image.width()
+        image_height = self.image.height()
+        scale = min(displayed_width / image_width, displayed_height / image_height)
+        x_offset = (displayed_width - image_width * scale) / 2
+        y_offset = (displayed_height - image_height * scale) / 2
+        
+        image_x = max(0, min((x - x_offset) / scale, image_width))
+        image_y = max(0, min((y - y_offset) / scale, image_height))
+        image_w = min(width / scale, image_width - image_x)
+        image_h = min(height / scale, image_height - image_y)
+        
+        # Prompt user for quantity input if standard
+        if standard:
+            quantity, ok = QInputDialog.getText(self, "Enter Standard Quantity", "Enter the known protein amount (e.g., 1.5 units):")
+            if ok and quantity:
+                try:
+                    # Extract just the numeric part if unit is included
+                    quantity_value = float(quantity.split()[0])
+                    self.bounding_boxes.append((image_x, image_y, image_w, image_h))                    
+                    self.quantities.append(quantity_value)
+                    self.update_live_view()                    
+                    # Calculate the area under the peak and subtract the background
+                    peak_area = self.calculate_peak_area(image_x, image_y, image_w, image_h)     
+                    self.standard_protein_areas.append(round(peak_area,3))
+                    self.standard_protein_areas_text.setText(str(self.standard_protein_areas))
+                except (ValueError, IndexError):
+                    QMessageBox.warning(self, "Error", "Please enter a valid number for protein quantity.")
+            self.standard_protein_values.setText(str(self.quantities))
+        else:
+            self.up_bounding_boxes=[]
+            self.up_bounding_boxes.append((image_x, image_y, image_w, image_h))
+            self.calculate_unknown_quantity()
+            peak_area=self.calculate_peak_area(image_x, image_y, image_w, image_h) 
+            self.target_protein_areas_text.setText(str(round(peak_area,3)))
+            
+        
+        self.update_live_view()
+        self.bounding_box_start = None
+        self.live_view_label.bounding_box_start = None
+        self.bounding_box_start = None
+    
+    def calculate_peak_area(self, x, y, w, h):
+        """Calculate the area under the peak and subtract the background."""
+        try:
+            from PIL import Image
+            import io
+        except ImportError:
+            QMessageBox.warning(self, "Error", "Please install Pillow library with 'pip install Pillow' for image processing.")
+            return 0
+        
+        # Crop the image to the bounding box
+        cropped = self.image.copy(int(x), int(y), int(w), int(h))
+        
+        
+        if cropped.isNull():
+            print(f"Error: Failed to crop image at coordinates ({x}, {y}, {w}, {h})")
+            return 0
+        
+        # Convert QImage to PIL Image
+        buffer = QBuffer()
+        buffer.open(QBuffer.ReadWrite)
+        cropped.save(buffer, "PNG")
+        pil_image = Image.open(io.BytesIO(buffer.data()))
+        buffer.close()
+        
+        # Convert PIL Image to numpy array
+        intensity_array = np.array(pil_image.convert("L"))
+        
+        background = np.min(intensity_array)
+        
+        intensity_array = intensity_array - background
+        
+        if len(intensity_array.shape) > 2:  # If RGB, convert to grayscale
+            intensity_array = np.mean(intensity_array, axis=2).astype(np.uint8)
+        
+        # Compute intensity profile (mean across the width of the band)
+        profile = np.mean(intensity_array, axis=1)
+        profile = 255 - profile  # Invert intensity
+                
+        # Identify baseline by connecting lowest edges
+        left_min = np.min(profile[:len(profile)//3])
+        right_min = np.min(profile[-len(profile)//3:])
+        baseline = np.linspace(left_min, right_min, len(profile))
+        corrected_profile = profile - baseline
+        corrected_profile[corrected_profile < 0] = 0  # Ensure non-negative values
+        
+        peak_area = np.trapz(corrected_profile)
+        
+        # Plot intensity profile
+        plt.figure(figsize=(6, 4))
+        plt.plot(profile, label='Raw Intensity', linestyle='dotted')
+        plt.plot(corrected_profile, label='Baseline Subtracted', color='red')
+        plt.fill_between(range(len(corrected_profile)), corrected_profile, alpha=0.3, color='red')
+        plt.xlabel('Pixel Row')
+        plt.ylabel('Intensity')
+        plt.legend()
+        plt.title('Band Intensity Profile')
+        
+    
+        # Convert the plot to a pixmap
+        buffer = BytesIO()
+        plt.savefig(buffer, format="png", bbox_inches="tight")
+        buffer.seek(0)
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+        buffer.close()
+        plt.close()
+    
+        # Display the plot and results in a message box
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle("Prediction Result")
+        if self.protein_quantities:
+            unknown=float(self.protein_quantities[0])
+            message_box.setText(
+                f"The peak area is approximately {peak_area:.2f}.\nPredicted Quantity: {unknown:.2f} units"
+            )
+        else:
+            message_box.setText(
+                f"The peak area is approximately {peak_area:.2f}.\n"
+            )
+        label = QLabel()
+        label.setPixmap(pixmap)
+        message_box.layout().addWidget(label, 1, 0, 1, message_box.layout().columnCount())
+        message_box.exec()
+        
+        
+        return peak_area
+    
+    
+    def calculate_unknown_quantity(self):
+        """Estimate unknown protein quantities based on intensity regression."""
+        if len(self.quantities) < 2:
+            QMessageBox.warning(self, "Error", "At least two known quantities are needed.")
+            return
+        
+        # Try to import required libraries
+        try:
+            from PIL import Image
+            import io
+        except ImportError:
+            QMessageBox.warning(self, "Error", "Please install Pillow library with 'pip install Pillow' for image processing.")
+            return
+        
+        intensities = []
+        known_quantities = []
+        
+        # Calculate intensities for standard bands
+        for idx in range(len(self.bounding_boxes)):
+            try:
+                x, y, w, h = self.bounding_boxes[idx]
+                q = self.quantities[idx]
+                
+                # Convert to integers and ensure coordinates are within image bounds
+                x, y = int(max(0, x)), int(max(0, y))
+                w, h = int(max(1, w)), int(max(1, h))
+                
+                if x + w > self.image.width():
+                    w = self.image.width() - x
+                if y + h > self.image.height():
+                    h = self.image.height() - y
+                    
+                if w <= 0 or h <= 0:
+                    continue  # Skip invalid regions
+                    
+                cropped = self.image.copy(x, y, w, h)
+                if cropped.isNull():
+                    print(f"Error: Failed to crop image at coordinates ({x}, {y}, {w}, {h})")
+                    continue
+                    
+                cropped = cropped.convertToFormat(QImage.Format_Grayscale8)
+        
+                # Convert QImage to PIL Image
+                buffer = QBuffer()
+                buffer.open(QBuffer.ReadWrite)
+                cropped.save(buffer, "PNG")
+                pil_image = Image.open(io.BytesIO(buffer.data()))
+                buffer.close()
+                
+                # Convert PIL Image to numpy array
+                intensity_array = np.array(pil_image)
+                if len(intensity_array.shape) > 2:  # If RGB, convert to grayscale
+                    intensity_array = np.mean(intensity_array, axis=2).astype(np.uint8)
+                
+                background = np.min(intensity_array)                
+                intensity_array = intensity_array - background
+                
+                # Compute intensity profile (mean across the width of the band)
+                profile = np.mean(intensity_array, axis=1)
+                profile = 255 - profile  # Invert intensity
+                        
+                # Identify baseline by connecting lowest edges
+                left_min = np.min(profile[:len(profile)//3])
+                right_min = np.min(profile[-len(profile)//3:])
+                baseline = np.linspace(left_min, right_min, len(profile))
+                corrected_profile = profile - baseline
+                corrected_profile[corrected_profile < 0] = 0  # Ensure non-negative values
+                
+                
+                # Compute area under the curve (AUC) as protein amount proxy
+                peak_area = np.trapz(corrected_profile)
+                intensities.append(peak_area)
+                known_quantities.append(q)
+                
+            except Exception as e:
+                print(f"Error processing standard band {idx}: {type(e).__name__}: {str(e)}")
+        
+        # Perform linear regression
+        coefficients = np.polyfit(intensities, known_quantities, 1)
+        
+        for idx in range(len(self.up_bounding_boxes)):
+            try:
+                x, y, w, h = self.up_bounding_boxes[idx]
+                q = self.quantities[idx]
+                
+                # Convert to integers and ensure coordinates are within image bounds
+                x, y = int(max(0, x)), int(max(0, y))
+                w, h = int(max(1, w)), int(max(1, h))
+                
+                if x + w > self.image.width():
+                    w = self.image.width() - x
+                if y + h > self.image.height():
+                    h = self.image.height() - y
+                    
+                if w <= 0 or h <= 0:
+                    continue  # Skip invalid regions
+                    
+                cropped = self.image.copy(x, y, w, h)
+                if cropped.isNull():
+                    print(f"Error: Failed to crop image at coordinates ({x}, {y}, {w}, {h})")
+                    continue
+                    
+                cropped = cropped.convertToFormat(QImage.Format_Grayscale8)
+        
+                # Convert QImage to PIL Image
+                buffer = QBuffer()
+                buffer.open(QBuffer.ReadWrite)
+                cropped.save(buffer, "PNG")
+                pil_image = Image.open(io.BytesIO(buffer.data()))
+                buffer.close()
+                
+                # Convert PIL Image to numpy array
+                intensity_array = np.array(pil_image)
+                if len(intensity_array.shape) > 2:  # If RGB, convert to grayscale
+                    intensity_array = np.mean(intensity_array, axis=2).astype(np.uint8)
+                
+                background = np.min(intensity_array)                
+                intensity_array = intensity_array - background
+                
+                # Compute intensity profile (mean across the width of the band)
+                profile = np.mean(intensity_array, axis=1)
+                profile = 255 - profile  # Invert intensity
+                        
+                # Identify baseline by connecting lowest edges
+                left_min = np.min(profile[:len(profile)//3])
+                right_min = np.min(profile[-len(profile)//3:])
+                baseline = np.linspace(left_min, right_min, len(profile))
+                corrected_profile = profile - baseline
+                corrected_profile[corrected_profile < 0] = 0  # Ensure non-negative values
+                
+                peak_area = np.trapz(corrected_profile)
+                unknown_quantity = np.polyval(coefficients, peak_area)
+                
+                self.protein_quantities=[]
+                self.protein_quantities.append(round(unknown_quantity,2))
+                
+                
+                
+            except Exception as e:
+                print(f"Error processing target protein band {idx}: {type(e).__name__}: {str(e)}")
+        
+    def draw_quantity_text(self, painter, x, y, quantity, scale_x, scale_y):
+        """Draw quantity text at the correct position."""
+        text_position = QPoint(int(x * scale_x) + self.x_offset_s, int(y * scale_y) + self.y_offset_s - 5)
+        painter.drawText(text_position, str(quantity))
+    
+    def update_standard_protein_quantities(self):
+        self.standard_protein_values.text()
     
     def move_tab(self,tab):
         self.tab_widget.setCurrentIndex(tab)
@@ -405,6 +789,76 @@ class CombinedSDSApp(QMainWindow):
             self.undo_stack.append(self.image.copy())
             self.image = self.redo_stack.pop()
             self.update_live_view()
+            
+    def analysis_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+    
+        # Group 1: Molecular Weight Prediction
+        mw_group = QGroupBox("Molecular Weight Prediction")
+        mw_layout = QVBoxLayout()
+        
+        self.predict_button = QPushButton("Predict Molecular Weight")
+        self.predict_button.setToolTip("Predicts the size of the protein/DNA if the MW marker or ladder is labeled and puts a straight line marker on the image. Shortcut: Ctrl+P or CMD+P")
+        self.predict_button.setEnabled(False)  # Initially disabled
+        self.predict_button.clicked.connect(self.predict_molecular_weight)
+        
+    
+        mw_layout.addWidget(self.predict_button)
+        mw_group.setLayout(mw_layout)
+        
+        # Group 2: Standard Curve Creation
+        standard_curve_group = QGroupBox("Generating Standard Curve for Quantification")
+        standard_curve_layout = QVBoxLayout()
+        
+        self.measure_quantity_button = QPushButton("Outline boxes for creating Standard Curve")
+        self.measure_quantity_button.setToolTip("Place bounding boxes on bands to measure sample quantity.")
+        self.measure_quantity_button.clicked.connect(self.enable_standard_protein_mode)
+        
+        self.standard_protein_values = QLineEdit()
+        self.standard_protein_values.setPlaceholderText("Autopopulates with standard quantities")
+        
+        self.standard_protein_areas_text = QLineEdit()
+        self.standard_protein_areas_text.setPlaceholderText("Autopopulates with peak areas")
+        
+        standard_curve_layout.addWidget(self.measure_quantity_button)
+        standard_curve_layout.addWidget(QLabel("Standard Quantities:"))
+        standard_curve_layout.addWidget(self.standard_protein_values)
+        standard_curve_layout.addWidget(QLabel("Peak Areas:"))
+        standard_curve_layout.addWidget(self.standard_protein_areas_text)
+        standard_curve_group.setLayout(standard_curve_layout)
+    
+        # Group 3: Protein Measurement
+        measure_group = QGroupBox("Sample Quantification")
+        measure_layout = QVBoxLayout()
+        
+        self.protein_button = QPushButton("Measure Sample Quantity")
+        self.protein_button.setToolTip("Place bounding boxes on bands to measure sample quantity.")
+        self.protein_button.clicked.connect(self.enable_measure_protein_mode)
+        
+        self.target_protein_areas_text = QLineEdit()
+        self.target_protein_areas_text.setPlaceholderText("Autopopulates with peak areas")
+    
+        
+    
+        measure_layout.addWidget(self.protein_button) 
+        measure_layout.addWidget(QLabel("Peak Areas:"))
+        measure_layout.addWidget(self.target_protein_areas_text)
+        measure_group.setLayout(measure_layout)
+        
+        clear_predict_button = QPushButton("Clear Markers")
+        clear_predict_button.setToolTip("Clears all protein analysis markers. Shortcut: Ctrl+Shift+P or CMD+Shift+P")
+        clear_predict_button.setEnabled(True)  
+        clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
+    
+        # Add all groups to the main layout
+        layout.addWidget(mw_group)
+        layout.addWidget(standard_curve_group)
+        layout.addWidget(measure_group)
+        layout.addWidget(clear_predict_button)
+        layout.addStretch()
+    
+        return tab
             
     def combine_image_tab(self):
         tab = QWidget()
@@ -2299,6 +2753,8 @@ class CombinedSDSApp(QMainWindow):
     def update_live_view(self):
         if not self.image:
             return
+        
+        
     
         # Enable the "Predict Molecular Weight" button if markers are present
         if self.left_markers or self.right_markers:
@@ -2310,6 +2766,12 @@ class CombinedSDSApp(QMainWindow):
         render_scale = 3  # Scale factor for rendering resolution
         render_width = self.live_view_label.width() * render_scale
         render_height = self.live_view_label.height() * render_scale
+        
+        # Calculate scaling factors and offsets
+    
+        # Calculate the scaling factors between the live view and the actual image
+        scale_x = self.image.width() / render_width
+        scale_y = self.image.height() / render_height
     
         # Get the crop percentage values from sliders
         x_start_percent = self.crop_x_start_slider.value() / 100
@@ -2381,6 +2843,7 @@ class CombinedSDSApp(QMainWindow):
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        
     
         # Render on a high-resolution canvas
         canvas = QImage(render_width, render_height, QImage.Format_ARGB32)
@@ -2395,6 +2858,43 @@ class CombinedSDSApp(QMainWindow):
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        
+        
+        
+        painter = QPainter(pixmap)
+        pen = QPen(Qt.red)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        
+        scale_x = self.live_view_label.width() / self.image.width()
+        scale_y = self.live_view_label.height() / self.image.height()
+        
+        # # Draw bounding boxes if in measure quantity mode
+        # if self.measure_quantity_mode and hasattr(self.live_view_label, 'bounding_box_preview') and self.live_view_label.bounding_box_preview:
+        #     painter = QPainter(pixmap)
+        #     pen = QPen(Qt.red, 1)
+        #     painter.setPen(pen)
+        #     start_x, start_y, end_x, end_y = self.live_view_label.bounding_box_preview
+        #     width = abs(end_x - start_x)
+        #     height = abs(end_y - start_y)
+        #     x = min(start_x, end_x)
+        #     y = min(start_y, end_y)
+        #     painter.drawRect(x, y, width, height)
+        #     painter.end()
+        
+        if self.predict_size==True:
+            for (x, y, w, h), quantity in zip(self.bounding_boxes, self.quantities):
+                rect = QRectF(x * scale_x, y * scale_y, w * scale_x, h * scale_y)
+                painter.drawRect(rect)
+                self.draw_quantity_text(painter, x, y, quantity, scale_x, scale_y)
+            
+            for (x, y, w, h), quantity in zip(self.up_bounding_boxes, self.protein_quantities):
+                rect = QRectF(x * scale_x, y * scale_y, w * scale_x, h * scale_y)
+                painter.drawRect(rect)
+                self.draw_quantity_text(painter, x, y, quantity, scale_x, scale_y)
+        
+        painter.end()
+        
         self.live_view_label.setPixmap(pixmap)
     
     def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
@@ -3075,6 +3575,17 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.setCursor(Qt.ArrowCursor)
         if hasattr(self, "protein_location"):
             del self.protein_location  # Clear the protein location marker
+        self.predict_size=False
+        self.bounding_boxes=[]
+        self.bounding_box_start = None
+        self.live_view_label.bounding_box_start = None
+        self.live_view_label.bounding_box_preview = None
+        self.quantities=[]
+        self.protein_quantities=[]
+        self.standard_protein_values.setText("")
+        self.standard_protein_areas=[]
+        self.standard_protein_areas_text.setText("")
+        
         self.update_live_view()  # Update the display
         
     def predict_molecular_weight(self):
@@ -3086,7 +3597,7 @@ class CombinedSDSApp(QMainWindow):
         self.run_predict_MW=False
         if self.run_predict_MW!=True:
             markers_not_rounded = self.left_markers if self.left_markers else self.right_markers
-            markers = [[round(value, 2) for value in sublist] for sublist in markers_not_rounded]
+            markers = [[round(float(value), 2) for value in sublist] for sublist in markers_not_rounded]
             if not markers:
                 QMessageBox.warning(self, "Error", "No markers available for prediction.")
                 return
