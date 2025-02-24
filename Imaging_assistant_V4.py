@@ -281,7 +281,7 @@ class PeakAreaDialog(QDialog):
     
             # Display the rotated cropped image aligned with the intensity profile
             ax_image.imshow(rotated_pil_image, cmap='gray', aspect='auto')
-    
+            
         # Redraw the canvas
         self.canvas.draw()
 
@@ -317,6 +317,11 @@ class LiveViewLabel(QLabel):
         if self.preview_marker_enabled:
             self.preview_marker_position = event.pos()
             self.update()  # Trigger repaint to show the preview
+        if self.zoom_level != 1.0 and self.pan_start:  # Pan the image when zoomed
+            delta = event.pos() - self.pan_start
+            self.pan_offset += delta
+            self.pan_start = event.pos()
+            self.update()
         if self.measure_quantity_mode and self.bounding_box_start:
             self.bounding_box_preview = (
                 self.bounding_box_start.x(),  # Start X
@@ -325,11 +330,7 @@ class LiveViewLabel(QLabel):
                 event.y()   # Current Y
             )
             self.update()  # Trigger repaint to show the bounding box preview
-        if self.zoom_level != 1.0 and self.pan_start:  # Pan the image when zoomed
-            delta = event.pos() - self.pan_start
-            self.pan_offset += delta
-            self.pan_start = event.pos()
-            self.update()  # Trigger repaint to update the panning
+            
         super().mouseMoveEvent(event)
 
 
@@ -366,12 +367,12 @@ class LiveViewLabel(QLabel):
             self.pan_start = None  # Reset pan start position
         super().mouseReleaseEvent(event)
     
-    def wheelEvent(self, event):
-        if event.angleDelta().y() > 0:
-            self.zoom_in()
-        else:
-            self.zoom_out()
-        super().wheelEvent(event)
+    # def wheelEvent(self, event):
+    #     if event.angleDelta().y() > 0:
+    #         self.zoom_in()
+    #     else:
+    #         self.zoom_out()
+    #     super().wheelEvent(event)
 
     def zoom_in(self):
         self.zoom_level *= 1.1
@@ -405,12 +406,30 @@ class LiveViewLabel(QLabel):
             text_height = painter.fontMetrics().height()
             # Draw the text at the cursor's position
             x, y = self.preview_marker_position.x(), self.preview_marker_position.y()
+            if self.zoom_level != 1.0:
+                x = (x - self.pan_offset.x()) / self.zoom_level
+                y = (y - self.pan_offset.y()) / self.zoom_level
             painter.drawText(int(x - text_width/2), int(y + text_height/4), self.preview_marker_text)
 
         
         if self.bounding_box_preview and self.counter<2:
             painter.setPen(QPen(Qt.red, 1))  # Red border for the bounding box
-            start_x, start_y, end_x, end_y = self.bounding_box_preview
+            if self.zoom_level != 1.0:
+                start_x, start_y, end_x, end_y = self.bounding_box_preview
+                start_x = (start_x - self.pan_offset.x()) / self.zoom_level
+                start_y = (start_y - self.pan_offset.y()) / self.zoom_level
+                end_x = (end_x - self.pan_offset.x()) / self.zoom_level
+                end_y = (end_y - self.pan_offset.y()) / self.zoom_level
+            else:
+                start_x, start_y, end_x, end_y = self.bounding_box_preview
+                # self.bounding_box_preview = (
+                #     ((self.bounding_box_start.x() - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level),
+                #     ((self.bounding_box_start.y() - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level),
+                #     ((event.x() - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level),
+                #     ((event.y() - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level)
+                # )
+    
+            # start_x, start_y, end_x, end_y = self.bounding_box_preview
             width = abs(end_x - start_x)
             height = abs(end_y - start_y)
             x = min(start_x, end_x)
@@ -430,8 +449,7 @@ class LiveViewLabel(QLabel):
             self.bounding_box_preview = None
             self.counter=0
             self.update()
-            
-                
+        
         super().keyPressEvent(event)
 
 class CombinedSDSApp(QMainWindow):
@@ -798,7 +816,8 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
         self.live_view_label.mouseReleaseEvent = lambda event: self.end_measure_bounding_box(event)
 
-
+    def call_live_view(self):
+        self.update_live_view()
     
     def start_bounding_box(self, event):
         """Record the start position of the bounding box."""
@@ -827,6 +846,13 @@ class CombinedSDSApp(QMainWindow):
             
         start_x, start_y = self.bounding_box_start.x(), self.bounding_box_start.y()
         end_x, end_y = event.pos().x(), event.pos().y()
+        
+        if self.live_view_label.zoom_level != 1.0:
+            start_x = (start_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+            start_y = (start_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
+            end_x = (end_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+            end_y = (end_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
+        
         width, height = abs(end_x - start_x), abs(end_y - start_y)
         x, y = min(start_x, end_x), min(start_y, end_y)
         
@@ -1990,6 +2016,24 @@ class CombinedSDSApp(QMainWindow):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.live_view_label.setCursor(Qt.ArrowCursor)
+            if self.live_view_label.preview_marker_enabled:
+                self.live_view_label.preview_marker_enabled = False  # Turn off the preview
+            self.live_view_label.measure_quantity_mode = False
+            self.live_view_label.bounding_boxes=[]
+            self.live_view_label.bounding_box_start = None
+            self.live_view_label.bounding_box_preview = None
+            self.live_view_label.counter=0
+        if self.live_view_label.zoom_level != 1.0:  # Only allow panning when zoomed in
+            step = 20  # Adjust the panning step size as needed
+            if event.key() == Qt.Key_Left:
+                self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() - step)
+            elif event.key() == Qt.Key_Right:
+                self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() + step)
+            elif event.key() == Qt.Key_Up:
+                self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() - step)
+            elif event.key() == Qt.Key_Down:
+                self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() + step)
+        self.update_live_view()
         super().keyPressEvent(event)
     
     def update_marker_text_font(self, font: QFont):
@@ -2043,6 +2087,10 @@ class CombinedSDSApp(QMainWindow):
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
         
+        if self.live_view_label.zoom_level != 1.0:
+            cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+            cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
+            
         # Adjust for snapping to grid
         if self.show_grid_checkbox.isChecked():
             grid_size = self.grid_size_input.value()
@@ -2612,9 +2660,11 @@ class CombinedSDSApp(QMainWindow):
         
         try:
             try:
-                self.marker_values_textbox.setText(str(config_data["marker_labels"]["left"]))
+                x = list(map(int, config_data["marker_labels"]["left"]))
+                self.marker_values_textbox.setText(str(x))
             except:
-                self.marker_values_textbox.setText(str(config_data["marker_labels"]["right"]))
+                x = list(map(int, config_data["marker_labels"]["right"]))
+                self.marker_values_textbox.setText(str(x))
             if self.marker_values_textbox.text!="":
                 self.combo_box.setCurrentText("Custom")
                 self.marker_values_textbox.setEnabled(True)                
@@ -2756,6 +2806,9 @@ class CombinedSDSApp(QMainWindow):
         # Get the cursor position from the event
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
+        if self.live_view_label.zoom_level != 1.0:
+            cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+            cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
         
         if self.show_grid_checkbox.isChecked():
             grid_size = self.grid_size_input.value()
@@ -2993,8 +3046,8 @@ class CombinedSDSApp(QMainWindow):
         # Calculate scaling factors and offsets
     
         # Calculate the scaling factors between the live view and the actual image
-        # scale_x = self.image.width() / render_width
-        # scale_y = self.image.height() / render_height
+        scale_x = self.image.width() / render_width
+        scale_y = self.image.height() / render_height
     
         # Get the crop percentage values from sliders
         x_start_percent = self.crop_x_start_slider.value() / 100
