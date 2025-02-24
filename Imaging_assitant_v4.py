@@ -36,7 +36,7 @@ class PeakAreaDialog(QDialog):
         # Store the original intensity profile
         self.cropped_image = cropped_image
         self.profile = profile
-        self.rolling_ball_radius = 50  # Default rolling ball radius
+        self.rolling_ball_radius = 500  # Default rolling ball radius
         self.peaks = []  # List to store detected peaks
         self.peak_regions = []  # List to store start and end positions of each peak
         self.peak_areas = []  # List to store calculated peak areas
@@ -56,7 +56,7 @@ class PeakAreaDialog(QDialog):
     
         # Rolling ball slider
         self.rolling_ball_slider = QSlider(Qt.Horizontal)
-        self.rolling_ball_slider.setRange(1, 500)  # Adjustable rolling ball radius
+        self.rolling_ball_slider.setRange(1, 5000)  # Adjustable rolling ball radius
         self.rolling_ball_slider.setValue(self.rolling_ball_radius)
         self.rolling_ball_slider.valueChanged.connect(self.update_plot)
         top_layout.addWidget(QLabel("Rolling Ball Radius"))
@@ -95,6 +95,8 @@ class PeakAreaDialog(QDialog):
     
         # Add sliders for each peak
         self.update_sliders()
+        
+        self.peak_sliders_layout.addStretch()
     
         # Set the container widget as the scroll area's widget
         scroll_area.setWidget(self.container)
@@ -199,14 +201,14 @@ class PeakAreaDialog(QDialog):
                 start_slider, end_slider = self.peak_sliders[i]
                 start_slider.setValue(start)
                 end_slider.setValue(end)
-
+        self.peak_number_input.setText(str(len(peaks)))
     def update_plot(self):
         """Update the plot and recalculate peak areas based on slider values."""
         if self.canvas is None:
             return  # Prevent updating if the canvas is deleted
     
         # Update rolling ball radius
-        self.rolling_ball_radius = self.rolling_ball_slider.value()
+        self.rolling_ball_radius = self.rolling_ball_slider.value()/10
     
         # Compute dynamic baseline using rolling ball background subtraction
         background = rolling_ball(self.profile, radius=self.rolling_ball_radius)
@@ -234,7 +236,7 @@ class PeakAreaDialog(QDialog):
         # Plot the intensity profile in the top subplot
         self.ax = self.fig.add_subplot(grid[0])
         self.ax.plot(self.profile, label='Raw Intensity', color='black', linestyle='-')
-        self.ax.plot(background, label='Rolling Ball Baseline', color='green', linestyle='--')
+        self.ax.plot(background, label=f'Rolling Ball Baseline, Ball Size: {self.rolling_ball_radius}', color='green', linestyle='--')
     
         # Highlight the bottom region of each peak (between the peak and the baseline)
         for i, (start, end) in enumerate(self.peak_regions):
@@ -887,16 +889,69 @@ class CombinedSDSApp(QMainWindow):
         if cropped.isNull():
             print(f"Error: Failed to crop image at coordinates ({x}, {y}, {w}, {h})")
             return 0
-        
+    
         cropped = cropped.convertToFormat(QImage.Format_Grayscale8)  # Ensure grayscale format
         width, height = cropped.width(), cropped.height()
         ptr = cropped.bits()
         ptr.setsize(height * width)  # Define size explicitly
         intensity_array = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width))
     
-        profile = np.percentile(intensity_array, 5,axis=1)
-        profile = 255 - profile
+        # Get the selected band estimation technique
+        technique = self.band_estimation_combobox.currentText()
+    
+        if technique == "Sum":
+            # **1. Apply Rolling Ball Background Subtraction (Like ImageJ)**
+            background = rolling_ball(intensity_array, radius=50)  # Radius is adjustable
+            corrected = intensity_array - background
+            corrected[corrected < 0] = 0  # Clip negative values
         
+            # **2. Sum Across Width for Column-Wise Projection**
+            profile = np.sum(corrected, axis=1)  # Sum all pixels along width
+        
+            # **3. Normalize the Profile to Enhance Peak Visibility**
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+        elif technique == "Mean":
+            profile = np.mean(intensity_array, axis=1)
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+        elif technique == "Percentile-5%":
+            profile = np.percentile(intensity_array, 5, axis=1)
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+        elif technique == "Percentile-10%":
+            profile = np.percentile(intensity_array, 10, axis=1)
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+        elif technique == "Percentile-15%":
+            profile = np.percentile(intensity_array, 15, axis=1)
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+        elif technique == "Percentile-30%":
+            profile = np.percentile(intensity_array, 30, axis=1)
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+        else:
+            profile = np.percentile(intensity_array, 5, axis=1)  # Default to Percentile-5%
+            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
+        
+            # **4. Apply Gaussian Smoothing to Remove Noise**
+            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
+    
+        profile = 255 - profile  # Invert the profile for peak detection
+    
         # Convert QImage to PIL Image
         buffer = QBuffer()
         buffer.open(QBuffer.ReadWrite)
@@ -908,7 +963,7 @@ class CombinedSDSApp(QMainWindow):
         dialog = PeakAreaDialog(profile, cropped_image, parent=self)
         if dialog.exec_() == QDialog.Accepted:
             peak_area = dialog.get_final_peak_area()
-            return peak_area # Return user-adjusted peak area
+            return peak_area  # Return user-adjusted peak area
     
         return 0  # Return 0 if the user cancels the adjustment
     
@@ -957,30 +1012,36 @@ class CombinedSDSApp(QMainWindow):
         # Group 1: Molecular Weight Prediction
         mw_group = QGroupBox("Molecular Weight Prediction")
         mw_layout = QVBoxLayout()
-        
+    
         self.predict_button = QPushButton("Predict Molecular Weight")
         self.predict_button.setToolTip("Predicts the size of the protein/DNA if the MW marker or ladder is labeled and puts a straight line marker on the image. Shortcut: Ctrl+P or CMD+P")
         self.predict_button.setEnabled(False)  # Initially disabled
         self.predict_button.clicked.connect(self.predict_molecular_weight)
-        
     
         mw_layout.addWidget(self.predict_button)
         mw_group.setLayout(mw_layout)
-        
+    
         # Group 2: Standard Curve Creation
         standard_curve_group = QGroupBox("Generating Standard Curve for Quantification")
         standard_curve_layout = QVBoxLayout()
-        
+    
+        # Add the Band Estimation Technique Combobox
+        self.band_estimation_combobox = QComboBox()
+        self.band_estimation_combobox.addItems(["Sum", "Mean", "Percentile-5%", "Percentile-10%", "Percentile-15%", "Percentile-30%"])
+        self.band_estimation_combobox.setCurrentText("Percentile-5%")  # Default to Percentile-5%
+        standard_curve_layout.addWidget(QLabel("Band Estimation Technique:"))
+        standard_curve_layout.addWidget(self.band_estimation_combobox)
+    
         self.measure_quantity_button = QPushButton("Outline boxes for creating Standard Curve")
         self.measure_quantity_button.setToolTip("Place bounding boxes on bands to measure sample quantity.")
         self.measure_quantity_button.clicked.connect(self.enable_standard_protein_mode)
-        
+    
         self.standard_protein_values = QLineEdit()
         self.standard_protein_values.setPlaceholderText("Autopopulates with standard quantities")
-        
+    
         self.standard_protein_areas_text = QLineEdit()
         self.standard_protein_areas_text.setPlaceholderText("Autopopulates with peak areas")
-        
+    
         standard_curve_layout.addWidget(self.measure_quantity_button)
         standard_curve_layout.addWidget(QLabel("Standard Quantities:"))
         standard_curve_layout.addWidget(self.standard_protein_values)
@@ -991,24 +1052,22 @@ class CombinedSDSApp(QMainWindow):
         # Group 3: Protein Measurement
         measure_group = QGroupBox("Sample Quantification")
         measure_layout = QVBoxLayout()
-        
+    
         self.protein_button = QPushButton("Measure Sample Quantity/Area")
         self.protein_button.setToolTip("Place bounding boxes on bands to measure sample quantity.")
         self.protein_button.clicked.connect(self.enable_measure_protein_mode)
-        
+    
         self.target_protein_areas_text = QLineEdit()
         self.target_protein_areas_text.setPlaceholderText("Autopopulates with peak areas")
     
-        
-    
-        measure_layout.addWidget(self.protein_button) 
+        measure_layout.addWidget(self.protein_button)
         measure_layout.addWidget(QLabel("Peak Areas:"))
         measure_layout.addWidget(self.target_protein_areas_text)
         measure_group.setLayout(measure_layout)
-        
+    
         clear_predict_button = QPushButton("Clear Markers")
         clear_predict_button.setToolTip("Clears all protein analysis markers. Shortcut: Ctrl+Shift+P or CMD+Shift+P")
-        clear_predict_button.setEnabled(True)  
+        clear_predict_button.setEnabled(True)
         clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
     
         # Add all groups to the main layout
