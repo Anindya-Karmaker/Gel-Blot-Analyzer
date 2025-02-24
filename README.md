@@ -2,14 +2,12 @@
 This software makes it easy to modify SDS-PAGE, WB and other GEL images easily and add notations like label heading, molecular weight marker and so on. It can save the image with all of the options for easy editing and has copy/paste functionality for PRO users. I am not a professional coder and used ChatGPT to write most of the supporting code based on my algorithms and ideas. Please download the required libraries using requirements.txt. Used python version 3.9.13 on a M1 MacBook Pro to run and test the code.
 
 Example output from the software:
-<img width="971" alt="image" src="https://github.com/user-attachments/assets/175dc79f-c243-447b-a1d4-e1e90f6fef45" />
+<img width="968" alt="image" src="https://github.com/user-attachments/assets/a60eb4dc-2b75-4dc8-8cd9-e4101ab6dfd4" />
 
-
-
-
-Have option to predict the molecular weight of the protein/bp of DNA Gel once the ladder markers (left/right) are placed (Accurarcy can vary anywhere from 5 to 10% depending on the quality of the gel):
-<img width="969" alt="image" src="https://github.com/user-attachments/assets/54a5a34b-2a11-4c18-b0fe-eda0816c60dc" />
-
+Have option to predict the molecular weight of the protein/bp of DNA Gel once the ladder markers (left/right) are placed (Accurarcy can vary anywhere from 5 to 10% depending on the quality of the gel) and perform Densitometric analysis:
+<img width="971" alt="image" src="https://github.com/user-attachments/assets/6da4bb1c-54d9-4666-be36-80b0b6416d53" />
+<img width="967" alt="image" src="https://github.com/user-attachments/assets/e7e65dc4-f129-44a6-ade8-8451d8a91bc4" />
+<img width="998" alt="image" src="https://github.com/user-attachments/assets/d9fcd094-2cc1-4775-b0ff-72b3defe38ac" />
 
 
 Other Features:
@@ -18,12 +16,14 @@ Other Features:
 * Option to add custom markers with custom font type, size and color
 * Inbuilt Snapping tool to help set markers 
 * Option to load image from clipboard and save to clipboard for faster operation
-* Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications 
+* Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications (BUGGY!)
 * Added Keyboard Shortcuts and Tooltips for major options
 * Added Undo/Redo buttons to revert back changes
+* Can perform densitometric analysis
 
 Known Bugs:
 * Make sure before adding left/right markers that they have values and not []
+* SVG OUPUT IS STILL BUGGY!
 
 To compile the code into an application:
   1. You need to install pyinstaller: pip install pyinstaller
