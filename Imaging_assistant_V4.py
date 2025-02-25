@@ -1,9 +1,11 @@
+import logging
+import traceback
+import sys
 import svgwrite
 import tempfile
 from tempfile import NamedTemporaryFile
 import base64
 from PIL import ImageGrab, Image, ImageQt  # Import Pillow's ImageGrab for clipboard access
-import sys
 from io import BytesIO
 import io
 from PyQt5.QtWidgets import (
@@ -25,6 +27,22 @@ from scipy.signal import find_peaks
 from skimage import filters, morphology
 from scipy.ndimage import gaussian_filter1d
 
+# Configure logging to write errors to a log file
+logging.basicConfig(
+    filename="error_log.txt",
+    level=logging.ERROR,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+def log_exception(exc_type, exc_value, exc_traceback):
+    """Log uncaught exceptions to the error log."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+# Set the custom exception handler
+sys.excepthook = log_exception
 
 class PeakAreaDialog(QDialog):
     """Interactive dialog to adjust peak regions and calculate peak areas."""
@@ -211,8 +229,7 @@ class PeakAreaDialog(QDialog):
         if self.canvas is None:
             return  # Prevent updating if the canvas is deleted
     
-        # Update rolling ball radius
-        self.rolling_ball_radius = self.rolling_ball_slider.value()/10
+        self.rolling_ball_radius = self.rolling_ball_slider.value() / 10
     
         # Compute dynamic baseline using rolling ball background subtraction
         background = rolling_ball(self.profile, radius=self.rolling_ball_radius)
@@ -225,14 +242,14 @@ class PeakAreaDialog(QDialog):
             end = end_slider.value()
             self.peak_regions.append((start, end))
     
-            # Calculate the peak area as the enclosed space between the peak and the baseline
+            # Calculate the peak area
             peak_region = self.profile[start:end]
             baseline_region = background[start:end]
             peak_area = np.trapz(peak_region - baseline_region)
             self.peak_areas.append(peak_area)
     
         # Clear the previous plot
-        self.fig.clf()  # Clear the entire figure
+        self.fig.clf()
     
         # Create a grid layout for the plot and image
         grid = plt.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 ratio
@@ -242,30 +259,26 @@ class PeakAreaDialog(QDialog):
         self.ax.plot(self.profile, label='Raw Intensity', color='black', linestyle='-')
         self.ax.plot(background, label=f'Rolling Ball Baseline, Ball Size: {self.rolling_ball_radius}', color='green', linestyle='--')
     
-        # Highlight the bottom region of each peak (between the peak and the baseline)
+        # Highlight peak regions
         for i, (start, end) in enumerate(self.peak_regions):
             self.ax.axvline(start, color='blue', linestyle='--')
             self.ax.axvline(end, color='orange', linestyle='--')
-            self.ax.fill_between(
-                range(start, end),
-                background[start:end],
-                self.profile[start:end],
-                color='yellow', alpha=0.3
-            )
-            self.ax.text(
-                (start + end) / 2,
-                np.max(self.profile[start:end]),
-                f'Area: {self.peak_areas[i]:.2f}',
-                ha='center', va='bottom'
-            )
+            self.ax.fill_between(range(start, end), background[start:end], self.profile[start:end], color='yellow', alpha=0.3)
+            self.ax.text((start + end) / 2, np.max(self.profile[start:end]), f'Area: {self.peak_areas[i]:.2f}', ha='center', va='bottom')
     
-        # self.ax.set_xlabel('Pixel Row')
         self.ax.set_ylabel('Intensity')
         self.ax.legend()
         self.ax.set_title('Band Intensity Profile with Peak Regions')
     
         # Add a subplot for the cropped image
         ax_image = self.fig.add_subplot(grid[1])
+    
+        # Align x-axis labels to match the image
+        self.ax.xaxis.set_label_position('bottom')
+        self.ax.xaxis.set_ticks_position('bottom')
+        
+        # Set the x-axis limits to match the extreme left and right of the image
+        self.ax.set_xlim(0, len(self.profile))
     
         # Disable all ticks and labels for the image subplot
         ax_image.set_xticks([])
@@ -275,14 +288,10 @@ class PeakAreaDialog(QDialog):
     
         # Display the cropped image if available
         if self.cropped_image:
-            # Convert QImage to PIL Image and enforce grayscale mode
-            # Rotate using PIL (90° CW)
-            rotated_pil_image = self.cropped_image.rotate(90, expand=True)  
-    
-            # Display the rotated cropped image aligned with the intensity profile
+            rotated_pil_image = self.cropped_image.rotate(90, expand=True)
             ax_image.imshow(rotated_pil_image, cmap='gray', aspect='auto')
-            
-        # Redraw the canvas
+    
+        # Update the canvas
         self.canvas.draw()
 
     def get_final_peak_area(self):
@@ -416,10 +425,10 @@ class LiveViewLabel(QLabel):
             painter.setPen(QPen(Qt.red, 1))  # Red border for the bounding box
             if self.zoom_level != 1.0:
                 start_x, start_y, end_x, end_y = self.bounding_box_preview
-                start_x = (start_x - self.pan_offset.x()) / self.zoom_level
-                start_y = (start_y - self.pan_offset.y()) / self.zoom_level
-                end_x = (end_x - self.pan_offset.x()) / self.zoom_level
-                end_y = (end_y - self.pan_offset.y()) / self.zoom_level
+                start_x = int((start_x - self.pan_offset.x()) / self.zoom_level)
+                start_y = int((start_y - self.pan_offset.y()) / self.zoom_level)
+                end_x = int((end_x - self.pan_offset.x()) / self.zoom_level)
+                end_y = int((end_y - self.pan_offset.y()) / self.zoom_level)
             else:
                 start_x, start_y, end_x, end_y = self.bounding_box_preview
                 # self.bounding_box_preview = (
@@ -434,7 +443,7 @@ class LiveViewLabel(QLabel):
             height = abs(end_y - start_y)
             x = min(start_x, end_x)
             y = min(start_y, end_y)
-            painter.drawRect(x, y, width, height)  # Draw the rectangle
+            painter.drawRect(int(x), int(y), int(width), int(height))  # Draw the rectangle
         painter.end()
         self.update()
             
@@ -448,8 +457,8 @@ class LiveViewLabel(QLabel):
             self.bounding_box_start = None
             self.bounding_box_preview = None
             self.counter=0
+            self.live_view_label.mousePressEvent=None
             self.update()
-        
         super().keyPressEvent(event)
 
 class CombinedSDSApp(QMainWindow):
@@ -848,10 +857,10 @@ class CombinedSDSApp(QMainWindow):
         end_x, end_y = event.pos().x(), event.pos().y()
         
         if self.live_view_label.zoom_level != 1.0:
-            start_x = (start_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
-            start_y = (start_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
-            end_x = (end_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
-            end_y = (end_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
+            start_x = int((start_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level)
+            start_y = int((start_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level)
+            end_x = int((end_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level)
+            end_y = int((end_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level)
         
         width, height = abs(end_x - start_x), abs(end_y - start_y)
         x, y = min(start_x, end_x), min(start_y, end_y)
@@ -892,7 +901,6 @@ class CombinedSDSApp(QMainWindow):
             # self.up_bounding_boxes=[]
             # self.up_bounding_boxes.append((image_x, image_y, image_w, image_h))
             peak_area=self.calculate_peak_area(image_x, image_y, image_w, image_h) 
-            print("PEAK AREA: ",peak_area)
             if len(self.quantities)>=2 and len(peak_area)<2:
                 self.calculate_unknown_quantity(self.peak_area_list, self.quantities, peak_area[0])
             try:
@@ -2023,6 +2031,8 @@ class CombinedSDSApp(QMainWindow):
             self.live_view_label.bounding_box_start = None
             self.live_view_label.bounding_box_preview = None
             self.live_view_label.counter=0
+            self.live_view_label.mousePressEvent=None
+
         if self.live_view_label.zoom_level != 1.0:  # Only allow panning when zoomed in
             step = 20  # Adjust the panning step size as needed
             if event.key() == Qt.Key_Left:
@@ -2942,10 +2952,10 @@ class CombinedSDSApp(QMainWindow):
         self.save_state()
         # Get the padding values from the text inputs
         try:
-            padding_left = int(self.left_padding_input.text())
-            padding_right = int(self.right_padding_input.text())
-            padding_top = int(self.top_padding_input.text())
-            padding_bottom = int(self.bottom_padding_input.text())
+            padding_left = abs(int(self.left_padding_input.text()))
+            padding_right = abs(int(self.right_padding_input.text()))
+            padding_top = abs(int(self.top_padding_input.text()))
+            padding_bottom = abs(int(self.bottom_padding_input.text()))
             
         except ValueError:
             #Handle invalid input (non-integer value)
@@ -3939,6 +3949,11 @@ class CombinedSDSApp(QMainWindow):
         # Get cursor position from the event
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
+        
+        if self.live_view_label.zoom_level != 1.0:
+            cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+            cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
+        
     
         # Dimensions of the displayed image
         displayed_width = self.live_view_label.width()
@@ -4086,18 +4101,21 @@ class CombinedSDSApp(QMainWindow):
 
 
 if __name__ == "__main__":
-    app = QApplication([])
-    app.setStyle("Fusion")
-    app.setStyleSheet("""
-    QSlider::handle:horizontal {
-        width: 100px;
-        height: 100px;
-        margin: -5px 0;
-        background: #FFFFFF;
-        border: 2px solid #555;
-        border-radius: 30px;
-    }
-""")
-    window = CombinedSDSApp()
-    window.show()
-    app.exec_()
+    try:
+        app = QApplication([])
+        app.setStyle("Fusion")
+        app.setStyleSheet("""
+        QSlider::handle:horizontal {
+            width: 100px;
+            height: 100px;
+            margin: -5px 0;
+            background: #FFFFFF;
+            border: 2px solid #555;
+            border-radius: 30px;
+        }
+    """)
+        window = CombinedSDSApp()
+        window.show()
+        app.exec_()
+    except Exception as e:
+        logging.error("Application crashed", exc_info=True)
