@@ -7,7 +7,8 @@ Example output from the software:
 Have option to predict the molecular weight of the protein/bp of DNA Gel once the ladder markers (left/right) are placed (Accurarcy can vary anywhere from 5 to 10% depending on the quality of the gel) and perform Densitometric analysis:
 <img width="971" alt="image" src="https://github.com/user-attachments/assets/6da4bb1c-54d9-4666-be36-80b0b6416d53" />
 <img width="967" alt="image" src="https://github.com/user-attachments/assets/e7e65dc4-f129-44a6-ade8-8451d8a91bc4" />
-<img width="998" alt="image" src="https://github.com/user-attachments/assets/d9fcd094-2cc1-4775-b0ff-72b3defe38ac" />
+<img width="997" alt="image" src="https://github.com/user-attachments/assets/afc3522b-201f-4695-b8fc-c4b9dc4aafe6" />
+
 
 
 Other Features:
