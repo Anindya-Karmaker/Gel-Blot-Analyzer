@@ -11,8 +11,8 @@ import io
 from PyQt5.QtWidgets import (
     QDesktopWidget, QScrollArea, QInputDialog, QShortcut, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
 )
-from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics
-from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF
+from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
+from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF,QUrl
 import json
 import os
 import numpy as np
@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import platform
 # import ctypes
 
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QSlider
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QSlider,QMenuBar, QMenu, QAction
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from skimage.restoration import rolling_ball 
 from scipy.signal import find_peaks
@@ -46,14 +46,16 @@ sys.excepthook = log_exception
 
 class PeakAreaDialog(QDialog):
     """Interactive dialog to adjust peak regions and calculate peak areas."""
-    def __init__(self, profile, cropped_image, parent=None):
+    def __init__(self, intensity_array, cropped_image, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Adjust Peak Regions")
         self.setGeometry(100, 100, 1000, 800)  # Larger window for multiple sliders
     
         # Store the original intensity profile
         self.cropped_image = cropped_image
-        self.profile = profile
+        self.profile = None
+        self.background=None
+        self.intensity_array=intensity_array
         self.rolling_ball_radius = 500  # Default rolling ball radius
         self.peaks = []  # List to store detected peaks
         self.peak_regions = []  # List to store start and end positions of each peak
@@ -76,9 +78,17 @@ class PeakAreaDialog(QDialog):
         self.rolling_ball_slider = QSlider(Qt.Horizontal)
         self.rolling_ball_slider.setRange(1, 5000)  # Adjustable rolling ball radius
         self.rolling_ball_slider.setValue(self.rolling_ball_radius)
-        self.rolling_ball_slider.valueChanged.connect(self.update_plot)
+        self.rolling_ball_slider.valueChanged.connect(self.update_peak_number)
         top_layout.addWidget(QLabel("Rolling Ball Radius"))
         top_layout.addWidget(self.rolling_ball_slider)
+        
+        # # Add the Band Estimation Technique Combobox
+        self.band_estimation_combobox = QComboBox()
+        self.band_estimation_combobox.addItems(["Mean", "Percentile-5%", "Percentile-10%", "Percentile-15%", "Percentile-30%"])
+        self.band_estimation_combobox.setCurrentText("Percentile-5%")  # Default to Percentile-5%
+        self.band_estimation_combobox.currentIndexChanged.connect(self.update_peak_number)
+        top_layout.addWidget(QLabel("Band Estimation Technique:"))
+        top_layout.addWidget(self.band_estimation_combobox)
     
         # OK button
         self.ok_button = QPushButton("OK")
@@ -108,7 +118,41 @@ class PeakAreaDialog(QDialog):
         self.container = QWidget()
         self.peak_sliders_layout = QVBoxLayout(self.container)
     
-        # Detect peaks and initialize sliders
+        # Get the selected band estimation technique
+        technique = self.band_estimation_combobox.currentText()
+        
+        
+        # **1. Apply Rolling Ball Background Subtraction (Like ImageJ)**
+        # background = rolling_ball(intensity_array, radius=50)  # Radius is adjustable
+        # corrected = intensity_array - background
+        # corrected[corrected < 0] = 0  # Clip negative values
+    
+        if technique == "Mean":
+            self.profile = np.mean(self.intensity_array, axis=1)
+        elif technique == "Percentile-5%":
+            self.profile = np.percentile(self.intensity_array, 5, axis=1)
+        elif technique == "Percentile-10%":
+            self.profile = np.percentile(self.intensity_array, 10, axis=1)
+        elif technique == "Percentile-15%":
+            self.profile = np.percentile(self.intensity_array, 15, axis=1)
+        elif technique == "Percentile-30%":
+            self.profile = np.percentile(self.intensity_array, 30, axis=1)
+        else:
+            self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile-5%
+
+        self.profile = (self.profile - np.min(self.profile)) /np.ptp(self.profile) * 255
+        self.profile = 255 - self.profile  # Invert the profile for peak detection
+        self.profile = gaussian_filter1d(self.profile, sigma=2)  # Smoothing filter
+    
+        self.rolling_ball_radius = self.rolling_ball_slider.value() / 10
+        # Compute dynamic baseline using rolling ball background subtraction
+        # self.background = rolling_ball(self.profile, radius=self.rolling_ball_radius)
+        background_fwd = rolling_ball(self.profile, radius=self.rolling_ball_radius)
+        profile_reversed = self.profile[::-1]  # Flip the profile
+        background_rev = rolling_ball(profile_reversed, radius=self.rolling_ball_radius)
+        background_rev = background_rev[::-1]  # Flip back to original order
+        self.background = np.minimum(background_fwd, background_rev)
+        
         self.detect_peaks()
     
         # Add sliders for each peak
@@ -126,6 +170,26 @@ class PeakAreaDialog(QDialog):
     
     def update_peak_number(self):
         """Update the number of peaks based on user input."""
+        # Get the selected band estimation technique
+        technique = self.band_estimation_combobox.currentText()
+        
+        if technique == "Mean":
+            self.profile = np.mean(self.intensity_array, axis=1)
+        elif technique == "Percentile-5%":
+            self.profile = np.percentile(self.intensity_array, 5, axis=1)
+        elif technique == "Percentile-10%":
+            self.profile = np.percentile(self.intensity_array, 10, axis=1)
+        elif technique == "Percentile-15%":
+            self.profile = np.percentile(self.intensity_array, 15, axis=1)
+        elif technique == "Percentile-30%":
+            self.profile = np.percentile(self.intensity_array, 30, axis=1)
+        else:
+            self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile-5%
+
+        self.profile = (self.profile - np.min(self.profile)) /np.ptp(self.profile) * 255
+        self.profile = 255 - self.profile  # Invert the profile for peak detection
+        self.profile = gaussian_filter1d(self.profile, sigma=2)  # Smoothing filter
+        
         try:
             num_peaks = int(self.peak_number_input.text())
             if num_peaks <= 0:
@@ -147,9 +211,22 @@ class PeakAreaDialog(QDialog):
     
             # Update sliders
             self.update_sliders()
-            self.update_plot()
         except ValueError as e:
             QMessageBox.warning(self, "Error", f"Invalid input: {e}")
+            
+        self.rolling_ball_radius = self.rolling_ball_slider.value() / 10
+        # Compute dynamic baseline using rolling ball background subtraction
+        # self.background = rolling_ball(self.profile, radius=self.rolling_ball_radius)
+        background_fwd = rolling_ball(self.profile, radius=self.rolling_ball_radius)
+        profile_reversed = self.profile[::-1]  # Flip the profile
+        background_rev = rolling_ball(profile_reversed, radius=self.rolling_ball_radius)
+        background_rev = background_rev[::-1]  # Flip back to original order
+        self.background = np.minimum(background_fwd, background_rev)
+        
+        self.update_plot()
+        
+        
+        
     
     def update_sliders(self):
         """Update the sliders based on the current peaks and peak regions."""
@@ -224,15 +301,13 @@ class PeakAreaDialog(QDialog):
                 start_slider.setValue(start)
                 end_slider.setValue(end)
         self.peak_number_input.setText(str(len(peaks)))
+        
     def update_plot(self):
         """Update the plot and recalculate peak areas based on slider values."""
         if self.canvas is None:
             return  # Prevent updating if the canvas is deleted
     
-        self.rolling_ball_radius = self.rolling_ball_slider.value() / 10
-    
-        # Compute dynamic baseline using rolling ball background subtraction
-        background = rolling_ball(self.profile, radius=self.rolling_ball_radius)
+        
     
         # Update peak regions and calculate peak areas
         self.peak_regions = []
@@ -244,7 +319,7 @@ class PeakAreaDialog(QDialog):
     
             # Calculate the peak area
             peak_region = self.profile[start:end]
-            baseline_region = background[start:end]
+            baseline_region = self.background[start:end]
             peak_area = np.trapz(peak_region - baseline_region)
             self.peak_areas.append(peak_area)
     
@@ -257,13 +332,13 @@ class PeakAreaDialog(QDialog):
         # Plot the intensity profile in the top subplot
         self.ax = self.fig.add_subplot(grid[0])
         self.ax.plot(self.profile, label='Raw Intensity', color='black', linestyle='-')
-        self.ax.plot(background, label=f'Rolling Ball Baseline, Ball Size: {self.rolling_ball_radius}', color='green', linestyle='--')
+        self.ax.plot(self.background, label=f'Rolling Ball Baseline, Ball Size: {self.rolling_ball_radius}', color='green', linestyle='--')
     
         # Highlight peak regions
         for i, (start, end) in enumerate(self.peak_regions):
             self.ax.axvline(start, color='blue', linestyle='--')
             self.ax.axvline(end, color='orange', linestyle='--')
-            self.ax.fill_between(range(start, end), background[start:end], self.profile[start:end], color='yellow', alpha=0.3)
+            self.ax.fill_between(range(start, end), self.background[start:end], self.profile[start:end], color='yellow', alpha=0.3)
             self.ax.text((start + end) / 2, np.max(self.profile[start:end]), f'Area: {self.peak_areas[i]:.2f}', ha='center', va='bottom')
     
         self.ax.set_ylabel('Intensity')
@@ -293,6 +368,8 @@ class PeakAreaDialog(QDialog):
     
         # Update the canvas
         self.canvas.draw()
+        plt.close(self.fig) 
+
 
     def get_final_peak_area(self):
         """Return the calculated peak areas."""
@@ -538,7 +615,8 @@ class CombinedSDSApp(QMainWindow):
         self.image_array_backup= None
         self.run_predict_MW=False
         
-
+        self.create_menu_bar()
+        
         # Main container widget
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -793,6 +871,53 @@ class CombinedSDSApp(QMainWindow):
         self.redo_shortcut.activated.connect(self.redo_action)
         self.load_config()
         
+    def create_menu_bar(self):
+        # Create the menu bar
+        menubar = self.menuBar()
+
+        # Create the "File" menu
+        file_menu = menubar.addMenu("File")
+
+        # Add "Load Image" action
+        load_action = QAction("Load Image", self)
+        load_action.triggered.connect(self.load_image)
+        file_menu.addAction(load_action)
+
+        # Add "Save Image" action
+        save_action = QAction("Save Image", self)
+        save_action.triggered.connect(self.save_image)
+        file_menu.addAction(save_action)
+        
+        # Add "Save Image SVG" action
+        save_action_svg = QAction("Save Image as SVG", self)
+        save_action_svg.triggered.connect(self.save_image_svg)
+        file_menu.addAction(save_action_svg)
+
+        # Add "Reset Image" action
+        reset_action = QAction("Reset Image", self)
+        reset_action.triggered.connect(self.reset_image)
+        file_menu.addAction(reset_action)
+
+        # Add a separator
+        file_menu.addSeparator()
+
+        # Add "Exit" action
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # Create the "About" menu
+        about_menu = menubar.addMenu("About")
+
+        # Add "GitHub" action
+        github_action = QAction("GitHub", self)
+        github_action.triggered.connect(self.open_github)
+        about_menu.addAction(github_action)
+
+    def open_github(self):
+        # Open the GitHub link in the default web browser
+        QDesktopServices.openUrl(QUrl("https://github.com/Anindya-Karmaker/Imaging-Assistant"))
+        
     def zoom_in(self):
         self.live_view_label.zoom_in()
         self.update_live_view()
@@ -934,61 +1059,7 @@ class CombinedSDSApp(QMainWindow):
         ptr.setsize(height * width)  # Define size explicitly
         intensity_array = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width))
     
-        # Get the selected band estimation technique
-        technique = self.band_estimation_combobox.currentText()
-    
-        if technique == "Sum":
-            # **1. Apply Rolling Ball Background Subtraction (Like ImageJ)**
-            background = rolling_ball(intensity_array, radius=50)  # Radius is adjustable
-            corrected = intensity_array - background
-            corrected[corrected < 0] = 0  # Clip negative values
         
-            # **2. Sum Across Width for Column-Wise Projection**
-            profile = np.sum(corrected, axis=1)  # Sum all pixels along width
-        
-            # **3. Normalize the Profile to Enhance Peak Visibility**
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-        elif technique == "Mean":
-            profile = np.mean(intensity_array, axis=1)
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-        elif technique == "Percentile-5%":
-            profile = np.percentile(intensity_array, 5, axis=1)
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-        elif technique == "Percentile-10%":
-            profile = np.percentile(intensity_array, 10, axis=1)
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-        elif technique == "Percentile-15%":
-            profile = np.percentile(intensity_array, 15, axis=1)
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-        elif technique == "Percentile-30%":
-            profile = np.percentile(intensity_array, 30, axis=1)
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-        else:
-            profile = np.percentile(intensity_array, 5, axis=1)  # Default to Percentile-5%
-            profile = (profile - np.min(profile)) / (np.max(profile) - np.min(profile)) * 255
-        
-            # **4. Apply Gaussian Smoothing to Remove Noise**
-            profile = gaussian_filter1d(profile, sigma=2)  # Smoothing filter
-    
-        profile = 255 - profile  # Invert the profile for peak detection
     
         # Convert QImage to PIL Image
         buffer = QBuffer()
@@ -998,7 +1069,7 @@ class CombinedSDSApp(QMainWindow):
         buffer.close()
     
         # Open interactive adjustment window
-        dialog = PeakAreaDialog(profile, cropped_image, parent=self)
+        dialog = PeakAreaDialog(intensity_array, cropped_image, parent=self)
         if dialog.exec_() == QDialog.Accepted:
             peak_area = dialog.get_final_peak_area()
             return peak_area  # Return user-adjusted peak area
@@ -1035,12 +1106,39 @@ class CombinedSDSApp(QMainWindow):
         if self.undo_stack:
             self.redo_stack.append(self.image.copy())
             self.image = self.undo_stack.pop()
+            try:
+                w=self.image.width()
+                h=self.image.height()
+                # Preview window
+                ratio=w/h
+                self.label_width=int(self.screen_width * 0.28)
+                label_height=int(self.label_width/ratio)
+                if label_height>self.label_width:
+                    label_height=self.label_width
+                    self.label_width=ratio*label_height
+                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+            except:
+                pass
             self.update_live_view()
+            
     
     def redo_action(self):
         if self.redo_stack:
             self.undo_stack.append(self.image.copy())
             self.image = self.redo_stack.pop()
+            try:
+                w=self.image.width()
+                h=self.image.height()
+                # Preview window
+                ratio=w/h
+                self.label_width=int(self.screen_width * 0.28)
+                label_height=int(self.label_width/ratio)
+                if label_height>self.label_width:
+                    label_height=self.label_width
+                    self.label_width=ratio*label_height
+                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+            except:
+                pass
             self.update_live_view()
             
     def analysis_tab(self):
@@ -1062,13 +1160,6 @@ class CombinedSDSApp(QMainWindow):
         # Group 2: Standard Curve Creation
         standard_curve_group = QGroupBox("Generating Standard Curve for Quantification")
         standard_curve_layout = QVBoxLayout()
-    
-        # Add the Band Estimation Technique Combobox
-        self.band_estimation_combobox = QComboBox()
-        self.band_estimation_combobox.addItems(["Sum", "Mean", "Percentile-5%", "Percentile-10%", "Percentile-15%", "Percentile-30%"])
-        self.band_estimation_combobox.setCurrentText("Percentile-5%")  # Default to Percentile-5%
-        standard_curve_layout.addWidget(QLabel("Band Estimation Technique:"))
-        standard_curve_layout.addWidget(self.band_estimation_combobox)
     
         self.measure_quantity_button = QPushButton("Outline boxes for creating Standard Curve")
         self.measure_quantity_button.setToolTip("Place bounding boxes on bands to measure sample quantity.")
@@ -1517,6 +1608,7 @@ class CombinedSDSApp(QMainWindow):
         # Rotation Angle 
         rotation_layout = QHBoxLayout()
         self.orientation_label = QLabel("Rotation Angle (Degrees)")
+        self.orientation_label.setFixedWidth(200)
         self.orientation_slider = QSlider(Qt.Horizontal)
         self.orientation_slider.setRange(-3600, 3600)  # Scale by 10 to allow decimals
         self.orientation_slider.setValue(0)
@@ -1556,7 +1648,7 @@ class CombinedSDSApp(QMainWindow):
         # Taper Skew Slider
         self.taper_skew_label = QLabel("Tapering Skew:")
         self.taper_skew_slider = QSlider(Qt.Horizontal)
-        self.taper_skew_slider.setRange(-50, 50)  # Adjust as needed
+        self.taper_skew_slider.setRange(-70, 70)  # Adjust as needed
         self.taper_skew_slider.setValue(0)
         self.taper_skew_slider.valueChanged.connect(self.update_live_view)
         
@@ -1703,7 +1795,7 @@ class CombinedSDSApp(QMainWindow):
         layout = QVBoxLayout(tab)
         
         marker_options_layout = QHBoxLayout()
-
+    
         # Left/Right Marker Options
         left_right_marker_group = QGroupBox("Left/Right Marker Options")
         left_right_marker_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -1751,25 +1843,36 @@ class CombinedSDSApp(QMainWindow):
         # Vertical layout for top marker group
         top_marker_layout = QVBoxLayout()
         
-        
-        # Text input for Top Marker Labels
+        # Text input for Top Marker Labels (multi-column support)
         self.top_marker_input = QTextEdit(self)
         self.top_marker_input.setText(", ".join(self.top_label))  # Populate with initial values
-        self.top_marker_input.setMinimumHeight(40)
+        self.top_marker_input.setMinimumHeight(50)  # Increase height for better visibility
+        self.top_marker_input.setPlaceholderText("Enter labels for each column, separated by commas. Use new lines for multiple columns.")
         
-        # Button to update Top Marker Labels
+        # Button to add a new column
+        self.add_column_button = QPushButton("Add Column")
+        self.add_column_button.clicked.connect(self.add_column)
+        
+        # Button to remove the last column
+        self.remove_column_button = QPushButton("Remove Last Column")
+        self.remove_column_button.clicked.connect(self.remove_column)
+        
+        # Button to update all labels
         self.update_top_labels_button = QPushButton("Update All Labels")
         self.update_top_labels_button.clicked.connect(self.update_all_labels)
         
+        # Layout for column management buttons
+        column_buttons_layout = QHBoxLayout()
+        column_buttons_layout.addWidget(self.add_column_button)
+        column_buttons_layout.addWidget(self.remove_column_button)
+        
         # Add widgets to the top marker layout
         top_marker_layout.addWidget(self.top_marker_input)
+        top_marker_layout.addLayout(column_buttons_layout)
         top_marker_layout.addWidget(self.update_top_labels_button)
         
         # Set the layout for the Top Marker Group
         top_marker_group.setLayout(top_marker_layout)
-        
-        # Add the group box to the main layout
-        
         
         # Add both groups to the horizontal layout
         marker_options_layout.addWidget(left_right_marker_group)
@@ -1777,7 +1880,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Add the horizontal layout to the main layout
         layout.addLayout(marker_options_layout)
-
+    
         # Marker padding sliders - Group box for marker distance adjustment
         padding_params_group = QGroupBox("Marker Placement and Distance")
         padding_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -1862,7 +1965,7 @@ class CombinedSDSApp(QMainWindow):
         # Add button and QLineEdit for the custom marker
         self.custom_marker_button = QPushButton("Custom Marker", self)
         self.custom_marker_button.setToolTip("Places custom markers at the middle of the mouse pointer")
-
+    
         self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
         
         self.custom_marker_button_left_arrow = QPushButton("←", self)
@@ -1873,11 +1976,8 @@ class CombinedSDSApp(QMainWindow):
         
         self.custom_marker_button_bottom_arrow = QPushButton("↓", self)
         
-        
-        
         self.custom_marker_text_entry = QLineEdit(self)        
         self.custom_marker_text_entry.setPlaceholderText("Enter custom marker text")
-        # self.custom_marker_text_entry.textChanged.connect(self.enable_custom_marker_mode)
         
         self.remove_custom_marker_button = QPushButton("Remove Last", self)
         self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
@@ -1893,7 +1993,7 @@ class CombinedSDSApp(QMainWindow):
         
         # Add the arrow buttons with fixed sizes to the marker buttons layout
         self.custom_marker_button_left_arrow.setFixedSize(30, 30)
-
+    
         marker_buttons_layout.addWidget(self.custom_marker_button_left_arrow)
         
         self.custom_marker_button_right_arrow.setFixedSize(30, 30)
@@ -1905,13 +2005,12 @@ class CombinedSDSApp(QMainWindow):
         self.custom_marker_button_bottom_arrow.setFixedSize(30, 30)
         marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
         
-        
         #Assign functions to the buttons
         self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
         self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
         self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
         self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
-
+    
         
         # Create a QWidget to hold the QHBoxLayout
         marker_buttons_widget = QWidget()
@@ -1931,7 +2030,6 @@ class CombinedSDSApp(QMainWindow):
         
         # Add the reset button
         padding_layout.addWidget(self.reset_custom_marker_button, 3, 4)
-                
         
         # Add the color button
         padding_layout.addWidget(self.custom_marker_color_button, 3, 5)
@@ -1940,14 +2038,12 @@ class CombinedSDSApp(QMainWindow):
         self.custom_font_type_dropdown = QFontComboBox()
         self.custom_font_type_dropdown.setCurrentFont(QFont("Arial"))
         self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
-        # self.font_type_dropdown.currentIndexChanged.connect(self.update_font_type)
         
         # Font size selector
         self.custom_font_size_label = QLabel("Custom Marker Size:", self)
         self.custom_font_size_spinbox = QSpinBox(self)
         self.custom_font_size_spinbox.setRange(2, 150)  # Allow font sizes from 8 to 72
         self.custom_font_size_spinbox.setValue(12)  # Default font size
-        # self.font_size_spinbox.valueChanged.connect(self.update_font_size)
         
         # Grid checkbox
         self.show_grid_checkbox = QCheckBox("Show Snap Grid", self)
@@ -1970,18 +2066,33 @@ class CombinedSDSApp(QMainWindow):
         padding_layout.addWidget(self.custom_font_size_spinbox, 4, 3,1,1)
         padding_layout.addWidget(self.show_grid_checkbox,4,4)
         padding_layout.addWidget(self.grid_size_input,4,5)
-
-        
-        
+    
         # Set the layout for the marker group box
         padding_params_group.setLayout(padding_layout)
         
-                
         # Add the font options group box to the main layout
         layout.addWidget(padding_params_group)
         
         layout.addStretch()
         return tab
+    
+    def add_column(self):
+        """Add a new column to the top marker labels."""
+        current_text = self.top_marker_input.toPlainText()
+        if current_text.strip():
+            self.top_marker_input.append("")  # Add a new line for a new column
+        else:
+            self.top_marker_input.setPlainText("")  # Start with an empty line if no text exists
+    
+    def remove_column(self):
+        """Remove the last column from the top marker labels."""
+        current_text = self.top_marker_input.toPlainText()
+        lines = current_text.split("\n")
+        if len(lines) > 1:
+            lines.pop()  # Remove the last line
+            self.top_marker_input.setPlainText("\n".join(lines))
+        else:
+            self.top_marker_input.clear()  # Clear the text if only one line exists
 
     
     def flip_vertical(self):
@@ -2141,30 +2252,18 @@ class CombinedSDSApp(QMainWindow):
             self.custom_marker_color = color  # Update the custom marker color
     
     def update_all_labels(self):
-        # Retrieve the multiline text from QTextEdit
-        self.marker_values=[int(num) if num.strip().isdigit() else num.strip() for num in self.marker_values_textbox.text().strip("[]").split(",")]
+        """Update all labels from the QTextEdit, supporting multiple columns."""
         input_text = self.top_marker_input.toPlainText()
+        lines = input_text.split("\n")
         
-        # Split the text into a list by commas and strip whitespace
-        self.top_label= [label.strip() for label in input_text.split(",") if label.strip()]
-        try:
-            
-            # Ensure that the top_markers list only updates the top_label values serially
-            if len(self.top_label) < len(self.top_markers):
-                self.top_markers = self.top_markers[:len(self.top_label)]
-            for i in range(0, len(self.top_markers)):
-                self.top_markers[i] = (self.top_markers[i][0], self.top_label[i])
-            
-            # If self.top_label has more entries than current top_markers, add them
-            # if len(self.top_label) > len(self.top_markers):
-            #     additional_markers = [(self.top_markers[-1][0] + 50 * (i + 1), label) 
-            #                           for i, label in enumerate(self.top_label[len(self.top_markers):])]
-            #     self.top_markers.extend(additional_markers)
-            
-            # If self.top_label has fewer entries, truncate the list
-            
-        except:
-            pass
+        # Clear existing top markers
+        self.top_markers.clear()
+        
+        # Process each line (column) and add markers
+        for line in lines:
+            if line.strip():  # Skip empty lines
+                labels = [label.strip() for label in line.split(",") if label.strip()]
+                self.top_markers.extend([(i * 50, label) for i, label in enumerate(labels)])  # Adjust spacing as needed
         try:
             if len(self.marker_values) < len(self.left_markers):
                 self.left_markers = self.left_markers[:len(self.marker_values)]
@@ -3085,12 +3184,15 @@ class CombinedSDSApp(QMainWindow):
     
         # Get the orientation value from the slider
         orientation = float(self.orientation_slider.value() / 20)  # Orientation slider value
+        self.orientation_label.setText(f"Rotation Angle ({orientation:.2f} Degrees)")
+        
     
         # Apply the rotation to the cropped image
         rotated_image = cropped_image.transformed(QTransform().rotate(orientation))
         
         taper_value = self.taper_skew_slider.value() / 100  # Normalize taper value to a range of -1 to 1
-
+        self.taper_skew_label.setText(f"Tapering Skew {taper_value:.2f} ")
+        
         width = self.image.width()
         height = self.image.height()
     
