@@ -84,8 +84,8 @@ class PeakAreaDialog(QDialog):
         
         # # Add the Band Estimation Technique Combobox
         self.band_estimation_combobox = QComboBox()
-        self.band_estimation_combobox.addItems(["Mean", "Percentile-5%", "Percentile-10%", "Percentile-15%", "Percentile-30%"])
-        self.band_estimation_combobox.setCurrentText("Percentile-5%")  # Default to Percentile-5%
+        self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
+        self.band_estimation_combobox.setCurrentText("Mean")  # Default to Percentile-5%
         self.band_estimation_combobox.currentIndexChanged.connect(self.update_peak_number)
         top_layout.addWidget(QLabel("Band Estimation Technique:"))
         top_layout.addWidget(self.band_estimation_combobox)
@@ -129,13 +129,13 @@ class PeakAreaDialog(QDialog):
     
         if technique == "Mean":
             self.profile = np.mean(self.intensity_array, axis=1)
-        elif technique == "Percentile-5%":
+        elif technique == "Percentile:5%":
             self.profile = np.percentile(self.intensity_array, 5, axis=1)
-        elif technique == "Percentile-10%":
+        elif technique == "Percentile:10%":
             self.profile = np.percentile(self.intensity_array, 10, axis=1)
-        elif technique == "Percentile-15%":
+        elif technique == "Percentile:15%":
             self.profile = np.percentile(self.intensity_array, 15, axis=1)
-        elif technique == "Percentile-30%":
+        elif technique == "Percentile:30%":
             self.profile = np.percentile(self.intensity_array, 30, axis=1)
         else:
             self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile-5%
@@ -175,13 +175,13 @@ class PeakAreaDialog(QDialog):
         
         if technique == "Mean":
             self.profile = np.mean(self.intensity_array, axis=1)
-        elif technique == "Percentile-5%":
+        elif technique == "Percentile:5%":
             self.profile = np.percentile(self.intensity_array, 5, axis=1)
-        elif technique == "Percentile-10%":
+        elif technique == "Percentile:10%":
             self.profile = np.percentile(self.intensity_array, 10, axis=1)
-        elif technique == "Percentile-15%":
+        elif technique == "Percentile:15%":
             self.profile = np.percentile(self.intensity_array, 15, axis=1)
-        elif technique == "Percentile-30%":
+        elif technique == "Percentile:30%":
             self.profile = np.percentile(self.intensity_array, 30, axis=1)
         else:
             self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile-5%
