@@ -40,6 +40,8 @@ def log_exception(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
     logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+    QMessageBox.warning("Error", f"ERROR: {exc_type, exc_value, exc_traceback}")
+    
 
 # Set the custom exception handler
 sys.excepthook = log_exception
@@ -78,8 +80,8 @@ class PeakAreaDialog(QDialog):
     
         # Band Estimation Combobox (FIX for AttributeError)
         self.band_estimation_combobox = QComboBox()
-        self.band_estimation_combobox.addItems(["Mean", "Percentile-5%", "Percentile-10%", "Percentile-15%", "Percentile-30%"])
-        self.band_estimation_combobox.setCurrentText("Percentile-5%")  
+        self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
+        self.band_estimation_combobox.setCurrentText("Mean")  
         self.band_estimation_combobox.currentIndexChanged.connect(self.update_peak_number)
         top_layout.addWidget(QLabel("Band Estimation Technique:"))
         top_layout.addWidget(self.band_estimation_combobox)
@@ -138,16 +140,16 @@ class PeakAreaDialog(QDialog):
     
         if technique == "Mean":
             self.profile = np.mean(self.intensity_array, axis=1)
-        elif technique == "Percentile-5%":
+        elif technique == "Percentile:5%":
             self.profile = np.percentile(self.intensity_array, 5, axis=1)
-        elif technique == "Percentile-10%":
+        elif technique == "Percentile:10%":
             self.profile = np.percentile(self.intensity_array, 10, axis=1)
-        elif technique == "Percentile-15%":
+        elif technique == "Percentile:15%":
             self.profile = np.percentile(self.intensity_array, 15, axis=1)
-        elif technique == "Percentile-30%":
+        elif technique == "Percentile:30%":
             self.profile = np.percentile(self.intensity_array, 30, axis=1)
         else:
-            self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile-5%
+            self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile:5%
 
         self.profile = (self.profile - np.min(self.profile)) /np.ptp(self.profile) * 255
         self.profile = 255 - self.profile  # Invert the profile for peak detection
@@ -176,16 +178,16 @@ class PeakAreaDialog(QDialog):
         
         if technique == "Mean":
             self.profile = np.mean(self.intensity_array, axis=1)
-        elif technique == "Percentile-5%":
+        elif technique == "Percentile:5%":
             self.profile = np.percentile(self.intensity_array, 5, axis=1)
-        elif technique == "Percentile-10%":
+        elif technique == "Percentile:10%":
             self.profile = np.percentile(self.intensity_array, 10, axis=1)
-        elif technique == "Percentile-15%":
+        elif technique == "Percentile:15%":
             self.profile = np.percentile(self.intensity_array, 15, axis=1)
-        elif technique == "Percentile-30%":
+        elif technique == "Percentile:30%":
             self.profile = np.percentile(self.intensity_array, 30, axis=1)
         else:
-            self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile-5%
+            self.profile = np.percentile(self.intensity_array, 5, axis=1)  # Default to Percentile:5%
 
         self.profile = (self.profile - np.min(self.profile)) /np.ptp(self.profile) * 255
         self.profile = 255 - self.profile  # Invert the profile for peak detection
@@ -258,6 +260,8 @@ class PeakAreaDialog(QDialog):
             peak_group.setLayout(peak_layout)
             self.peak_sliders_layout.addWidget(peak_group)
             self.peak_sliders.append((start_slider, end_slider))
+        
+        self.peak_sliders_layout.addStretch()
 
     def detect_peaks(self):
         """Detect peaks and troughs in the intensity profile."""
@@ -431,11 +435,6 @@ class LiveViewLabel(QLabel):
         if self.preview_marker_enabled:
             self.preview_marker_position = event.pos()
             self.update()  # Trigger repaint to show the preview
-        if self.zoom_level != 1.0 and self.pan_start:  # Pan the image when zoomed
-            delta = event.pos() - self.pan_start
-            self.pan_offset += delta
-            self.pan_start = event.pos()
-            self.update()
         if self.measure_quantity_mode and self.bounding_box_start:
             self.bounding_box_preview = (
                 self.bounding_box_start.x(),  # Start X
@@ -467,9 +466,6 @@ class LiveViewLabel(QLabel):
                 self.box_measurement_complete=True
                 print("BOX MEASUREMENT COMPLETED")
             self.update()  # Trigger repaint
-        if self.zoom_level != 1.0:  # Enable panning only when zoomed
-            self.pan_start = event.pos()
-            self.update()
         super().mousePressEvent(event)
 
     
@@ -477,8 +473,6 @@ class LiveViewLabel(QLabel):
         if self.measure_quantity_mode and self.bounding_box_start:
             self.bounding_box_preview = None  # Clear the preview
             self.update()
-        if self.zoom_level != 1.0:
-            self.pan_start = None  # Reset pan start position
         super().mouseReleaseEvent(event)
     
     # def wheelEvent(self, event):
@@ -563,6 +557,7 @@ class LiveViewLabel(QLabel):
             self.bounding_box_preview = None
             self.counter=0
             self.live_view_label.mousePressEvent=None
+            self.live_view_label.setCursor(Qt.ArrowCursor)
             self.update()
         super().keyPressEvent(event)
 
@@ -573,7 +568,7 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         window_width = int(self.screen_width * 0.5)  # 60% of screen width
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.window_title="IMAGING ASSISTANT V4.00"
+        self.window_title="IMAGING ASSISTANT V4.20"
         self.setWindowTitle(self.window_title)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -743,13 +738,13 @@ class CombinedSDSApp(QMainWindow):
         zoom_in_button = QPushButton("Zoom In")
         zoom_in_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         zoom_in_button.clicked.connect(self.zoom_in)
-        zoom_in_button.setToolTip("Increase zoom level")
+        zoom_in_button.setToolTip("Increase zoom level. Click the display window and use arrow keys for moving")
         
         # Zoom Out button
         zoom_out_button = QPushButton("Zoom Out")
         zoom_out_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         zoom_out_button.clicked.connect(self.zoom_out)
-        zoom_out_button.setToolTip("Decrease zoom level")
+        zoom_out_button.setToolTip("Decrease zoom level. Click the display window and use arrow keys for moving")
         
         # Add Zoom buttons to the zoom layout
         zoom_layout.addWidget(zoom_in_button)
@@ -964,7 +959,7 @@ class CombinedSDSApp(QMainWindow):
         # Assign mouse event handlers for bounding box creation
         self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
         self.live_view_label.mouseReleaseEvent = lambda event: self.end_standard_bounding_box(event)
-        # self.bounding_box_start = None
+        self.live_view_label.setCursor(Qt.CrossCursor)
     
     def enable_measure_protein_mode(self):
         """Enable mode to measure protein quantity using the standard curve."""
@@ -977,6 +972,7 @@ class CombinedSDSApp(QMainWindow):
         self.setMouseTracking(True)  # Ensure parent also tracks mouse
         self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
         self.live_view_label.mouseReleaseEvent = lambda event: self.end_measure_bounding_box(event)
+        self.live_view_label.setCursor(Qt.CrossCursor)
 
     def call_live_view(self):
         self.update_live_view()
@@ -3027,7 +3023,7 @@ class CombinedSDSApp(QMainWindow):
             if self.marker_mode == "left" and self.current_marker_index < len(self.marker_values):
                 if len(self.left_markers)!=0:
                     self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))                    
-                    
+                    self.current_marker_index += 1
                 else:
                     self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
                     self.current_marker_index += 1
@@ -3037,10 +3033,10 @@ class CombinedSDSApp(QMainWindow):
                     self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
                     self.left_padding_slider.setValue(padding_value)
                     self.left_marker_shift_added = self.left_padding_slider.value()                    
-                    # print("left_padding_slider: ",self.left_padding_slider.value())
             elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
                 if len(self.right_markers)!=0:
                     self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
+                    self.current_top_label_index += 1
                 else:
                     self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
                     self.current_marker_index += 1
@@ -3050,10 +3046,10 @@ class CombinedSDSApp(QMainWindow):
                     self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
                     self.right_padding_slider.setValue(padding_value)
                     self.right_marker_shift_added = self.right_padding_slider.value()
-                    # print("right_padding_slider: ",self.right_padding_slider.value())
             elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
                 if len(self.top_markers)!=0:
                     self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
+                    self.current_top_label_index += 1
                 else:
                     self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
                     self.current_top_label_index += 1
@@ -3063,7 +3059,6 @@ class CombinedSDSApp(QMainWindow):
                     self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
                     self.top_padding_slider.setValue(padding_value)
                     self.top_marker_shift_added = self.top_padding_slider.value()
-                    # print("top_padding_slider: ",self.top_padding_slider.value())
         except:
             print("ERROR ADDING BANDS")
         self.update_live_view()
@@ -3825,7 +3820,7 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     text,
-                    insert=(x-text_width/2, y-text_height/2),
+                    insert=(x-text_width/2, y-text_height/4),
                     fill=color.name(),
                     font_family=font,
                     font_size=f"{font_size}px"
@@ -3842,7 +3837,7 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     final_text,
-                    insert=(self.left_marker_shift_added-text_width/2, y-text_height/2),
+                    insert=(self.left_marker_shift_added-text_width/2, y-text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -3861,7 +3856,7 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     f" ⎯ {text}",
-                    insert=(self.right_marker_shift_added-text_width/2, y-text_height/2),
+                    insert=(self.right_marker_shift_added-text_width/2, y-text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -3879,7 +3874,7 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     text,
-                    insert=(x-text_width/2, self.top_marker_shift_added-text_height/2),
+                    insert=(x-text_width/2, self.top_marker_shift_added-text_height/4),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
