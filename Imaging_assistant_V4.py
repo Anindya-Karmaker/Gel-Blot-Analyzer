@@ -2655,6 +2655,7 @@ class CombinedSDSApp(QMainWindow):
             self.image_contrasted = self.image.copy()
             self.image_before_padding = None
             self.image_master=self.image.copy()
+            self.image_before_contrast = self.image.copy()
     
         # Check if the clipboard contains URLs (file paths)
         if mime_data.hasUrls():
@@ -2668,6 +2669,7 @@ class CombinedSDSApp(QMainWindow):
                     self.image_contrasted = self.image.copy()
                     self.image_before_padding = None
                     self.image_master=self.image.copy()
+                    self.image_before_contrast = self.image.copy()
                     
     
                     # Update the window title with the image path
