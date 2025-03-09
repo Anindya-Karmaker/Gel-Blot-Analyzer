@@ -40,7 +40,7 @@ def log_exception(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
     logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-    QMessageBox.warning("Error", f"ERROR: {exc_type, exc_value, exc_traceback}")
+    QMessageBox.warning("Error", f"{exc_type, exc_value, exc_traceback}")
     
 
 # Set the custom exception handler
@@ -51,8 +51,7 @@ class PeakAreaDialog(QDialog):
     def __init__(self, intensity_array, cropped_image, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Adjust Peak Regions")
-        self.setGeometry(100, 100, 1000, 800)  # Larger window for multiple sliders
-    
+        self.setGeometry(100, 100, 1000, 800)  # Larger window for multiple sliders    
         # Store the original intensity profile
         self.cropped_image = cropped_image
         self.profile = None
@@ -265,7 +264,7 @@ class PeakAreaDialog(QDialog):
 
     def detect_peaks(self):
         """Detect peaks and troughs in the intensity profile."""
-        peaks, _ = find_peaks(self.profile, height=np.mean(self.profile), distance=50)
+        peaks, _ = find_peaks(self.profile, height=np.mean(self.profile), distance=5)
         self.peaks = peaks
     
         # Calculate troughs between peaks
@@ -2654,8 +2653,8 @@ class CombinedSDSApp(QMainWindow):
             self.image = image  # Store the image in self.image
             self.original_image = self.image.copy()
             self.image_contrasted = self.image.copy()
-            self.image_master = self.image.copy()
             self.image_before_padding = None
+            self.image_master=self.image.copy()
     
         # Check if the clipboard contains URLs (file paths)
         if mime_data.hasUrls():
@@ -2667,8 +2666,8 @@ class CombinedSDSApp(QMainWindow):
                     self.image = QImage(file_path)
                     self.original_image = self.image.copy()
                     self.image_contrasted = self.image.copy()
-                    self.image_master = self.image.copy()
                     self.image_before_padding = None
+                    self.image_master=self.image.copy()
                     
     
                     # Update the window title with the image path
@@ -2734,7 +2733,9 @@ class CombinedSDSApp(QMainWindow):
             self.original_image = QImage(self.image_path)  # Keep the original image
             self.image = self.original_image.copy()        # Start with a copy of the original
             self.image_master= self.original_image.copy()  
+            self.image_before_contrast = self.original_image.copy()  
             self.image_contrasted= self.original_image.copy()  
+            self.image_before_padding=None
 
             self.setWindowTitle(f"{self.window_title}:{self.image_path}")
     
