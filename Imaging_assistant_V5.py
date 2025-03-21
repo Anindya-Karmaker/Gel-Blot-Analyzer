@@ -45,16 +45,16 @@ def log_exception(exc_type, exc_value, exc_traceback):
     logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 
     # Display a QMessageBox with the error details
-    #error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}"
-    #QMessageBox.critical(
-    #    None,  # No parent window
-    #    "Unexpected Error",  # Title of the message box
-    #    error_message,  # Error message to display
-    #    QMessageBox.Ok  # Button to close the dialog
-    #)
+    error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}"
+    QMessageBox.critical(
+        None,  # No parent window
+        "Unexpected Error",  # Title of the message box
+        error_message,  # Error message to display
+        QMessageBox.Ok  # Button to close the dialog
+    )
     
 
-# Set the custom exception handler
+# # Set the custom exception handler
 sys.excepthook = log_exception
 
 class TableWindow(QDialog):
@@ -259,7 +259,7 @@ class PeakAreaDialog(QDialog):
         
         self.peak_height_slider_label = QLabel("Peak Height")
         self.peak_height_slider = QSlider(Qt.Horizontal)
-        self.peak_height_slider.setRange(1, 100)  
+        self.peak_height_slider.setRange(1, 200)  
         self.peak_height_slider.setValue(int(self.peak_height*100))
         self.peak_height_slider.valueChanged.connect(self.detect_peaks)
         
@@ -1052,6 +1052,7 @@ class CombinedSDSApp(QMainWindow):
         self.load_config()
         
     def quadrilateral_to_rect(self, image, quad_points):
+        image = image.convertToFormat(QImage.Format_RGBA8888)
         # Get the dimensions of the live view label and the actual image
         label_width = self.live_view_label.width()
         label_height = self.live_view_label.height()
@@ -1152,8 +1153,11 @@ class CombinedSDSApp(QMainWindow):
                 channels = 4  # Assume RGBA
                 format_type = image.Format_RGBA8888
             
-            # Convert QImage to numpy array
-            img_data = image.bits().asstring(image_width * image_height * channels)
+            # Convert QImage to numpy
+            ptr = image.constBits()
+            ptr.setsize(image.byteCount())
+            img_data = np.array(ptr).reshape(image_height, image_width, channels)
+            
             if channels == 1:
                 img = np.frombuffer(img_data, dtype=np.uint8).reshape((image_height, image_width))
             else:
@@ -1785,7 +1789,7 @@ class CombinedSDSApp(QMainWindow):
             self.update_live_view()
         
     
-    def process_standard(self):
+    def process_standard(self,image):
         # if len(self.live_view_label.quad_points) != 4:
         #     QMessageBox.warning(self, "Error", "Please define quadrilateral area first")
         #     return
@@ -2080,12 +2084,12 @@ class CombinedSDSApp(QMainWindow):
         # End painting
         painter.end()
         
- 
+        
         self.render_image_on_canvas(
                 high_res_canvas, scaled_base_image, x_start, y_start, render_scale, draw_guides=False
             )
         
-        self.image=high_res_canvas
+        self.image=high_res_canvas.copy()
         self.image_before_padding=self.image.copy()
         self.image_before_contrast=self.image.copy()
         self.update_live_view()
@@ -2093,6 +2097,13 @@ class CombinedSDSApp(QMainWindow):
         # Remove Image 1 and Image 2 after finalizing
         self.remove_image1()
         self.remove_image2()
+        
+        self.left_markers.clear()  # Clear left markers
+        self.right_markers.clear()  # Clear right markers
+        self.top_markers.clear()
+        self.custom_markers.clear()
+        self.remove_custom_marker_mode()
+        self.clear_predict_molecular_weight()
     
         QMessageBox.information(self, "Success", "The images have been overlapped and saved in memory.")
     
