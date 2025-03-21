@@ -26,6 +26,22 @@ Known Bugs:
 * Make sure before adding left/right markers that they have values and not []
 * SVG OUPUT IS STILL BUGGY!
 
+To run using Anaconda without compatiblity issues:
+1.Create a new Conda environment:
+  >Open a terminal or Anaconda Prompt and navigate to the directory where the environment.yml file is located. Then run the following command:
+  >conda env create -f environment.yml
+
+  This will create a new Conda environment named imaging_assistant_env with all the required libraries.
+
+2.Activate the environment:
+  After the environment is created, activate it using the following command:  
+  >conda activate imaging_assistant_env
+
+3.Run the program:
+  Once the environment is activated, you can run your Python program using:
+  >python Imaging_assistant_V5.py
+
+
 To compile the code into an application:
   1. You need to install pyinstaller: pip install pyinstaller
   2. Extract the files into your folder of choice and modify this command:
