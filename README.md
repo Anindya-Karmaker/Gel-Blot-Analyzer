@@ -1,6 +1,17 @@
 # Imaging-Assistant
-This software makes it easy to modify SDS-PAGE, WB and other GEL images easily and add notations like label heading, molecular weight marker and so on. It can save the image with all of the options for easy editing and has copy/paste functionality for PRO users. I am not a professional coder and used ChatGPT to write most of the supporting code based on my algorithms and ideas. Please download the required libraries using requirements.txt. Used python version 3.9.13 on a M1 MacBook Pro to run and test the code.
+This software makes it easy to modify SDS-PAGE, WB and other GEL images easily and add notations like label heading, molecular weight marker and so on. It can save the image with all of the options for easy editing and has copy/paste functionality. I am not a professional coder and used ChatGPT, Claude, Gemini and DeepSeek to write most of the supporting code based on my algorithms and ideas. Please download the required libraries using requirements.txt. Used python version 3.9.13 on a M1 MacBook Pro to run and test the code.
 
+Features:
+* Fully integrated Image Cropping, Alignment and Skew Correction toolkit builtin
+* Adjust Low/High Image Contrast and Gamma (For visualizing proteins with faint bands)
+* Option to add custom markers with custom font type, size and color
+* Inbuilt Snapping tool to help set markers 
+* Option to load image from clipboard and save to clipboard for faster operation
+* Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications (BUGGY!)
+* Added Keyboard Shortcuts and Tooltips for major options
+* Added Undo/Redo buttons to revert back changes
+* Can perform detailed densitometric analysis including band analysis and band quantification
+  
 Example output from the software:
 <img width="968" alt="image" src="https://github.com/user-attachments/assets/a60eb4dc-2b75-4dc8-8cd9-e4101ab6dfd4" />
 
@@ -11,16 +22,7 @@ Have option to predict the molecular weight of the protein/bp of DNA Gel once th
 
 
 
-Other Features:
-* Fully integrated Image Cropping, Alignment and Skew Correction toolkit builtin
-* Adjust Low/High Image Contrast and Gamma (For visualizing proteins with faint bands)
-* Option to add custom markers with custom font type, size and color
-* Inbuilt Snapping tool to help set markers 
-* Option to load image from clipboard and save to clipboard for faster operation
-* Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications (BUGGY!)
-* Added Keyboard Shortcuts and Tooltips for major options
-* Added Undo/Redo buttons to revert back changes
-* Can perform densitometric analysis
+
 
 Known Bugs:
 * Make sure before adding left/right markers that they have values and not []
