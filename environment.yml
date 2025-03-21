@@ -11,6 +11,7 @@ dependencies:
   - scikit-image  # For image processing
   - openpyxl  # For Excel file handling
   - pillow  # For image manipulation
+  - pyinstaller # For compiling the software, otherwise can skip
   - pip  # For installing additional Python packages
   - pip:
     - svgwrite  # For SVG file handling (if not available via Conda)
