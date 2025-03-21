@@ -29,6 +29,7 @@ Known Bugs:
 * SVG OUPUT IS STILL BUGGY!
 
 To run using Anaconda without compatiblity issues:
+
 1.Create a new Conda environment:
   >Open a terminal or Anaconda Prompt and navigate to the directory where the environment.yml file is located. Then run the following command:
   >conda env create -f environment.yml
@@ -43,26 +44,27 @@ To run using Anaconda without compatiblity issues:
   Once the environment is activated, you can run your Python program using:
   >python Imaging_assistant_V5.py
 
-
-To compile the code into an application:
-  1. You need to install pyinstaller: pip install pyinstaller
-  2. Extract the files into your folder of choice and modify this command:
-
-    pyinstaller --noconfirm --onefile --windowed --distpath C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Application\dist --workpath C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Application --icon=C:\Imaging-Assistant-main_3\Imaging-Assistant-main\icon.ico --name=MyApp C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
-
-  3. Modify the directory. For example:
-     
-    Here the directory is: C:\Imaging-Assistant-main_3\Imaging-Assistant-main\ (Change as needed)
-    
-  4. Run the command to get an executable so you can run the software on any PC without needing to install Python or Ananconda Distribution
-     
-To run the program in Python or Ananconda Distribution:
+To run the program in Python or Other Distribution(can have compatibility issues with python >3.9.13):
 
   1. Run the command:
      
      pip install -r C:\Imaging-Assistant-main_3\Imaging-Assistant-main\requirements.txt
 
      python C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
+
+To compile the code into an application:
+  1. You need to install pyinstaller: pip install pyinstaller
+  2. Extract the files into your folder of choice and modify this command:
+
+    pyinstaller --noconfirm --onefile --windowed --icon=C:\Imaging-Assistant-main\icon.ico --name=MyApp C:\Imaging-Assistant-main\Imaging_assistant_V5.py
+
+  3. Modify the directory. For example:
+     
+    Here the directory is: C:\Imaging-Assistant-main\ (Change as needed)
+    
+  4. Run the command to get an executable so you can run the software on any PC without needing to install Python or Ananconda Distribution
+     
+
 
 
 
