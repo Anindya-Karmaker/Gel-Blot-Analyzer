@@ -45,13 +45,13 @@ def log_exception(exc_type, exc_value, exc_traceback):
     logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 
     # Display a QMessageBox with the error details
-    error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}"
-    QMessageBox.critical(
-        None,  # No parent window
-        "Unexpected Error",  # Title of the message box
-        error_message,  # Error message to display
-        QMessageBox.Ok  # Button to close the dialog
-    )
+    #error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}"
+    #QMessageBox.critical(
+    #    None,  # No parent window
+    #    "Unexpected Error",  # Title of the message box
+    #    error_message,  # Error message to display
+    #    QMessageBox.Ok  # Button to close the dialog
+    #)
     
 
 # Set the custom exception handler
