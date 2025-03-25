@@ -13,16 +13,12 @@ Features:
 * Can perform detailed densitometric analysis including band analysis and band quantification
   
 Example output from the software:
-<img width="968" alt="image" src="https://github.com/user-attachments/assets/a60eb4dc-2b75-4dc8-8cd9-e4101ab6dfd4" />
-
-Have option to predict the molecular weight of the protein/bp of DNA Gel once the ladder markers (left/right) are placed (Accurarcy can vary anywhere from 5 to 10% depending on the quality of the gel) and perform Densitometric analysis:
-<img width="971" alt="image" src="https://github.com/user-attachments/assets/6da4bb1c-54d9-4666-be36-80b0b6416d53" />
-<img width="967" alt="image" src="https://github.com/user-attachments/assets/e7e65dc4-f129-44a6-ade8-8451d8a91bc4" />
-<img width="997" alt="image" src="https://github.com/user-attachments/assets/afc3522b-201f-4695-b8fc-c4b9dc4aafe6" />
-
-
-
-
+<img width="969" alt="image" src="https://github.com/user-attachments/assets/c5b6b417-a93f-4d1c-b9fe-e16d422f901a" />
+<img width="971" alt="image" src="https://github.com/user-attachments/assets/3943b1ba-d8a9-4e35-9dc8-55cb5cb6a407" />
+<img width="969" alt="image" src="https://github.com/user-attachments/assets/0a9489d0-f7f0-4e1c-911f-2ff6fd179067" />
+<img width="970" alt="image" src="https://github.com/user-attachments/assets/8f72be1a-e2f3-4557-a204-616d860d4430" />
+<img width="970" alt="image" src="https://github.com/user-attachments/assets/69e1f709-d547-4b82-9831-617b4839f9d6" />
+<img width="970" alt="image" src="https://github.com/user-attachments/assets/80e22811-fac4-450b-8a79-f57f30b2614b" />
 
 Known Bugs:
 * Make sure before adding left/right markers that they have values and not []
