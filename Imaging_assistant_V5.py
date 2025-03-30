@@ -607,31 +607,10 @@ class LiveViewLabel(QLabel):
         if self.preview_marker_enabled:
             self.preview_marker_position = event.pos()
             self.update()  # Trigger repaint to show the preview
-        if self.mode == "move" and self.selected_point != -1:
-            if self.resize_mode:
-                # Handle resizing
-                offset = event.pos() - self.drag_start_pos
-                self.drag_start_pos = event.pos()
-                
-                if self.quad_points:
-                    # Resize quadrilateral
-                    self.quad_points[self.selected_point] += offset
-                elif self.bounding_box_preview:
-                    # Resize rectangle
-                    x1, y1, x2, y2 = self.bounding_box_preview
-                    if self.selected_point == 0:  # Top-left
-                        x1 += offset.x()
-                        y1 += offset.y()
-                    elif self.selected_point == 1:  # Top-right
-                        x2 += offset.x()
-                        y1 += offset.y()
-                    elif self.selected_point == 2:  # Bottom-right
-                        x2 += offset.x()
-                        y2 += offset.y()
-                    elif self.selected_point == 3:  # Bottom-left
-                        x1 += offset.x()
-                        y2 += offset.y()
-                    self.bounding_box_preview = (x1, y1, x2, y2)
+        if self.selected_point != -1 and self.measure_quantity_mode:# and self.mode=="quad":
+            # Update dragged corner position
+            self.quad_points[self.selected_point] = self.transform_point(event.pos())
+            self.update()  # Show the bounding box preview
         
         super().mouseMoveEvent(event)
 
@@ -708,6 +687,11 @@ class LiveViewLabel(QLabel):
                 x = (x - self.pan_offset.x()) / self.zoom_level
                 y = (y - self.pan_offset.y()) / self.zoom_level
             painter.drawText(int(x - text_width / 2), int(y + text_height / 4), self.preview_marker_text)
+            
+        if len(self.quad_points) > 0 and len(self.quad_points) <4 :
+            for p in self.quad_points:
+                painter.setPen(QPen(Qt.red, 2))
+                painter.drawEllipse(p, 1, 1)
     
         if len(self.quad_points) == 4:
             painter.setPen(QPen(Qt.red, 2))
