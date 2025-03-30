@@ -601,15 +601,38 @@ class LiveViewLabel(QLabel):
         self.rectangle_start = None  # Start point of the rectangle
         self.rectangle_end = None    # End point of the rectangle
         self.rectangle_points = []   # Stores the rectangle points
+        self.drag_start_pos = None  # For tracking drag operations
 
     def mouseMoveEvent(self, event):
         if self.preview_marker_enabled:
             self.preview_marker_position = event.pos()
             self.update()  # Trigger repaint to show the preview
-        if self.selected_point != -1 and self.measure_quantity_mode:# and self.mode=="quad":
-            # Update dragged corner position
-            self.quad_points[self.selected_point] = self.transform_point(event.pos())
-            self.update()  # Show the bounding box preview
+        if self.mode == "move" and self.selected_point != -1:
+            if self.resize_mode:
+                # Handle resizing
+                offset = event.pos() - self.drag_start_pos
+                self.drag_start_pos = event.pos()
+                
+                if self.quad_points:
+                    # Resize quadrilateral
+                    self.quad_points[self.selected_point] += offset
+                elif self.bounding_box_preview:
+                    # Resize rectangle
+                    x1, y1, x2, y2 = self.bounding_box_preview
+                    if self.selected_point == 0:  # Top-left
+                        x1 += offset.x()
+                        y1 += offset.y()
+                    elif self.selected_point == 1:  # Top-right
+                        x2 += offset.x()
+                        y1 += offset.y()
+                    elif self.selected_point == 2:  # Bottom-right
+                        x2 += offset.x()
+                        y2 += offset.y()
+                    elif self.selected_point == 3:  # Bottom-left
+                        x1 += offset.x()
+                        y2 += offset.y()
+                    self.bounding_box_preview = (x1, y1, x2, y2)
+        
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
@@ -1635,7 +1658,6 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.mode = "move"
         self.live_view_label.setCursor(Qt.SizeAllCursor)  # Change cursor to indicate move mode
         self.live_view_label.mousePressEvent = self.start_move_selection
-        self.live_view_label.mouseMoveEvent = self.move_selection
         self.live_view_label.mouseReleaseEvent = self.end_move_selection
         self.update_live_view()
         
@@ -1651,6 +1673,7 @@ class CombinedSDSApp(QMainWindow):
                 ])
             self.live_view_label.drag_start_pos = event.pos()
             self.update_live_view()
+        self.live_view_label.mouseMoveEvent = self.move_selection
     
     def move_selection(self, event):
         """Move the selection while the mouse is being dragged."""
@@ -1678,7 +1701,9 @@ class CombinedSDSApp(QMainWindow):
             self.live_view_label.selected_point = None
             self.live_view_label.drag_start_pos = None
             self.update_live_view()
-            
+        
+        
+             
     def get_nearest_point(self, mouse_pos, points):
         """Get the nearest point to the mouse position."""
         min_distance = float('inf')
@@ -3661,7 +3686,7 @@ class CombinedSDSApp(QMainWindow):
             elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
                 if len(self.right_markers)!=0:
                     self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
-                    self.current_top_label_index += 1
+                    self.current_marker_index += 1
                 else:
                     self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
                     self.current_marker_index += 1
