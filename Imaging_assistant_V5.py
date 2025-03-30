@@ -602,6 +602,7 @@ class LiveViewLabel(QLabel):
         self.rectangle_end = None    # End point of the rectangle
         self.rectangle_points = []   # Stores the rectangle points
         self.drag_start_pos = None  # For tracking drag operations
+        self.draw_edges=True
 
     def mouseMoveEvent(self, event):
         if self.preview_marker_enabled:
@@ -611,6 +612,8 @@ class LiveViewLabel(QLabel):
             # Update dragged corner position
             self.quad_points[self.selected_point] = self.transform_point(event.pos())
             self.update()  # Show the bounding box preview
+        if self.selected_point != -1 and self.mode=="move":
+            self.drag_start_pos=event.pos()
         
         super().mouseMoveEvent(event)
 
@@ -693,7 +696,7 @@ class LiveViewLabel(QLabel):
                 painter.setPen(QPen(Qt.red, 2))
                 painter.drawEllipse(p, 1, 1)
     
-        if len(self.quad_points) == 4:
+        if len(self.quad_points) == 4 and self.draw_edges==True:
             painter.setPen(QPen(Qt.red, 2))
             painter.drawPolygon(QPolygonF(self.quad_points))
             # Draw draggable corners
@@ -1648,6 +1651,7 @@ class CombinedSDSApp(QMainWindow):
     def start_move_selection(self, event):
         """Start moving the selection when the mouse is pressed."""
         if self.live_view_label.mode == "move":
+            self.live_view_label.draw_edges=False
             # Check if the mouse is near the quadrilateral or rectangle
             if self.live_view_label.quad_points:
                 self.live_view_label.selected_point = self.get_nearest_point(event.pos(), self.live_view_label.quad_points)
@@ -1682,9 +1686,10 @@ class CombinedSDSApp(QMainWindow):
     def end_move_selection(self, event):
         """End moving the selection when the mouse is released."""
         if self.live_view_label.mode == "move":
-            self.live_view_label.selected_point = None
-            self.live_view_label.drag_start_pos = None
+            self.live_view_label.selected_point = -1            
             self.update_live_view()
+            self.live_view_label.draw_edges=True
+        self.live_view_label.mouseMoveEvent = None
         
         
              
