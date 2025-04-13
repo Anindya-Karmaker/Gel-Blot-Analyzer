@@ -1221,6 +1221,11 @@ class LiveViewLabel(QLabel):
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
+        
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
 
         if self.zoom_level != 1.0:
             painter.translate(self.pan_offset)
@@ -1305,7 +1310,8 @@ class CombinedSDSApp(QMainWindow):
         self.right_markers = []
         self.top_markers = []
         self.custom_markers=[]
-        self.current_marker_index = 0
+        self.current_left_marker_index = 0
+        self.current_right_marker_index = 0
         self.current_top_label_index = 0
         self.font_rotation=-45
         self.image_width=0
@@ -2117,6 +2123,7 @@ class CombinedSDSApp(QMainWindow):
 
         # --- Molecular Weight Prediction ---
         mw_group = QGroupBox("Molecular Weight Prediction")
+        mw_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         mw_layout = QVBoxLayout(mw_group)
         mw_layout.setSpacing(8)
 
@@ -2129,7 +2136,8 @@ class CombinedSDSApp(QMainWindow):
         layout.addWidget(mw_group)
 
         # --- Peak Area / Sample Quantification ---
-        quant_group = QGroupBox("Peak Area / Sample Quantification")
+        quant_group = QGroupBox("Peak Area and Sample Quantification")
+        quant_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         quant_layout = QVBoxLayout(quant_group)
         quant_layout.setSpacing(8)
 
@@ -2435,6 +2443,7 @@ class CombinedSDSApp(QMainWindow):
 
         # --- Image 1 Group ---
         image1_group = QGroupBox("Image 1 Overlay")
+        image1_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         image1_layout = QGridLayout(image1_group) # Use grid for better control layout
         image1_layout.setSpacing(8)
 
@@ -2484,6 +2493,7 @@ class CombinedSDSApp(QMainWindow):
 
         # --- Image 2 Group --- (Similar structure to Image 1)
         image2_group = QGroupBox("Image 2 Overlay")
+        image2_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         image2_layout = QGridLayout(image2_group)
         image2_layout.setSpacing(8)
 
@@ -2705,7 +2715,8 @@ class CombinedSDSApp(QMainWindow):
         layout.setSpacing(15) # Add spacing between groups
 
         # --- Font Options Group ---
-        font_options_group = QGroupBox("Marker & Label Font") # Renamed for clarity
+        font_options_group = QGroupBox("Marker and Label Font") # Renamed for clarity
+        font_options_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         font_options_layout = QGridLayout(font_options_group)
         font_options_layout.setSpacing(8)
 
@@ -2749,6 +2760,7 @@ class CombinedSDSApp(QMainWindow):
 
         # --- Image Adjustments Group ---
         img_adjust_group = QGroupBox("Image Adjustments")
+        img_adjust_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         img_adjust_layout = QGridLayout(img_adjust_group)
         img_adjust_layout.setSpacing(8)
 
@@ -2976,6 +2988,7 @@ class CombinedSDSApp(QMainWindow):
 
         # --- Padding Group ---
         padding_params_group = QGroupBox("Add White Space (Padding)")
+        padding_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         padding_layout = QGridLayout(padding_params_group)
         padding_layout.setSpacing(8)
 
@@ -3020,7 +3033,7 @@ class CombinedSDSApp(QMainWindow):
 
         # --- Buttons Layout ---
         button_layout = QHBoxLayout()
-        self.recommend_button = QPushButton("Set Recommended")
+        self.recommend_button = QPushButton("Set Recommended Values")
         self.recommend_button.setToolTip("Auto-fill padding values based on image size (approx. 10-15%).")
         self.recommend_button.clicked.connect(self.recommended_values)
 
@@ -3158,7 +3171,7 @@ class CombinedSDSApp(QMainWindow):
         layout.addLayout(marker_options_layout)
     
         # Marker padding sliders - Group box for marker distance adjustment
-        padding_params_group = QGroupBox("Marker Placement and Distance")
+        padding_params_group = QGroupBox("Marker Placement and Offsets")
         padding_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         
         # Grid layout for the marker group box
@@ -3582,21 +3595,21 @@ class CombinedSDSApp(QMainWindow):
         if marker_type == 'left':
             if param == 'remove' and len(self.left_markers)!=0:
                 self.left_markers.pop()  
-                if self.current_marker_index > 0:
-                    self.current_marker_index -= 1
+                if self.current_left_marker_index > 0:
+                    self.current_left_marker_index -= 1
             elif param == 'reset':
                 self.left_markers.clear()
-                self.current_marker_index = 0  
+                self.current_left_marker_index = 0  
 
              
         elif marker_type == 'right' and len(self.right_markers)!=0:
             if param == 'remove':
                 self.right_markers.pop()  
-                if self.current_marker_index > 0:
-                    self.current_marker_index -= 1
+                if self.current_right_marker_index > 0:
+                    self.current_right_marker_index -= 1
             elif param == 'reset':
                 self.right_markers.clear()
-                self.current_marker_index = 0
+                self.current_right_marker_index = 0
 
         elif marker_type == 'top' and len(self.top_markers)!=0:
             if param == 'remove':
@@ -3888,6 +3901,8 @@ class CombinedSDSApp(QMainWindow):
             self.image_before_contrast = self.image.copy()
             self.image_master = self.image.copy()
             self.image_before_padding = None
+            self.setWindowTitle(f"{self.window_title}>IMAGE SIZE:{self.image.width()}x{self.image.height()}")
+
     
         # Check if the clipboard contains URLs (file paths)
         if mime_data.hasUrls():
@@ -3905,7 +3920,7 @@ class CombinedSDSApp(QMainWindow):
                     
     
                     # Update the window title with the image path
-                    self.setWindowTitle(f"{self.window_title}: {file_path}")
+                    self.setWindowTitle(f"{self.window_title}>IMAGE SIZE:{self.image.width()}x{self.image.height()}:{file_path}")
         try:
             w=self.image.width()
             h=self.image.height()
@@ -3974,7 +3989,7 @@ class CombinedSDSApp(QMainWindow):
             self.image_before_contrast=self.original_image.copy() 
             self.image_contrasted= self.original_image.copy()  
 
-            self.setWindowTitle(f"{self.window_title}:{self.image_path}")
+            self.setWindowTitle(f"{self.window_title}>IMAGE SIZE:{self.image.width()}x{self.image.height()}:{self.image_path}")
     
             # Determine associated config file
             self.base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -4199,45 +4214,40 @@ class CombinedSDSApp(QMainWindow):
         return config
     
     def add_band(self, event):
+        # --- Ensure internal lists match UI input BEFORE adding band ---
+        # This call ensures self.marker_values and self.top_label are
+        # updated based on the current text in the UI boxes.
+        self.update_all_labels()
+        # -------------------------------------------------------------
+
         self.save_state()
         # Ensure there's an image loaded and marker mode is active
         self.live_view_label.preview_marker_enabled = False
         self.live_view_label.preview_marker_text = ""
         if not self.image or not self.marker_mode:
             return
-    
-        # Get the cursor position from the event
+
+        # --- Get Coordinates and Scaling (Same as previous version) ---
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
         if self.live_view_label.zoom_level != 1.0:
             cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
             cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
-        
+
         if self.show_grid_checkbox.isChecked():
             grid_size = self.grid_size_input.value()
             cursor_x = round(cursor_x / grid_size) * grid_size
             cursor_y = round(cursor_y / grid_size) * grid_size
-    
-        # Get the dimensions of the displayed image
+
         displayed_width = self.live_view_label.width()
         displayed_height = self.live_view_label.height()
-    
-        # Get the actual dimensions of the loaded image
-        image_width = self.image.width()
-        image_height = self.image.height()
-    
-        # Calculate the scaling factor (assuming uniform scaling to maintain aspect ratio)
-        scale = min(displayed_width / image_width, displayed_height / image_height)
-        scale_x = displayed_width / image_width
-        scale_y = displayed_height / image_height
-    
-        # Calculate offsets if the image is centered in the live_view_label
-        offset_x = (displayed_width - image_width * scale_x) / 2
-        offset_y = (displayed_height - image_height * scale_y) / 2
-    
-        # Transform cursor coordinates to the image coordinate space
-        image_x = (cursor_x - offset_x) / scale_x
-        image_y = (cursor_y - offset_y) / scale_y
+        image_width = self.image.width() if self.image.width() > 0 else 1
+        image_height = self.image.height() if self.image.height() > 0 else 1
+        uniform_scale = min(displayed_width / image_width, displayed_height / image_height) if image_width > 0 and image_height > 0 else 1
+        offset_x = (displayed_width - image_width * uniform_scale) / 2
+        offset_y = (displayed_height - image_height * uniform_scale) / 2
+        image_x = (cursor_x - offset_x) / uniform_scale if uniform_scale != 0 else 0
+        image_y = (cursor_y - offset_y) / uniform_scale if uniform_scale != 0 else 0
         
         x_start_percent = self.crop_x_start_slider.value() / 100
         x_end_percent = self.crop_x_end_slider.value() / 100
@@ -4249,70 +4259,117 @@ class CombinedSDSApp(QMainWindow):
         x_end = int(self.image.width() * x_end_percent)
         y_start = int(self.image.height() * y_start_percent)
         y_end = int(self.image.height() * y_end_percent)
-		
-        render_scale = 3  # Scale factor for rendering resolution
+
+        # --- Get Render Info for Slider Positioning (Same as previous version) ---
+        render_scale = 3
         render_width = self.live_view_label.width() * render_scale
         render_height = self.live_view_label.height() * render_scale
-    
-        # Validate that the transformed coordinates are within image bounds
-        if not (0 <= image_y <= image_height):
-            return  # Ignore clicks outside the image bounds
+
+        # --- Validate Coordinates (Same as previous version) ---
+        current_image_width = self.image.width()
+        current_image_height = self.image.height()
+        if not (0 <= image_y <= current_image_height) and self.marker_mode in ["left", "right"]:
+             return
+        if not (0 <= image_x <= current_image_width) and self.marker_mode == "top":
+             return
+        # --- End Coordinate/Scaling/Validation ---
+
         try:
-        # Add the band marker based on the active marker mode
-            if self.marker_mode == "left" and self.current_marker_index < len(self.marker_values):
-                if len(self.left_markers)!=0:
-                    self.left_markers.append((image_y, self.marker_values[len(self.left_markers)]))                    
-                    self.current_marker_index += 1
+            # --- Left Marker Logic ---
+            if self.marker_mode == "left":
+                # Determine label based on current count and *now updated* self.marker_values
+                current_marker_count = len(self.left_markers)
+                is_first_marker = (current_marker_count == 0)
+
+                # Use the self.marker_values list, which was just updated
+                if current_marker_count < len(self.marker_values):
+                    marker_value_to_add = self.marker_values[current_marker_count]
                 else:
-                    self.left_markers.append((image_y, self.marker_values[self.current_marker_index]))
-                    self.current_marker_index += 1
+                    marker_value_to_add = ""
+                    if current_marker_count == len(self.marker_values): # Print warning only once
+                        print(f"Warning: Adding left marker {current_marker_count + 1} beyond preset count. Using empty label.")
+
+                self.left_markers.append((image_y, marker_value_to_add))
+                self.current_left_marker_index += 1 # Still increment conceptual index
+
+                # Set slider position only for the *very first* marker placed
+                if is_first_marker:
                     padding_value=int((image_x - x_start) * (render_width / self.image.width()))
                     self.left_padding_slider.setValue(0)
                     self.left_slider_range=[-100,int(render_width)+100]
                     self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
                     self.left_padding_slider.setValue(padding_value)
-                    self.left_marker_shift_added = self.left_padding_slider.value()                    
-            elif self.marker_mode == "right" and self.current_marker_index < len(self.marker_values):
-                if len(self.right_markers)!=0:
-                    self.right_markers.append((image_y, self.marker_values[len(self.right_markers)]))
-                    self.current_marker_index += 1
+                    self.left_marker_shift_added = self.left_padding_slider.value()    
+
+            # --- Right Marker Logic ---
+            elif self.marker_mode == "right":
+                current_marker_count = len(self.right_markers)
+                is_first_marker = (current_marker_count == 0)
+
+                # Use the self.marker_values list, which was just updated
+                if current_marker_count < len(self.marker_values):
+                    marker_value_to_add = self.marker_values[current_marker_count]
                 else:
-                    self.right_markers.append((image_y, self.marker_values[self.current_marker_index]))
-                    self.current_marker_index += 1
+                    marker_value_to_add = ""
+                    if current_marker_count == len(self.marker_values): # Print warning only once
+                        print(f"Warning: Adding right marker {current_marker_count + 1} beyond preset count. Using empty label.")
+
+                self.right_markers.append((image_y, marker_value_to_add))
+                self.current_right_marker_index += 1
+
+                if is_first_marker:
                     padding_value=int((image_x - x_start) * (render_width / self.image.width()))
                     self.right_padding_slider.setValue(0)
                     self.right_slider_range=[-100,int(render_width)+100]
                     self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
                     self.right_padding_slider.setValue(padding_value)
                     self.right_marker_shift_added = self.right_padding_slider.value()
-            elif self.marker_mode == "top" and self.current_top_label_index < len(self.top_label):
-                if len(self.top_markers)!=0:
-                    self.top_markers.append((image_x, self.top_label[len(self.top_markers)]))
-                    self.current_top_label_index += 1
+
+            # --- Top Marker Logic ---
+            elif self.marker_mode == "top":
+                current_marker_count = len(self.top_markers)
+                is_first_marker = (current_marker_count == 0)
+
+                # Use the self.top_label list, which was just updated
+                if current_marker_count < len(self.top_label):
+                    label_to_add = self.top_label[current_marker_count]
                 else:
-                    self.top_markers.append((image_x, self.top_label[self.current_top_label_index]))
-                    self.current_top_label_index += 1
+                    label_to_add = ""
+                    if current_marker_count == len(self.top_label): # Print warning only once
+                         print(f"Warning: Adding top marker {current_marker_count + 1} beyond preset count. Using empty label.")
+
+                self.top_markers.append((image_x, label_to_add))
+                self.current_top_label_index += 1
+
+                if is_first_marker:
                     padding_value=int((image_y - y_start) * (render_height / self.image.height()))
                     self.top_padding_slider.setValue(0)
                     self.top_slider_range=[-100,int(render_height)+100]
                     self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
                     self.top_padding_slider.setValue(padding_value)
                     self.top_marker_shift_added = self.top_padding_slider.value()
-        except:
-            print("ERROR ADDING BANDS")
+
+        except Exception as e:
+             # Catch other potential errors
+             print(f"ERROR ADDING BANDS: An unexpected error occurred - {type(e).__name__}: {e}")
+             import traceback
+             traceback.print_exc()
+             QMessageBox.critical(self, "Error", f"An unexpected error occurred while adding the marker:\n{e}")
+
+        # Update the live view to render the newly added marker
         self.update_live_view()
         
 
         
     def enable_left_marker_mode(self):
         self.marker_mode = "left"
-        self.current_marker_index = 0
+        self.current_left_marker_index = 0
         self.live_view_label.mousePressEvent = self.add_band
         self.live_view_label.setCursor(Qt.CrossCursor)
 
     def enable_right_marker_mode(self):
         self.marker_mode = "right"
-        self.current_marker_index = 0
+        self.current_right_marker_index = 0
         self.live_view_label.mousePressEvent = self.add_band
         self.live_view_label.setCursor(Qt.CrossCursor)
     
@@ -5475,7 +5532,8 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_slider.setValue(0)
         self.top_padding_slider.setValue(0)
         self.marker_mode = None
-        self.current_marker_index = 0
+        self.current_left_marker_index = 0
+        self.current_right_marker_index = 0
         self.current_top_label_index = 0
         self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
         self.marker_values_textbox.setText(str(self.marker_values_dict[self.combo_box.currentText()]))
