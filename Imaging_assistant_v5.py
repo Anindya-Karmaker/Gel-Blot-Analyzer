@@ -4895,67 +4895,109 @@ class CombinedSDSApp(QMainWindow):
     def update_crop(self):
         self.save_state()
         """Update the image based on current crop sliders. First align, then crop the image."""
-        # Save current configuration
         self.show_grid_checkbox.setChecked(False)
-        self.update_live_view()
-    
-        # Align the image first (rotate it)
-        self.align_image()
-    
-        # Now apply cropping
-        cropped_image = self.crop_image()
-    
+        self.update_live_view() # Update once before operations
+
+        # Get crop parameters *before* aligning/cropping
+        x_start_percent = self.crop_x_start_slider.value() / 100
+        x_end_percent = self.crop_x_end_slider.value() / 100
+        y_start_percent = self.crop_y_start_slider.value() / 100
+        y_end_percent = self.crop_y_end_slider.value() / 100
+
+        # Calculate the crop boundaries based on the *current* image dimensions before cropping
+        if not self.image:
+            return # Should not happen if called from UI, but safety check
+        current_width = self.image.width()
+        current_height = self.image.height()
+        x_start = int(current_width * x_start_percent)
+        x_end = int(current_width * x_end_percent)
+        y_start = int(current_height * y_start_percent)
+        y_end = int(current_height * y_end_percent)
+
+        # Ensure cropping boundaries are valid relative to current image
+        if x_start >= x_end or y_start >= y_end:
+            QMessageBox.warning(self, "Warning", "Invalid cropping values based on current image size.")
+            # Optionally reset sliders here if needed
+            return
+
+
+        # Align the image first (rotate it) - align_image modifies self.image
+        # We align *before* cropping based on the original logic flow provided.
+        # Note: If alignment changes dimensions significantly, this might need rethinking,
+        # but typically rotation keeps content centered.
+        # self.align_image() # Call align_image *if* it should happen before crop
+
+
+        # Now apply cropping to the *current* self.image
+        cropped_image = self.crop_image() # crop_image uses current self.image state
+
         if cropped_image:
-            # Adjust marker positions based on cropping
-            # self.adjust_markers_for_cropping(cropped_image)
+            # --- Adjust marker positions relative to the crop ---
+            new_left_markers = []
+            for y, label in self.left_markers:
+                if y_start <= y < y_end: # Check if marker was within vertical crop bounds
+                    new_y = y - y_start
+                    new_left_markers.append((new_y, label))
+            self.left_markers = new_left_markers
+
+            new_right_markers = []
+            for y, label in self.right_markers:
+                if y_start <= y < y_end:
+                    new_y = y - y_start
+                    new_right_markers.append((new_y, label))
+            self.right_markers = new_right_markers
+
+            new_top_markers = []
+            for x, label in self.top_markers:
+                if x_start <= x < x_end: # Check if marker was within horizontal crop bounds
+                    new_x = x - x_start
+                    new_top_markers.append((new_x, label))
+            self.top_markers = new_top_markers
+
+            new_custom_markers = []
+            if hasattr(self, "custom_markers"):
+                for x, y, text, color, font, font_size in self.custom_markers:
+                    if x_start <= x < x_end and y_start <= y < y_end:
+                        new_x = x - x_start
+                        new_y = y - y_start
+                        new_custom_markers.append((new_x, new_y, text, color, font, font_size))
+            self.custom_markers = new_custom_markers
+            # -----------------------------------------------------
+
+            # Update the main image and related states
             self.image = cropped_image
+            # Ensure these backups reflect the *newly cropped* state
             self.image_before_padding = self.image.copy()
             self.image_contrasted = self.image.copy()
             self.image_before_contrast = self.image.copy()
-    
-        # Reset sliders
+
+        # Reset sliders after applying the crop
         self.crop_x_start_slider.setValue(0)
         self.crop_x_end_slider.setValue(100)
         self.crop_y_start_slider.setValue(0)
         self.crop_y_end_slider.setValue(100)
-    
+
+        # Update live view label size based on the *new* image dimensions
         try:
-            w = cropped_image.width()
-            h = cropped_image.height()
-            # Preview window
-            ratio = w / h
-            self.label_width = int(self.screen_width * 0.28)
-            label_height = int(self.label_width / ratio)
-            if label_height > self.label_width:
-                label_height = self.label_width
-                self.label_width = ratio * label_height
-            self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-        except:
-            pass
-    
-        self.update_live_view()
-    
-    # def adjust_markers_for_cropping(self, cropped_image):
-    #     """Adjust marker positions based on cropping."""
-    #     # Get crop percentage values from sliders
-    #     x_start_percent = self.crop_x_start_slider.value() / 100
-    #     x_end_percent = self.crop_x_end_slider.value() / 100
-    #     y_start_percent = self.crop_y_start_slider.value() / 100
-    #     y_end_percent = self.crop_y_end_slider.value() / 100
-    
-    #     # Calculate the crop boundaries based on the percentages
-    #     x_start = int(self.image.width() * x_start_percent)
-    #     x_end = int(self.image.width() * x_end_percent)
-    #     y_start = int(self.image.height() * y_start_percent)
-    #     y_end = int(self.image.height() * y_end_percent)
-    
-    #     # Adjust left markers
-    #     self.left_markers = [(y - y_start, label) for y, label in self.left_markers if y_start <= y <= y_end]
-    #     # Adjust right markers
-    #     self.right_markers = [(y - y_start, label) for y, label in self.right_markers if y_start <= y <= y_end]
-    #     # Adjust top markers
-    #     self.top_markers = [(x - x_start, label) for x, label in self.top_markers if x_start <= x <= x_end]
-    
+            if self.image: # Check if image exists after cropping
+                w = self.image.width()
+                h = self.image.height()
+                # Preview window
+                ratio = w / h if h > 0 else 1 # Avoid division by zero
+                self.label_width = int(self.screen_width * 0.28)
+                label_height = int(self.label_width / ratio)
+                if label_height > self.label_width:
+                    label_height = self.label_width
+                    self.label_width = int(ratio * label_height) # Ensure integer width
+                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        except Exception as e:
+            print(f"Error resizing label after crop: {e}")
+            # Fallback size?
+            self.live_view_label.setFixedSize(int(self.screen_width * 0.28), int(self.screen_width * 0.28))
+
+
+        self.update_live_view() # Final update with corrected markers and image
+        
     def update_skew(self):
         self.save_state()
         taper_value = self.taper_skew_slider.value() / 100  # Normalize taper value to a range of -1 to 1
