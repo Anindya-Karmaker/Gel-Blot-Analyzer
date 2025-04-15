@@ -338,160 +338,273 @@ class TableWindow(QDialog):
                 
 
 class PeakAreaDialog(QDialog):
-    """Interactive dialog to adjust peak regions and calculate peak areas."""
-    def __init__(self, cropped_image, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Adjust Peak Regions")
-        self.setGeometry(100, 100, 1000, 800) # Adjusted size
+    """
+    Interactive dialog to adjust peak regions and calculate peak areas.
+    Settings persistence (prominence, height, distance, spread, methods)
+    is managed by the parent application via passed variables.
+    """
+    # No SETTINGS_FILE needed as persistence is handled by the parent
 
+    def __init__(self, cropped_image, current_settings, persist_checked, parent=None):
+        """
+        Initializes the dialog.
+
+        Args:
+            cropped_image (PIL.Image): The cropped image (should be grayscale).
+            current_settings (dict): Dictionary containing the last used settings
+                                      from the parent application.
+            persist_checked (bool): The last state of the "Persist Settings"
+                                     checkbox from the parent.
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Adjust Peak Regions and Calculate Areas")
+        self.setGeometry(100, 100, 1100, 850) # Adjusted size for better layout
+
+        # Ensure input is a PIL Image and store it
+        if not isinstance(cropped_image, Image.Image):
+             # Handle error or try conversion if applicable
+             raise TypeError("cropped_image must be a PIL Image object")
         self.cropped_image = cropped_image
-        # Ensure the image is grayscale ('L') for analysis
-        self.cropped_image = self.cropped_image.convert("L")
+        # Convert to grayscale numpy array for processing
+        self.intensity_array = np.array(self.cropped_image.convert("L"), dtype=np.float64)
 
         self.profile = None
-        self.background = None # Store the rolling ball background
-        # Convert image to numpy array for processing
-        self.intensity_array = np.array(self.cropped_image, dtype=np.float64) # Use float for calculations
+        self.background = None # Stores the rolling ball background result
 
-        # Default Parameters
-        self.rolling_ball_radius = 50
-        self.peak_height_factor = 0.1
-        self.peak_distance = 30
-        self.peak_prominence_factor = 0.02
+        # --- Apply passed settings or use defaults ---
+        # Get settings from the dictionary passed by the parent
+        self.rolling_ball_radius = current_settings.get('rolling_ball_radius', 50)
+        self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
+        self.peak_distance = current_settings.get('peak_distance', 30)
+        self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.02)
+        self.peak_spread_pixels = current_settings.get('peak_spread_pixels', 10)
+        self.band_estimation_method = current_settings.get('band_estimation_method', "Mean")
+        self.area_subtraction_method = current_settings.get('area_subtraction_method', "Valley-to-Valley")
+        # --- End Apply passed settings ---
 
-        self.peaks = np.array([]) # Initialize as empty numpy array
-        self.peak_regions = []   # Stores tuples of (start, end) indices
-        # Store calculated areas for each peak using different methods
-        self.peak_areas_rolling_ball = []
-        self.peak_areas_straight_line = []
-        self.peak_areas_valley = [] # <-- Added for Valley-to-Valley
-        self.peak_sliders = [] # Stores references to (start_slider, end_slider) tuples
-        self.method = "Valley-to-Valley" # Default method
+        # Internal state for peak data
+        self.peaks = np.array([])           # Indices of detected peaks
+        self.initial_peak_regions = []      # Regions calculated directly from detection (before spread)
+        self.peak_regions = []              # Final regions after spread/slider adjustments
+        self.peak_areas_rolling_ball = []   # Calculated areas (method 1)
+        self.peak_areas_straight_line = []  # Calculated areas (method 2)
+        self.peak_areas_valley = []         # Calculated areas (method 3)
+        self.peak_sliders = []              # References to individual QSlider widgets
 
+        # --- Stored state for parent access upon closing ---
+        self._final_settings = {} # Will store the settings when OK is clicked
+        self._persist_enabled_on_exit = persist_checked # Store initial state from parent
+
+        # --- Build UI ---
+        self._setup_ui(persist_checked) # Pass initial checkbox state to UI setup
+
+        # --- Initial Setup ---
+        self.regenerate_profile_and_detect() # Generate profile and detect peaks
+
+    def _setup_ui(self, persist_checked_initial):
+        """Creates and arranges the UI elements."""
         # --- Main Layout ---
         main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(15)
 
         # --- Matplotlib Plot Canvas ---
-        self.fig = plt.figure(figsize=(10, 6)) # Adjust figure size if needed
+        self.fig = plt.figure(figsize=(10, 5)) # Adjusted figure size
         self.canvas = FigureCanvas(self.fig)
-        self.canvas.setFixedSize(1000, 400) # Fixed size for now
-        main_layout.addWidget(self.canvas, 1) # Give canvas more stretch factor
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout.addWidget(self.canvas, stretch=3) # Give canvas more vertical stretch
 
-        # --- Top Control Layout (Grid) ---
-        top_controls_layout = QGridLayout()
+        # --- Controls Layout (Horizontal Box for side-by-side groups) ---
+        controls_hbox = QHBoxLayout()
+        controls_hbox.setSpacing(15)
+
+        # --- Left Controls Column (Global & Detection) ---
+        left_controls_vbox = QVBoxLayout()
+
+        # Group 1: Global Settings
+        global_settings_group = QGroupBox("Global Settings")
+        global_settings_layout = QGridLayout(global_settings_group)
+        global_settings_layout.setSpacing(8) # Spacing within the grid
 
         # Band Estimation Method Dropdown
         self.band_estimation_combobox = QComboBox()
         self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
-        self.band_estimation_combobox.setCurrentText("Mean")
+        self.band_estimation_combobox.setCurrentText(self.band_estimation_method) # Initialize with current value
         self.band_estimation_combobox.currentIndexChanged.connect(self.regenerate_profile_and_detect)
-        top_controls_layout.addWidget(QLabel("Band Estimation Method:"), 0, 0)
-        top_controls_layout.addWidget(self.band_estimation_combobox, 0, 1)
+        global_settings_layout.addWidget(QLabel("Band Profile:"), 0, 0)
+        global_settings_layout.addWidget(self.band_estimation_combobox, 0, 1)
 
         # Area Subtraction Method Dropdown
         self.method_combobox = QComboBox()
-        # Add the new method
         self.method_combobox.addItems(["Valley-to-Valley", "Rolling Ball", "Straight Line"])
-        self.method_combobox.setCurrentText(self.method)
+        self.method_combobox.setCurrentText(self.area_subtraction_method) # Initialize with current value
         self.method_combobox.currentIndexChanged.connect(self.update_plot) # Update plot when method changes
-        top_controls_layout.addWidget(QLabel("Area Subtraction Method:"), 0, 2)
-        top_controls_layout.addWidget(self.method_combobox, 0, 3)
+        global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
+        global_settings_layout.addWidget(self.method_combobox, 1, 1)
 
-        # Rolling Ball Radius Slider (relevant for Rolling Ball method)
-        self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({self.rolling_ball_radius:.1f})")
+        # Rolling Ball Radius Slider
+        self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({self.rolling_ball_radius:.0f})")
         self.rolling_ball_slider = QSlider(Qt.Horizontal)
         self.rolling_ball_slider.setRange(1, 500) # Adjust range as needed
-        self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
+        self.rolling_ball_slider.setValue(int(self.rolling_ball_radius)) # Initialize with current value
+        self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})")) # Update label
         self.rolling_ball_slider.valueChanged.connect(self.update_plot) # Update plot when radius changes
-        top_controls_layout.addWidget(self.rolling_ball_label, 1, 0)
-        top_controls_layout.addWidget(self.rolling_ball_slider, 1, 1, 1, 3) # Span 3 columns
+        global_settings_layout.addWidget(self.rolling_ball_label, 2, 0)
+        global_settings_layout.addWidget(self.rolling_ball_slider, 2, 1)
 
-        main_layout.addLayout(top_controls_layout)
+        left_controls_vbox.addWidget(global_settings_group)
 
+        # Group 2: Peak Detection Parameters
+        peak_detect_group = QGroupBox("Peak Detection Parameters")
+        peak_detect_layout = QGridLayout(peak_detect_group)
+        peak_detect_layout.setSpacing(8)
 
-        # --- Peak Detection Parameter Layout (Grid) ---
-        peak_param_layout = QGridLayout()
-
-        # Manual Peak Number Input & Update Button
+        # Manual Peak Number Input & Update Button (Row 0)
         self.peak_number_label = QLabel("Detected Peaks:")
         self.peak_number_input = QLineEdit()
-        self.peak_number_input.setPlaceholderText("Manual #")
-        self.update_peak_number_button = QPushButton("Update") # Create Update button
-        self.update_peak_number_button.clicked.connect(self.manual_peak_number_update) # Connect button click
-        peak_param_layout.addWidget(self.peak_number_label, 0, 0)
-        peak_param_layout.addWidget(self.peak_number_input, 0, 1)
-        peak_param_layout.addWidget(self.update_peak_number_button, 0, 2) # Add Update button to grid
+        self.peak_number_input.setPlaceholderText("#")
+        self.peak_number_input.setMaximumWidth(60) # Limit width for aesthetics
+        self.update_peak_number_button = QPushButton("Set")
+        self.update_peak_number_button.setToolTip("Manually override the number of peaks detected.")
+        self.update_peak_number_button.clicked.connect(self.manual_peak_number_update)
+        peak_detect_layout.addWidget(self.peak_number_label, 0, 0)
+        peak_detect_layout.addWidget(self.peak_number_input, 0, 1)
+        peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2)
 
-        # Peak Prominence Slider
+        # Peak Prominence Slider (Row 1)
         self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})")
         self.peak_prominence_slider = QSlider(Qt.Horizontal)
         self.peak_prominence_slider.setRange(0, 50) # Range 0.0 to 0.5
-        self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
+        self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100)) # Initialize
         self.peak_prominence_slider.valueChanged.connect(self.detect_peaks) # Trigger peak detection
-        peak_param_layout.addWidget(self.peak_prominence_slider_label, 0, 3)
-        peak_param_layout.addWidget(self.peak_prominence_slider, 0, 4)
+        peak_detect_layout.addWidget(self.peak_prominence_slider_label, 1, 0)
+        peak_detect_layout.addWidget(self.peak_prominence_slider, 1, 1, 1, 2) # Span 2 columns
 
-        # Peak Height Slider
+        # Peak Height Slider (Row 2)
         self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f}) %")
         self.peak_height_slider = QSlider(Qt.Horizontal)
         self.peak_height_slider.setRange(0, 100) # Range 0% to 100%
-        self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
+        self.peak_height_slider.setValue(int(self.peak_height_factor * 100)) # Initialize
         self.peak_height_slider.valueChanged.connect(self.detect_peaks) # Trigger peak detection
-        peak_param_layout.addWidget(self.peak_height_slider_label, 1, 0)
-        peak_param_layout.addWidget(self.peak_height_slider, 1, 1)
+        peak_detect_layout.addWidget(self.peak_height_slider_label, 2, 0)
+        peak_detect_layout.addWidget(self.peak_height_slider, 2, 1, 1, 2) # Span 2 columns
 
-        # Peak Distance Slider
+        # Peak Distance Slider (Row 3)
         self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px")
         self.peak_distance_slider = QSlider(Qt.Horizontal)
         self.peak_distance_slider.setRange(1, 200) # Adjust range as needed
-        self.peak_distance_slider.setValue(self.peak_distance)
+        self.peak_distance_slider.setValue(self.peak_distance) # Initialize
         self.peak_distance_slider.valueChanged.connect(self.detect_peaks) # Trigger peak detection
-        peak_param_layout.addWidget(self.peak_distance_slider_label, 1, 3)
-        peak_param_layout.addWidget(self.peak_distance_slider, 1, 4)
+        peak_detect_layout.addWidget(self.peak_distance_slider_label, 3, 0)
+        peak_detect_layout.addWidget(self.peak_distance_slider, 3, 1, 1, 2) # Span 2 columns
 
-        main_layout.addLayout(peak_param_layout)
+        left_controls_vbox.addWidget(peak_detect_group)
+        left_controls_vbox.addStretch(1) # Push groups up in the left column
 
-        # --- Peak Region Sliders Area (Scroll Area) ---
-        scroll_area = QScrollArea(self)
+        controls_hbox.addLayout(left_controls_vbox, stretch=1) # Add left column to HBox
+
+        # --- Right Controls Column (Peak Region Adjustments) ---
+        right_controls_vbox = QVBoxLayout()
+
+        # Group 3: Peak Region Spread (Global Adjustment)
+        peak_spread_group = QGroupBox("Peak Region Adjustments")
+        peak_spread_layout = QGridLayout(peak_spread_group)
+        peak_spread_layout.setSpacing(8)
+
+        # Peak Spread Slider
+        self.peak_spread_label = QLabel(f"Peak Spread (+/- {self.peak_spread_pixels} px)")
+        self.peak_spread_slider = QSlider(Qt.Horizontal)
+        self.peak_spread_slider.setRange(0, 100) # Spread 0 to 100 pixels around center
+        self.peak_spread_slider.setValue(self.peak_spread_pixels) # Initialize
+        self.peak_spread_slider.setToolTip(
+            "Adjusts the width of all detected peak regions simultaneously.\n"
+            "Regions expand/contract around the initial detected peak center."
+        )
+        self.peak_spread_slider.valueChanged.connect(self.apply_peak_spread) # Connect to handler
+        # Update label text when slider changes
+        self.peak_spread_slider.valueChanged.connect(
+            lambda value, lbl=self.peak_spread_label: lbl.setText(f"Peak Spread (+/- {value} px)")
+        )
+        peak_spread_layout.addWidget(self.peak_spread_label, 0, 0)
+        peak_spread_layout.addWidget(self.peak_spread_slider, 0, 1)
+
+        right_controls_vbox.addWidget(peak_spread_group)
+
+        # Scroll Area for Individual Peak Sliders
+        scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setMinimumHeight(250) # Ensure scroll area has reasonable initial height
+        scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) # Allow vertical expansion
 
-        self.container = QWidget() # Container for sliders
-        self.peak_sliders_layout = QVBoxLayout(self.container)
-        self.peak_sliders_layout.setSpacing(10) # Add space between peak groups
+        self.container = QWidget() # Container widget for the layout inside scroll area
+        self.peak_sliders_layout = QVBoxLayout(self.container) # Layout for individual peak groups
+        self.peak_sliders_layout.setSpacing(10) # Space between peak groups
 
-        scroll_area.setWidget(self.container)
-        main_layout.addWidget(scroll_area, 2) # Give sliders area more stretch factor
+        scroll_area.setWidget(self.container) # Put the container in the scroll area
+        right_controls_vbox.addWidget(scroll_area, stretch=1) # Give scroll area vertical stretch
 
+        controls_hbox.addLayout(right_controls_vbox, stretch=2) # Add right column, give more horizontal space
+
+        main_layout.addLayout(controls_hbox) # Add the HBox containing controls to main layout
 
         # --- Bottom Button Layout ---
         bottom_button_layout = QHBoxLayout()
-        bottom_button_layout.addStretch(1) # Spacer pushes button to the right
+
+        # Persist Settings Checkbox
+        self.persist_settings_checkbox = QCheckBox("Persist Settings")
+        self.persist_settings_checkbox.setChecked(persist_checked_initial) # Use initial state from parent
+        self.persist_settings_checkbox.setToolTip("Save current detection parameters for the next time this dialog opens during this session.")
+        bottom_button_layout.addWidget(self.persist_settings_checkbox)
+
+        bottom_button_layout.addStretch(1) # Spacer pushes OK button to the right
         self.ok_button = QPushButton("OK")
-        self.ok_button.setMinimumWidth(100) # Set a minimum width
-        self.ok_button.clicked.connect(self.accept) # Close dialog and return Accepted
+        self.ok_button.setMinimumWidth(100)
+        self.ok_button.setDefault(True) # Make OK the default button (responds to Enter)
+        self.ok_button.clicked.connect(self.accept_and_close) # Connect to custom accept method
         bottom_button_layout.addWidget(self.ok_button)
 
-        main_layout.addLayout(bottom_button_layout) # Add this layout at the very end
+        main_layout.addLayout(bottom_button_layout) # Add bottom buttons
 
+    # --- Methods for Parent Interaction ---
 
-        # --- Initial Setup ---
-        self.regenerate_profile_and_detect() # Combined initial setup
+    def accept_and_close(self):
+        """Stores the current settings and persist state before accepting."""
+        # Capture the current state of all relevant controls into the dictionary
+        self._final_settings = {
+            'rolling_ball_radius': self.rolling_ball_slider.value(),
+            'peak_height_factor': self.peak_height_slider.value() / 100.0,
+            'peak_distance': self.peak_distance_slider.value(),
+            'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
+            'peak_spread_pixels': self.peak_spread_slider.value(),
+            'band_estimation_method': self.band_estimation_combobox.currentText(),
+            'area_subtraction_method': self.method_combobox.currentText()
+        }
+        # Capture the state of the checkbox when OK is clicked
+        self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked()
+        self.accept() # Standard Qt accept method to close the dialog
 
-    # --- Methods for profile generation, peak detection, slider updates ---
-    # (regenerate_profile_and_detect, detect_peaks, manual_peak_number_update, update_sliders)
-    # Keep these methods as previously defined in the thought process or previous response.
-    # Ensure they call self.update_plot() at the end.
+    def get_current_settings(self):
+        """Returns the settings dictionary captured when OK was clicked."""
+        return self._final_settings
+
+    def should_persist_settings(self):
+        """Returns the state of the 'Persist Settings' checkbox when OK was clicked."""
+        return self._persist_enabled_on_exit
+
+    # --- Core Logic Methods ---
+
     def regenerate_profile_and_detect(self):
         """Calculates the profile based on combobox selection and detects peaks."""
-        technique = self.band_estimation_combobox.currentText()
+        # Update instance attributes from comboboxes *before* using them
+        self.band_estimation_method = self.band_estimation_combobox.currentText()
+        self.area_subtraction_method = self.method_combobox.currentText()
 
         # Calculate profile based on selected technique
-        if technique == "Mean":
+        if self.band_estimation_method == "Mean":
             self.profile = np.mean(self.intensity_array, axis=1)
-        elif technique.startswith("Percentile"):
+        elif self.band_estimation_method.startswith("Percentile"):
             try:
-                percent = int(technique.split(":")[1].replace('%', ''))
-                # Ensure percentile is within valid range [0, 100]
+                percent = int(self.band_estimation_method.split(":")[1].replace('%', ''))
                 percent = max(0, min(100, percent))
                 self.profile = np.percentile(self.intensity_array, percent, axis=1)
             except (ValueError, IndexError):
@@ -500,223 +613,259 @@ class PeakAreaDialog(QDialog):
         else:
             self.profile = np.mean(self.intensity_array, axis=1) # Default to Mean
 
-        # Normalize profile to 0-255 range (optional, but good for consistency)
+        # Check if profile calculation resulted in NaN or Inf values (can happen with empty images/regions)
+        if not np.all(np.isfinite(self.profile)):
+            print("Warning: Profile contains non-finite values. Setting to zero.")
+            self.profile = np.zeros(self.intensity_array.shape[0]) # Create zero profile matching height
+
+
+        # Normalize and Invert profile
         prof_min, prof_max = np.min(self.profile), np.max(self.profile)
         if prof_max > prof_min:
-            self.profile = (self.profile - prof_min) / (prof_max - prof_min) * 255.0
+            # Added check for non-finite min/max
+            if np.isfinite(prof_min) and np.isfinite(prof_max):
+                 self.profile = (self.profile - prof_min) / (prof_max - prof_min) * 255.0
+            else: # Handle case where min/max might be NaN/Inf if profile was bad
+                 self.profile = np.zeros_like(self.profile)
         else:
              self.profile = np.zeros_like(self.profile) # Handle flat profile
+        self.profile = 255.0 - self.profile # Invert (dark bands = high peaks)
 
-        # Invert the profile: dark bands (low intensity) become peaks (high values)
-        self.profile = 255.0 - self.profile
-
-        # Apply Gaussian smoothing to reduce noise before peak detection
-        # sigma=2 is a reasonable starting point, adjust if needed
-        self.profile = gaussian_filter1d(self.profile, sigma=2)
+        # Apply Gaussian smoothing
+        try:
+            # Ensure profile length is sufficient for smoothing
+            if len(self.profile) > 6: # sigma*3*2 rule of thumb for Gaussian
+                self.profile = gaussian_filter1d(self.profile, sigma=2)
+            elif len(self.profile) > 0:
+                print("Warning: Profile too short for significant Gaussian smoothing.")
+                # Optionally apply minimal smoothing or skip
+        except Exception as smooth_err:
+            print(f"Error during Gaussian smoothing: {smooth_err}")
+            # Continue without smoothing if it fails
 
         # Detect peaks using the new profile
-        self.detect_peaks() # This will call update_sliders and update_plot
+        self.detect_peaks()
 
     def detect_peaks(self):
-        """Detect peaks in the intensity profile and set initial regions."""
+        """Detect peaks, set initial regions, and apply current spread."""
         if self.profile is None or len(self.profile) == 0:
-            print("Profile not generated yet.")
+            print("Profile not generated yet for peak detection.")
             self.peaks = np.array([])
+            self.initial_peak_regions = []
             self.peak_regions = []
-            self.peak_number_input.setText("0") # Update display
+            self.peak_number_input.setText("0")
             self.update_sliders()
             self.update_plot()
             return
 
-        # Update parameters from sliders
+        # Update parameters from sliders INTO the instance attributes
         self.peak_height_factor = self.peak_height_slider.value() / 100.0
         self.peak_distance = self.peak_distance_slider.value()
         self.peak_prominence_factor = self.peak_prominence_slider.value() / 100.0
+        self.peak_spread_pixels = self.peak_spread_slider.value()
+        self.rolling_ball_radius = self.rolling_ball_slider.value()
 
-        # Update labels
+        # Update UI Labels to reflect current instance attributes
         self.peak_height_slider_label.setText(f"Min Height ({self.peak_height_factor:.2f}) %")
         self.peak_distance_slider_label.setText(f"Min Distance ({self.peak_distance}) px")
         self.peak_prominence_slider_label.setText(f"Min Prominence ({self.peak_prominence_factor:.2f})")
+        self.peak_spread_label.setText(f"Peak Spread (+/- {self.peak_spread_pixels} px)")
+        self.rolling_ball_label.setText(f"Rolling Ball Radius ({self.rolling_ball_radius:.0f})")
 
-        # Calculate height and prominence thresholds based on profile range
-        # Ensure profile_range is never zero to avoid division by zero or invalid thresholds
+        # Calculate thresholds using the UPDATED instance attributes
         profile_range = np.ptp(self.profile)
-        if profile_range == 0: profile_range = 1 # Avoid division by zero, use a small default range
-
+        if profile_range == 0: profile_range = 1 # Avoid division by zero
         min_height = np.min(self.profile) + profile_range * self.peak_height_factor
         min_prominence = profile_range * self.peak_prominence_factor
 
         try:
-            # Detect peaks using find_peaks with improved parameters
-            # Request width properties to estimate initial regions better
+            # Detect peaks using UPDATED instance attributes
             peaks_indices, properties = find_peaks(
                 self.profile,
                 height=min_height,
-                prominence=max(1, min_prominence), # Ensure prominence is at least 1 for robustness
+                prominence=max(1, min_prominence), # Ensure prominence is at least 1
                 distance=self.peak_distance,
                 width=1,       # Request width properties
-                rel_height=0.5 # Measure width at half prominence (common practice)
+                rel_height=0.5 # Measure width at half prominence
             )
 
-            # Extract width-related properties if available
-            # Note: 'width_heights', 'left_ips', 'right_ips' depend on scipy version and `width` parameter
+            # Extract width properties
             left_ips = properties.get('left_ips', [])
             right_ips = properties.get('right_ips', [])
 
-            self.peaks = peaks_indices # Store indices as numpy array
-            self.peak_regions = [] # Reset regions
+            self.peaks = peaks_indices
+            self.initial_peak_regions = [] # Reset INITIAL regions
 
-            # Set initial peak regions using width properties or fallback
-            # Check if width properties were successfully returned and match the number of peaks
+            # Set INITIAL peak regions based on width properties or fallback
             if len(left_ips) == len(self.peaks) and len(right_ips) == len(self.peaks):
-                # Use interpolated peak boundaries from find_peaks
                 for i, peak_idx in enumerate(self.peaks):
                     start = int(np.floor(left_ips[i]))
                     end = int(np.ceil(right_ips[i]))
-                    # Ensure boundaries are within profile limits and start < end
                     start = max(0, start)
                     end = min(len(self.profile) - 1, end)
-                    if start >= end: # Fallback for zero/negative width from properties
-                        # Use a small region around the peak index as fallback
-                        fallback_width = max(1, self.peak_distance // 4) # Heuristic width
+                    if start >= end: # Handle zero/negative width from properties
+                        fallback_width = max(1, self.peak_distance // 4) # Use instance distance
                         start = max(0, peak_idx - fallback_width)
                         end = min(len(self.profile) - 1, peak_idx + fallback_width)
-                        if start >= end: end = min(len(self.profile) - 1, start + 1) # Ensure at least 1 pixel width
-                    self.peak_regions.append((start, end))
+                        if start >= end: end = min(len(self.profile) - 1, start + 1)
+                    self.initial_peak_regions.append((start, end))
             else:
-                # Fallback if width properties aren't available or reliable
-                print("Warning: Width properties not found or inconsistent, using distance-based fallback for initial regions.")
+                # Fallback if width properties aren't available/reliable
+                print("Warning: Width properties inconsistent, using distance-based fallback.")
                 for i, peak_idx in enumerate(self.peaks):
-                    # Estimate width based on peak distance (heuristic)
-                    width_estimate = self.peak_distance // 2 # Half the min distance
+                    width_estimate = self.peak_distance // 2 # Use instance distance
                     start = max(0, peak_idx - width_estimate)
                     end = min(len(self.profile) - 1, peak_idx + width_estimate)
-                    if start >= end: # Minimal fallback for edge cases
-                        start = max(0, peak_idx - 2) # e.g., +/- 2 pixels
-                        end = min(len(self.profile) - 1, peak_idx + 2)
-                        if start >= end: end = min(len(self.profile) - 1, start + 1) # Ensure at least 1 pixel width
-                    self.peak_regions.append((start, end))
+                    if start >= end: # Minimal fallback
+                         start = max(0, peak_idx - 2)
+                         end = min(len(self.profile) - 1, peak_idx + 2)
+                         if start >= end: end = min(len(self.profile) - 1, start + 1)
+                    self.initial_peak_regions.append((start, end))
 
         except Exception as e:
             print(f"Error during peak detection: {e}")
+            QMessageBox.warning(self, "Peak Detection Error", f"An error occurred during peak detection:\n{e}")
             self.peaks = np.array([])
-            self.peak_regions = []
+            self.initial_peak_regions = []
 
-        # Update the peak number input *only if not focused and empty*
-        # Or if it's simply empty, update it anyway
-        if not self.peak_number_input.hasFocus() and self.peak_number_input.text() == "":
-             self.peak_number_input.setText(str(len(self.peaks)))
-        elif self.peak_number_input.text() == "": # Update if empty regardless of focus
+        # Update the peak number input field only if not focused or empty
+        if not self.peak_number_input.hasFocus() or self.peak_number_input.text() == "":
              self.peak_number_input.setText(str(len(self.peaks)))
 
-        self.update_sliders() # Recreate sliders based on new peaks/regions
-        self.update_plot()    # Redraw the plot with new peaks/regions
+        # Apply the current spread setting using the updated instance attribute
+        # This call is crucial to sync regions after detection
+        self.apply_peak_spread(self.peak_spread_pixels) # Calls update_sliders & update_plot
 
+    def apply_peak_spread(self, spread_value):
+        """Applies the spread value to the initial peak regions."""
+        self.peak_spread_pixels = spread_value # Update internal state for persistence
+        self.peak_regions = [] # Clear the final regions list to rebuild
 
-    def manual_peak_number_update(self):
-        """Handles manual changes to the number of peaks via the Update button."""
-        # Check length/size correctly for empty array/list
-        # Ensure self.profile is available before trying to add peaks
         if self.profile is None or len(self.profile) == 0:
-            QMessageBox.warning(self, "Error", "Profile must be generated before adjusting peaks.")
+            self.update_sliders() # Ensure sliders are cleared if no profile
+            self.update_plot()
             return
 
-        # Check if there are any peaks detected before allowing manual reduction
-        if len(self.peaks) == 0 and self.peak_number_input.text().isdigit() and int(self.peak_number_input.text()) <= 0 :
-            # If no peaks detected, don't allow setting to 0 or negative.
-            # Silently ignore or maybe show a message.
-            # print("No peaks initially detected. Cannot manually adjust.")
-            self.peak_number_input.setText("0") # Keep display at 0
+        profile_len = len(self.profile)
+
+        # Use the initial regions list as the base for applying spread
+        num_initial = min(len(self.peaks), len(self.initial_peak_regions))
+        if len(self.peaks) != len(self.initial_peak_regions):
+             print(f"Warning: Mismatch between peaks ({len(self.peaks)}) and initial regions "
+                   f"({len(self.initial_peak_regions)}). Applying spread to {num_initial}.")
+
+        for i in range(num_initial):
+            # Use the detected peak index as the center for spread calculation
+            # This is more robust if initial_peak_regions were just placeholders
+            peak_idx = self.peaks[i]
+            center = peak_idx
+
+            # Calculate new boundaries based on peak center and spread
+            new_start = center - self.peak_spread_pixels
+            new_end = center + self.peak_spread_pixels
+
+            # Clamp to profile boundaries and ensure integer values
+            new_start = max(0, int(new_start))
+            new_end = min(profile_len - 1, int(new_end))
+
+            # Ensure start <= end, making it a single point if spread is excessive
+            if new_start > new_end:
+                new_start = new_end
+
+            self.peak_regions.append((new_start, new_end))
+
+        # Adjust final regions list if manual peak# change occurred BEFORE spread application
+        if len(self.peak_regions) != len(self.peaks):
+            print(f"Adjusting final regions list length from {len(self.peak_regions)} to {len(self.peaks)} after manual change.")
+            # This assumes peaks list is the source of truth for length
+            self.peak_regions = self.peak_regions[:len(self.peaks)]
+            # If peaks were added manually, need corresponding placeholder regions added here?
+            # Manual_peak_number_update should handle adding initial regions first.
+
+        # Recreate sliders based on NEW self.peak_regions & redraw plot
+        self.update_sliders()
+        self.update_plot()
+
+    def manual_peak_number_update(self):
+        """Handles manual changes to the number of peaks."""
+        if self.profile is None or len(self.profile) == 0:
+            QMessageBox.warning(self, "Error", "Profile must be generated first.")
             return
 
         try:
             num_peaks_manual = int(self.peak_number_input.text())
-            if num_peaks_manual < 0: # Allow 0 peaks now
+            if num_peaks_manual < 0:
                 self.peak_number_input.setText(str(len(self.peaks))) # Revert display
                 QMessageBox.warning(self, "Input Error", "Number of peaks cannot be negative.")
                 return
 
             current_num_peaks = len(self.peaks)
-
             if num_peaks_manual == current_num_peaks:
                  return # No change needed
 
-            elif num_peaks_manual == 0:
-                # Clear all peaks and regions
+            if num_peaks_manual == 0:
                 self.peaks = np.array([])
-                self.peak_regions = []
-                self.update_sliders()
-                self.update_plot()
-                return # Exit after clearing
-
+                self.initial_peak_regions = []
+                self.peak_regions = [] # Clear final regions too
             elif num_peaks_manual < current_num_peaks:
-                # Truncate based on sorted order (implicitly done if peaks were sorted initially)
-                # Ensure self.peaks is treated consistently (e.g., list for manipulation)
-                peaks_list = self.peaks.tolist() if isinstance(self.peaks, np.ndarray) else list(self.peaks)
-                self.peaks = np.array(peaks_list[:num_peaks_manual]) # Convert back to numpy array
-                self.peak_regions = self.peak_regions[:num_peaks_manual]
-                self.update_sliders()
-                self.update_plot()
-
+                # Truncate peaks and initial regions
+                self.peaks = self.peaks[:num_peaks_manual]
+                self.initial_peak_regions = self.initial_peak_regions[:num_peaks_manual]
+                # Final regions will be adjusted by apply_peak_spread later
             elif num_peaks_manual > current_num_peaks:
-                # Add dummy peaks/regions
+                # Add dummy peaks and corresponding initial regions
                 num_to_add = num_peaks_manual - current_num_peaks
-                # Place new peaks somewhat centrally or based on profile length
                 profile_center = len(self.profile) // 2
-                # Estimate a reasonable width for new dummy peaks
-                dummy_width = max(5, self.peak_distance // 2) # Min width 5 or based on distance
-
-                peaks_list = self.peaks.tolist() if isinstance(self.peaks, np.ndarray) else list(self.peaks)
+                peaks_list = self.peaks.tolist()
+                initial_regions_list = list(self.initial_peak_regions) # Work with list copy
 
                 for i in range(num_to_add):
-                    # Try placing dummy peaks near the center, slightly offset to avoid overlap
-                    offset = int(np.random.uniform(-dummy_width*1.5, dummy_width*1.5)) if i > 0 else 0
-                    new_peak_pos = profile_center + offset
-                    # Ensure position is within bounds
-                    new_peak_pos = max(0, min(len(self.profile)-1, new_peak_pos))
-
-                    # Simple check to avoid placing exactly on existing peak positions
-                    attempts = 0
-                    while new_peak_pos in peaks_list and attempts < 10:
-                        new_peak_pos = max(0, min(len(self.profile)-1, new_peak_pos + np.random.choice([-1, 1])))
-                        attempts += 1
-                    if new_peak_pos in peaks_list: # If still overlapping after attempts, place it anyway
-                        print("Warning: Could not find unique position for dummy peak.")
-
+                    # Add a dummy peak (e.g., near center)
+                    new_peak_pos = profile_center + np.random.randint(-50, 50) # Simple placement
+                    new_peak_pos = max(0, min(len(self.profile) - 1, new_peak_pos))
                     peaks_list.append(new_peak_pos)
 
-                    # Define a plausible region around the new peak
-                    start = max(0, new_peak_pos - dummy_width // 2)
-                    end = min(len(self.profile) - 1, new_peak_pos + dummy_width // 2)
-                    # Ensure start < end and width is at least 1
-                    if start >= end: end = min(len(self.profile) - 1, start + 1)
-                    self.peak_regions.append((start, end))
+                    # Add a placeholder *initial* region for the new peak
+                    # The size will be determined by the spread slider later
+                    # Use a minimal default width for the placeholder initial region
+                    placeholder_width = 5 # e.g., +/- 5 pixels
+                    initial_start = max(0, new_peak_pos - placeholder_width)
+                    initial_end = min(len(self.profile) - 1, new_peak_pos + placeholder_width)
+                    if initial_start >= initial_end: initial_end = min(len(self.profile)-1, initial_start + 1)
+                    initial_regions_list.append((initial_start, initial_end))
 
-                # Sort peaks and regions together by peak position after adding dummies
-                if peaks_list: # Check if list is not empty
-                    combined = sorted(zip(peaks_list, self.peak_regions), key=lambda pair: pair[0])
-                    # Unzip the sorted pairs
-                    sorted_peaks, sorted_regions = zip(*combined)
+                # Sort peaks and initial regions together after adding dummies
+                if peaks_list:
+                    # Ensure initial_regions_list has the same length as peaks_list
+                    if len(initial_regions_list) != len(peaks_list):
+                        # This case should ideally not happen if logic is correct, but handle defensively
+                        print("Warning: Peak and initial region lists length mismatch during manual add.")
+                        min_len = min(len(peaks_list), len(initial_regions_list))
+                        peaks_list = peaks_list[:min_len]
+                        initial_regions_list = initial_regions_list[:min_len]
+
+                    combined = sorted(zip(peaks_list, initial_regions_list), key=lambda pair: pair[0])
+                    sorted_peaks, sorted_initial_regions = zip(*combined)
                     self.peaks = np.array(sorted_peaks)
-                    self.peak_regions = list(sorted_regions)
-                else: # Handle case where list might become empty (e.g., setting to 0)
+                    self.initial_peak_regions = list(sorted_initial_regions)
+                else:
                     self.peaks = np.array([])
-                    self.peak_regions = []
+                    self.initial_peak_regions = []
 
-                self.update_sliders()
-                self.update_plot()
+            # Crucially, after modifying peaks and initial_regions,
+            # re-apply the current spread setting to update self.peak_regions
+            self.apply_peak_spread(self.peak_spread_slider.value()) # This calls update_sliders/plot
 
         except ValueError:
             self.peak_number_input.setText(str(len(self.peaks))) # Revert display
             QMessageBox.warning(self, "Input Error", "Please enter a valid integer for the number of peaks.")
         except Exception as e:
              print(f"Error in manual peak update: {e}")
-             # Optionally display error to user or log it
              QMessageBox.critical(self, "Error", f"An error occurred during manual peak update:\n{e}")
              self.peak_number_input.setText(str(len(self.peaks))) # Revert on error
 
     def update_sliders(self):
-        """Update the sliders based on the current peaks and peak regions."""
+        """Update the sliders based on the current self.peak_regions (after spread)."""
         # Clear existing sliders widgets first
         for i in reversed(range(self.peak_sliders_layout.count())):
             item = self.peak_sliders_layout.itemAt(i)
@@ -726,19 +875,15 @@ class PeakAreaDialog(QDialog):
                 self.peak_sliders_layout.removeWidget(widget)
                 widget.deleteLater()
             else:
-                # Handle layouts or spacers if necessary (like stretch)
+                # Handle layouts or spacers if necessary
                 layout_item = self.peak_sliders_layout.takeAt(i)
-                if layout_item is not None:
-                    # Check if it's a spacer item before trying to delete layout
+                if layout_item:
+                    # Check if it's a spacer item
                     if isinstance(layout_item, QSpacerItem):
-                        # Spacers don't need explicit deletion like widgets/layouts
-                        pass
-                    elif layout_item.layout() is not None:
-                        # Recursively clear layouts if needed (complex nesting)
-                        # clear_layout(layout_item.layout()) # Define clear_layout if needed
-                        pass # For this structure, likely not needed
+                        pass # Spacers don't need explicit deletion
+                    # Recursively clear layouts if needed (shouldn't be necessary here)
+                    # elif layout_item.layout() is not None: clear_layout(layout_item.layout())
                     del layout_item # Delete the layout item itself
-
 
         self.peak_sliders.clear() # Clear the list storing slider references
 
@@ -746,309 +891,342 @@ class PeakAreaDialog(QDialog):
 
         profile_len = len(self.profile)
 
-        # Ensure peaks and regions lists are consistent in length
-        num_items = min(len(self.peaks), len(self.peak_regions))
-        if len(self.peaks) != len(self.peak_regions):
-            print(f"Warning: Mismatch between peaks ({len(self.peaks)}) and regions ({len(self.peak_regions)}). Adjusting to {num_items}.")
-            # Optionally truncate the longer list, though manual_peak_update should handle this
-            self.peaks = self.peaks[:num_items]
-            self.peak_regions = self.peak_regions[:num_items]
+        # Create sliders based on self.peak_regions
+        num_items = len(self.peak_regions)
+        # Ensure peaks list is consistent for labels (can happen after manual changes)
+        if len(self.peaks) != num_items:
+            print(f"Warning: Peak count ({len(self.peaks)}) differs from region count ({num_items}) for slider labels.")
 
 
-        # Add sliders for each peak defined in self.peak_regions
         for i in range(num_items):
-            # Ensure region values are valid integers
             try:
+                # Get region boundaries from self.peak_regions
                 start_val, end_val = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
-                peak_index = int(self.peaks[i]) # Get the corresponding peak index
-            except (ValueError, TypeError, IndexError):
-                print(f"Warning: Invalid data for peak/region at index {i}. Skipping slider creation.")
+                # Get peak index for label, handle potential length mismatch safely
+                peak_index = int(self.peaks[i]) if i < len(self.peaks) else -1 # Use -1 if no matching peak index
+            except (ValueError, TypeError, IndexError) as e:
+                print(f"Warning: Invalid data for peak/region at index {i} ({e}). Skipping slider.")
                 continue # Skip this iteration if data is corrupt
 
-            peak_group = QGroupBox(f"Peak {i + 1} (Index: {peak_index})")
+            peak_group = QGroupBox(f"Peak {i + 1} (Index: {peak_index if peak_index != -1 else 'N/A'})")
             peak_layout = QGridLayout(peak_group)
 
             # Start slider
             start_slider = QSlider(Qt.Horizontal)
             start_slider.setRange(0, profile_len - 1)
-            # Clamp initial value to be within the range
-            start_slider.setValue(max(0, min(profile_len - 1, start_val)))
-            start_slider.valueChanged.connect(self.update_plot) # Connect to update plot
-            start_label = QLabel(f"Start: {start_slider.value()}") # Use slider's actual value
-            # Use a lambda with default argument capture for the label
-            start_slider.valueChanged.connect(lambda val, lbl=start_label: lbl.setText(f"Start: {val}"))
+            # Clamp initial value just in case & set slider position
+            start_val_clamped = max(0, min(profile_len - 1, start_val))
+            start_slider.setValue(start_val_clamped)
+            start_slider.valueChanged.connect(self.update_plot) # Update plot when changed by user
+            start_label = QLabel(f"Start: {start_slider.value()}") # Show actual slider value
+            # Connect to helper that updates self.peak_regions AND the label
+            start_slider.valueChanged.connect(lambda val, lbl=start_label, idx=i: self._update_region_from_slider(idx, 'start', val, lbl))
             peak_layout.addWidget(start_label, 0, 0)
             peak_layout.addWidget(start_slider, 0, 1)
 
             # End slider
             end_slider = QSlider(Qt.Horizontal)
             end_slider.setRange(0, profile_len - 1)
-            # Clamp initial value to be within the range
-            end_slider.setValue(max(0, min(profile_len - 1, end_val)))
-            end_slider.valueChanged.connect(self.update_plot) # Connect to update plot
-            end_label = QLabel(f"End: {end_slider.value()}") # Use slider's actual value
-            # Use a lambda with default argument capture for the label
-            end_slider.valueChanged.connect(lambda val, lbl=end_label: lbl.setText(f"End: {val}"))
+             # Clamp initial value just in case & set slider position
+            end_val_clamped = max(0, min(profile_len - 1, end_val))
+            # Ensure end slider value is >= start slider value initially
+            if end_val_clamped < start_val_clamped: end_val_clamped = start_val_clamped
+            end_slider.setValue(end_val_clamped)
+            end_slider.valueChanged.connect(self.update_plot) # Update plot when changed by user
+            end_label = QLabel(f"End: {end_slider.value()}") # Show actual slider value
+            # Connect to helper that updates self.peak_regions AND the label
+            end_slider.valueChanged.connect(lambda val, lbl=end_label, idx=i: self._update_region_from_slider(idx, 'end', val, lbl))
             peak_layout.addWidget(end_label, 1, 0)
             peak_layout.addWidget(end_slider, 1, 1)
 
             self.peak_sliders_layout.addWidget(peak_group)
-            self.peak_sliders.append((start_slider, end_slider)) # Store tuple of widget references
+            self.peak_sliders.append((start_slider, end_slider)) # Store tuple of references
 
         # Add stretch at the end ONLY if there are sliders, to push them up
         if num_items > 0:
             self.peak_sliders_layout.addStretch(1)
 
+    def _update_region_from_slider(self, index, boundary_type, value, label_widget):
+        """Helper to update self.peak_regions when an individual slider is moved."""
+        # Update self.peak_regions list first
+        if 0 <= index < len(self.peak_regions):
+            current_start, current_end = self.peak_regions[index]
+            if boundary_type == 'start':
+                # Ensure start <= end after update
+                new_start = min(value, current_end)
+                self.peak_regions[index] = (new_start, current_end)
+                label_widget.setText(f"Start: {new_start}") # Update label
+                # Update the actual slider value if clamping occurred
+                # Use object reference stored in self.peak_sliders
+                start_slider_widget, _ = self.peak_sliders[index]
+                if start_slider_widget.value() != new_start:
+                     # Temporarily block signals to prevent infinite loop
+                    start_slider_widget.blockSignals(True)
+                    start_slider_widget.setValue(new_start)
+                    start_slider_widget.blockSignals(False)
+            elif boundary_type == 'end':
+                # Ensure start <= end after update
+                new_end = max(value, current_start)
+                self.peak_regions[index] = (current_start, new_end)
+                label_widget.setText(f"End: {new_end}") # Update label
+                # Update the actual slider value if clamping occurred
+                _, end_slider_widget = self.peak_sliders[index]
+                if end_slider_widget.value() != new_end:
+                    end_slider_widget.blockSignals(True)
+                    end_slider_widget.setValue(new_end)
+                    end_slider_widget.blockSignals(False)
+        # No need to call update_plot here, it's triggered by the original slider signal
 
     def update_plot(self):
-        """Update the plot based on current settings and slider positions."""
-        if self.canvas is None or self.profile is None:
-            # print("Canvas or profile not ready for plotting.")
-            return # Nothing to plot
+        """Update the plot based on current settings and peak regions."""
+        # --- Guard Clauses ---
+        if self.canvas is None: return
+        if self.profile is None or len(self.profile) == 0 :
+            # Clear plot if no profile
+            try:
+                self.fig.clf() # Clear figure
+                self.ax = self.fig.add_subplot(111) # Add basic axes
+                self.ax.text(0.5, 0.5, "No Profile Data", ha='center', va='center', transform=self.ax.transAxes)
+                self.canvas.draw_idle()
+            except Exception as e:
+                print(f"Error clearing plot: {e}")
+            return
 
-        # Get current settings
+        # --- Update Instance Attributes from UI (ensure consistency) ---
+        # It's good practice to sync attributes before plotting, although signals should handle most cases
         self.method = self.method_combobox.currentText()
         self.rolling_ball_radius = self.rolling_ball_slider.value()
-        self.rolling_ball_label.setText(f"Rolling Ball Radius ({self.rolling_ball_radius:.1f})")
+        # No need to update detection factors here unless explicitly requested by user action
 
-        # --- Calculate Rolling Ball Background (always needed for reference/comparison) ---
+        # --- Calculate Rolling Ball Background ---
         try:
-            # Ensure profile is float64 for rolling_ball function
             profile_float = self.profile.astype(np.float64)
-            # Calculate forward rolling ball background
-            background_fwd = rolling_ball(profile_float, radius=self.rolling_ball_radius)
-            # Ensure background does not exceed the profile itself
-            self.background = np.minimum(background_fwd, profile_float)
+            # Added check for profile length vs radius
+            safe_radius = min(self.rolling_ball_radius, len(profile_float) // 2 -1) # Prevent radius > half length
+            if safe_radius < 1: safe_radius = 1 # Ensure radius is at least 1
+            if safe_radius != self.rolling_ball_radius:
+                 print(f"Adjusted rolling ball radius to {safe_radius} due to profile length.")
+
+            if len(profile_float) > 1 : # rolling_ball needs > 1 point
+                background_fwd = rolling_ball(profile_float, radius=safe_radius)
+                self.background = np.minimum(background_fwd, profile_float)
+            else:
+                self.background = profile_float.copy() # Background is just the profile if too short
+        except ImportError:
+             print("Scikit-image not found. Rolling ball method unavailable.")
+             QMessageBox.warning(self, "Dependency Error", "Scikit-image is required for the Rolling Ball method.")
+             # Fallback or disable method if needed
+             self.background = np.full_like(self.profile, np.min(self.profile))
+        except ValueError as ve: # Catch specific skimage value errors (e.g., radius)
+            print(f"Error calculating rolling ball background: {ve}. Using min profile value as fallback.")
+            self.background = np.full_like(self.profile, np.min(self.profile))
         except Exception as e:
-            print(f"Error calculating rolling ball background: {e}")
-            # Fallback to a flat background if calculation fails
+            print(f"Unexpected error calculating rolling ball background: {e}")
             self.background = np.full_like(self.profile, np.min(self.profile))
 
         # --- Clear Figure and Setup Subplots using GridSpec ---
-        self.fig.clf() # Clear the entire figure to recreate layout
-        # Define grid: 2 rows, 1 col. Top plot (profile) taller than bottom (image)
+        self.fig.clf()
         gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
-        self.ax = self.fig.add_subplot(gs[0]) # Top subplot for the profile
-        ax_image = self.fig.add_subplot(gs[1], sharex=self.ax) # Bottom subplot, share x-axis
+        self.ax = self.fig.add_subplot(gs[0])
+        ax_image = self.fig.add_subplot(gs[1], sharex=self.ax) # Share X axis
 
-        # --- Calculate Profile Range for text positioning ---
+        # --- Calculate Profile Range for text/limit calculations ---
         profile_range = np.ptp(self.profile) if np.ptp(self.profile) > 0 else 1
 
-        # --- Plot Profile and Detected Peaks on the top subplot (self.ax) ---
+        # --- Plot Profile and Detected Peak Markers ---
         self.ax.plot(self.profile, label="Smoothed Profile", color="black", linestyle="-", linewidth=1.2)
-        # Plot detected peaks if they exist and are valid indices
         if len(self.peaks) > 0:
+             # Ensure indices are valid before accessing profile data
              valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(self.profile))]
              if len(valid_peaks_indices) > 0:
-                 self.ax.scatter(valid_peaks_indices, self.profile[valid_peaks_indices],
-                                 color="red", marker='x', s=50, label="Detected Peaks", zorder=5) # zorder ensures peaks are on top
+                 peak_y_values = self.profile[valid_peaks_indices]
+                 self.ax.scatter(valid_peaks_indices, peak_y_values,
+                                 color="red", marker='x', s=50, label="Detected Peaks", zorder=5)
 
-        # --- Process Each Peak Region (defined by sliders) ---
-        # Clear previous area calculations
+        # --- Process Each Peak Region (using self.peak_regions) ---
         self.peak_areas_rolling_ball.clear()
         self.peak_areas_straight_line.clear()
-        self.peak_areas_valley.clear() # <-- Clear new list
+        self.peak_areas_valley.clear()
 
-        # Ensure consistency between sliders and peaks/regions before looping
-        num_items_to_plot = min(len(self.peak_sliders), len(self.peaks), len(self.peak_regions))
-        if len(self.peak_sliders) != len(self.peaks) or len(self.peak_sliders) != len(self.peak_regions):
-             print(f"Warning: Mismatch sliders({len(self.peak_sliders)})/peaks({len(self.peaks)})/regions({len(self.peak_regions)}). Plotting {num_items_to_plot} items.")
+        num_items_to_plot = len(self.peak_regions)
+        # Check consistency with peak_sliders list (should match)
+        if len(self.peak_sliders) != num_items_to_plot:
+             print(f"Plot Warning: Slider count ({len(self.peak_sliders)}) differs from region count ({num_items_to_plot}).")
+             num_items_to_plot = min(len(self.peak_sliders), num_items_to_plot) # Plot the minimum
 
+        max_text_y_position = np.min(self.profile) # Initialize for y-limit calculation
 
         for i in range(num_items_to_plot):
-            start_slider, end_slider = self.peak_sliders[i]
-            start = start_slider.value()
-            end = end_slider.value()
+            # Get region boundaries from the synchronized list
+            start, end = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
 
-            # --- Validate and Adjust Region Boundaries ---
-            if start > end: # Ensure start <= end by swapping if necessary
-                start, end = end, start
-                # Optionally update sliders visually? Might be confusing.
-                # start_slider.setValue(start)
-                # end_slider.setValue(end)
-
-            # Clamp to profile bounds
-            start = max(0, start)
-            end = min(len(self.profile) - 1, end)
-
-            # Skip if region is invalid (less than 2 points wide)
+            # --- Skip if region is invalid (start >= end) ---
             if start >= end:
-                print(f"Warning: Skipping invalid region for Peak {i+1} (start={start}, end={end})")
-                # Append 0.0 for all area methods for this invalid peak
+                # Append 0.0 areas for skipped peak - crucial for list consistency
                 self.peak_areas_rolling_ball.append(0.0)
                 self.peak_areas_straight_line.append(0.0)
                 self.peak_areas_valley.append(0.0)
-                # Optionally draw markers anyway to show the attempted bounds
+                # Optionally draw markers to show the invalid point
                 self.ax.axvline(start, color="grey", linestyle=":", linewidth=1.0, alpha=0.7)
-                # self.ax.axvline(end, color="grey", linestyle=":", linewidth=1.0, alpha=0.7) # End marker same as start
-                continue
+                continue # Skip to the next region
 
             # --- Define Data Arrays for the Current Region ---
-            x_region = np.arange(start, end + 1) # Pixel indices within the region
-            # Ensure slicing is within bounds
+            x_region = np.arange(start, end + 1)
             profile_region = self.profile[start : end + 1]
-            # Ensure background_region slice matches profile_region length and bounds
+            # Ensure background region slicing is safe
             if start < len(self.background) and end < len(self.background):
                  background_region = self.background[start : end + 1]
-            else: # Handle edge case where region might slightly exceed background array
-                 print(f"Warning: Region {i+1} exceeds background array bounds. Using fallback background.")
-                 background_region = np.full_like(profile_region, np.min(self.background)) # Fallback
+            else: # Fallback if region somehow exceeds background array
+                 print(f"Warning: Plot region {i+1} exceeds background bounds.")
+                 background_region = np.full_like(profile_region, np.min(self.background))
 
+            # Ensure profile_region and background_region have same shape for subtraction
+            if profile_region.shape != background_region.shape:
+                print(f"Warning: Shape mismatch between profile ({profile_region.shape}) and background ({background_region.shape}) for peak {i+1}. Skipping area calc.")
+                self.peak_areas_rolling_ball.append(0.0)
+                self.peak_areas_straight_line.append(0.0)
+                self.peak_areas_valley.append(0.0)
+                continue
 
             # --- Calculate Areas Using All Methods ---
-
             # 1. Rolling Ball Area
-            # Use trapezoidal rule for integration: area = integral(y_signal - y_background) dx
             area_rb = np.trapz(profile_region - background_region, x=x_region)
-            area_rb = max(0, area_rb) # Ensure area is non-negative
+            area_rb = max(0, area_rb)
             self.peak_areas_rolling_ball.append(area_rb)
 
             # 2. Straight Line Area
-            # Define baseline points at the start and end of the region
             x_baseline_sl = np.array([start, end])
-            # Ensure baseline points are within profile bounds (should be guaranteed by clamping start/end)
-            y_baseline_points_sl = np.array([self.profile[start], self.profile[end]])
-            # Interpolate the straight line baseline across the x_region
-            y_baseline_interpolated_sl = np.interp(x_region, x_baseline_sl, y_baseline_points_sl)
-            # Calculate area above the straight line baseline
-            area_sl = np.trapz(profile_region - y_baseline_interpolated_sl, x=x_region)
-            area_sl = max(0, area_sl) # Ensure non-negative
+            # Ensure indices are valid for profile access
+            if start < len(self.profile) and end < len(self.profile):
+                y_baseline_points_sl = np.array([self.profile[start], self.profile[end]])
+                y_baseline_interpolated_sl = np.interp(x_region, x_baseline_sl, y_baseline_points_sl)
+                area_sl = np.trapz(profile_region - y_baseline_interpolated_sl, x=x_region)
+                area_sl = max(0, area_sl)
+            else:
+                print(f"Warning: Invalid indices for straight line baseline for peak {i+1}.")
+                area_sl = 0.0 # Assign 0 area if indices invalid
             self.peak_areas_straight_line.append(area_sl)
 
-            # 3. Valley-to-Valley Area <-- NEW
-            # Define a search range to find valleys (can be adjusted)
-            search_range = max(15, int((end - start) * 1.5)) # Search wider than peak, min 15px
-
-            # Find left valley index
-            valley_start_idx = start
-            for idx in range(start - 1, max(-1, start - search_range - 1), -1):
-                if idx < 0: # Reached start of profile
-                    valley_start_idx = 0
-                    break
-                # Check if value increases (valley found at idx+1)
-                if self.profile[idx] > self.profile[idx + 1]:
-                    valley_start_idx = idx + 1
-                    break
-                # If reached search limit, use the lowest point found so far
-                if idx == max(0, start - search_range):
-                    min_idx_in_search = np.argmin(self.profile[max(0, start - search_range):start]) + max(0, start - search_range)
-                    valley_start_idx = min_idx_in_search
-                    # Double check immediate left if possible
-                    if start > 0 and self.profile[start-1] < self.profile[valley_start_idx]:
-                        valley_start_idx = start-1
-                    break # Exit loop after reaching limit
-
-            # Find right valley index
-            valley_end_idx = end
-            for idx in range(end + 1, min(len(self.profile), end + search_range + 1)):
-                if idx >= len(self.profile): # Reached end of profile
-                    valley_end_idx = len(self.profile) - 1
-                    break
-                # Check if value increases (valley found at idx-1)
-                if self.profile[idx] > self.profile[idx - 1]:
-                    valley_end_idx = idx - 1
-                    break
-                # If reached search limit, use the lowest point found
-                if idx == min(len(self.profile) - 1, end + search_range):
-                    min_idx_in_search = np.argmin(self.profile[end + 1 : min(len(self.profile), end + search_range + 1)]) + end + 1
-                    if min_idx_in_search < len(self.profile): # Ensure index is valid
-                         valley_end_idx = min_idx_in_search
-                         # Double check immediate right
-                         if end < len(self.profile) - 1 and self.profile[end+1] < self.profile[valley_end_idx]:
-                             valley_end_idx = end+1
-                    else: # Fallback if search yielded no minimum
-                        valley_end_idx = end # Default to end boundary
-                    break # Exit loop after reaching limit
-
-
-            # Ensure final valley indices are valid and reasonable
-            valley_start_idx = max(0, valley_start_idx)
-            valley_end_idx = min(len(self.profile) - 1, valley_end_idx)
-
-            # Prevent valleys from being *inside* the integration region (use boundaries instead)
-            if valley_start_idx > start: valley_start_idx = start
-            if valley_end_idx < end: valley_end_idx = end
-
-            # Handle cases where valleys are invalid (e.g., end <= start) -> default to Straight Line for this peak
-            if valley_end_idx <= valley_start_idx:
-                print(f"Warning: Valley detection invalid for Peak {i+1}. Using region boundaries for baseline.")
+            # 3. Valley-to-Valley Area
+            area_vv = 0.0 # Default value
+            try: # Wrap valley finding in try-except
+                search_range = max(15, int((end - start) * 1.5))
+                # Find left valley (using robust logic from previous answers)
                 valley_start_idx = start
+                for idx in range(start - 1, max(-1, start - search_range - 1), -1):
+                    if idx < 0: valley_start_idx = 0; break
+                    if self.profile[idx] > self.profile[idx + 1]: valley_start_idx = idx + 1; break
+                    if idx == max(0, start - search_range):
+                        min_idx_in_search = np.argmin(self.profile[max(0, start - search_range):start]) + max(0, start - search_range)
+                        valley_start_idx = min_idx_in_search
+                        if start > 0 and self.profile[start-1] < self.profile[valley_start_idx]: valley_start_idx = start-1
+                        break
+                # Find right valley (using robust logic from previous answers)
                 valley_end_idx = end
+                for idx in range(end + 1, min(len(self.profile), end + search_range + 1)):
+                    if idx >= len(self.profile): valley_end_idx = len(self.profile) - 1; break
+                    if self.profile[idx] > self.profile[idx - 1]: valley_end_idx = idx - 1; break
+                    if idx == min(len(self.profile) - 1, end + search_range):
+                        min_idx_in_search = np.argmin(self.profile[end + 1 : min(len(self.profile), end + search_range + 1)]) + end + 1
+                        if min_idx_in_search < len(self.profile):
+                             valley_end_idx = min_idx_in_search
+                             if end < len(self.profile) - 1 and self.profile[end+1] < self.profile[valley_end_idx]: valley_end_idx = end+1
+                        else: valley_end_idx = end
+                        break
+                # Validate and calculate
+                valley_start_idx = max(0, valley_start_idx)
+                valley_end_idx = min(len(self.profile) - 1, valley_end_idx)
+                if valley_start_idx > start: valley_start_idx = start
+                if valley_end_idx < end: valley_end_idx = end
+                if valley_end_idx <= valley_start_idx:
+                    print(f"Warning: Valley detection invalid for Peak {i+1}. Using region boundaries.")
+                    valley_start_idx = start
+                    valley_end_idx = end
 
-            # Define valley baseline points
-            x_baseline_valley = np.array([valley_start_idx, valley_end_idx])
-            y_baseline_points_valley = np.array([self.profile[valley_start_idx], self.profile[valley_end_idx]])
-            # Interpolate valley baseline across the x_region
-            y_baseline_interpolated_valley = np.interp(x_region, x_baseline_valley, y_baseline_points_valley)
-            # Calculate area above valley baseline
-            area_vv = np.trapz(profile_region - y_baseline_interpolated_valley, x=x_region)
-            area_vv = max(0, area_vv) # Ensure non-negative
+                # Ensure indices valid before accessing profile
+                if 0 <= valley_start_idx < len(self.profile) and 0 <= valley_end_idx < len(self.profile):
+                    x_baseline_valley = np.array([valley_start_idx, valley_end_idx])
+                    y_baseline_points_valley = np.array([self.profile[valley_start_idx], self.profile[valley_end_idx]])
+                    y_baseline_interpolated_valley = np.interp(x_region, x_baseline_valley, y_baseline_points_valley)
+                    area_vv = np.trapz(profile_region - y_baseline_interpolated_valley, x=x_region)
+                    area_vv = max(0, area_vv)
+                else:
+                    print(f"Warning: Invalid indices for valley baseline for peak {i+1}.")
+                    area_vv = 0.0 # Assign 0 area if indices invalid
+
+            except IndexError as ie:
+                 print(f"IndexError during valley finding for peak {i+1}: {ie}. Assigning area 0.")
+                 area_vv = 0.0
+            except Exception as e_vv:
+                 print(f"Error during valley calculation for peak {i+1}: {e_vv}. Assigning area 0.")
+                 area_vv = 0.0
             self.peak_areas_valley.append(area_vv)
 
+
             # --- Plot Baselines and Fills Based on Selected Method ---
-            current_area = 0.0 # Initialize area to display
+            current_area = 0.0 # Area to display in text
             if self.method == "Rolling Ball":
-                # Plot the rolling ball background (only once for clarity)
-                if i == 0:
-                   self.ax.plot(self.background, color="green", linestyle="--", linewidth=1, label="Rolling Ball BG")
-                # Fill area between profile and rolling ball background
+                if i == 0: self.ax.plot(self.background, color="green", linestyle="--", linewidth=1, label="Rolling Ball BG")
                 self.ax.fill_between(x_region, background_region, profile_region,
-                                     where=profile_region >= background_region, # Only fill where profile is above BG
+                                     where=profile_region >= background_region,
                                      color="yellow", alpha=0.4, interpolate=True)
                 current_area = area_rb
-
             elif self.method == "Straight Line":
-                 # Plot the straight line baseline segment for this peak
                  self.ax.plot(x_baseline_sl, y_baseline_points_sl, color="purple", linestyle="--", linewidth=1, label="Straight Line BG" if i == 0 else "")
-                 # Fill area between profile and straight line baseline
                  self.ax.fill_between(x_region, y_baseline_interpolated_sl, profile_region,
                                       where=profile_region >= y_baseline_interpolated_sl,
                                       color="cyan", alpha=0.4, interpolate=True)
                  current_area = area_sl
-
             elif self.method == "Valley-to-Valley":
-                 # Plot the valley-to-valley baseline segment
-                 self.ax.plot(x_baseline_valley, y_baseline_points_valley, color="orange", linestyle="--", linewidth=1, label="Valley BG" if i == 0 else "")
-                 # Fill area between profile and valley baseline
-                 self.ax.fill_between(x_region, y_baseline_interpolated_valley, profile_region,
-                                      where=profile_region >= y_baseline_interpolated_valley,
-                                      color="lightblue", alpha=0.4, interpolate=True)
+                 # Only plot if baseline points are valid
+                 if 0 <= valley_start_idx < len(self.profile) and 0 <= valley_end_idx < len(self.profile):
+                     self.ax.plot(x_baseline_valley, y_baseline_points_valley, color="orange", linestyle="--", linewidth=1, label="Valley BG" if i == 0 else "")
+                     self.ax.fill_between(x_region, y_baseline_interpolated_valley, profile_region,
+                                          where=profile_region >= y_baseline_interpolated_valley,
+                                          color="lightblue", alpha=0.4, interpolate=True)
                  current_area = area_vv
 
-            # --- Plot Area Text and Region Markers ---
-            # Display the calculated area for the *selected* method
-            area_text = f"{current_area:.1f}" # Display area with 1 decimal place
-            # Position text slightly above the peak within the region
-            # Use max of profile OR baseline in region to avoid text overlap if baseline is high
+            # --- Plot COMBINED Area Text and Region Markers ---
+            combined_text = f"Peak {i + 1}\n{current_area:.1f}" # Peak number \n Area
+
+            # Position text slightly above the highest point in the region
             text_y_base = np.max(profile_region)
+            # Consider baseline height if it's higher than the profile peak in that region
             if self.method == "Rolling Ball": text_y_base = max(text_y_base, np.max(background_region))
             elif self.method == "Straight Line": text_y_base = max(text_y_base, np.max(y_baseline_interpolated_sl))
-            elif self.method == "Valley-to-Valley": text_y_base = max(text_y_base, np.max(y_baseline_interpolated_valley))
+            elif self.method == "Valley-to-Valley":
+                # Check if valley baseline was valid before using it for positioning
+                if 0 <= valley_start_idx < len(self.profile) and 0 <= valley_end_idx < len(self.profile):
+                    text_y_base = max(text_y_base, np.max(y_baseline_interpolated_valley))
+                # else: use profile_region max as fallback
 
-            text_y_pos = text_y_base + profile_range * 0.03 # Position slightly above max
-            self.ax.text((start + end) / 2, text_y_pos, area_text,
-                         ha="center", va="bottom", fontsize=7, color='black') # Smaller font
+            text_y_pos = text_y_base + profile_range * 0.06 # Offset slightly above max point
 
-            # Plot vertical markers for region boundaries (start=blue, end=red)
+            # Draw the combined text label
+            self.ax.text((start + end) / 2, text_y_pos, combined_text,
+                         ha="center", va="bottom", fontsize=7, color='black', zorder=6)
+
+            # Update the maximum text position encountered for y-limit calculation
+            max_text_y_position = max(max_text_y_position, text_y_pos + profile_range*0.03) # Add buffer for text height
+
+
+            # Plot vertical markers for region boundaries
             self.ax.axvline(start, color="blue", linestyle=":", linewidth=1.5, alpha=0.8)
             self.ax.axvline(end, color="red", linestyle=":", linewidth=1.5, alpha=0.8)
 
         # --- Final Plot Configuration (Top Subplot) ---
         self.ax.set_ylabel("Intensity (A.U.)")
-        self.ax.legend(fontsize='small', loc='upper right') # Adjust legend position
+        self.ax.legend(fontsize='small', loc='upper right')
         self.ax.set_title("Intensity Profile and Peak Regions")
-        # Optional: Turn off grid for cleaner look self.ax.grid(False)
-        # Hide x-axis ticks and labels for the top plot as it shares with bottom plot
-        plt.setp(self.ax.get_xticklabels(), visible=False)
-        # Remove tick marks on the x-axis of the top plot
-        self.ax.tick_params(axis='x', which='both', bottom=False, top=False)
+        plt.setp(self.ax.get_xticklabels(), visible=False) # Hide X labels on top plot
+        self.ax.tick_params(axis='x', which='both', bottom=False, top=False) # Remove X ticks
 
         # Set plot limits for better visualization
         if len(self.profile) > 1:
             self.ax.set_xlim(0, len(self.profile) - 1)
-        # Adjust y-limits to give some space above the highest point (profile or text)
         prof_min, prof_max = np.min(self.profile), np.max(self.profile)
-        y_max_limit = prof_max + profile_range * 0.15 # Add 15% padding above max profile value
+        # Adjust y-limits to give space above the highest point (profile or text label)
+        y_max_limit = max(prof_max, max_text_y_position) + profile_range * 0.05 # 5% padding above highest element
         self.ax.set_ylim(prof_min - profile_range * 0.05, y_max_limit)
 
 
@@ -1056,71 +1234,66 @@ class PeakAreaDialog(QDialog):
         ax_image.clear() # Clear previous image plot
         if self.cropped_image:
             try:
-                # Rotate PIL image 90 degrees clockwise for horizontal display below profile
-                rotated_pil_image = self.cropped_image.rotate(90, expand=True) # Rotate CCW
-                ax_image.imshow(rotated_pil_image, cmap='gray', aspect='auto', extent=[0, len(self.profile)-1, 0, rotated_pil_image.height]) # Match x-axis extent
+                # Rotate PIL image for horizontal display
+                rotated_pil_image = self.cropped_image.rotate(90, expand=True)
+                ax_image.imshow(rotated_pil_image, cmap='gray', aspect='auto',
+                                extent=[0, len(self.profile)-1, 0, rotated_pil_image.height]) # Match x-axis extent
                 ax_image.set_xlabel("Pixel Index Along Profile Axis")
                 ax_image.set_yticks([]) # Hide y-axis ticks for the image subplot
-                ax_image.set_ylabel("Lane Width", fontsize='small') # Optional Y label for image
+                ax_image.set_ylabel("Lane Width", fontsize='small')
             except Exception as img_e:
                 print(f"Error displaying cropped image: {img_e}")
                 ax_image.text(0.5, 0.5, 'Error loading image', ha='center', va='center', transform=ax_image.transAxes)
-                ax_image.set_xticks([]) # Hide axes if error
-                ax_image.set_yticks([])
+                ax_image.set_xticks([]); ax_image.set_yticks([])
         else:
-            # Display placeholder if no image is available
             ax_image.text(0.5, 0.5, 'No Image Available', ha='center', va='center', transform=ax_image.transAxes)
-            ax_image.set_xticks([])
-            ax_image.set_yticks([])
+            ax_image.set_xticks([]); ax_image.set_yticks([])
 
-        # Adjust layout tightly to prevent labels overlapping and use space efficiently
+        # Adjust layout tightly
         try:
-            # self.fig.tight_layout(pad=0.5, h_pad=0.1) # Reduce vertical padding
-             self.fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.1, hspace=0.05) # Fine-tune margins and spacing
+             self.fig.subplots_adjust(left=0.07, right=0.98, top=0.92, bottom=0.1, hspace=0.05) # Fine-tune margins
         except Exception as layout_e:
             print(f"Error adjusting layout: {layout_e}")
 
         # --- Draw Plot ---
         try:
-            self.canvas.draw_idle() # Use draw_idle for potentially better responsiveness
+            self.canvas.draw_idle() # Use draw_idle for better responsiveness
         except Exception as draw_e:
              print(f"Error drawing canvas: {draw_e}")
              
         plt.close(self.fig)
 
-
     def get_final_peak_area(self):
         """Return the list of calculated peak areas based on the selected method."""
-        # Ensure areas were calculated and lists have the correct length matching the number of valid peaks
-        # A recalculation might be needed if the state is inconsistent
-        # Check consistency:
-        num_valid_peaks = len(self.peaks) # Assuming self.peaks holds the final valid peaks
-        # It might be safer to check against the number of sliders if peaks/regions could be out of sync
-        # num_valid_peaks = len(self.peak_sliders)
+        # Determine the number of valid peaks based on the number of regions processed
+        num_valid_peaks = len(self.peak_regions)
 
-        # Choose the correct list based on the selected method
+        areas_to_return = []
+        current_area_list = None
+
         if self.method == "Rolling Ball":
-            # Verify list length; recalculate if necessary (optional, depends on strictness)
-            if len(self.peak_areas_rolling_ball) != num_valid_peaks:
-                 print(f"Warning: Rolling ball area list length mismatch ({len(self.peak_areas_rolling_ball)} vs {num_valid_peaks} peaks). Recalculating.")
-                 self.update_plot() # Recalculate to ensure consistency
-            return self.peak_areas_rolling_ball[:num_valid_peaks] # Return correct length slice
-
+            current_area_list = self.peak_areas_rolling_ball
         elif self.method == "Straight Line":
-            if len(self.peak_areas_straight_line) != num_valid_peaks:
-                 print(f"Warning: Straight line area list length mismatch ({len(self.peak_areas_straight_line)} vs {num_valid_peaks} peaks). Recalculating.")
-                 self.update_plot()
-            return self.peak_areas_straight_line[:num_valid_peaks]
-
-        elif self.method == "Valley-to-Valley": # <-- Added case
-            if len(self.peak_areas_valley) != num_valid_peaks:
-                 print(f"Warning: Valley area list length mismatch ({len(self.peak_areas_valley)} vs {num_valid_peaks} peaks). Recalculating.")
-                 self.update_plot()
-            return self.peak_areas_valley[:num_valid_peaks]
-
-        else: # Default or unknown method
+            current_area_list = self.peak_areas_straight_line
+        elif self.method == "Valley-to-Valley":
+            current_area_list = self.peak_areas_valley
+        else:
             print(f"Warning: Unknown area calculation method '{self.method}'. Returning empty list.")
             return []
+
+        # Ensure consistency between calculated areas and the number of regions plotted
+        if len(current_area_list) != num_valid_peaks:
+            print(f"Warning: Area list length ({len(current_area_list)}) mismatch for method '{self.method}' "
+                  f"(expected {num_valid_peaks}). Returning potentially incomplete list.")
+            # Truncate or pad list to match the number of peaks processed
+            areas_to_return = current_area_list[:num_valid_peaks]
+            # Optional: Pad with zeros if the list is shorter than expected
+            # while len(areas_to_return) < num_valid_peaks:
+            #     areas_to_return.append(0.0)
+        else:
+            areas_to_return = current_area_list
+
+        return areas_to_return
     
         
     
@@ -1289,7 +1462,7 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         window_width = int(self.screen_width * 0.5)  # 60% of screen width
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.window_title="IMAGING ASSISTANT V5.1"
+        self.window_title="IMAGING ASSISTANT V5.2"
         self.setWindowTitle(self.window_title)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -1323,6 +1496,19 @@ class CombinedSDSApp(QMainWindow):
         self.x_offset_s=0
         self.y_offset_s=0
         self.peak_area=[]
+        self.is_modified=False
+        
+        self.peak_dialog_settings = {
+            'rolling_ball_radius': 50,
+            'peak_height_factor': 0.1,
+            'peak_distance': 30,
+            'peak_prominence_factor': 0.02,
+            'peak_spread_pixels': 10,
+            'band_estimation_method': "Mean",
+            'area_subtraction_method': "Valley-to-Valley"
+        }
+        self.persist_peak_settings_enabled = True # State of the checkbox
+        
         # Variables to store bounding boxes and quantities
         self.bounding_boxes = []
         self.up_bounding_boxes = []
@@ -1617,6 +1803,30 @@ class CombinedSDSApp(QMainWindow):
         self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
         self.redo_shortcut.activated.connect(self.redo_action)
         self.load_config()
+        
+    def prompt_save_if_needed(self):
+        if not self.is_modified:
+            return True # No changes, proceed
+        """Checks if modified and prompts user to save. Returns True to proceed, False to cancel."""
+        reply = QMessageBox.question(self, 'Unsaved Changes',
+                                     "You have unsaved changes. Do you want to save them?",
+                                     QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                                     QMessageBox.Save) # Default button is Save
+
+        if reply == QMessageBox.Save:
+            return self.save_image() # Returns True if saved, False if save cancelled
+        elif reply == QMessageBox.Discard:
+            return True # Proceed without saving
+        else: # Cancelled
+            return False # Abort the current action (close/load)
+
+    def closeEvent(self, event):
+        """Overrides the default close event to prompt for saving."""
+        if self.prompt_save_if_needed():
+
+            event.accept() # Proceed with closing
+        else:
+            event.ignore() # Abort closing
         
     def quadrilateral_to_rect(self, image, quad_points):
         image = image.convertToFormat(QImage.Format_RGBA8888)
@@ -1918,26 +2128,38 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.bounding_box_start = None
         self.bounding_box_start = None
     
-    def calculate_peak_area(self, cropped):  
-        cropped = cropped.convertToFormat(QImage.Format_Grayscale8)  # Ensure grayscale format
-        
-    
-        
-    
-        # # Convert QImage to PIL Image
+    def calculate_peak_area(self, cropped_qimage): # Renamed input for clarity
+        """Opens the PeakAreaDialog for interactive adjustment and area calculation."""
+        # Convert QImage to PIL Image for the dialog
         buffer = QBuffer()
         buffer.open(QBuffer.ReadWrite)
-        cropped.save(buffer, "PNG")
-        cropped_image = Image.open(io.BytesIO(buffer.data()))
+        cropped_qimage.save(buffer, "PNG") # Use the passed QImage
+        cropped_pil_image = Image.open(io.BytesIO(buffer.data()))
         buffer.close()
-        
-        # Open interactive adjustment window
-        dialog = PeakAreaDialog(cropped_image, parent=self)
+
+        # --- MODIFIED: Pass current settings and persistence state to Dialog ---
+        dialog = PeakAreaDialog(
+            cropped_image=cropped_pil_image,
+            current_settings=self.peak_dialog_settings, # Pass the dict
+            persist_checked=self.persist_peak_settings_enabled, # Pass the bool
+            parent=self
+        )
+        # --- END MODIFIED ---
+
+        peak_areas = [] # Default return value
         if dialog.exec_() == QDialog.Accepted:
-            peak_area = dialog.get_final_peak_area()
-            return peak_area  # Return user-adjusted peak area
-    
-        return 0  # Return 0 if the user cancels the adjustment
+            peak_areas = dialog.get_final_peak_area()
+
+            # --- ADDED: Retrieve settings from dialog and update main app state ---
+            # Check if persistence was enabled *in the dialog* when it closed
+            if dialog.should_persist_settings():
+                self.peak_dialog_settings = dialog.get_current_settings()
+                self.persist_peak_settings_enabled = True
+            else:
+                self.persist_peak_settings_enabled = False
+            # --- END ADDED ---
+
+        return peak_areas # Return calculated areas or empty list if cancelled
     
     
     def calculate_unknown_quantity(self, peak_area_list, known_quantities, peak_area):
@@ -2144,10 +2366,18 @@ class CombinedSDSApp(QMainWindow):
         # Area Definition Buttons
         area_def_layout=QHBoxLayout()
         self.btn_define_quad = QPushButton("Define Quad Area")
-        self.btn_define_quad.setToolTip("Click 4 corner points on the image to define a quadrilateral region.")
+        self.btn_define_quad.setToolTip(
+            "Click 4 corner points to define a region. \n"
+            "Use for skewed lanes. The area will be perspective-warped (straightened) before analysis. \n"
+            "Results may differ from Rectangle selection due to warping."
+        )
         self.btn_define_quad.clicked.connect(self.enable_quad_mode)
         self.btn_define_rec = QPushButton("Define Rectangle Area")
-        self.btn_define_rec.setToolTip("Click and drag on the image to define a rectangular region.")
+        self.btn_define_rec.setToolTip(
+            "Click and drag to define a rectangular region. \n"
+            "Use for lanes that are already straight or when simple profile analysis is sufficient. \n"
+            "Does not correct for skew."
+        )
         self.btn_define_rec.clicked.connect(self.enable_rectangle_mode)
         self.btn_sel_rec = QPushButton("Move Selected Area")
         self.btn_sel_rec.setToolTip("Click and drag the selected Quad or Rectangle to move it.")
@@ -2200,7 +2430,7 @@ class CombinedSDSApp(QMainWindow):
         sample_info_layout.addWidget(self.target_protein_areas_text, 0, 1)
 
         # Add Table Export button next to sample areas
-        self.table_export_button = QPushButton("Export Results Table...")
+        self.table_export_button = QPushButton("Export Results Table")
         self.table_export_button.setToolTip("Export the analysis results (areas, percentages, quantities) to Excel.")
         self.table_export_button.clicked.connect(self.open_table_window)
         sample_info_layout.addWidget(self.table_export_button, 1, 0, 1, 2) # Span button across columns
@@ -3070,9 +3300,9 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
         self.top_slider_range=[-100,int(render_height)+100]
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-        self.left_padding_input.setText(str(int(render_width*0.1)))
-        self.right_padding_input.setText(str(int(render_width*0.1)))
-        self.top_padding_input.setText(str(int(render_height*0.15)))
+        self.left_padding_input.setText(str(int(self.image.width()*0.1)))
+        self.right_padding_input.setText(str(int(self.image.width()*0.1)))
+        self.top_padding_input.setText(str(int(self.image.height()*0.15)))
         self.update_live_view()
         
         
@@ -3888,6 +4118,7 @@ class CombinedSDSApp(QMainWindow):
     
     def load_image_from_clipboard(self):
         """Load an image from the clipboard into self.image."""
+        self.is_modified=True
         self.reset_image()
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
@@ -3901,7 +4132,7 @@ class CombinedSDSApp(QMainWindow):
             self.image_before_contrast = self.image.copy()
             self.image_master = self.image.copy()
             self.image_before_padding = None
-            self.setWindowTitle(f"{self.window_title}>IMAGE SIZE:{self.image.width()}x{self.image.height()}")
+            self.setWindowTitle(f"{self.window_title}::IMAGE SIZE:{self.image.width()}x{self.image.height()}")
 
     
         # Check if the clipboard contains URLs (file paths)
@@ -3920,7 +4151,7 @@ class CombinedSDSApp(QMainWindow):
                     
     
                     # Update the window title with the image path
-                    self.setWindowTitle(f"{self.window_title}>IMAGE SIZE:{self.image.width()}x{self.image.height()}:{file_path}")
+                    self.setWindowTitle(f"{self.window_title}::IMAGE SIZE:{self.image.width()}x{self.image.height()}:{file_path}")
         try:
             w=self.image.width()
             h=self.image.height()
@@ -3945,9 +4176,9 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
         self.top_slider_range=[-100,int(render_height)+100]
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-        self.left_padding_input.setText(str(int(render_width*0.1)))
-        self.right_padding_input.setText(str(int(render_width*0.1)))
-        self.top_padding_input.setText(str(int(render_height*0.15)))
+        self.left_padding_input.setText(str(int(self.image.width()*0.1)))
+        self.right_padding_input.setText(str(int(self.image.width()*0.1)))
+        self.top_padding_input.setText(str(int(self.image.height()*0.15)))
         self.update_live_view()
         self.save_state()
         
@@ -3973,6 +4204,7 @@ class CombinedSDSApp(QMainWindow):
         self._update_color_button_style(self.font_color_button, self.font_color)
             
     def load_image(self):
+        self.is_modified=True
         self.undo_stack = []  # Reset the undo stack
         self.redo_stack = []  # Reset the redo stack
         self.reset_image()
@@ -3989,7 +4221,7 @@ class CombinedSDSApp(QMainWindow):
             self.image_before_contrast=self.original_image.copy() 
             self.image_contrasted= self.original_image.copy()  
 
-            self.setWindowTitle(f"{self.window_title}>IMAGE SIZE:{self.image.width()}x{self.image.height()}:{self.image_path}")
+            self.setWindowTitle(f"{self.window_title}::IMAGE SIZE:{self.image.width()}x{self.image.height()}:{self.image_path}")
     
             # Determine associated config file
             self.base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -4031,9 +4263,9 @@ class CombinedSDSApp(QMainWindow):
         self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
         self.top_slider_range=[-100,int(render_height)+100]
         self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
-        self.left_padding_input.setText(str(int(render_width*0.1)))
-        self.right_padding_input.setText(str(int(render_width*0.1)))
-        self.top_padding_input.setText(str(int(render_height*0.15)))
+        self.left_padding_input.setText(str(int(self.image.width()*0.1)))
+        self.right_padding_input.setText(str(int(self.image.width()*0.1)))
+        self.top_padding_input.setText(str(int(self.image.height()*0.15)))
         self.update_live_view()
         self.save_state()
     
@@ -5385,154 +5617,331 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()  # Update the display
         
     def predict_molecular_weight(self):
+        """
+        Initiates the molecular weight prediction process.
+        Determines the available markers, sorts them by position,
+        and sets up the mouse click event to get the target protein location.
+        """
         self.live_view_label.preview_marker_enabled = False
         self.live_view_label.preview_marker_text = ""
         self.live_view_label.setCursor(Qt.CrossCursor)
-        
+        self.run_predict_MW = False # Reset prediction flag
+
         # Determine which markers to use (left or right)
-        self.run_predict_MW=False
-        if self.run_predict_MW!=True:
-            markers_not_rounded = self.left_markers if self.left_markers else self.right_markers
-            markers = [[round(float(value), 2) for value in sublist] for sublist in markers_not_rounded]
-            if not markers:
-                QMessageBox.warning(self, "Error", "No markers available for prediction.")
-                return
-        
-            # Get marker positions and values
-            marker_positions = np.array([pos for pos, _ in markers])
-            marker_values = np.array([val for _, val in markers])
-        
-            # Ensure there are at least two markers for linear regression
-            if len(marker_positions) < 2:
-                QMessageBox.warning(self, "Error", "At least two markers are needed for prediction.")
-                return
-        
-            # Normalize distances
-            min_position = np.min(marker_positions)
-            max_position = np.max(marker_positions)
-            normalized_distances = (marker_positions - min_position) / (max_position - min_position)
-            # normalized_distances = (marker_positions) / (min_position)
-            # print("MARKERS: ", markers)
-            
-        
-            # Allow the user to select a point for prediction
-            QMessageBox.information(self, "Instruction", "Click on the protein location in the preview window.")
-            self.live_view_label.mousePressEvent = lambda event: self.get_protein_location(
-                event, normalized_distances, marker_values, min_position, max_position
-            )
+        markers_raw_tuples = self.left_markers if self.left_markers else self.right_markers
+        if not markers_raw_tuples:
+            QMessageBox.warning(self, "Error", "No markers available for prediction. Please place markers first.")
+            self.live_view_label.setCursor(Qt.ArrowCursor) # Reset cursor
+            return
 
-            
+        # --- Crucial Step: Sort markers by Y-position (migration distance) ---
+        # This ensures the order reflects the actual separation on the gel/blot
+        try:
+            # Ensure marker values are numeric for sorting and processing
+            numeric_markers = []
+            for pos, val_str in markers_raw_tuples:
+                try:
+                    numeric_markers.append((float(pos), float(val_str)))
+                except (ValueError, TypeError):
+                    # Skip markers with non-numeric values for prediction
+                    print(f"Warning: Skipping non-numeric marker value '{val_str}' at position {pos}.")
+                    continue
 
+            if len(numeric_markers) < 2:
+                 QMessageBox.warning(self, "Error", "At least two valid numeric markers are needed for prediction.")
+                 self.live_view_label.setCursor(Qt.ArrowCursor)
+                 return
 
-        
-    def get_protein_location(self, event, normalized_distances, marker_values, min_position, max_position):
-        # Get cursor position from the event
+            sorted_markers = sorted(numeric_markers, key=lambda item: item[0])
+            # Separate sorted positions and values
+            sorted_marker_positions = np.array([pos for pos, val in sorted_markers])
+            sorted_marker_values = np.array([val for pos, val in sorted_markers])
+
+        except Exception as e:
+            QMessageBox.critical(self, "Marker Error", f"Error processing marker data: {e}\nPlease ensure markers have valid numeric values.")
+            self.live_view_label.setCursor(Qt.ArrowCursor)
+            return
+
+        # Ensure there are still at least two markers after potential filtering
+        if len(sorted_marker_positions) < 2:
+            QMessageBox.warning(self, "Error", "Not enough valid numeric markers remain after filtering.")
+            self.live_view_label.setCursor(Qt.ArrowCursor)
+            return
+
+        # Prompt user and set up the click handler
+        QMessageBox.information(self, "Instruction",
+                                "Click on the target protein location in the preview window.\n"
+                                "The closest standard set (Gel or WB) will be used for calculation.")
+        # Pass the *sorted* full marker data to the click handler
+        self.live_view_label.mousePressEvent = lambda event: self.get_protein_location(
+            event, sorted_marker_positions, sorted_marker_values
+        )
+
+    def get_protein_location(self, event, all_marker_positions, all_marker_values):
+        """
+        Handles the mouse click event for protein selection.
+        Determines the relevant standard set based on click proximity,
+        performs regression on that set, predicts MW, and plots the results.
+        """
+        # --- 1. Get Protein Click Position (Image Coordinates) ---
         pos = event.pos()
         cursor_x, cursor_y = pos.x(), pos.y()
-        
+
+        # Account for zoom and pan
         if self.live_view_label.zoom_level != 1.0:
             cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
             cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
-        
-    
-        # Dimensions of the displayed image
+
+        # Transform cursor position from view coordinates to image coordinates
         displayed_width = self.live_view_label.width()
         displayed_height = self.live_view_label.height()
-    
-        # Dimensions of the actual image
-        image_width = self.image.width()
-        image_height = self.image.height()
-    
-        # Calculate scaling factors
+        image_width = self.image.width() if self.image and self.image.width() > 0 else 1
+        image_height = self.image.height() if self.image and self.image.height() > 0 else 1
+
         scale = min(displayed_width / image_width, displayed_height / image_height)
-    
-        # Calculate offsets
         x_offset = (displayed_width - image_width * scale) / 2
         y_offset = (displayed_height - image_height * scale) / 2
-    
-        # Transform cursor position to image space
-        protein_position = round((cursor_y - y_offset) / scale,2)
-        # protein_positio
-        # print("PROTEIN POSITION: ", protein_position)
-        
-        
-        
-    
-        # Normalize the protein position
-        normalized_protein_position = (protein_position - min_position) / (max_position - min_position)
-        # normalized_protein_position = (protein_position) / (min_position)
-    
-        # Perform linear regression on the log-transformed data
-        log_marker_values = np.log10(marker_values)
-        
-        #LOG_FIT
-        coefficients = np.polyfit(normalized_distances, log_marker_values, 1)
-        #Polynomial Fit 6th order
-        # coefficients = np.polyfit(normalized_distances, log_marker_values, 6)  # Fit a quadratic curve
-        
-        # Predict molecular weight
+
+        protein_y_image = (cursor_y - y_offset) / scale if scale != 0 else 0
+        # protein_x_image = (cursor_x - x_offset) / scale if scale != 0 else 0 # Keep X if needed later
+
+        # Store the clicked location in *view* coordinates for drawing the marker later
+        self.protein_location = (cursor_x, cursor_y) # Use view coordinates for the marker
+
+        # --- 2. Identify Potential Standard Sets (Partitioning) ---
+        transition_index = -1
+        # Find the first index where the molecular weight INCREASES after initially decreasing
+        # (indicates a likely switch from Gel high->low MW to WB high->low MW)
+        initial_decrease = False
+        for k in range(1, len(all_marker_values)):
+             if all_marker_values[k] < all_marker_values[k-1]:
+                 initial_decrease = True # Confirm we've started migrating down
+             # Check for increase *after* we've seen a decrease
+             if initial_decrease and all_marker_values[k] > all_marker_values[k-1]:
+                 transition_index = k
+                 break # Found the likely transition
+
+        # --- 3. Select the Active Standard Set based on Click Proximity ---
+        active_marker_positions = None
+        active_marker_values = None
+        set_name = "Full Set" # Default name
+
+        if transition_index != -1:
+            # We have two potential sets
+            set1_positions = all_marker_positions[:transition_index]
+            set1_values = all_marker_values[:transition_index]
+            set2_positions = all_marker_positions[transition_index:]
+            set2_values = all_marker_values[transition_index:]
+
+            # Check if both sets are valid (at least 2 points)
+            valid_set1 = len(set1_positions) >= 2
+            valid_set2 = len(set2_positions) >= 2
+
+            if valid_set1 and valid_set2:
+                # Calculate the mean Y position for each set
+                mean_y_set1 = np.mean(set1_positions)
+                mean_y_set2 = np.mean(set2_positions)
+
+                # Assign the click to the set whose mean Y is closer
+                if abs(protein_y_image - mean_y_set1) <= abs(protein_y_image - mean_y_set2):
+                    active_marker_positions = set1_positions
+                    active_marker_values = set1_values
+                    set_name = "Set 1 (Gel?)" # Tentative name
+                else:
+                    active_marker_positions = set2_positions
+                    active_marker_values = set2_values
+                    set_name = "Set 2 (WB?)" # Tentative name
+            elif valid_set1: # Only set 1 is valid
+                 active_marker_positions = set1_positions
+                 active_marker_values = set1_values
+                 set_name = "Set 1 (Gel?)"
+            elif valid_set2: # Only set 2 is valid
+                 active_marker_positions = set2_positions
+                 active_marker_values = set2_values
+                 set_name = "Set 2 (WB?)"
+            else: # Neither set is valid after splitting
+                 QMessageBox.warning(self, "Error", "Could not form valid standard sets after partitioning.")
+                 self.live_view_label.setCursor(Qt.ArrowCursor)
+                 if hasattr(self, "protein_location"): del self.protein_location
+                 return
+        else:
+            # Only one set detected, use all markers
+            if len(all_marker_positions) >= 2:
+                active_marker_positions = all_marker_positions
+                active_marker_values = all_marker_values
+                set_name = "Single Set"
+            else: # Should have been caught earlier, but double-check
+                 QMessageBox.warning(self, "Error", "Not enough markers in the single set.")
+                 self.live_view_label.setCursor(Qt.ArrowCursor)
+                 if hasattr(self, "protein_location"): del self.protein_location
+                 return
+
+        # --- 4. Perform Regression on the Active Set ---
+        # Normalize distances *within the active set*
+        min_pos_active = np.min(active_marker_positions)
+        max_pos_active = np.max(active_marker_positions)
+        if max_pos_active == min_pos_active: # Avoid division by zero if all points are the same
+            QMessageBox.warning(self, "Error", "All markers in the selected set have the same position.")
+            self.live_view_label.setCursor(Qt.ArrowCursor)
+            if hasattr(self, "protein_location"): del self.protein_location
+            return
+
+        normalized_distances_active = (active_marker_positions - min_pos_active) / (max_pos_active - min_pos_active)
+
+        # Log transform marker values
+        try:
+            log_marker_values_active = np.log10(active_marker_values)
+        except Exception as e:
+             QMessageBox.warning(self, "Error", f"Could not log-transform marker values (are they all positive?): {e}")
+             self.live_view_label.setCursor(Qt.ArrowCursor)
+             if hasattr(self, "protein_location"): del self.protein_location
+             return
+
+        # Perform linear regression (log-linear fit)
+        coefficients = np.polyfit(normalized_distances_active, log_marker_values_active, 1)
+
+        # Calculate R-squared for the fit on the active set
+        residuals = log_marker_values_active - np.polyval(coefficients, normalized_distances_active)
+        ss_res = np.sum(residuals**2)
+        ss_tot = np.sum((log_marker_values_active - np.mean(log_marker_values_active))**2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 1 # Handle case of perfect fit or single point mean
+
+        # --- 5. Predict MW for the Clicked Protein ---
+        # Normalize the protein's Y position *using the active set's min/max*
+        normalized_protein_position = (protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
+
+        # Predict using the derived coefficients
         predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
         predicted_weight = 10 ** predicted_log10_weight
-    
-        # Store the protein location in pixel coordinates
-        self.protein_location = (cursor_x, cursor_y)
 
-        
-    
-        # Update the live view to draw the *
-        self.update_live_view()
-    
-        # Plot the graph with the clicked position
+        # --- 6. Update View and Plot ---
+        self.update_live_view() # Draw the '*' marker at self.protein_location
+
+        # Plot the results, passing both active and all data for context
         self.plot_molecular_weight_graph(
-            normalized_distances,
-            marker_values,
-            10 ** np.polyval(coefficients, normalized_distances),
-            normalized_protein_position,
+            # Active set data for fitting and line plot:
+            normalized_distances_active,
+            active_marker_values,
+            10 ** np.polyval(coefficients, normalized_distances_active), # Fitted values for active set
+            # Full set data for context (plotting all points):
+            all_marker_positions, # Pass original positions
+            all_marker_values,
+            min_pos_active,       # Pass min/max of *active* set for normalization context
+            max_pos_active,
+            # Prediction results:
+            normalized_protein_position, # Position relative to active set scale
             predicted_weight,
-            r_squared=1 - (np.sum((log_marker_values - np.polyval(coefficients, normalized_distances)) ** 2) /
-                           np.sum((log_marker_values - np.mean(log_marker_values)) ** 2))
+            r_squared,
+            set_name # Name of the set used
         )
+
+        # Reset mouse event handler after prediction
+        self.live_view_label.mousePressEvent = None
+        self.live_view_label.setCursor(Qt.ArrowCursor)
+        self.run_predict_MW = True # Indicate prediction was attempted/completed
 
         
         
     def plot_molecular_weight_graph(
-        self, normalized_distances, marker_values, fitted_values, protein_position, predicted_weight, r_squared
+        self,
+        # Data for the active set (used for the fit line and highlighted points)
+        active_norm_distances,  # Normalized distances for the active set points
+        active_marker_values,   # Original MW values of the active set points
+        active_fitted_values,   # Fitted MW values corresponding to active_norm_distances
+
+        # Data for *all* markers (for plotting all points for context)
+        all_marker_positions,   # *Original* Y positions of all markers
+        all_marker_values,      # *Original* MW values of all markers
+        active_min_pos,         # Min Y position of the *active* set (for normalizing all points)
+        active_max_pos,         # Max Y position of the *active* set (for normalizing all points)
+
+        # Prediction results
+        predicted_norm_position,# Predicted protein position normalized relative to active set scale
+        predicted_weight,       # Predicted MW value
+
+        # Fit quality and set info
+        r_squared,              # R-squared of the fit on the active set
+        set_name                # Name of the set used (e.g., "Set 1", "Set 2", "Single Set")
     ):
+        """
+        Plots the molecular weight prediction graph, showing all markers,
+        highlighting the active set, the fitted line for the active set,
+        and the predicted protein position.
+        """
         import matplotlib.pyplot as plt
         from io import BytesIO
         from PyQt5.QtGui import QPixmap
-    
-        plt.figure(figsize=(5, 3))
-        plt.scatter(normalized_distances, marker_values, color="red", label="Marker Data")
-        plt.plot(normalized_distances, fitted_values, color="blue", label=f"Fit (R²={r_squared:.3f})")
-        plt.axvline(protein_position, color="green", linestyle="--", label=f"Protein Position\n({predicted_weight:.2f} units)")
-        plt.xlabel("Normalized Relative Distance")
+        from PyQt5.QtWidgets import QLabel # Make sure QLabel is imported if not already
+
+        # --- Normalize *all* marker positions using the *active* set's scale ---
+        # This ensures all points are plotted on the same normalized x-axis
+        # defined by the regression range.
+        if active_max_pos == active_min_pos: # Avoid division by zero
+             print("Warning: Cannot normalize all points - active set min/max are equal.")
+             all_norm_distances_for_plot = np.zeros_like(all_marker_positions)
+        else:
+            all_norm_distances_for_plot = (all_marker_positions - active_min_pos) / (active_max_pos - active_min_pos)
+
+        # --- Create Plot ---
+        plt.figure(figsize=(6, 4)) # Slightly larger figure
+
+        # 1. Plot *all* marker points lightly for context
+        plt.scatter(all_norm_distances_for_plot, all_marker_values, color="grey", alpha=0.6, label="All Markers", s=30)
+
+        # 2. Plot the *active* marker points prominently
+        plt.scatter(active_norm_distances, active_marker_values, color="red", label=f"Active Set ({set_name})", s=50, marker='o')
+
+        # 3. Plot the fitted line for the *active* set
+        # Sort points for a smooth line if necessary (linear fit usually doesn't require it)
+        sort_indices = np.argsort(active_norm_distances)
+        plt.plot(active_norm_distances[sort_indices], active_fitted_values[sort_indices],
+                 color="blue", label=f"Fit (R²={r_squared:.3f})")
+
+        # 4. Plot the predicted protein position
+        plt.axvline(predicted_norm_position, color="green", linestyle="--",
+                    label=f"Target Protein\n({predicted_weight:.2f} units)")
+
+        # --- Configure Plot ---
+        plt.xlabel(f"Normalized Distance (Relative to {set_name})")
         plt.ylabel("Molecular Weight (units)")
-        plt.yscale("log")  # Log scale for molecular weight
-        plt.legend()
-        plt.title("Molecular Weight Prediction")
-    
-        # Convert the plot to a pixmap
-        buffer = BytesIO()
-        plt.savefig(buffer, format="png", bbox_inches="tight")
-        buffer.seek(0)
-        pixmap = QPixmap()
-        pixmap.loadFromData(buffer.read())
-        buffer.close()
-        plt.close()
-    
+        plt.yscale("log")  # Log scale for molecular weight is standard
+        plt.legend(fontsize='small')
+        plt.title(f"Molecular Weight Prediction (Using {set_name})")
+        plt.grid(True, which='both', linestyle=':', linewidth=0.5) # Add subtle grid
+
+        # --- Display Plot in QMessageBox ---
+        try:
+            # Convert the plot to a pixmap
+            buffer = BytesIO()
+            plt.savefig(buffer, format="png", bbox_inches="tight", dpi=150) # Increase DPI slightly
+            buffer.seek(0)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.read())
+            buffer.close()
+        except Exception as plot_err:
+            print(f"Error generating plot image: {plot_err}")
+            QMessageBox.warning(self, "Plot Error", "Could not generate the prediction plot.")
+            plt.close() # Close the figure even if saving failed
+            return
+        finally:
+             plt.close() # Ensure figure is always closed
+
         # Display the plot and results in a message box
         message_box = QMessageBox(self)
         message_box.setWindowTitle("Prediction Result")
         message_box.setText(
+            f"Used {set_name} for prediction.\n"
             f"The predicted molecular weight is approximately {predicted_weight:.2f} units.\n"
             f"R-squared value of the fit: {r_squared:.3f}"
         )
-        label = QLabel()
-        label.setPixmap(pixmap)
-        message_box.layout().addWidget(label, 1, 0, 1, message_box.layout().columnCount())
-        message_box.exec()
-        # self.run_predict_MW=True
+        # Add plot image below the text
+        plot_label = QLabel()
+        plot_label.setPixmap(pixmap)
+        # Access the grid layout of the QMessageBox to add the widget
+        grid_layout = message_box.layout()
+        # Add widget in the next available row (row 1), spanning all columns
+        grid_layout.addWidget(plot_label, 1, 0, 1, grid_layout.columnCount())
+        message_box.exec_()
 
   
         
