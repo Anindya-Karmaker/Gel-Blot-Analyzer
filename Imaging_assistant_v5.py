@@ -3008,7 +3008,7 @@ class CombinedSDSApp(QMainWindow):
 
         low_contrast_label = QLabel("Contrast:") # Renamed for clarity
         self.low_slider = QSlider(Qt.Horizontal)
-        self.low_slider.setRange(0, 200) # Range 0 to 200%
+        self.low_slider.setRange(0, 100) # Range 0 to 100%
         self.low_slider.setValue(100) # Default 100%
         self.low_slider.valueChanged.connect(self.update_image_contrast)
         self.low_value_label = QLabel("1.00") # Display factor
