@@ -503,23 +503,23 @@ class PeakAreaDialog(QDialog):
 
 
         # Peak Prominence Slider (Row 2) - Shifted down one row
-        self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f}) (rel 0-255)")
+        self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})")
         self.peak_prominence_slider = QSlider(Qt.Horizontal)
         self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
         self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
         # Changing prominence only requires re-detection, not full regeneration
         self.peak_prominence_slider.valueChanged.connect(self.detect_peaks)
-        self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f}) (rel 0-255)"))
+        self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})"))
         peak_detect_layout.addWidget(self.peak_prominence_slider_label, 2, 0)
         peak_detect_layout.addWidget(self.peak_prominence_slider, 2, 1, 1, 2)
 
         # Peak Height Slider (Row 3) - Shifted down one row
-        self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f}) % (of 0-255 range)")
+        self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f}) %")
         self.peak_height_slider = QSlider(Qt.Horizontal)
         self.peak_height_slider.setRange(0, 100)
         self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
         self.peak_height_slider.valueChanged.connect(self.detect_peaks)
-        self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f}) % (of 0-255 range)"))
+        self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f}) %"))
         peak_detect_layout.addWidget(self.peak_height_slider_label, 3, 0)
         peak_detect_layout.addWidget(self.peak_height_slider, 3, 1, 1, 2)
 
@@ -702,9 +702,9 @@ class PeakAreaDialog(QDialog):
         # ** NEW: Update smoothing label **
         if hasattr(self, 'smoothing_label'): # Check if UI element exists
             self.smoothing_label.setText(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
-        self.peak_height_slider_label.setText(f"Min Height ({self.peak_height_factor:.2f}) % (of 0-255 range)")
+        self.peak_height_slider_label.setText(f"Min Height ({self.peak_height_factor:.2f}) %")
         self.peak_distance_slider_label.setText(f"Min Distance ({self.peak_distance}) px")
-        self.peak_prominence_slider_label.setText(f"Min Prominence ({self.peak_prominence_factor:.2f}) (rel 0-255)")
+        self.peak_prominence_slider_label.setText(f"Min Prominence ({self.peak_prominence_factor:.2f})")
         self.peak_spread_label.setText(f"Peak Spread (+/- {self.peak_spread_pixels} px)")
         # Rolling ball label is now updated automatically via its connection
 
@@ -727,7 +727,6 @@ class PeakAreaDialog(QDialog):
                 distance=self.peak_distance,
                 width=1, rel_height=0.5
             )
-            print(f"  Found {len(peaks_indices)} peaks at indices: {peaks_indices}") # Debug
 
             # (Rest of setting initial_peak_regions remains the same)
             left_ips = properties.get('left_ips', [])
@@ -745,7 +744,6 @@ class PeakAreaDialog(QDialog):
                          if start >= end: end = min(profile_len - 1, start + 1)
                      self.initial_peak_regions.append((start, end))
             else: # Fallback
-                 print("Warning: Width properties inconsistent, using distance fallback.")
                  for i, peak_idx in enumerate(self.peaks):
                      wd_est = self.peak_distance // 2; start = max(0, peak_idx - wd_est); end = min(profile_len - 1, peak_idx + wd_est)
                      if start >= end: start = max(0, peak_idx - 2); end = min(profile_len - 1, peak_idx + 2)
@@ -753,7 +751,6 @@ class PeakAreaDialog(QDialog):
                      self.initial_peak_regions.append((start, end))
 
         except Exception as e:
-            print(f"Error during peak detection: {e}")
             QMessageBox.warning(self, "Peak Detection Error", f"Peak detection error:\n{e}")
             self.peaks = np.array([]); self.initial_peak_regions = []
 
@@ -1266,6 +1263,17 @@ class CombinedSDSApp(QMainWindow):
         window_width = int(self.screen_width * 0.5)  # 60% of screen width
         window_height = int(self.screen_height * 0.75)  # 95% of screen height
         self.window_title="IMAGING ASSISTANT V6.0"
+        # --- Initialize Status Bar Labels ---
+        self.size_label = QLabel("Image Size: N/A")
+        self.depth_label = QLabel("Bit Depth: N/A")
+        self.location_label = QLabel("Source: N/A")
+
+        # --- Add Labels to Status Bar ---
+        statusbar = self.statusBar() # Get the status bar instance
+        statusbar.addWidget(self.size_label)
+        statusbar.addWidget(self.depth_label)
+        # Add location label with stretch factor 1 to push it to the right
+        statusbar.addWidget(self.location_label, 1)
         self.setWindowTitle(self.window_title)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -1284,6 +1292,7 @@ class CombinedSDSApp(QMainWindow):
         self.image_padded=False
         self.predict_size=False
         self.warped_image=None
+        self.transparency=1
         self.left_markers = []
         self.right_markers = []
         self.top_markers = []
@@ -1372,7 +1381,7 @@ class CombinedSDSApp(QMainWindow):
             parent=self,
         )
         # Image display
-        self.live_view_label.setStyleSheet("border: 1px solid black;")
+        self.live_view_label.setStyleSheet("background-color: white; border: 1px solid black;")
         # self.live_view_label.setCursor(Qt.CrossCursor)
         self.live_view_label.setFixedSize(self.label_width, self.label_width)
         # self.live_view_label.mousePressEvent = self.add_band()
@@ -1608,6 +1617,53 @@ class CombinedSDSApp(QMainWindow):
         self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
         self.redo_shortcut.activated.connect(self.redo_action)
         self.load_config()
+        
+    def _update_status_bar(self):
+        """Updates the status bar labels with current image information."""
+        if self.image and not self.image.isNull():
+            w = self.image.width()
+            h = self.image.height()
+            self.size_label.setText(f"Image Size: {w}x{h}")
+
+            # Determine bit depth/format string
+            img_format = self.image.format()
+            depth_str = "Unknown"
+            if img_format == QImage.Format_Grayscale8:
+                depth_str = "8-bit Grayscale"
+            elif img_format == QImage.Format_Grayscale16:
+                depth_str = "16-bit Grayscale"
+            elif img_format == QImage.Format_RGB888:
+                 depth_str = "24-bit RGB"
+            elif img_format in (QImage.Format_RGB32, QImage.Format_ARGB32,
+                                QImage.Format_ARGB32_Premultiplied, QImage.Format_RGBA8888):
+                 depth_str = "32-bit (A)RGB"
+            elif img_format == QImage.Format_Indexed8:
+                 depth_str = "8-bit Indexed"
+            elif img_format == QImage.Format_Mono:
+                 depth_str = "1-bit Mono"
+            else:
+                # Fallback to depth() if format is unusual
+                depth_val = self.image.depth()
+                depth_str = f"{depth_val}-bit Depth"
+            self.depth_label.setText(f"Bit Depth: {depth_str}")
+
+            # Update location
+            location = "N/A"
+            if hasattr(self, 'image_path') and self.image_path:
+                # Show only filename if it's a path, otherwise show the source info
+                if os.path.exists(self.image_path):
+                    location = os.path.basename(self.image_path)
+                else: # Likely "Clipboard..." or similar
+                    location = self.image_path
+            else:
+                location = "N/A"
+            self.location_label.setText(f"Source: {location}")
+
+        else:
+            # No image loaded
+            self.size_label.setText("Image Size: N/A")
+            self.depth_label.setText("Bit Depth: N/A")
+            self.location_label.setText("Source: N/A")
         
     def prompt_save_if_needed(self):
         if not self.is_modified:
@@ -2181,11 +2237,10 @@ class CombinedSDSApp(QMainWindow):
                 calculated_quantities.append(round(val, 2))
 
             # Display the results in a message box (optional, but helpful feedback)
-            QMessageBox.information(self, "Protein Quantification", f"Predicted Quantities: {calculated_quantities} units")
+            # QMessageBox.information(self, "Protein Quantification", f"Predicted Quantities: {calculated_quantities} units")
 
         except Exception as e:
-             print(f"Error during quantity calculation: {e}")
-             QMessageBox.warning(self, "Calculation Error", f"Could not calculate quantities: {e}")
+             # QMessageBox.warning(self, "Calculation Error", f"Could not calculate quantities: {e}")
              return [] # Return empty list on error
 
         return calculated_quantities # <-- Return the list
@@ -2289,7 +2344,7 @@ class CombinedSDSApp(QMainWindow):
                 self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
             except:
                 pass
-            
+            self._update_status_bar()
             self.update_live_view()
             
     
@@ -2354,7 +2409,7 @@ class CombinedSDSApp(QMainWindow):
                 self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
             except:
                 pass
-            
+            self._update_status_bar()
             self.update_live_view()
             
     def analysis_tab(self):
@@ -4499,7 +4554,7 @@ class CombinedSDSApp(QMainWindow):
             self.image_contrasted = self.image.copy()
             self.image_before_contrast = self.image.copy()
             self.image_padded = False
-            self.setWindowTitle(f"{self.window_title}::IMAGE SIZE:{self.image.width()}x{self.image.height()}:{source_info}")
+            self.setWindowTitle(f"{self.window_title}::{source_info}")
 
             # --- Update UI Elements (Label size, sliders) ---
             try:
@@ -4533,6 +4588,8 @@ class CombinedSDSApp(QMainWindow):
             # --- End UI Element Update ---
         else:
              QMessageBox.critical(self, "Paste Error", "Failed to initialize image object after pasting.")
+             return
+        self._update_status_bar()
     # --- END: Modified Loading / Pasting ---
         
     def update_font(self):
@@ -4598,7 +4655,7 @@ class CombinedSDSApp(QMainWindow):
                 self.image_before_contrast = self.image.copy() # Backup for contrast
                 self.image_padded = False               # Reset flag
 
-                self.setWindowTitle(f"{self.window_title}::IMAGE SIZE:{self.image.width()}x{self.image.height()}:{self.image_path}")
+                self.setWindowTitle(f"{self.window_title}::{self.image_path}")
 
                 # --- Load Associated Config File (Logic remains the same) ---
                 self.base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -4664,6 +4721,8 @@ class CombinedSDSApp(QMainWindow):
                     print(f"Error setting up UI after load: {e}")
             # --- End UI Element Update ---
 
+            
+            self._update_status_bar() # <--- Add this
             self.update_live_view() # Render the loaded image
             self.save_state() # Save initial loaded state
     
@@ -4671,6 +4730,15 @@ class CombinedSDSApp(QMainWindow):
         self.left_padding_input.setText(config_data["adding_white_space"]["left"])
         self.right_padding_input.setText(config_data["adding_white_space"]["right"])
         self.top_padding_input.setText(config_data["adding_white_space"]["top"])
+        try:
+            self.transparency=int(config_data["adding_white_space"]["transparency"])
+            
+            if self.transparency==1:
+                self.finalize_image()
+        except:
+            pass
+        
+            
         try:
             self.bottom_padding_input.setText(config_data["adding_white_space"]["bottom"])
         except:
@@ -4780,6 +4848,7 @@ class CombinedSDSApp(QMainWindow):
                 "right": self.right_padding_input.text(),
                 "top": self.top_padding_input.text(),
                 "bottom": self.bottom_padding_input.text(),
+                "transparency": self.transparency,
             },
             "cropping_parameters": {
                 "x_start_percent": self.crop_x_start_slider.value(),
@@ -5033,60 +5102,89 @@ class CombinedSDSApp(QMainWindow):
             return
 
         try:
-            padding_left = abs(int(self.left_padding_input.text()))
-            padding_right = abs(int(self.right_padding_input.text()))
-            padding_top = abs(int(self.top_padding_input.text()))
-            padding_bottom = abs(int(self.bottom_padding_input.text()))
+            # Ensure padding values are non-negative
+            padding_left = max(0, int(self.left_padding_input.text()))
+            padding_right = max(0, int(self.right_padding_input.text()))
+            padding_top = max(0, int(self.top_padding_input.text()))
+            padding_bottom = max(0, int(self.bottom_padding_input.text()))
+            # Update input fields in case negative values were entered
+            self.left_padding_input.setText(str(padding_left))
+            self.right_padding_input.setText(str(padding_right))
+            self.top_padding_input.setText(str(padding_top))
+            self.bottom_padding_input.setText(str(padding_bottom))
+
         except ValueError:
-            QMessageBox.warning(self, "Error", "Please enter valid integers for padding.")
+            QMessageBox.warning(self, "Error", "Please enter valid non-negative integers for padding.")
             return
 
-        # Don't rely on get_compatible_grayscale_format, check the actual image
+        # --- Check if padding is actually needed ---
+        if padding_left == 0 and padding_right == 0 and padding_top == 0 and padding_bottom == 0:
+            QMessageBox.information(self, "Info", "No padding specified. Image remains unchanged.")
+            return # Nothing to do
+
         try:
+            # --- Determine if the source image has transparency ---
+            source_has_alpha = self.image.hasAlphaChannel()
+            print(f"Source image has alpha channel: {source_has_alpha}")
+
+            # --- Convert source QImage to NumPy array ---
             np_img = self.qimage_to_numpy(self.image)
             if np_img is None: raise ValueError("NumPy conversion failed.")
+            print(f"  Source NumPy array shape: {np_img.shape}, dtype: {np_img.dtype}")
 
-            # Determine fill value based on dtype and dimensions
+            # --- Determine fill value based on source transparency and dimensions ---
             fill_value = None
-            if np_img.ndim == 2: # Grayscale
-                fill_value = 65535 if np_img.dtype == np.uint16 else 255
-                print(f"Padding grayscale image with fill value: {fill_value}")
-            elif np_img.ndim == 3: # Color (assume BGR/BGRA)
-                num_channels = np_img.shape[2]
-                base_val = 65535 if np_img.dtype == np.uint16 else 255
-                if num_channels == 3: # BGR
-                    fill_value = (base_val, base_val, base_val)
-                elif num_channels == 4: # BGRA - white opaque
-                    fill_value = (base_val, base_val, base_val, base_val) # White, Alpha=max
-                else:
-                     raise ValueError(f"Unsupported number of color channels: {num_channels}")
-                print(f"Padding color image ({num_channels} channels) with fill value: {fill_value}")
-            else:
-                 raise ValueError(f"Unsupported image dimensions: {np_img.ndim}")
+            # Check if NumPy array indicates alpha (4 channels) even if QImage didn't report it explicitly
+            numpy_indicates_alpha = (np_img.ndim == 3 and np_img.shape[2] == 4)
 
-            # Adjust markers BEFORE creating the new image
+            if source_has_alpha or numpy_indicates_alpha:
+                # Pad with transparency (transparent black)
+                # OpenCV expects (B, G, R, Alpha) or just Alpha if grayscale+alpha (less common here)
+                # Ensure we provide 4 values for BGRA
+                fill_value = (0, 0, 0, 0) # Transparent Black (B=0, G=0, R=0, A=0)
+                print(f"Padding with transparency. Fill value: {fill_value}")
+            elif np_img.ndim == 3: # Opaque Color (BGR)
+                fill_value = (255, 255, 255) # White (B=255, G=255, R=255)
+                print(f"Padding opaque color with white. Fill value: {fill_value}")
+            elif np_img.ndim == 2: # Opaque Grayscale
+                fill_value = 65535 if np_img.dtype == np.uint16 else 255 # White
+                print(f"Padding opaque grayscale with white. Fill value: {fill_value}")
+            else:
+                 raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
+
+            # --- Adjust markers BEFORE creating the new padded image ---
             self.adjust_markers_for_padding(padding_left, padding_right, padding_top, padding_bottom)
 
-            # Pad using OpenCV's copyMakeBorder
+            # --- Pad using OpenCV's copyMakeBorder ---
+            print(f"Applying padding: Top={padding_top}, Bottom={padding_bottom}, Left={padding_left}, Right={padding_right}")
             padded_np = cv2.copyMakeBorder(np_img, padding_top, padding_bottom,
                                            padding_left, padding_right,
-                                           cv2.BORDER_CONSTANT, value=fill_value) # Use color/gray fill_value
+                                           cv2.BORDER_CONSTANT, value=fill_value)
+            print(f"  Padded NumPy array shape: {padded_np.shape}, dtype: {padded_np.dtype}")
 
-            # Convert back to QImage
-            padded_image = self.numpy_to_qimage(padded_np) # Should handle color correctly now
+            # --- Convert padded NumPy array back to QImage ---
+            # numpy_to_qimage should automatically select a format supporting alpha if padded_np has 4 channels
+            padded_image = self.numpy_to_qimage(padded_np)
             if padded_image.isNull():
-                 raise ValueError("Conversion back to QImage failed.")
+                 raise ValueError("Conversion back to QImage failed after padding.")
+            print(f"  Converted back to QImage format: {padded_image.format()}, Has alpha: {padded_image.hasAlphaChannel()}")
 
-            # Update main image and backups
-            self.image_before_padding = self.image.copy() if not self.image_padded else self.image_before_padding
+
+            # --- Update main image and backups ---
+            # Store the image *before* this padding operation, unless padding was already applied
+            if not self.image_padded:
+                self.image_before_padding = self.image.copy()
+            # Else: keep the existing image_before_padding from the *previous* unpadded state
+
             self.image = padded_image
-            self.image_padded = True # Indicate padding applied
-            # Update backups consistently
-            self.image_contrasted = self.image.copy()
-            self.image_before_contrast = self.image.copy()
+            self.image_padded = True # Indicate padding has been applied
 
-            # Update UI (label size, slider ranges, live view)
-            # (UI update logic remains the same)
+            # Update backups consistently to reflect the new padded state
+            self.image_contrasted = self.image.copy()
+            self.image_before_contrast = self.image.copy() # Contrast baseline resets after padding
+
+            # --- Update UI (label size, slider ranges, live view) ---
+            # (Keep the existing UI update logic here)
             w = self.image.width()
             h = self.image.height()
             ratio = w / h if h > 0 else 1
@@ -5106,10 +5204,11 @@ class CombinedSDSApp(QMainWindow):
             self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
             self.top_slider_range = [-100, int(render_height) + 100]
             self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
+            # --- End UI Update ---
 
-
-            self.update_live_view()
-            print(f"Padding applied. New image format: {self.image.format()}")
+            self.update_live_view() # Refresh display
+            self._update_status_bar() # Update size/depth info
+            print(f"Padding applied successfully.")
 
         except Exception as e:
             QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
@@ -5783,8 +5882,8 @@ class CombinedSDSApp(QMainWindow):
         # Use RGB888 if saving as JPG/BMP which don't support alpha well.
         save_format_mod = suffix.replace(".", "").upper()
         if save_format_mod in ["JPG", "JPEG", "BMP"]:
-            canvas_format = QImage.Format_RGB888
-            fill_color = Qt.white # Use white background for opaque formats
+            canvas_format = QImage.Format_ARGB32_Premultiplied
+            fill_color = Qt.transparent # Use white background for opaque formats
         else: # PNG, TIFF
             canvas_format = QImage.Format_ARGB32_Premultiplied # Good for rendering quality with alpha
             fill_color = Qt.transparent # Use transparent background
@@ -5829,7 +5928,7 @@ class CombinedSDSApp(QMainWindow):
         QMessageBox.information(self, "Saved", f"Files saved successfully:\n- {os.path.basename(original_save_path)}\n- {os.path.basename(modified_save_path)}\n- {os.path.basename(config_save_path)}")
 
         # Update window title (optional, remove base_name if confusing)
-        self.setWindowTitle(f"{self.window_title}::IMAGE SIZE:{self.image.width()}x{self.image.height()}:{base_name_nosuffix}")
+        self.setWindowTitle(f"{self.window_title}::{base_name_nosuffix}")
         return True # Indicate successful save
             
     def save_image_svg(self):
@@ -5951,9 +6050,9 @@ class CombinedSDSApp(QMainWindow):
         high_res_canvas_width = self.live_view_label.width() * render_scale
         high_res_canvas_height = self.live_view_label.height() * render_scale
         high_res_canvas = QImage(
-            high_res_canvas_width, high_res_canvas_height, QImage.Format_RGB888
+            high_res_canvas_width, high_res_canvas_height, QImage.Format_ARGB32_Premultiplied
         )
-        high_res_canvas.fill(QColor(255, 255, 255))  # White background
+        high_res_canvas.fill(Qt.transparent)  # White background
     
         # Define cropping boundaries
         x_start_percent = self.crop_x_start_slider.value() / 100
@@ -6530,6 +6629,7 @@ class CombinedSDSApp(QMainWindow):
             self.live_view_label.setFixedSize(int(self.screen_width * 0.28), int(self.screen_width * 0.28))
 
         self.update_live_view()
+        self._update_status_bar() # <--- Add this
         print("Image and settings reset complete.")
 
 
