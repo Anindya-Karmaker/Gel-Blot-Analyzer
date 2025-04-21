@@ -213,36 +213,63 @@ def log_exception(exc_type, exc_value, exc_traceback):
 sys.excepthook = log_exception
 
 class TableWindow(QDialog):
-    # Add 'calculated_quantities' parameter
+    """
+    A dialog window to display peak analysis results in a table.
+    Includes functionality to copy selected data to the clipboard
+    in a format pasteable into Excel (tab-separated).
+    Also includes Excel export functionality.
+    """
     def __init__(self, peak_areas, standard_dictionary, standard, calculated_quantities, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Table Export")
-        self.setGeometry(100, 100, 600, 400)
-        self.calculated_quantities = calculated_quantities # <-- Store passed quantities
+        self.setGeometry(100, 100, 600, 400) # Adjust size as needed
+        self.calculated_quantities = calculated_quantities # Store passed quantities
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
 
+        # --- Table Setup ---
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.ContiguousSelection)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers) # Data is read-only
+        self.table.setSelectionBehavior(QTableWidget.SelectRows) # Select whole rows
+        self.table.setSelectionMode(QTableWidget.ContiguousSelection) # Allow selecting multiple adjacent rows
 
-        # Populate the table using the passed data
+        # --- Populate Table ---
         self.populate_table(peak_areas, standard_dictionary, standard)
 
         self.scroll_area.setWidget(self.table)
+
+        # --- Buttons ---
+        self.copy_button = QPushButton("Copy Selected to Clipboard")
+        self.copy_button.setToolTip("Copy selected rows to clipboard (tab-separated)")
+        self.copy_button.clicked.connect(self.copy_table_data) # Connect copy function
+
         self.export_button = QPushButton("Export to Excel")
         self.export_button.clicked.connect(self.export_to_excel)
 
+        # --- Layout ---
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.copy_button)
+        button_layout.addStretch()
+        button_layout.addWidget(self.export_button)
+
         layout = QVBoxLayout()
         layout.addWidget(self.scroll_area)
-        layout.addWidget(self.export_button)
+        layout.addLayout(button_layout)
         self.setLayout(layout)
 
+        # Enable keyboard copy (Ctrl+C / Cmd+C)
+        self.copy_shortcut = QShortcut(QKeySequence.Copy, self.table)
+        self.copy_shortcut.activated.connect(self.copy_table_data)
+        # Make table focusable to receive shortcut events
+        self.table.setFocusPolicy(Qt.StrongFocus)
+
+
     def populate_table(self, peak_areas, standard_dictionary, standard):
-        total_area = sum(peak_areas)
+        """Populates the table with the provided peak analysis data."""
+        total_area = sum(peak_areas) if peak_areas else 0.0 # Handle empty list
         self.table.setRowCount(len(peak_areas))
 
         for row, area in enumerate(peak_areas):
@@ -262,39 +289,41 @@ class TableWindow(QDialog):
             # --- Use pre-calculated quantities if available ---
             quantity_str = "" # Default empty string
             if standard and row < len(self.calculated_quantities): # Check if standard mode and index is valid
-                quantity_str = f"{self.calculated_quantities[row]:.2f}"
+                quantity_str = f"{self.calculated_quantities[row]:.2f}" # Format as needed
             # Always set the item, even if empty
             self.table.setItem(row, 3, QTableWidgetItem(quantity_str))
             # --- End quantity handling ---
 
+        self.table.resizeColumnsToContents() # Adjust column widths
 
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.copy_table_data)
 
-    # (copy_table_data and export_to_excel remain the same)
     def copy_table_data(self):
-        """Copy selected table data to the clipboard."""
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
+        """Copy selected table data to the clipboard in a tab-separated format."""
+        selected_ranges = self.table.selectedRanges()
+        if not selected_ranges:
+            return # Nothing selected
 
-        # Get the selected rows and columns
-        rows = set(item.row() for item in selected_items)
-        cols = set(item.column() for item in selected_items)
+        # We copy contiguous blocks as selected. If multiple non-contiguous blocks are selected,
+        # this standard implementation will only copy the first one.
+        # For pasting into Excel, copying a single contiguous block is usually expected.
+        selected_range = selected_ranges[0]
+        start_row = selected_range.topRow()
+        end_row = selected_range.bottomRow()
+        start_col = selected_range.leftColumn()
+        end_col = selected_range.rightColumn()
 
-        # Prepare the data for copying
-        data = []
-        for row in sorted(rows):
+        clipboard_string = ""
+        for row in range(start_row, end_row + 1):
             row_data = []
-            for col in sorted(cols):
+            for col in range(start_col, end_col + 1):
                 item = self.table.item(row, col)
                 row_data.append(item.text() if item else "")
-            data.append("\t".join(row_data))
+            clipboard_string += "\t".join(row_data) + "\n" # Tab separated, newline at end of row
 
-        # Copy the data to the clipboard
+        # Copy to clipboard
         clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(data))
+        clipboard.setText(clipboard_string.strip()) # Remove trailing newline
+
 
     def export_to_excel(self):
         """Export the table data to an Excel file."""
@@ -309,24 +338,50 @@ class TableWindow(QDialog):
         # Create a new Excel workbook and worksheet
         workbook = openpyxl.Workbook()
         worksheet = workbook.active
-        worksheet.title = "Peak Areas"
+        worksheet.title = "Peak Analysis Results" # More descriptive title
 
         # Write the table headers to the Excel sheet
         headers = [self.table.horizontalHeaderItem(col).text() for col in range(self.table.columnCount())]
         for col, header in enumerate(headers, start=1):
-            worksheet.cell(row=1, column=col, value=header)
-            worksheet.cell(row=1, column=col).font = Font(bold=True)  # Make headers bold
+            cell = worksheet.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)  # Make headers bold
 
         # Write the table data to the Excel sheet
         for row in range(self.table.rowCount()):
             for col in range(self.table.columnCount()):
                 item = self.table.item(row, col)
-                worksheet.cell(row=row + 2, column=col + 1, value=item.text() if item else "")
+                value = item.text() if item else ""
+                # Attempt to convert numeric strings back to numbers for Excel
+                try:
+                    if '%' in value: # Handle percentages
+                        numeric_value = float(value.replace('%', '')) / 100.0
+                        cell = worksheet.cell(row=row + 2, column=col + 1, value=numeric_value)
+                        cell.number_format = '0.00%' # Apply percentage format
+                    else:
+                        numeric_value = float(value)
+                        worksheet.cell(row=row + 2, column=col + 1, value=numeric_value)
+                except ValueError:
+                    # Keep as text if conversion fails
+                    worksheet.cell(row=row + 2, column=col + 1, value=value)
+
+        # Auto-adjust column widths (optional, but nice)
+        for col_idx, column_letter in enumerate(worksheet.columns, start=1):
+            max_length = 0
+            column = column_letter[0].column_letter # Get the column letter ('A', 'B', ...)
+            for cell in worksheet[column]:
+                try: # Necessary to avoid error on empty cells
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(cell.value)
+                except:
+                    pass
+            adjusted_width = (max_length + 2) * 1.2 # Add padding and factor
+            worksheet.column_dimensions[column].width = adjusted_width
+
 
         # Save the Excel file
         try:
             workbook.save(file_path)
-            QMessageBox.information(self, "Success", f"Table data exported to {file_path}")
+            QMessageBox.information(self, "Success", f"Table data exported to\n{file_path}")
         except Exception as e:
              QMessageBox.critical(self, "Export Error", f"Could not save Excel file:\n{e}")
                 
@@ -1934,89 +1989,113 @@ class CombinedSDSApp(QMainWindow):
     # --- END: Helper Functions ---
         
     def quadrilateral_to_rect(self, image, quad_points):
-       # This implementation uses the more robust NumPy/OpenCV approach from Snippet 7
-       if not image or image.isNull():
-           QMessageBox.warning(self, "Warp Error", "Invalid input image.")
-           return None
-       if len(quad_points) != 4:
-            QMessageBox.warning(self, "Warp Error", "Need exactly 4 points for quadrilateral.")
+        """
+        Warps the quadrilateral region defined by quad_points in the input image
+        to a rectangular image using perspective transformation.
+        Crucially, preserves the original bit depth (e.g., uint16) of the input image.
+        """
+        # --- Input Validation ---
+        if not image or image.isNull():
+            QMessageBox.warning(self, "Warp Error", "Invalid input image provided for warping.")
             return None
-
-       # --- Convert QImage to NumPy array (Preserve bit depth) ---
-       try:
-           img_array = self.qimage_to_numpy(image)
-           if img_array is None: raise ValueError("NumPy Conversion returned None")
-       except Exception as e:
-           QMessageBox.warning(self, "Warp Error", f"Failed to convert image to NumPy: {e}")
-           return None
-
-       # Ensure array is 2D grayscale
-       if img_array.ndim == 3:
-            print("Warning: Warping input array is 3D. Converting to grayscale.")
-            color_code = cv2.COLOR_BGR2GRAY if img_array.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
-            img_array = cv2.cvtColor(img_array, color_code)
-            # Decide target format - stick to 8-bit if source was color
-            # img_array = img_array.astype(np.uint8)
-
-
-       # --- Transform points from LiveViewLabel space to Image space ---
-       # This scaling part remains potentially complex and needs validation
-       # based on the exact coordinate system flow through cropping/padding.
-       # Assuming direct scaling for now.
-       label_width = self.live_view_label.width()
-       label_height = self.live_view_label.height()
-       current_img_width = image.width() # Use the width of the image *passed in*
-       current_img_height = image.height()
-       scale_x_disp = current_img_width / label_width if label_width > 0 else 1
-       scale_y_disp = current_img_height / label_height if label_height > 0 else 1
-
-       src_points_img = []
-       for point in quad_points:
-           x_view, y_view = point.x(), point.y()
-           if self.live_view_label.zoom_level != 1.0:
-               x_view = (x_view - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
-               y_view = (y_view - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
-           x_image = x_view * scale_x_disp
-           y_image = y_view * scale_y_disp
-           src_points_img.append([x_image, y_image])
-       src_np = np.array(src_points_img, dtype=np.float32)
-
-       # --- Define Destination Rectangle ---
-       width_a = np.linalg.norm(src_np[0] - src_np[1])
-       width_b = np.linalg.norm(src_np[2] - src_np[3])
-       height_a = np.linalg.norm(src_np[0] - src_np[3])
-       height_b = np.linalg.norm(src_np[1] - src_np[2])
-       max_width = int(max(width_a, width_b))
-       max_height = int(max(height_a, height_b))
-
-       if max_width <= 0 or max_height <= 0:
-            QMessageBox.warning(self, "Warp Error", "Invalid destination rectangle size.")
+        if len(quad_points) != 4:
+             QMessageBox.warning(self, "Warp Error", "Need exactly 4 points for quadrilateral.")
+             return None
+        if cv2 is None:
+             QMessageBox.critical(self, "Dependency Error", "OpenCV (cv2) is required for quadrilateral warping but is not installed.")
+             return None
+     
+        # --- Convert QImage to NumPy array (Preserves bit depth) ---
+        try:
+            img_array = self.qimage_to_numpy(image) # Should return uint16 if input is Format_Grayscale16
+            if img_array is None: raise ValueError("NumPy Conversion returned None")
+            print(f"quad_to_rect: Input image dtype = {img_array.dtype}, shape = {img_array.shape}") # Debug
+        except Exception as e:
+            QMessageBox.warning(self, "Warp Error", f"Failed to convert image to NumPy: {e}")
             return None
-
-       dst_np = np.array([
-           [0, 0], [max_width - 1, 0], [max_width - 1, max_height - 1], [0, max_height - 1]
-       ], dtype=np.float32)
-
-       # --- Perform Perspective Warp using OpenCV ---
-       try:
-           matrix = cv2.getPerspectiveTransform(src_np, dst_np)
-           # Warp the original NumPy array (could be uint8 or uint16)
-           warped_array = cv2.warpPerspective(img_array, matrix, (max_width, max_height),
-                                              flags=cv2.INTER_LINEAR, # Use linear interpolation
-                                              borderMode=cv2.BORDER_CONSTANT,
-                                              borderValue=0) # Fill borders with black
-       except Exception as e:
-            QMessageBox.warning(self, "Warp Error", f"OpenCV perspective warp failed: {e}")
+     
+        # --- !!! REMOVED INTERNAL GRAYSCALE CONVERSION !!! ---
+        # # OLD code that caused the issue if input was color:
+        # if img_array.ndim == 3:
+        #      print("Warning: Warping input array is 3D. Converting to grayscale.")
+        #      # THIS CONVERSION TO UINT8 WAS THE PROBLEM
+        #      color_code = cv2.COLOR_BGR2GRAY if img_array.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
+        #      img_array = cv2.cvtColor(img_array, color_code)
+        #      # img_array = img_array.astype(np.uint8) # Explicit cast not needed, cvtColor usually returns uint8
+        # --- End Removed Block ---
+        # Now, warpPerspective will operate on the img_array with its original dtype (e.g., uint16 grayscale or color)
+     
+     
+        # --- Transform points from LiveViewLabel space to Image space ---
+        # (Coordinate transformation logic remains the same - assumes direct scaling for now)
+        label_width = self.live_view_label.width()
+        label_height = self.live_view_label.height()
+        current_img_width = image.width()
+        current_img_height = image.height()
+        scale_x_disp = current_img_width / label_width if label_width > 0 else 1
+        scale_y_disp = current_img_height / label_height if label_height > 0 else 1
+     
+        src_points_img = []
+        for point in quad_points:
+            x_view, y_view = point.x(), point.y()
+            # Account for zoom/pan in LiveViewLabel coordinates
+            if self.live_view_label.zoom_level != 1.0:
+                x_view = (x_view - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+                y_view = (y_view - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
+            # Scale to image coordinates
+            x_image = x_view * scale_x_disp
+            y_image = y_view * scale_y_disp
+            src_points_img.append([x_image, y_image])
+        src_np = np.array(src_points_img, dtype=np.float32)
+     
+        # --- Define Destination Rectangle ---
+        # Calculate dimensions based on the source points
+        width_a = np.linalg.norm(src_np[0] - src_np[1])
+        width_b = np.linalg.norm(src_np[2] - src_np[3])
+        height_a = np.linalg.norm(src_np[0] - src_np[3])
+        height_b = np.linalg.norm(src_np[1] - src_np[2])
+        max_width = int(max(width_a, width_b))
+        max_height = int(max(height_a, height_b))
+     
+        if max_width <= 0 or max_height <= 0:
+             QMessageBox.warning(self, "Warp Error", f"Invalid destination rectangle size ({max_width}x{max_height}).")
+             return None
+     
+        dst_np = np.array([
+            [0, 0], [max_width - 1, 0], [max_width - 1, max_height - 1], [0, max_height - 1]
+        ], dtype=np.float32)
+     
+        # --- Perform Perspective Warp using OpenCV ---
+        try:
+            matrix = cv2.getPerspectiveTransform(src_np, dst_np)
+            # Determine border color based on input array type
+            if img_array.ndim == 3: # Color
+                 # Use black (0,0,0) or white (255,255,255) depending on preference. Alpha needs 4 values if present.
+                 border_val = (0, 0, 0, 0) if img_array.shape[2] == 4 else (0, 0, 0)
+            else: # Grayscale
+                 border_val = 0 # Black for grayscale
+     
+            # Warp the ORIGINAL NumPy array (could be uint8, uint16, color)
+            warped_array = cv2.warpPerspective(img_array, matrix, (max_width, max_height),
+                                               flags=cv2.INTER_LINEAR, # Linear interpolation is usually good
+                                               borderMode=cv2.BORDER_CONSTANT,
+                                               borderValue=border_val) # Fill borders appropriately
+            print(f"quad_to_rect: Warped array dtype = {warped_array.dtype}, shape = {warped_array.shape}") # Debug
+        except Exception as e:
+             QMessageBox.warning(self, "Warp Error", f"OpenCV perspective warp failed: {e}")
+             traceback.print_exc() # Print full traceback for debugging
+             return None
+     
+        # --- Convert warped NumPy array back to QImage ---
+        # numpy_to_qimage should handle uint16 correctly, creating Format_Grayscale16
+        try:
+            warped_qimage = self.numpy_to_qimage(warped_array) # Handles uint8/uint16/color
+            if warped_qimage.isNull(): raise ValueError("numpy_to_qimage conversion failed.")
+            print(f"quad_to_rect: Returned QImage format = {warped_qimage.format()}") # Debug
+            return warped_qimage
+        except Exception as e:
+            QMessageBox.warning(self, "Warp Error", f"Failed to convert warped array back to QImage: {e}")
             return None
-
-       # --- Convert warped NumPy array back to QImage ---
-       try:
-           warped_qimage = self.numpy_to_qimage(warped_array) # Handles uint8/uint16
-           if warped_qimage.isNull(): raise ValueError("Conversion failed.")
-           return warped_qimage
-       except Exception as e:
-           QMessageBox.warning(self, "Warp Error", f"Failed to convert warped array to QImage: {e}")
-           return None
    # --- END: Modified Warping ---
     
     
