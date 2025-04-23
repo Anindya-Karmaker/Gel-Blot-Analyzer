@@ -1427,7 +1427,7 @@ class CombinedSDSApp(QMainWindow):
         # Upper section (Preview and buttons)
         upper_layout = QHBoxLayout()
 
-        self.label_width=int(self.screen_width * 0.28)
+        self.label_width=int(self.screen_width * 0.25)
     
         self.live_view_label = LiveViewLabel(
             font_type=QFont("Arial"),
@@ -2415,7 +2415,7 @@ class CombinedSDSApp(QMainWindow):
                 h=self.image.height()
                 # Preview window
                 ratio=w/h
-                self.label_width=int(self.screen_width * 0.28)
+                self.label_width=int(self.screen_width * 0.25)
                 label_height=int(self.label_width/ratio)
                 if label_height>self.label_width:
                     label_height=self.label_width
@@ -2480,7 +2480,7 @@ class CombinedSDSApp(QMainWindow):
                 h=self.image.height()
                 # Preview window
                 ratio=w/h
-                self.label_width=int(self.screen_width * 0.28)
+                self.label_width=int(self.screen_width * 0.25)
                 label_height=int(self.label_width/ratio)
                 if label_height>self.label_width:
                     label_height=self.label_width
@@ -4641,7 +4641,7 @@ class CombinedSDSApp(QMainWindow):
                 w=self.image.width()
                 h=self.image.height()
                 ratio=w/h if h > 0 else 1
-                self.label_width=int(self.screen_width * 0.28)
+                self.label_width=int(self.screen_width * 0.25)
                 label_height=int(self.label_width/ratio)
                 if label_height>self.label_width:
                     label_height=self.label_width
@@ -4773,7 +4773,7 @@ class CombinedSDSApp(QMainWindow):
                     w=self.image.width()
                     h=self.image.height()
                     ratio=w/h if h > 0 else 1
-                    self.label_width=int(self.screen_width * 0.28)
+                    self.label_width=int(self.screen_width * 0.25)
                     label_height=int(self.label_width/ratio)
                     if label_height>self.label_width:
                         label_height=self.label_width
@@ -5267,7 +5267,7 @@ class CombinedSDSApp(QMainWindow):
             w = self.image.width()
             h = self.image.height()
             ratio = w / h if h > 0 else 1
-            self.label_width = int(self.screen_width * 0.28)
+            self.label_width = int(self.screen_width * 0.25)
             label_height = int(self.label_width / ratio)
             if label_height > self.label_width:
                 label_height = self.label_width
@@ -5670,73 +5670,59 @@ class CombinedSDSApp(QMainWindow):
         
     def align_image(self):
         self.save_state()
-        if not self.image or self.image.isNull(): return
-
-        angle = float(self.orientation_slider.value() / 20.0) # Corrected division
-        if abs(angle) < 0.01: # No significant rotation needed
+        """Align the image based on the orientation slider and keep high-resolution updates."""
+        if not self.image:
             return
-
-        target_grayscale_format = self.get_compatible_grayscale_format() # Grayscale16 or Grayscale8
-        is_16bit = (target_grayscale_format == QImage.Format_Grayscale16)
-        fill_color = 65535 if is_16bit else 255 # White background value
-
-        # Use NumPy and OpenCV for rotation to better handle formats and prevent clipping
-        try:
-            np_img = self.qimage_to_numpy(self.image)
-            if np_img is None: raise ValueError("NumPy conversion failed.")
-
-            # Ensure grayscale for rotation calculation if needed
-            if np_img.ndim == 3:
-                 print("Warning: Aligning color image. Converting to grayscale first.")
-                 color_code = cv2.COLOR_BGR2GRAY if np_img.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
-                 np_img_gray = cv2.cvtColor(np_img, color_code)
-            else:
-                 np_img_gray = np_img
-
-            # Get rotation matrix
-            (h, w) = np_img_gray.shape[:2]
-            center = (w // 2, h // 2)
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-
-            # Calculate new bounding box size
-            cos = np.abs(M[0, 0])
-            sin = np.abs(M[0, 1])
-            new_w = int((h * sin) + (w * cos))
-            new_h = int((h * cos) + (w * sin))
-
-            # Adjust rotation matrix for translation
-            M[0, 2] += (new_w / 2) - center[0]
-            M[1, 2] += (new_h / 2) - center[1]
-
-            # Perform the rotation using OpenCV warpAffine
-            # Use the appropriate interpolation, e.g., INTER_LINEAR or INTER_CUBIC
-            # Use the original numpy array (could be color or gray)
-            rotated_np = cv2.warpAffine(np_img, M, (new_w, new_h),
-                                        flags=cv2.INTER_LINEAR, # Or INTER_CUBIC
-                                        borderMode=cv2.BORDER_CONSTANT,
-                                        borderValue=fill_color) # Use appropriate fill color
-
-
-            # Convert back to QImage
-            aligned_canvas = self.numpy_to_qimage(rotated_np)
-
-            if aligned_canvas.isNull():
-                raise ValueError("Conversion back to QImage failed.")
-
-            # Update the main image and backups
-            self.image = aligned_canvas
-            self.image_before_padding = self.image.copy()
-            self.image_contrasted = self.image.copy()
-            self.image_before_contrast = self.image.copy()
-
-            # Reset slider and update view
-            self.orientation_slider.setValue(0)
-            self.update_live_view()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Alignment Error", f"Failed to align image: {e}")
-            # Optionally restore previous state if needed
-            # self.undo_action() # If you want undo on error
+    
+        self.draw_guides = False
+        self.show_guides_checkbox.setChecked(False)
+        self.show_grid_checkbox.setChecked(False)
+        self.update_live_view()
+    
+        # Get the orientation value from the slider
+        angle = float(self.orientation_slider.value()/20)
+    
+        # Perform rotation
+        transform = QTransform()
+        transform.translate(self.image.width() / 2, self.image.height() / 2)  # Center rotation
+        transform.rotate(angle)
+        transform.translate(-self.image.width() / 2, -self.image.height() / 2)
+    
+        rotated_image = self.image.transformed(transform, Qt.SmoothTransformation)
+    
+        # Create a white canvas large enough to fit the rotated image
+        canvas_width = rotated_image.width()
+        canvas_height = rotated_image.height()
+        high_res_canvas = QImage(canvas_width, canvas_height, QImage.Format_ARGB32_Premultiplied)
+        high_res_canvas.fill(Qt.transparent)  # Fill with white background
+    
+        # Render the high-resolution canvas using `render_image_on_canvas`, without guides
+        self.render_image_on_canvas(
+            high_res_canvas,
+            scaled_image=rotated_image,
+            x_start=0,
+            y_start=0,
+            render_scale=1,  # Adjust scale if needed
+            draw_guides=False  # Do not draw guides in this case
+        )
+    
+        # Update the main high-resolution image
+        self.image = high_res_canvas
+        self.image_before_padding = self.image.copy()
+        self.image_contrasted=self.image.copy()
+        self.image_before_contrast=self.image.copy()
+    
+        # Create a low-resolution preview for display in `live_view_label`
+        preview = high_res_canvas.scaled(
+            self.live_view_label.width(),
+            self.live_view_label.height(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.live_view_label.setPixmap(QPixmap.fromImage(preview))
+    
+        # Reset the orientation slider
+        self.orientation_slider.setValue(0)
     
     
     def update_crop(self):
@@ -5840,7 +5826,7 @@ class CombinedSDSApp(QMainWindow):
         except Exception as e:
             print(f"Error resizing label after crop: {e}")
             # Fallback size?
-            self.live_view_label.setFixedSize(int(self.screen_width * 0.28), int(self.screen_width * 0.28))
+            self.live_view_label.setFixedSize(int(self.screen_width * 0.25), int(self.screen_width * 0.25))
 
 
         self.update_live_view() # Final update with corrected markers and image
@@ -6692,7 +6678,7 @@ class CombinedSDSApp(QMainWindow):
                 w=self.image.width()
                 h=self.image.height()
                 ratio=w/h if h > 0 else 1
-                self.label_width=int(self.screen_width * 0.28)
+                self.label_width=int(self.screen_width * 0.25)
                 label_height=int(self.label_width/ratio)
                 if label_height>self.label_width:
                     label_height=self.label_width
@@ -6705,7 +6691,7 @@ class CombinedSDSApp(QMainWindow):
                 print(f"Error resizing label during reset: {e}")
         else:
             self.live_view_label.clear()
-            self.live_view_label.setFixedSize(int(self.screen_width * 0.28), int(self.screen_width * 0.28))
+            self.live_view_label.setFixedSize(int(self.screen_width * 0.25), int(self.screen_width * 0.25))
 
         self.update_live_view()
         self._update_status_bar() # <--- Add this
