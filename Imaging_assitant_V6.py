@@ -1417,7 +1417,7 @@ class CombinedSDSApp(QMainWindow):
         self.image_array_backup= None
         self.run_predict_MW=False
         
-        self.create_menu_bar()
+        #self.create_menu_bar()
         
         # Main container widget
         main_widget = QWidget()
