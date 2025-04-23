@@ -2495,13 +2495,13 @@ class CombinedSDSApp(QMainWindow):
     def analysis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setSpacing(15) # Increase spacing in this tab
+        # layout.setSpacing(15) # Increase spacing in this tab
 
         # --- Molecular Weight Prediction ---
         mw_group = QGroupBox("Molecular Weight Prediction")
         mw_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         mw_layout = QVBoxLayout(mw_group)
-        mw_layout.setSpacing(8)
+        # mw_layout.setSpacing(8)
 
         self.predict_button = QPushButton("Predict Molecular Weight")
         self.predict_button.setToolTip("Predicts size based on labeled MWM lane.\nClick marker positions first, then click this button, then click the target band.\nShortcut: Ctrl+P / Cmd+P")
@@ -2515,7 +2515,7 @@ class CombinedSDSApp(QMainWindow):
         quant_group = QGroupBox("Peak Area and Sample Quantification")
         quant_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         quant_layout = QVBoxLayout(quant_group)
-        quant_layout.setSpacing(8)
+        # quant_layout.setSpacing(8)
 
         # Area Definition Buttons
         area_def_layout=QHBoxLayout()
@@ -2599,7 +2599,7 @@ class CombinedSDSApp(QMainWindow):
         self.clear_predict_button.setToolTip("Clears MW prediction line and analysis regions.\nShortcut: Ctrl+Shift+P / Cmd+Shift+P")
         self.clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
         layout.addWidget(self.clear_predict_button)
-        clear_layout.addStretch()
+        # clear_layout.addStretch()
         layout.addLayout(clear_layout)
 
 
