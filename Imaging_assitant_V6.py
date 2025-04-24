@@ -4160,7 +4160,8 @@ class CombinedSDSApp(QMainWindow):
         # Trigger a refresh of the live view
         self.update_live_view()
         
-    def reset_marker(self, marker_type, param):       
+    def reset_marker(self, marker_type, param):    
+        self.save_state()
         if marker_type == 'left':
             if param == 'remove' and len(self.left_markers)!=0:
                 self.left_markers.pop()  
@@ -4193,6 +4194,7 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()
         
     def duplicate_marker(self, marker_type):
+        self.save_state()
         if marker_type == 'left' and self.right_markers:
             self.left_markers = self.right_markers.copy()  # Copy right markers to left
         elif marker_type == 'right' and self.left_markers:
