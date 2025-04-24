@@ -2187,6 +2187,7 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()      
 
     def analyze_bounding_box(self, pil_image_for_dialog, standard): # Input is PIL Image
+    
         peak_area = None # Initialize
         # Clear previous results before new analysis
         self.latest_peak_areas = []
@@ -2778,6 +2779,9 @@ class CombinedSDSApp(QMainWindow):
     def process_standard(self):
         """Processes the defined region (quad or rect) as a standard."""
         extracted_qimage = None # Will hold the QImage of the extracted region
+        self.live_view_label.pan_offset = QPointF(0, 0)
+        self.live_view_label.zoom_level=1.0
+        self.update_live_view()       
 
         if len(self.live_view_label.quad_points) == 4:
             # --- Quadrilateral Logic ---
@@ -2843,6 +2847,9 @@ class CombinedSDSApp(QMainWindow):
         # No else needed, errors handled above
     
     def process_sample(self):
+        self.live_view_label.pan_offset = QPointF(0, 0)
+        self.live_view_label.zoom_level=1.0
+        self.update_live_view()  
         """Processes the defined region (quad or rect) as a sample."""
         extracted_qimage = None # Will hold the QImage of the extracted region
 
@@ -4693,8 +4700,6 @@ class CombinedSDSApp(QMainWindow):
                 config_name = ""
                 if self.base_name.endswith("_original"):
                     config_name = self.base_name.replace("_original", "_config.txt")
-                elif self.base_name.endswith("_modified"):
-                    config_name = self.base_name.replace("_modified", "_config.txt")
                 else:
                     config_name = self.base_name + "_config.txt"
 
@@ -4763,9 +4768,6 @@ class CombinedSDSApp(QMainWindow):
         self.top_padding_input.setText(config_data["adding_white_space"]["top"])
         try:
             self.transparency=int(config_data["adding_white_space"]["transparency"])
-            
-            if self.transparency==1:
-                self.finalize_image()
         except:
             pass
         
@@ -5619,6 +5621,26 @@ class CombinedSDSApp(QMainWindow):
     # Modify align_image and update_crop to preserve settings
     def reset_align_image(self):
         self.orientation_slider.setValue(0)
+        try:
+            if self.image: # Check if image exists after cropping
+                w = self.image.width()
+                h = self.image.height()
+                # Preview window
+                ratio = w / h if h > 0 else 1 # Avoid division by zero
+                self.label_width = int(self.screen_width * 0.28)
+                label_height = int(self.label_width / ratio)
+                if label_height > self.label_width:
+                    label_height = self.label_width
+                    self.label_width = int(ratio * label_height) # Ensure integer width
+                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        except Exception as e:
+            print(f"Error resizing label after crop: {e}")
+            # Fallback size?
+            self.live_view_label.setFixedSize(int(self.label_size), int(self.label_size))
+
+
+        self.update_live_view() # Final update with corrected markers and image
+        
         
     def align_image(self):
         self.save_state()
@@ -5675,6 +5697,25 @@ class CombinedSDSApp(QMainWindow):
     
         # Reset the orientation slider
         self.orientation_slider.setValue(0)
+        try:
+            if self.image: # Check if image exists after cropping
+                w = self.image.width()
+                h = self.image.height()
+                # Preview window
+                ratio = w / h if h > 0 else 1 # Avoid division by zero
+                self.label_width = int(self.screen_width * 0.28)
+                label_height = int(self.label_width / ratio)
+                if label_height > self.label_width:
+                    label_height = self.label_width
+                    self.label_width = int(ratio * label_height) # Ensure integer width
+                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+        except Exception as e:
+            print(f"Error resizing label after crop: {e}")
+            # Fallback size?
+            self.live_view_label.setFixedSize(int(self.label_size), int(self.label_size))
+
+
+        self.update_live_view() # Final update with corrected markers and image
     
     
     def update_crop(self):
@@ -5836,9 +5877,9 @@ class CombinedSDSApp(QMainWindow):
             base = os.path.splitext(os.path.basename(self.image_path))[0]
             # Remove common suffixes if they exist from previous saves
             base = base.replace("_original", "").replace("_modified", "")
-            suggested_name = f"{base}_edited.png" # Suggest PNG for modified view
+            suggested_name = f"{base}" # Suggest PNG for modified view
         elif hasattr(self, 'base_name') and self.base_name:
-            suggested_name = f"{self.base_name}_edited.png"
+            suggested_name = f"{self.base_name}"
         else:
             suggested_name = "untitled_image.png"
 
@@ -5876,7 +5917,7 @@ class CombinedSDSApp(QMainWindow):
         config_save_path = f"{base_name_nosuffix}_config.txt"
 
         # --- Save original image (using self.image_master) ---
-        img_to_save_orig = self.image_master # Use the pristine master copy
+        img_to_save_orig = self.image # Use the pristine master copy
         if img_to_save_orig and not img_to_save_orig.isNull():
             save_format_orig = suffix.replace(".", "").upper() # Determine format from suffix
             if save_format_orig == "TIF": save_format_orig = "TIFF" # Use standard TIFF identifier
