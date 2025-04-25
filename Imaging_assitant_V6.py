@@ -217,18 +217,34 @@ class TableWindow(QDialog):
     A dialog window to display peak analysis results in a table.
     Includes functionality to copy selected data to the clipboard
     in a format pasteable into Excel (tab-separated).
-    Also includes Excel export functionality.
+    Also includes Excel export functionality and standard curve plot.
     """
+    # *** MODIFIED: Added standard_dictionary to the constructor ***
     def __init__(self, peak_areas, standard_dictionary, standard, calculated_quantities, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Table Export")
-        self.setGeometry(100, 100, 600, 400) # Adjust size as needed
-        self.calculated_quantities = calculated_quantities # Store passed quantities
+        self.setWindowTitle("Analysis Results and Standard Curve") # Updated title
+        self.setGeometry(100, 100, 700, 650) # Increased height for plot
+        self.calculated_quantities = calculated_quantities
+        self.standard_dictionary = standard_dictionary # Store standard data
 
-        self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
+        # --- Main Layout ---
+        main_layout = QVBoxLayout(self)
+
+        # --- Standard Curve Plot Area (Conditional) ---
+        plot_widget = self._create_standard_curve_plot() # Create plot or placeholder
+        if plot_widget:
+            plot_group = QGroupBox("Standard Curve")
+            plot_layout = QVBoxLayout(plot_group)
+            plot_layout.addWidget(plot_widget)
+            # Set a fixed or maximum height for the plot group if needed
+            plot_group.setMaximumHeight(300) # Example max height
+            plot_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            main_layout.addWidget(plot_group) # Add plot at the top
+
 
         # --- Table Setup ---
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
@@ -240,31 +256,111 @@ class TableWindow(QDialog):
         self.populate_table(peak_areas, standard_dictionary, standard)
 
         self.scroll_area.setWidget(self.table)
+        main_layout.addWidget(self.scroll_area) # Add table below plot
+
 
         # --- Buttons ---
         self.copy_button = QPushButton("Copy Selected to Clipboard")
         self.copy_button.setToolTip("Copy selected rows to clipboard (tab-separated)")
         self.copy_button.clicked.connect(self.copy_table_data) # Connect copy function
 
-        self.export_button = QPushButton("Export to Excel")
+        self.export_button = QPushButton("Export Table to Excel")
         self.export_button.clicked.connect(self.export_to_excel)
 
-        # --- Layout ---
+        # --- Layout Buttons ---
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.copy_button)
         button_layout.addStretch()
         button_layout.addWidget(self.export_button)
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.scroll_area)
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
+        main_layout.addLayout(button_layout) # Add buttons at the bottom
+        self.setLayout(main_layout)
 
         # Enable keyboard copy (Ctrl+C / Cmd+C)
         self.copy_shortcut = QShortcut(QKeySequence.Copy, self.table)
         self.copy_shortcut.activated.connect(self.copy_table_data)
         # Make table focusable to receive shortcut events
         self.table.setFocusPolicy(Qt.StrongFocus)
+
+
+    def _create_standard_curve_plot(self):
+        """Creates and returns the Matplotlib canvas for the standard curve, or None."""
+        if not self.standard_dictionary or len(self.standard_dictionary) < 2:
+            # Return a placeholder label if no/insufficient standard data
+            no_curve_label = QLabel("Standard curve requires at least 2 standard points.")
+            no_curve_label.setAlignment(Qt.AlignCenter)
+            return no_curve_label
+
+        try:
+            # Extract data
+            quantities = np.array(list(self.standard_dictionary.keys()), dtype=float)
+            areas = np.array(list(self.standard_dictionary.values()), dtype=float)
+
+            # Perform linear regression (Area vs Quantity)
+            coeffs = np.polyfit(areas, quantities, 1)
+            slope, intercept = coeffs
+
+            # Calculate R-squared
+            predicted_quantities = np.polyval(coeffs, areas)
+            residuals = quantities - predicted_quantities
+            ss_res = np.sum(residuals**2)
+            ss_tot = np.sum((quantities - np.mean(quantities))**2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 1.0
+
+            # Create Matplotlib figure and axes
+            fig, ax = plt.subplots(figsize=(5, 3)) # Keep adjusted size
+            fig.set_dpi(90)
+
+            # Plot data points
+            ax.scatter(areas, quantities, label='Standard Points', color='red', zorder=5)
+
+            # Plot regression line
+            x_line = np.linspace(min(areas) * 0.95, max(areas) * 1.05, 100)
+            y_line = slope * x_line + intercept
+
+            # *** MODIFICATION: Create multi-line label for the legend ***
+            fit_label = (
+                f'Linear Fit\n'
+                f'Qty = {slope}*Area + {intercept}\n'
+                f'R² = {r_squared:.3f}'
+            )
+            ax.plot(x_line, y_line, label=fit_label, color='blue') # Use the combined label
+
+            # *** REMOVED: Separate text annotation is no longer needed ***
+            # eq_text = f'Qty = {slope:.2f} * Area + {intercept:.2f}\nR² = {r_squared:.3f}'
+            # ax.text(0.05, 0.05, eq_text, transform=ax.transAxes, fontsize=8,
+            #         verticalalignment='bottom', # Align text bottom to position
+            #         horizontalalignment='left', # Align text left to position
+            #         bbox=dict(boxstyle='round,pad=0.3', fc='wheat', alpha=0.5))
+
+            # Customize plot
+            ax.set_xlabel('Total Peak Area (Arbitrary Units)', fontsize=9)
+            ax.set_ylabel('Known Quantity (Unit)', fontsize=9)
+            ax.set_title('Standard Curve', fontsize=10, fontweight='bold')
+            # Keep legend font size small and specify location
+            ax.legend(fontsize=8, loc='best') # Use 'best' or 'upper right', etc.
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.tick_params(axis='both', which='major', labelsize=8)
+            ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
+
+            # Use constrained_layout for potentially better automatic spacing
+            try:
+                fig.set_constrained_layout(True)
+            except AttributeError: # Fallback for older Matplotlib
+                plt.tight_layout(pad=0.5)
+
+            # Create canvas
+            canvas = FigureCanvas(fig)
+            canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            canvas.updateGeometry()
+            return canvas
+
+        except Exception as e:
+            print(f"Error creating standard curve plot: {e}")
+            error_label = QLabel(f"Error generating plot:\n{e}")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setStyleSheet("color: red;")
+            return error_label
 
 
     def populate_table(self, peak_areas, standard_dictionary, standard):
@@ -5881,9 +5977,9 @@ class CombinedSDSApp(QMainWindow):
             base = base.replace("_original", "").replace("_modified", "")
             suggested_name = f"{base}" # Suggest PNG for modified view
         elif hasattr(self, 'base_name') and self.base_name:
-            suggested_name = f"{self.base_name}"
+            suggested_name = f"{base}"
         else:
-            suggested_name = "untitled_image.png"
+            suggested_name = "untitled_image"
 
         save_dir = os.path.dirname(self.image_path) if self.image_path else "" # Suggest save in original dir
 
@@ -5900,7 +5996,7 @@ class CombinedSDSApp(QMainWindow):
             return False # Indicate save cancelled
 
         # Determine paths based on the base path
-        base_name_nosuffix = os.path.splitext(base_save_path)[0]
+        base_name_nosuffix = (os.path.splitext(base_save_path)[0]).replace("_original", "").replace("_modified", "")
         # Determine the desired suffix based on the selected filter or default to .png
         if "png" in selected_filter.lower():
              suffix = ".png"
