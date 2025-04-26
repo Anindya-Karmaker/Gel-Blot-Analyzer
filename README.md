@@ -28,7 +28,7 @@ Example output from the software:
 <img width="867" alt="image" src="https://github.com/user-attachments/assets/f4faa88e-aebc-45d2-a082-645f0ae35182" />
 
 Known Bugs:
-* SVG OUPUT IS STILL BUGGY!
+* SVG OUPUT IS STILL BUGGY FOR CUSTOM MARKERS!
 
 To run using Anaconda without compatiblity issues:
 
