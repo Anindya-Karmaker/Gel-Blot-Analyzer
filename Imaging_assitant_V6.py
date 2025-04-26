@@ -6379,9 +6379,31 @@ class CombinedSDSApp(QMainWindow):
     
         if not file_path.endswith(".svg"):
             file_path += ".svg"
+            
+        render_scale = 3
+        high_res_canvas_width = self.live_view_label.width() * render_scale
+        high_res_canvas_height = self.live_view_label.height() * render_scale
+        
+        x_start_percent = self.crop_x_start_slider.value() / 100
+        x_end_percent = self.crop_x_end_slider.value() / 100
+        y_start_percent = self.crop_y_start_slider.value() / 100
+        y_end_percent = self.crop_y_end_slider.value() / 100
     
+        # Calculate the crop boundaries based on the percentages
+        x_start = int(self.image.width() * x_start_percent)
+        x_end = int(self.image.width() * x_end_percent)
+        y_start = int(self.image.height() * y_start_percent)
+        y_end = int(self.image.height() * y_end_percent)
+        
+        x_offset = 0
+        y_offset = 0
+        
+        self.x_offset_s=x_offset
+        self.y_offset_s=y_offset
+        line_padding = 5 * render_scale
+        
         # Create an SVG file with svgwrite
-        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(self.image.width(), self.image.height()))
+        dwg = svgwrite.Drawing(file_path, profile='tiny', size=(high_res_canvas_width, high_res_canvas_height))
     
         # Convert the QImage to a base64-encoded PNG for embedding
         buffer = QBuffer()
@@ -6392,26 +6414,82 @@ class CombinedSDSApp(QMainWindow):
     
         # Embed the image as a base64 data URI
         dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
+        
     
     
         # Add custom markers to the SVG
-        for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
-            font_metrics = QFontMetrics(QFont(font, font_size))
-            text_width = (font_metrics.horizontalAdvance(text))  # Get text width
-            text_height = (font_metrics.height())
-    
-            dwg.add(
-                dwg.text(
-                    text,
-                    insert=(x-text_width/2, y-text_height/4),
-                    fill=color.name(),
-                    font_family=font,
-                    font_size=f"{font_size}px"
-                )
-            )
+        for marker_tuple in getattr(self, "custom_markers", []):
+                try:
+                    # Default values for optional elements
+                    is_bold = False
+                    is_italic = False
+
+                    # Unpack based on length for backward compatibility
+                    if len(marker_tuple) == 8:
+                        x_pos, y_pos, marker_text, color, font_family, font_size, is_bold, is_italic = marker_tuple
+                    elif len(marker_tuple) == 6:
+                        x_pos, y_pos, marker_text, color, font_family, font_size = marker_tuple
+                        # is_bold and is_italic remain False (default)
+                    else:
+                        print(f"Warning: Skipping custom marker with unexpected tuple length {len(marker_tuple)}: {marker_tuple}")
+                        continue # Skip this marker
+
+                    # --- Prepare SVG attributes ---
+                    # Text content
+                    text_content = str(marker_text)
+
+                    # Color: Convert QColor to hex string if needed
+                    if isinstance(color, QColor):
+                        fill_color = color.name() # Gets hex #RRGGBB or #AARRGGBB
+                    elif isinstance(color, str):
+                         # Basic validation if it's already a hex string
+                         if color.startswith('#') and len(color) in [7, 9]:
+                             fill_color = color
+                         else: # Try converting string name to QColor, then get hex
+                             temp_color = QColor(color)
+                             fill_color = temp_color.name() if temp_color.isValid() else "#000000" # Fallback
+                    else:
+                        fill_color = "#000000" # Fallback to black
+
+                    # Font attributes
+                    font_family_svg = str(font_family)
+                    try:
+                        font_size_svg = f"{int(font_size)}px" # Ensure integer and add px
+                    except (ValueError, TypeError):
+                         print(f"Warning: Invalid font size '{font_size}' for marker, using 12px.")
+                         font_size_svg = "12px" # Default size
+
+                    # SVG font weight and style based on boolean flags
+                    font_weight_svg = "bold" if bool(is_bold) else "normal"
+                    font_style_svg = "italic" if bool(is_italic) else "normal"
+                    x_pos_cropped = (x_pos - x_start) * (high_res_canvas_width / self.image.width())
+                    y_pos_cropped = (y_pos - y_start) * (high_res_canvas_height / self.image.height())
+
+                    # --- Add SVG text element ---
+                    # Use text-anchor and dominant-baseline for centering at (x_pos, y_pos)
+                    font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
+                    text_width = int(font_metrics.horizontalAdvance(marker_text))  # Get text width
+                    text_height = font_metrics.height()
+                    dwg.add(
+                        dwg.text(
+                            text_content,
+                            insert=(x_pos_cropped, y_pos_cropped),       # Position text anchor at the coordinate
+                            fill=fill_color,
+                            font_family=font_family_svg,
+                            font_size=font_size_svg,
+                            font_weight=font_weight_svg, # Apply bold/normal
+                            font_style=font_style_svg   # Apply italic/normal
+                        )
+                    )
+                except Exception as e:
+                     # Catch errors during processing a single marker tuple
+                     print(f"Error processing custom marker for SVG: {marker_tuple} - {e}")
+                     import traceback
+                     traceback.print_exc() # Print full traceback for debugging
     
         # Add left labels
         for y, text in getattr(self, "left_markers", []):
+            y_pos_cropped = (y - y_start) * (high_res_canvas_height / self.image.height())
             font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
             final_text=f"{text} ⎯ "            
             text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
@@ -6420,7 +6498,7 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     final_text,
-                    insert=(self.left_marker_shift_added-text_width/2, y-text_height/4),
+                    insert=(int(x_offset + self.left_marker_shift + self.left_marker_shift_added - text_width), int(y_offset + y_pos_cropped)),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -6430,6 +6508,7 @@ class CombinedSDSApp(QMainWindow):
     
         # Add right labels
         for y, text in getattr(self, "right_markers", []):
+            y_pos_cropped = (y - y_start) * (high_res_canvas_height / self.image.height())
             font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
             final_text=f"{text} ⎯ "            
             text_width = int(font_metrics.horizontalAdvance(final_text))  # Get text width
@@ -6439,7 +6518,7 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     f" ⎯ {text}",
-                    insert=(self.right_marker_shift_added-text_width/2, y-text_height/4),
+                    insert=(int(x_offset + self.right_marker_shift_added), int(y_offset + y_pos_cropped )),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
@@ -6449,6 +6528,7 @@ class CombinedSDSApp(QMainWindow):
     
         # Add top labels
         for x, text in getattr(self, "top_markers", []):
+            x_pos_cropped = (x - x_start) * (high_res_canvas_width / self.image.width())
             font_metrics = QFontMetrics(QFont(self.font_family, self.font_size))
             final_text=f"{text}"
             text_width = int(font_metrics.horizontalAdvance(final_text)) # Get text width
@@ -6457,11 +6537,11 @@ class CombinedSDSApp(QMainWindow):
             dwg.add(
                 dwg.text(
                     text,
-                    insert=(x-text_width/2, self.top_marker_shift_added-text_height/4),
+                    insert=(x_offset + x_pos_cropped, y_offset + self.top_marker_shift + self.top_marker_shift_added),
                     fill=self.font_color.name(),
                     font_family=self.font_family,
                     font_size=f"{self.font_size}px",
-                    transform=f"rotate({self.font_rotation}, {x-text_width/2}, {self.top_marker_shift_added+text_height/4})"
+                    transform=f"rotate({self.font_rotation}, {x_offset + x_pos_cropped}, {y_offset + self.top_marker_shift + self.top_marker_shift_added})"
                 )
             )
     
