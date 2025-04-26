@@ -9,10 +9,15 @@ from PIL import ImageGrab, Image, ImageQt  # Import Pillow's ImageGrab for clipb
 from io import BytesIO
 import io
 from PyQt5.QtWidgets import (
-    QDesktopWidget, QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem, QScrollArea, QInputDialog, QShortcut, QFrame, QApplication, QSizePolicy, QMainWindow, QApplication, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog, QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox
+    QDesktopWidget, QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,
+    QScrollArea, QInputDialog, QShortcut, QFrame, QApplication, QSizePolicy,
+    QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
+    QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
+    QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox,
+    QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog
 )
-from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
-from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF,QUrl
+from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
+from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize
 import json
 import os
 import numpy as np
@@ -20,9 +25,6 @@ import matplotlib.pyplot as plt
 import platform
 import openpyxl
 from openpyxl.styles import Font
-# import ctypes
-
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QSlider,QMenuBar, QMenu, QAction
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.gridspec import GridSpec
 from skimage.restoration import rolling_ball 
@@ -31,157 +33,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d # Needed for interpolation
 import cv2
 
-# --- Style Sheet Definition ---
-STYLE_SHEET = """
-QMainWindow {
-    background-color: #f0f0f0; /* Light gray background */
-}
 
-QTabWidget::pane { /* The tab widget frame */
-    border-top: 1px solid #C2C7CB;
-    padding: 10px;
-    background-color: #ffffff; /* White background for tab content */
-}
-
-QTabBar::tab {
-    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                stop: 0 #E1E1E1, stop: 0.4 #DDDDDD,
-                                stop: 0.5 #D8D8D8, stop: 1.0 #D3D3D3);
-    border: 1px solid #C4C4C3;
-    border-bottom-color: #C2C7CB; /* same as the pane border */
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-    min-width: 8ex;
-    padding: 5px 10px;
-    margin-right: 2px; /* space between tabs */
-}
-
-QTabBar::tab:selected, QTabBar::tab:hover {
-    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                stop: 0 #fafafa, stop: 0.4 #f4f4f4,
-                                stop: 0.5 #e7e7e7, stop: 1.0 #fafafa);
-}
-
-QTabBar::tab:selected {
-    border-color: #9B9B9B;
-    border-bottom-color: #ffffff; /* same as pane background */
-    margin-left: -2px; /* make selected tab look connected */
-    margin-right: -2px;
-}
-
-QTabBar::tab:!selected {
-    margin-top: 2px; /* make non-selected tabs look smaller */
-}
-
-QPushButton {
-    background-color: #e0e0e0;
-    border: 1px solid #c0c0c0;
-    padding: 5px 10px;
-    border-radius: 4px;
-    min-height: 20px; /* Ensure minimum height */
-}
-
-QPushButton:hover {
-    background-color: #d0d0d0;
-    border: 1px solid #b0b0b0;
-}
-
-QPushButton:pressed {
-    background-color: #c0c0c0;
-}
-
-QPushButton:disabled {
-    background-color: #f5f5f5;
-    color: #a0a0a0;
-    border: 1px solid #d5d5d5;
-}
-
-QGroupBox {
-    background-color: #fafafa; /* Slightly off-white */
-    border: 1px solid #d0d0d0;
-    border-radius: 5px;
-    margin-top: 1ex; /* spacing above the title */
-    padding: 10px; /* internal padding */
-}
-
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left; /* position at the top left */
-    padding: 0 3px;
-    left: 10px; /* position title slightly indented */
-    color: #333;
-    font-weight: bold;
-}
-
-QLabel {
-    color: #333; /* Darker text for labels */
-    padding-bottom: 2px; /* Small spacing below labels */
-}
-
-QLineEdit, QTextEdit, QSpinBox, QComboBox, QFontComboBox {
-    border: 1px solid #c0c0c0;
-    border-radius: 3px;
-    padding: 3px 5px;
-    background-color: white;
-    min-height: 20px;
-}
-
-QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus, QFontComboBox:focus {
-    border: 1px solid #88aaff; /* Highlight focus */
-}
-
-QSlider::groove:horizontal {
-    border: 1px solid #bbb;
-    background: white;
-    height: 8px; /* Slider groove height */
-    border-radius: 4px;
-}
-
-QSlider::handle:horizontal {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #eee, stop:1 #ccc);
-    border: 1px solid #777;
-    width: 13px; /* Handle width */
-    margin: -2px 0; /* handle is placed vertically centered */
-    border-radius: 4px;
-}
-
-QSlider::add-page:horizontal {
-    background: #d0d0d0; /* Color for the part after the handle */
-    border: 1px solid #bbb;
-    border-radius: 4px;
-}
-
-QSlider::sub-page:horizontal {
-    background: #88aaff; /* Color for the part before the handle */
-    border: 1px solid #bbb;
-    border-radius: 4px;
-}
-
-QTableWidget {
-    border: 1px solid #c0c0c0;
-    gridline-color: #d0d0d0; /* Lighter grid lines */
-    background-color: white;
-}
-
-QHeaderView::section {
-    background-color: #e8e8e8; /* Header background */
-    padding: 4px;
-    border: 1px solid #c0c0c0;
-    font-weight: bold;
-}
-
-QTableWidgetItem {
-    padding: 3px;
-}
-
-QScrollArea {
-    border: none; /* Remove border from scroll area itself */
-}
-/* Make the LiveViewLabel border slightly softer */
-#LiveViewLabel {
-    border: 1px solid #c0c0c0;
-}
-"""
 
 # --- End Style Sheet Definition ---
 # Configure logging to write errors to a log file
@@ -211,6 +63,353 @@ def log_exception(exc_type, exc_value, exc_traceback):
 
 # # Set the custom exception handler
 sys.excepthook = log_exception
+
+class ModifyMarkersDialog(QDialog):
+    """
+    Dialog to view, edit, delete, and reorder custom markers.
+    Now includes Bold/Italic controls.
+    """
+    def __init__(self, markers_list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Modify Custom Markers")
+        self.setMinimumSize(750, 450) # Increased width for new columns
+
+        # Store a working copy of the markers, ensuring 8 elements
+        self.markers = []
+        for marker_data in markers_list:
+            if len(marker_data) == 6:
+                # Old format: Add default False for bold/italic
+                self.markers.append(marker_data + (False, False))
+            elif len(marker_data) == 8:
+                self.markers.append(marker_data) # Already new format
+            else:
+                print(f"Warning: Skipping marker with unexpected data length: {marker_data}")
+        # self.markers now contains only 8-element tuples
+
+        self._block_signals = False # Flag to prevent recursive signals
+
+        # --- Main Layout ---
+        layout = QVBoxLayout(self)
+
+        # --- Table Widget ---
+        self.table_widget = QTableWidget()
+        # -->> Increased column count to 9 <<--
+        self.table_widget.setColumnCount(9)
+        self.table_widget.setHorizontalHeaderLabels([
+            "Text", "Font", "Size", "Bold", "Italic", "Color", "X Pos", "Y Pos", "Actions"
+        ])
+        self.table_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table_widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table_widget.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked | QAbstractItemView.EditKeyPressed)
+        self.table_widget.setSortingEnabled(True)
+
+        # Connect signals
+        self.table_widget.itemChanged.connect(self.handle_item_changed)
+        self.table_widget.cellDoubleClicked.connect(self.handle_cell_double_clicked)
+
+        layout.addWidget(self.table_widget)
+
+        # --- Populate Table ---
+        self.populate_table()
+
+        # Adjust column widths
+        self.table_widget.resizeColumnsToContents()
+        self.table_widget.horizontalHeader().setStretchLastSection(False)
+        # Adjust widths based on new columns
+        self.table_widget.setColumnWidth(0, 150) # Text
+        self.table_widget.setColumnWidth(1, 100) # Font
+        self.table_widget.setColumnWidth(2, 40)  # Size
+        self.table_widget.setColumnWidth(3, 40)  # Bold << NEW
+        self.table_widget.setColumnWidth(4, 40)  # Italic << NEW
+        self.table_widget.setColumnWidth(5, 80)  # Color (Index 5 now)
+        self.table_widget.setColumnWidth(6, 60)  # X Pos (Index 6 now)
+        self.table_widget.setColumnWidth(7, 60)  # Y Pos (Index 7 now)
+        self.table_widget.setColumnWidth(8, 80)  # Actions (Index 8 now)
+
+        # --- Button Box ---
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        self.setLayout(layout)
+
+    def populate_table(self):
+        """Fills the table with the current marker data, including Bold/Italic checkboxes."""
+        self._block_signals = True # Block signals during population
+        self.table_widget.setRowCount(0) # Clear existing rows
+        self.table_widget.setRowCount(len(self.markers))
+        self.table_widget.setSortingEnabled(False)
+
+        for row_idx, marker_data in enumerate(self.markers):
+            try:
+                # -->> Unpack 8 elements <<--
+                x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data
+            except ValueError as e:
+                 print(f"Error unpacking marker data at row {row_idx}: {marker_data} - {e}")
+                 self.table_widget.setItem(row_idx, 0, QTableWidgetItem("Error"))
+                 continue
+
+            # --- Create Standard Items ---
+            text_item = QTableWidgetItem(str(text))
+            font_item = QTableWidgetItem(str(font_family))
+            size_item = QTableWidgetItem(str(font_size))
+            color_item = QTableWidgetItem(qcolor.name())
+            x_item = QTableWidgetItem(f"{x:.1f}")
+            y_item = QTableWidgetItem(f"{y:.1f}")
+
+            # --- Set Flags for Editability ---
+            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+            font_item.setFlags(font_item.flags() & ~Qt.ItemIsEditable)
+            size_item.setFlags(size_item.flags() | Qt.ItemIsEditable)
+            color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
+            x_item.setFlags(x_item.flags() | Qt.ItemIsEditable)
+            y_item.setFlags(y_item.flags() | Qt.ItemIsEditable)
+
+            # --- Tooltips ---
+            color_item.setToolTip("Double-click to change color")
+            font_item.setToolTip("Double-click to change font")
+
+            # --- Color Background ---
+            color_item.setBackground(QBrush(qcolor))
+            text_color = Qt.white if qcolor.lightness() < 128 else Qt.black
+            color_item.setForeground(QBrush(text_color))
+
+            # --- Add Standard Items to Table ---
+            # Column indices are shifted due to new Bold/Italic columns
+            self.table_widget.setItem(row_idx, 0, text_item)   # Col 0: Text
+            self.table_widget.setItem(row_idx, 1, font_item)   # Col 1: Font Family
+            self.table_widget.setItem(row_idx, 2, size_item)   # Col 2: Font Size
+            # Columns 3 and 4 are for checkboxes
+            self.table_widget.setItem(row_idx, 5, color_item)  # Col 5: Color
+            self.table_widget.setItem(row_idx, 6, x_item)      # Col 6: X Pos
+            self.table_widget.setItem(row_idx, 7, y_item)      # Col 7: Y Pos
+
+            # --- Create and Add Checkboxes ---
+            # Bold Checkbox (Column 3)
+            bold_checkbox = QCheckBox()
+            bold_checkbox.setChecked(is_bold)
+            bold_checkbox.stateChanged.connect(
+                lambda state, r=row_idx: self.handle_style_changed(state, r, "bold")
+            )
+            # Center the checkbox in the cell
+            cell_widget_bold = QWidget()
+            layout_bold = QHBoxLayout(cell_widget_bold)
+            layout_bold.addWidget(bold_checkbox)
+            layout_bold.setAlignment(Qt.AlignCenter)
+            layout_bold.setContentsMargins(0,0,0,0)
+            cell_widget_bold.setLayout(layout_bold)
+            self.table_widget.setCellWidget(row_idx, 3, cell_widget_bold)
+
+            # Italic Checkbox (Column 4)
+            italic_checkbox = QCheckBox()
+            italic_checkbox.setChecked(is_italic)
+            italic_checkbox.stateChanged.connect(
+                lambda state, r=row_idx: self.handle_style_changed(state, r, "italic")
+            )
+            # Center the checkbox
+            cell_widget_italic = QWidget()
+            layout_italic = QHBoxLayout(cell_widget_italic)
+            layout_italic.addWidget(italic_checkbox)
+            layout_italic.setAlignment(Qt.AlignCenter)
+            layout_italic.setContentsMargins(0,0,0,0)
+            cell_widget_italic.setLayout(layout_italic)
+            self.table_widget.setCellWidget(row_idx, 4, cell_widget_italic)
+
+            # --- Add Delete Button ---
+            delete_button = QPushButton("Delete")
+            delete_button.setStyleSheet("QPushButton { padding: 2px 5px; }")
+            delete_button.clicked.connect(lambda checked, r=row_idx: self.delete_marker(r))
+            self.table_widget.setCellWidget(row_idx, 8, delete_button) # Col 8: Actions
+
+        self.table_widget.setSortingEnabled(True)
+        self._block_signals = False # Re-enable signals
+
+    def handle_item_changed(self, item):
+        """Update the internal markers list when text, size, or position is edited."""
+        if self._block_signals:
+            return
+
+        row = item.row()
+        col = item.column()
+        new_value_str = item.text()
+
+        if 0 <= row < len(self.markers):
+            current_marker = list(self.markers[row]) # Now an 8-element list
+
+            try:
+                # Check column indices carefully based on the new layout
+                if col == 0: # Text column (Index 2 in marker tuple)
+                    current_marker[2] = new_value_str
+
+                elif col == 2: # Size column (Index 5 in marker tuple)
+                    try:
+                        new_size = int(new_value_str)
+                        if 2 <= new_size <= 150:
+                             current_marker[5] = new_size
+                        else: raise ValueError("Size out of range")
+                    except ValueError:
+                        QMessageBox.warning(self, "Invalid Size", "...")
+                        self._block_signals = True
+                        item.setText(str(current_marker[5]))
+                        self._block_signals = False
+                        return
+
+                elif col == 6: # X Position column (Index 0 in marker tuple)
+                    try:
+                        new_x = float(new_value_str)
+                        current_marker[0] = new_x
+                    except ValueError:
+                        QMessageBox.warning(self, "Invalid Position", "...")
+                        self._block_signals = True
+                        item.setText(f"{current_marker[0]:.1f}")
+                        self._block_signals = False
+                        return
+
+                elif col == 7: # Y Position column (Index 1 in marker tuple)
+                    try:
+                        new_y = float(new_value_str)
+                        current_marker[1] = new_y
+                    except ValueError:
+                        QMessageBox.warning(self, "Invalid Position", "...")
+                        self._block_signals = True
+                        item.setText(f"{current_marker[1]:.1f}")
+                        self._block_signals = False
+                        return
+
+                # Update the marker in the internal list
+                self.markers[row] = tuple(current_marker)
+
+            except IndexError:
+                 print(f"Error: Index mismatch when updating marker at row {row}.")
+            except Exception as e:
+                 print(f"Error handling item change for row {row}, col {col}: {e}")
+        else:
+             print(f"Warning: itemChanged signal received for invalid row {row}")
+
+    # --- NEW Method to handle checkbox changes ---
+    def handle_style_changed(self, state, row, style_type):
+        """Update the bold/italic flag when a checkbox changes."""
+        if self._block_signals:
+            return
+
+        if 0 <= row < len(self.markers):
+            current_marker = list(self.markers[row])
+            is_checked = (state == Qt.Checked)
+
+            try:
+                if style_type == "bold":
+                    current_marker[6] = is_checked # Index 6 is bold
+                elif style_type == "italic":
+                    current_marker[7] = is_checked # Index 7 is italic
+
+                self.markers[row] = tuple(current_marker)
+                # print(f"Updated style for marker {row}: {self.markers[row]}") # Debug
+            except IndexError:
+                print(f"Error: Index mismatch updating style for marker at row {row}.")
+            except Exception as e:
+                print(f"Error handling style change for row {row}, type {style_type}: {e}")
+        else:
+            print(f"Warning: styleChanged signal received for invalid row {row}")
+    # --- END NEW Method ---
+
+    def handle_cell_double_clicked(self, row, column):
+        """Handle double-clicks for changing color or font."""
+        if not (0 <= row < len(self.markers)): return
+
+        current_marker = list(self.markers[row]) # 8 elements
+
+        # Column indices shifted: Font=1, Color=5
+        if column == 1: # Font column
+            # Pass existing flags (bold/italic) to font dialog
+            initial_qfont = QFont(current_marker[4], current_marker[5])
+            initial_qfont.setBold(current_marker[6])
+            initial_qfont.setItalic(current_marker[7])
+
+            selected_font, ok = QFontDialog.getFont(initial_qfont, self, "Select Marker Font")
+
+            if ok:
+                # Update family, size, AND bold/italic from dialog
+                current_marker[4] = selected_font.family()
+                current_marker[5] = selected_font.pointSize()
+                current_marker[6] = selected_font.bold()    # Get bold state
+                current_marker[7] = selected_font.italic()  # Get italic state
+                self.markers[row] = tuple(current_marker)
+
+                # Update table view immediately
+                self._block_signals = True
+                self.table_widget.item(row, 1).setText(selected_font.family())
+                self.table_widget.item(row, 2).setText(str(selected_font.pointSize()))
+                # Update checkboxes as well
+                bold_widget = self.table_widget.cellWidget(row, 3)
+                if bold_widget: bold_widget.findChild(QCheckBox).setChecked(selected_font.bold())
+                italic_widget = self.table_widget.cellWidget(row, 4)
+                if italic_widget: italic_widget.findChild(QCheckBox).setChecked(selected_font.italic())
+                self._block_signals = False
+
+        elif column == 5: # Color column (now index 5)
+            current_color = current_marker[3] # Color is still index 3 in tuple
+            new_color = QColorDialog.getColor(current_color, self, "Select Marker Color")
+            if new_color.isValid():
+                current_marker[3] = new_color
+                self.markers[row] = tuple(current_marker)
+
+                # Update table view immediately
+                self._block_signals = True
+                color_item = self.table_widget.item(row, 5) # Update correct column index
+                color_item.setText(new_color.name())
+                color_item.setBackground(QBrush(new_color))
+                text_color = Qt.white if new_color.lightness() < 128 else Qt.black
+                color_item.setForeground(QBrush(text_color))
+                self._block_signals = False
+
+    def delete_marker(self, row_to_delete):
+        """Deletes the marker corresponding to the clicked button's row."""
+        sort_col = self.table_widget.horizontalHeader().sortIndicatorSection()
+        sort_order = self.table_widget.horizontalHeader().sortIndicatorOrder()
+        self.table_widget.setSortingEnabled(False)
+
+        if 0 <= row_to_delete < len(self.markers):
+            del self.markers[row_to_delete]
+            self.table_widget.removeRow(row_to_delete)
+            # Reconnect buttons and checkboxes for rows *after* the deleted one
+            for current_row in range(row_to_delete, self.table_widget.rowCount()):
+                # Delete button
+                button_widget = self.table_widget.cellWidget(current_row, 8) # Index 8 now
+                if isinstance(button_widget, QPushButton):
+                    try: button_widget.clicked.disconnect()
+                    except TypeError: pass
+                    button_widget.clicked.connect(lambda checked, r=current_row: self.delete_marker(r))
+                # Bold checkbox
+                bold_cell_widget = self.table_widget.cellWidget(current_row, 3)
+                if bold_cell_widget:
+                    bold_checkbox = bold_cell_widget.findChild(QCheckBox)
+                    if bold_checkbox:
+                        try: bold_checkbox.stateChanged.disconnect()
+                        except TypeError: pass
+                        bold_checkbox.stateChanged.connect(
+                            lambda state, r=current_row: self.handle_style_changed(state, r, "bold")
+                        )
+                # Italic checkbox
+                italic_cell_widget = self.table_widget.cellWidget(current_row, 4)
+                if italic_cell_widget:
+                    italic_checkbox = italic_cell_widget.findChild(QCheckBox)
+                    if italic_checkbox:
+                        try: italic_checkbox.stateChanged.disconnect()
+                        except TypeError: pass
+                        italic_checkbox.stateChanged.connect(
+                            lambda state, r=current_row: self.handle_style_changed(state, r, "italic")
+                        )
+        else:
+            print(f"Warning: Attempted to delete invalid row index {row_to_delete}")
+
+        self.table_widget.setSortingEnabled(True)
+        if sort_col >= 0:
+            self.table_widget.sortByColumn(sort_col, sort_order)
+
+    def get_modified_markers(self):
+        """Returns the modified list of markers."""
+        return self.markers
 
 class TableWindow(QDialog):
     """
@@ -3726,7 +3925,7 @@ class CombinedSDSApp(QMainWindow):
         
         
     def create_markers_tab(self):
-        """Create the Markers tab with a more compact layout and slider labels."""
+        """Create the Markers tab with preset, label, placement, offset, and custom controls."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(8)  # Reduce main vertical spacing
@@ -3734,19 +3933,17 @@ class CombinedSDSApp(QMainWindow):
         # --- Combined Group Box for Presets and Labels ---
         presets_labels_group = QGroupBox("Marker Presets and Labels")
         presets_labels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        # Use a QGridLayout for better horizontal arrangement
         presets_labels_layout = QGridLayout(presets_labels_group)
         presets_labels_layout.setSpacing(5) # Reduce spacing within the grid
 
         # -- Left/Right Marker Options (Columns 0 & 1) --
         presets_labels_layout.addWidget(QLabel("Preset:"), 0, 0) # Label for combo
         self.combo_box = QComboBox(self)
-        # Initialize marker_values_dict if it doesn't exist (important for first run)
         if not hasattr(self, 'marker_values_dict'):
-            self.load_config() # Load config attempts to initialize it
+             self.load_config() # Load config attempts to initialize it
         self.combo_box.addItems(self.marker_values_dict.keys())
         self.combo_box.addItem("Custom")
-        self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
+        self.combo_box.setCurrentText("Precision Plus All Blue/Unstained") # Default or load last used?
         self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
         presets_labels_layout.addWidget(self.combo_box, 0, 1) # Combo box in col 1
 
@@ -3760,7 +3957,6 @@ class CombinedSDSApp(QMainWindow):
         self.rename_input.setEnabled(False)
         presets_labels_layout.addWidget(self.rename_input, 2, 0, 1, 2) # Span rename input
 
-        # Buttons in a horizontal layout for better alignment
         preset_buttons_layout = QHBoxLayout()
         self.save_button = QPushButton("Save Config", self)
         self.save_button.clicked.connect(self.save_config)
@@ -3771,168 +3967,171 @@ class CombinedSDSApp(QMainWindow):
         preset_buttons_layout.addStretch() # Push buttons left
         presets_labels_layout.addLayout(preset_buttons_layout, 3, 0, 1, 2) # Add button layout, spanning
 
-
         # -- Top Marker Options (Columns 2 & 3) --
         presets_labels_layout.addWidget(QLabel("Top Labels:"), 0, 2) # Label for text edit
         self.top_marker_input = QTextEdit(self)
-        # Ensure self.top_label is initialized before use
         if not hasattr(self, 'top_label'):
             self.top_label = ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"] # Default
-        self.top_marker_input.setText(", ".join(self.top_label))
-        # Reduce height slightly
+        self.top_marker_input.setText(", ".join(map(str, self.top_label))) # Ensure all elements are strings for join
         self.top_marker_input.setMinimumHeight(40)
         self.top_marker_input.setMaximumHeight(80) # Reduced max height
         self.top_marker_input.setPlaceholderText("Labels (comma-separated)") # Shorter text
-        # Span the QTextEdit vertically over several rows for better balance
         presets_labels_layout.addWidget(self.top_marker_input, 0, 3, 3, 1) # Row 0, Col 3, Span 3 rows, 1 col
 
         self.update_top_labels_button = QPushButton("Update All Labels")
         self.update_top_labels_button.clicked.connect(self.update_all_labels)
         presets_labels_layout.addWidget(self.update_top_labels_button, 3, 3) # Place below text edit in col 3
 
-        # Set column stretch factors (optional, helps balance)
         presets_labels_layout.setColumnStretch(1, 1)
         presets_labels_layout.setColumnStretch(3, 1)
 
-        # Add the combined group box to the main layout
         layout.addWidget(presets_labels_group)
 
         # --- Marker Placement and Offsets Group ---
         padding_params_group = QGroupBox("Marker Placement and Offsets")
         padding_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         padding_layout = QGridLayout(padding_params_group)
-        # Reduce grid spacing
         padding_layout.setVerticalSpacing(5)
         padding_layout.setHorizontalSpacing(8)
 
+        # Initialize slider ranges if not already done (e.g., by loading config)
+        if not hasattr(self, 'left_slider_range'): self.left_slider_range = [-100, 1000]
+        if not hasattr(self, 'right_slider_range'): self.right_slider_range = [-100, 1000]
+        if not hasattr(self, 'top_slider_range'): self.top_slider_range = [-100, 1000]
+        # Initialize shift values if not already done
+        if not hasattr(self, 'left_marker_shift_added'): self.left_marker_shift_added = 0
+        if not hasattr(self, 'right_marker_shift_added'): self.right_marker_shift_added = 0
+        if not hasattr(self, 'top_marker_shift_added'): self.top_marker_shift_added = 0
+
         # --- Row 0: Left Marker ---
-        left_marker_button = QPushButton("Place Left") # Shorter text
+        left_marker_button = QPushButton("Place Left")
         left_marker_button.setToolTip("Place left markers. Shortcut: Ctrl+Shift+L")
         left_marker_button.clicked.connect(self.enable_left_marker_mode)
         self.left_padding_slider = QSlider(Qt.Horizontal)
-        # Ensure slider ranges are initialized
-        if not hasattr(self, 'left_slider_range'): self.left_slider_range = [-100, 1000] # Default
         self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
-        self.left_padding_slider.setValue(0)
+        self.left_padding_slider.setValue(self.left_marker_shift_added) # Use initialized/loaded value
         self.left_padding_slider.valueChanged.connect(self.update_left_padding)
         remove_left_button = QPushButton("Remove Last")
         remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove'))
         reset_left_button = QPushButton("Reset")
         reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
-        duplicate_left_button = QPushButton("Copy Right") # Shorter text
+        duplicate_left_button = QPushButton("Copy Right")
         duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left'))
-        # ADDED LABEL for Left Slider
-        padding_layout.addWidget(QLabel("Offset Left:"), 0, 3) # New Label
+        padding_layout.addWidget(QLabel("Offset Left:"), 0, 3)
         padding_layout.addWidget(left_marker_button, 0, 0)
         padding_layout.addWidget(remove_left_button, 0, 1)
         padding_layout.addWidget(reset_left_button, 0, 2)
-        padding_layout.addWidget(self.left_padding_slider, 0, 4, 1, 2) # Shift slider and span
-        padding_layout.addWidget(duplicate_left_button, 0, 6) # Shift button
+        padding_layout.addWidget(self.left_padding_slider, 0, 4, 1, 3) # Span 3 columns
+        padding_layout.addWidget(duplicate_left_button, 0, 7)
 
         # --- Row 1: Right Marker ---
-        right_marker_button = QPushButton("Place Right") # Shorter text
+        right_marker_button = QPushButton("Place Right")
         right_marker_button.setToolTip("Place right markers. Shortcut: Ctrl+Shift+R")
         right_marker_button.clicked.connect(self.enable_right_marker_mode)
         self.right_padding_slider = QSlider(Qt.Horizontal)
-        if not hasattr(self, 'right_slider_range'): self.right_slider_range = [-100, 1000] # Default
         self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
-        self.right_padding_slider.setValue(0)
+        self.right_padding_slider.setValue(self.right_marker_shift_added)
         self.right_padding_slider.valueChanged.connect(self.update_right_padding)
         remove_right_button = QPushButton("Remove Last")
         remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove'))
         reset_right_button = QPushButton("Reset")
         reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
-        duplicate_right_button = QPushButton("Copy Left") # Shorter text
+        duplicate_right_button = QPushButton("Copy Left")
         duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right'))
-        # ADDED LABEL for Right Slider
-        padding_layout.addWidget(QLabel("Offset Right:"), 1, 3) # New Label
+        padding_layout.addWidget(QLabel("Offset Right:"), 1, 3)
         padding_layout.addWidget(right_marker_button, 1, 0)
         padding_layout.addWidget(remove_right_button, 1, 1)
         padding_layout.addWidget(reset_right_button, 1, 2)
-        padding_layout.addWidget(self.right_padding_slider, 1, 4, 1, 2) # Shift slider and span
-        padding_layout.addWidget(duplicate_right_button, 1, 6) # Shift button
+        padding_layout.addWidget(self.right_padding_slider, 1, 4, 1, 3) # Span 3 columns
+        padding_layout.addWidget(duplicate_right_button, 1, 7)
 
         # --- Row 2: Top Marker ---
-        top_marker_button = QPushButton("Place Top") # Shorter text
+        top_marker_button = QPushButton("Place Top")
         top_marker_button.setToolTip("Place top markers. Shortcut: Ctrl+Shift+T")
         top_marker_button.clicked.connect(self.enable_top_marker_mode)
         self.top_padding_slider = QSlider(Qt.Horizontal)
-        if not hasattr(self, 'top_slider_range'): self.top_slider_range = [-100, 1000] # Default
         self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
-        self.top_padding_slider.setValue(0)
+        self.top_padding_slider.setValue(self.top_marker_shift_added)
         self.top_padding_slider.valueChanged.connect(self.update_top_padding)
         remove_top_button = QPushButton("Remove Last")
         remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove'))
         reset_top_button = QPushButton("Reset")
         reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
-        # ADDED LABEL for Top Slider
-        padding_layout.addWidget(QLabel("Offset Top:"), 2, 3) # New Label
+        padding_layout.addWidget(QLabel("Offset Top:"), 2, 3)
         padding_layout.addWidget(top_marker_button, 2, 0)
         padding_layout.addWidget(remove_top_button, 2, 1)
         padding_layout.addWidget(reset_top_button, 2, 2)
-        padding_layout.addWidget(self.top_padding_slider, 2, 4, 1, 3)  # Shift slider and span 3 columns
+        padding_layout.addWidget(self.top_padding_slider, 2, 4, 1, 4)  # Span 4 columns (takes space of duplicate btn too)
 
         # --- Row 3: Custom Marker Main Controls ---
         self.custom_marker_button = QPushButton("Place Custom", self)
-        self.custom_marker_button.setToolTip("Place custom markers")
+        self.custom_marker_button.setToolTip("Click to activate, then click on image to place the text/arrow")
         self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
         self.custom_marker_text_entry = QLineEdit(self)
-        self.custom_marker_text_entry.setPlaceholderText("Custom text") # Shorter
+        self.custom_marker_text_entry.setPlaceholderText("Custom text")
 
-        # Arrow buttons in a compact horizontal layout
         marker_buttons_layout = QHBoxLayout()
-        marker_buttons_layout.setContentsMargins(0, 0, 0, 0) # Remove layout margins
-        marker_buttons_layout.setSpacing(2) # Minimal spacing between arrows
+        marker_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        marker_buttons_layout.setSpacing(2)
         self.custom_marker_button_left_arrow = QPushButton("←", self)
         self.custom_marker_button_right_arrow = QPushButton("→", self)
         self.custom_marker_button_top_arrow = QPushButton("↑", self)
         self.custom_marker_button_bottom_arrow = QPushButton("↓", self)
-        # Make arrow buttons smaller
-        arrow_size = 25 # Adjust size as needed
+        arrow_size = 25
         self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size)
         self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size)
         self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size)
         self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size)
+        self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left: Add ← and activate placement")
+        self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right: Add → and activate placement")
+        self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up: Add ↑ and activate placement")
+        self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down: Add ↓ and activate placement")
         marker_buttons_layout.addWidget(self.custom_marker_button_left_arrow)
         marker_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
         marker_buttons_layout.addWidget(self.custom_marker_button_top_arrow)
         marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
-        marker_buttons_layout.addStretch() # Push arrows left
-        # Connect arrow buttons
+        marker_buttons_layout.addStretch()
         self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
         self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
         self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
         self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
 
-        # Add widgets to row 3
-        padding_layout.addWidget(self.custom_marker_button, 3, 0)
-        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1, 1, 2) # Span 2
-        padding_layout.addLayout(marker_buttons_layout, 3, 3) # Arrow layout Col 3
         self.remove_custom_marker_button = QPushButton("Remove Last", self)
         self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
         self.reset_custom_marker_button = QPushButton("Reset", self)
         self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
-        self.custom_marker_color_button = QPushButton("Color") # Shorter text
+        self.modify_custom_marker_button = QPushButton("Modify", self) # << THE NEW BUTTON
+        self.modify_custom_marker_button.setToolTip("Open a dialog to manage custom markers")
+        self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog) # << CONNECTED
+        self.custom_marker_color_button = QPushButton("Color")
         self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
-        # Ensure custom_marker_color is initialized
         if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
         self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-        padding_layout.addWidget(self.remove_custom_marker_button, 3, 4) # Col 4
-        padding_layout.addWidget(self.reset_custom_marker_button, 3, 5) # Col 5
-        padding_layout.addWidget(self.custom_marker_color_button, 3, 6) # Col 6
+
+        padding_layout.addWidget(self.custom_marker_button, 3, 0)
+        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1, 1, 2)
+        padding_layout.addLayout(marker_buttons_layout, 3, 3)
+        padding_layout.addWidget(self.remove_custom_marker_button, 3, 4)
+        padding_layout.addWidget(self.reset_custom_marker_button, 3, 5)
+        padding_layout.addWidget(self.modify_custom_marker_button, 3, 6) # Added Modify Button
+        padding_layout.addWidget(self.custom_marker_color_button, 3, 7)   # Color Button shifted
 
         # --- Row 4: Custom Marker Font and Grid ---
         self.custom_font_type_label = QLabel("Custom Font:", self)
         self.custom_font_type_dropdown = QFontComboBox()
-        self.custom_font_type_dropdown.setCurrentFont(QFont("Arial")) # Default
+        # Initialize font: Check if 'Arial' exists, otherwise use first available
+        initial_font = QFont("Arial")
+        # if initial_font.family() not in [f.family() for f in self.custom_font_type_dropdown.availableFonts()]:
+        #      initial_font = self.custom_font_type_dropdown.availableFonts()[0] if self.custom_font_type_dropdown.availableFonts() else QFont()
+        self.custom_font_type_dropdown.setCurrentFont(initial_font)
         self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
 
-        self.custom_font_size_label = QLabel("Size:", self) # Shorter
+        self.custom_font_size_label = QLabel("Size:", self)
         self.custom_font_size_spinbox = QSpinBox(self)
         self.custom_font_size_spinbox.setRange(2, 150)
         self.custom_font_size_spinbox.setValue(12) # Default
 
-        self.show_grid_checkbox = QCheckBox("Snap Grid", self) # Shorter
+        self.show_grid_checkbox = QCheckBox("Snap Grid", self)
         self.show_grid_checkbox.setToolTip("Places a snapping grid. Shortcut: Ctrl+Shift+G")
         self.show_grid_checkbox.setChecked(False)
         self.show_grid_checkbox.stateChanged.connect(self.update_live_view)
@@ -3940,7 +4139,7 @@ class CombinedSDSApp(QMainWindow):
         self.grid_size_input = QSpinBox(self)
         self.grid_size_input.setRange(5, 100)
         self.grid_size_input.setValue(20)
-        self.grid_size_input.setPrefix("Grid (px): ") # Shorter
+        self.grid_size_input.setPrefix("Grid (px): ")
         self.grid_size_input.valueChanged.connect(self.update_live_view)
 
         padding_layout.addWidget(self.custom_font_type_label, 4, 0)
@@ -3948,23 +4147,46 @@ class CombinedSDSApp(QMainWindow):
         padding_layout.addWidget(self.custom_font_size_label, 4, 2)
         padding_layout.addWidget(self.custom_font_size_spinbox, 4, 3)
         padding_layout.addWidget(self.show_grid_checkbox, 4, 4)
-        padding_layout.addWidget(self.grid_size_input, 4, 5,1,2)
+        padding_layout.addWidget(self.grid_size_input, 4, 5, 1, 3) # Span 3 columns
 
-        # Make columns reasonably sized - Now 7 columns total
+        # Set column stretches - Now 8 columns (0-7)
         padding_layout.setColumnStretch(0, 1) # Place buttons
-        padding_layout.setColumnStretch(1, 1) # Remove buttons
-        padding_layout.setColumnStretch(2, 1) # Reset buttons
-        padding_layout.setColumnStretch(3, 0) # Labels for sliders (no stretch)
-        padding_layout.setColumnStretch(4, 2) # Sliders / Custom Text/Arrows / Grid
-        padding_layout.setColumnStretch(5, 1) # Sliders / Custom Reset/Grid Size
-        padding_layout.setColumnStretch(6, 1) # Duplicate/Custom Color
+        padding_layout.setColumnStretch(1, 1) # Remove/Custom Text/Font Combo
+        padding_layout.setColumnStretch(2, 1) # Reset/Custom Text/Font Size Label
+        padding_layout.setColumnStretch(3, 1) # Offset Label/Arrows/Font Size Spin
+        padding_layout.setColumnStretch(4, 2) # Slider/Remove/Grid Check
+        padding_layout.setColumnStretch(5, 1) # Slider/Reset/Grid Size
+        padding_layout.setColumnStretch(6, 1) # Slider/Modify/Grid Size
+        padding_layout.setColumnStretch(7, 1) # Duplicate/Color/Grid Size
 
-        # Add the placement group box to the main layout
         layout.addWidget(padding_params_group)
-
-        layout.addStretch() # Push content up
+        layout.addStretch()
 
         return tab
+
+    def open_modify_markers_dialog(self):
+        """Opens the dialog to modify custom markers."""
+        if not hasattr(self, "custom_markers") or not isinstance(self.custom_markers, list):
+            self.custom_markers = []
+
+        if not self.custom_markers:
+            QMessageBox.information(self, "No Markers", "There are no custom markers to modify.")
+            return
+
+        dialog = ModifyMarkersDialog(list(self.custom_markers), self)
+
+        if dialog.exec_() == QDialog.Accepted:
+            modified_markers = dialog.get_modified_markers()
+            if modified_markers != self.custom_markers:
+                 print("Applying modified markers.")
+                 self.save_state()
+                 self.custom_markers = modified_markers
+                 self.is_modified = True
+                 self.update_live_view()
+            else:
+                 print("No changes made to custom markers.")
+        else:
+             print("Marker modification cancelled.")
     
     def add_column(self):
         """Add a new column to the top marker labels."""
@@ -4205,7 +4427,7 @@ class CombinedSDSApp(QMainWindow):
             
         # Store the custom marker's position and text
         self.custom_markers = getattr(self, "custom_markers", [])
-        self.custom_markers.append((image_x, image_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value()))
+        self.custom_markers.append((image_x, image_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value(),False,False))
         # print("CUSTOM_MARKER: ",self.custom_markers)
         # Update the live view to render the custom marker
         self.update_live_view()
@@ -4923,10 +5145,26 @@ class CombinedSDSApp(QMainWindow):
             pass
     
         try:
-            self.custom_markers = [
-                (marker["x"], marker["y"], marker["text"], QColor(marker["color"]), marker["font"], marker["font_size"])
-                for marker in config_data.get("custom_markers", [])
-            ]
+            loaded_custom_markers = []
+            for marker_dict in config_data.get("custom_markers", []):
+                try:
+                    x = float(marker_dict["x"])
+                    y = float(marker_dict["y"])
+                    text = str(marker_dict["text"])
+                    color = QColor(marker_dict["color"])
+                    font = str(marker_dict["font"])
+                    font_size = int(marker_dict["font_size"])
+                    # Check for bold/italic, default to False if missing (backward compatible)
+                    is_bold = bool(marker_dict.get("bold", False))
+                    is_italic = bool(marker_dict.get("italic", False))
+
+                    loaded_custom_markers.append((
+                        x, y, text, color, font, font_size, is_bold, is_italic
+                    ))
+                except (KeyError, ValueError, TypeError) as e:
+                    print(f"Warning: Skipping invalid custom marker entry during load: {marker_dict} - {e}")
+
+            self.custom_markers = loaded_custom_markers
                 
                 
                 
@@ -4973,13 +5211,14 @@ class CombinedSDSApp(QMainWindow):
         self.update_live_view()
         
     def get_current_config(self):
+        """Gathers the current application state into a dictionary for saving."""
         config = {
             "adding_white_space": {
                 "left": self.left_padding_input.text(),
                 "right": self.right_padding_input.text(),
                 "top": self.top_padding_input.text(),
                 "bottom": self.bottom_padding_input.text(),
-                "transparency": self.transparency,
+                "transparency": self.transparency, # Assuming self.transparency exists
             },
             "cropping_parameters": {
                 "x_start_percent": self.crop_x_start_slider.value(),
@@ -4988,59 +5227,61 @@ class CombinedSDSApp(QMainWindow):
                 "y_end_percent": self.crop_y_end_slider.value(),
             },
             "marker_positions": {
-                "left": self.left_markers,
-                "right": self.right_markers,
-                "top": self.top_markers,
+                # Store positions only for standard markers
+                "left": [(pos, label) for pos, label in getattr(self, 'left_markers', [])],
+                "right": [(pos, label) for pos, label in getattr(self, 'right_markers', [])],
+                "top": [(pos, label) for pos, label in getattr(self, 'top_markers', [])],
             },
-            "marker_labels": {
-                "top": self.top_label,
-                "left": [marker[1] for marker in self.left_markers],
-                "right": [marker[1] for marker in self.right_markers],
+            "marker_labels": { # Storing labels separately might be redundant if already in positions
+                "top": getattr(self, 'top_label', []),
+                "left": [marker[1] for marker in getattr(self, 'left_markers', [])],
+                "right": [marker[1] for marker in getattr(self, 'right_markers', [])],
             },
-            "marker_padding": {
+            "marker_padding": { # Offsets for standard markers
                 "top": self.top_padding_slider.value(),
                 "left": self.left_padding_slider.value(),
                 "right": self.right_padding_slider.value(),
             },
-            "font_options": {
+            "font_options": { # Default font options for standard markers
                 "font_family": self.font_family,
                 "font_size": self.font_size,
                 "font_rotation": self.font_rotation,
                 "font_color": self.font_color.name(),
             },
+            "slider_ranges": { # Store current slider ranges
+                 "left": getattr(self, 'left_slider_range', [-100, 1000]),
+                 "right": getattr(self, 'right_slider_range', [-100, 1000]),
+                 "top": getattr(self, 'top_slider_range', [-100, 1000]),
+             },
+            "added_shift": { # Store current added shifts
+                 "left": getattr(self, 'left_marker_shift_added', 0),
+                 "right": getattr(self, 'right_marker_shift_added', 0),
+                 "top": getattr(self, 'top_marker_shift_added', 0),
+            }
         }
-    
-        try:
-            # Add custom markers with font and font size
-            config["custom_markers"] = [
-                {"x": x, "y": y, "text": text, "color": color.name(), "font": font, "font_size": font_size}
-                for x, y, text, color, font, font_size in self.custom_markers
-            ]
-        except AttributeError:
-            # Handle the case where self.custom_markers is not defined or invalid
-            config["custom_markers"] = []
-        try:
-            config["slider_ranges"] = {
-                    "left": self.left_slider_range,
-                    "right": self.right_slider_range,
-                    "top": self.top_slider_range,
-                }
-            
-        except AttributeError:
-            # Handle the case where slider ranges are not defined
-            config["slider_ranges"] = []
-            
-        try:
-            config["added_shift"] = {
-                    "left": self.left_marker_shift_added,
-                    "right": self.right_marker_shift_added,
-                    "top": self.top_marker_shift_added,
-                }
-            
-        except AttributeError:
-            # Handle the case where slider ranges are not defined
-            config["added_shift"] = []
-    
+
+        # --- Updated Custom Markers Section ---
+        custom_markers_data = []
+        # Use getattr for safety, default to empty list
+        for marker_tuple in getattr(self, "custom_markers", []):
+            try:
+                # Unpack 8 elements
+                x, y, text, color, font, font_size, is_bold, is_italic = marker_tuple
+                custom_markers_data.append({
+                    "x": x,
+                    "y": y,
+                    "text": text,
+                    "color": color.name(), # Save color name/hex
+                    "font": font,
+                    "font_size": font_size,
+                    "bold": is_bold,       # Save bold flag
+                    "italic": is_italic    # Save italic flag
+                })
+            except (ValueError, TypeError, IndexError) as e:
+                print(f"Warning: Skipping invalid custom marker data during save: {marker_tuple} - {e}")
+        config["custom_markers"] = custom_markers_data
+        # --- End Updated Custom Markers ---
+
         return config
     
     def add_band(self, event):
@@ -5629,44 +5870,79 @@ class CombinedSDSApp(QMainWindow):
                 int(y * render_scale + text_height / 4),  # Center vertically
                 text
             )
-        if hasattr(self, "custom_markers"):
-            
-            # Get default font type and size
-            default_font_type = QFont(self.custom_font_type_dropdown.currentText())
-            default_font_size = int(self.custom_font_size_spinbox.value())
-        
-            for x_pos, y_pos, marker_text, color, *optional in self.custom_markers:
-                
-                   
-                # Use provided font type and size if available, otherwise use defaults
-                marker_font_type = optional[0] if len(optional) > 0 else default_font_type
-                marker_font_size = optional[1] if len(optional) > 1 else default_font_size
-        
-                # Ensure marker_font_type is a QFont instance
-                font = QFont(marker_font_type) if isinstance(marker_font_type, str) else QFont(marker_font_type)
-                font.setPointSize(marker_font_size * render_scale)  # Adjust font size for rendering scale
-        
-                # Apply the font and pen settings
-                painter.setFont(font)
-                painter.setPen(color)
-        
-                # Correct scaling and offsets
-                x_pos_cropped = (x_pos - x_start) * (scaled_image.width() / self.image.width()) 
-                y_pos_cropped = (y_pos - y_start) * (scaled_image.height() / self.image.height()) 
-        
-                # Only draw markers if they fall within the visible scaled image area
-                if 0 <= x_pos_cropped <= scaled_image.width() and 0 <= y_pos_cropped <= scaled_image.height():
-                    # Calculate text dimensions for alignment
-                    font_metrics = painter.fontMetrics()
-                    text_width = font_metrics.horizontalAdvance(marker_text)
-                    text_height = font_metrics.height()
-        
-                    # Draw text centered horizontally and vertically
+        for marker_tuple in getattr(self, "custom_markers", []):
+            try:
+                # -->> Unpack all 8 elements using the correct order <<--
+                # The tuple structure is (x, y, text, color, font_family, font_size, is_bold, is_italic)
+                x_pos, y_pos, marker_text, color, font_family, font_size, is_bold, is_italic = marker_tuple
+
+                # Calculate position on canvas, scaling relative to the CROPPED image extent
+                # Ensure original image dimensions are valid for scaling calculation
+                orig_img_w = self.image.width() if self.image and self.image.width() > 0 else 1
+                orig_img_h = self.image.height() if self.image and self.image.height() > 0 else 1
+                # Dimensions of the image drawn on the canvas (after potential cropping/scaling)
+                img_w_on_canvas = scaled_image.width()
+                img_h_on_canvas = scaled_image.height()
+
+                # Calculate the marker's position relative to the canvas origin (x_offset, y_offset)
+                # Scale based on how the original coordinates map to the scaled_image dimensions
+                x_pos_on_canvas = x_offset + (x_pos - x_start) * (img_w_on_canvas / orig_img_w)
+                y_pos_on_canvas = y_offset + (y_pos - y_start) * (img_h_on_canvas / orig_img_h)
+
+                # Only draw if within the visible scaled image bounds on the canvas
+                # Check against the area occupied by scaled_image on the canvas
+                if (x_offset <= x_pos_on_canvas <= x_offset + img_w_on_canvas and
+                    y_offset <= y_pos_on_canvas <= y_offset + img_h_on_canvas):
+
+                    # -->> Create and configure font using unpacked values <<--
+                    # Ensure font_size is a valid integer before scaling
+                    try:
+                        # Use int() directly on font_size which should already be an int/float
+                        scaled_font_size = int(int(font_size) * render_scale)
+                        if scaled_font_size < 1: scaled_font_size = 1 # Ensure minimum size 1
+                    except (ValueError, TypeError):
+                        print(f"Warning: Invalid font size '{font_size}' for marker, using default.")
+                        scaled_font_size = int(12 * render_scale) # Default scaled size (e.g., 12pt scaled)
+
+                    # Ensure font_family is a string
+                    marker_font = QFont(str(font_family), scaled_font_size)
+                    # Ensure bold/italic are booleans and apply them
+                    marker_font.setBold(bool(is_bold))
+                    marker_font.setItalic(bool(is_italic))
+
+                    # Set the configured font on the painter
+                    painter.setFont(marker_font)
+
+                    # -->> Set the color, ensuring it's a QColor <<--
+                    if isinstance(color, str):
+                        current_color = QColor(color) # Create QColor from name/hex string
+                    elif isinstance(color, QColor):
+                        current_color = color # It's already a QColor
+                    else:
+                         print(f"Warning: Invalid color type '{type(color)}' for marker, using black.")
+                         current_color = Qt.black # Fallback color
+                    painter.setPen(current_color)
+
+                    # Calculate text dimensions for alignment using the specific marker's font
+                    font_metrics_custom = painter.fontMetrics()
+                    # Ensure marker_text is a string
+                    text_to_draw = str(marker_text)
+                    text_width = font_metrics_custom.horizontalAdvance(text_to_draw)
+                    text_height = font_metrics_custom.height()
+                    # Approximate vertical offset to center text around the point's Y coordinate
+                    y_offset_global_custom = text_height / 4
+
+                    # Draw text centered horizontally at its calculated canvas position
                     painter.drawText(
-                        int(x_pos_cropped + x_offset- text_width / 2),  # Center horizontally
-                        int(y_pos_cropped + y_offset+ text_height / 4),  # Center vertically
-                        marker_text
+                        int(x_pos_on_canvas - text_width / 2),          # Center horizontally
+                        int(y_pos_on_canvas + y_offset_global_custom),  # Center vertically around baseline
+                        text_to_draw                                    # Draw the text
                     )
+            except (ValueError, TypeError, IndexError) as e:
+                # Catch errors during unpacking or processing of a single marker tuple
+                print(f"Warning: Skipping drawing invalid/incomplete custom marker tuple: {marker_tuple} - Error: {e}")
+                import traceback
+                traceback.print_exc() # Print stack trace for debugging tuple issues
             
             
     
