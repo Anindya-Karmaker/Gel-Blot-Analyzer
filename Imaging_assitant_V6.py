@@ -5640,11 +5640,11 @@ class CombinedSDSApp(QMainWindow):
                 # Pad with transparency (transparent black)
                 # OpenCV expects (B, G, R, Alpha) or just Alpha if grayscale+alpha (less common here)
                 # Ensure we provide 4 values for BGRA
-                fill_value = (0, 0, 0, 0) # Transparent Black (B=0, G=0, R=0, A=0)
+                fill_value = Qt.transparent # Transparent Black (B=0, G=0, R=0, A=0)
             elif np_img.ndim == 3: # Opaque Color (BGR)
-                fill_value = (255, 255, 255) # White (B=255, G=255, R=255)
+                fill_value = Qt.transparent # White (B=255, G=255, R=255)
             elif np_img.ndim == 2: # Opaque Grayscale
-                fill_value = 65535 if np_img.dtype == np.uint16 else 255 # White
+                fill_value = Qt.transparent #if np_img.dtype == np.uint16 else 255 # White
             else:
                  raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
 
