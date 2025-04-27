@@ -1655,7 +1655,7 @@ class CombinedSDSApp(QMainWindow):
         # window_width = int(self.screen_width * 0.5)  # 60% of screen width
         # window_height = int(self.screen_height * 0.75)  # 95% of screen height
         self.preview_label_width_setting = int(self.screen_width * 0.28)
-        self.preview_label_max_height_setting = int(self.screen_height * 0.7)
+        self.preview_label_max_height_setting = int(self.screen_height * 0.4)
         self.label_size = self.preview_label_width_setting
         self.window_title="IMAGING ASSISTANT V6.0"
         # --- Initialize Status Bar Labels ---
@@ -1997,53 +1997,83 @@ class CombinedSDSApp(QMainWindow):
         
     def _update_preview_label_size(self):
         """
-        Updates the fixed size of the live_view_label based on the current image's
-        aspect ratio and the application's preview size settings.
+        Updates the fixed size of the live_view_label, prioritizing fitting the height
+        to a maximum setting (from self.preview_label_max_height_setting)
+        while maintaining the image's aspect ratio by adjusting the width.
         """
-        target_width = self.preview_label_width_setting # Use the setting
-        target_height = self.preview_label_width_setting # Default to square if no image
+        # --- Define Defaults and Minimums ---
+        # Use settings if available, otherwise use sensible defaults
+        default_max_height = 500 # Fallback if setting is missing
+        min_dim = 50             # Minimum allowed dimension for the label
 
+        # Determine the target maximum height
+        target_max_height = default_max_height
+        if hasattr(self, 'preview_label_max_height_setting'):
+            # Ensure the setting is a valid positive number, otherwise use default
+            try:
+                setting_height = int(self.preview_label_max_height_setting)
+                if setting_height > 0:
+                    target_max_height = setting_height
+                else:
+                    print("Warning: preview_label_max_height_setting is not positive, using default.")
+            except (TypeError, ValueError):
+                print("Warning: preview_label_max_height_setting is invalid, using default.")
+        else:
+            print("Warning: preview_label_max_height_setting attribute not found, using default.")
+
+        # Ensure the target height is not smaller than the minimum
+        target_max_height = max(min_dim, target_max_height)
+
+        # Initialize target dimensions with defaults for the "no image" case
+        final_target_width = max(min_dim, target_max_height) # Default to square if no image
+        final_target_height = max(min_dim, target_max_height)
+
+        # --- Calculate Size Based on Image ---
         if self.image and not self.image.isNull():
             w = self.image.width()
             h = self.image.height()
 
             if w > 0 and h > 0:
                 ratio = w / h
-                # Calculate height based on target width and ratio
-                calculated_height = int(target_width / ratio)
 
-                # Apply max height constraint if it exists and is needed
-                if hasattr(self, 'preview_label_max_height_setting') and calculated_height > self.preview_label_max_height_setting:
-                     target_height = self.preview_label_max_height_setting
-                     # Recalculate width based on constrained height and ratio
-                     target_width = int(target_height * ratio)
-                else:
-                    # Use the calculated height if within constraints or no constraint set
-                    target_height = calculated_height
+                # --- Scenario 1: Image fits within max height ---
+                # Calculate width based on max height and ratio
+                calculated_width_for_max_height = int(target_max_height * ratio)
+
+                # Use max height and calculated width directly
+                final_target_height = target_max_height
+                final_target_width = calculated_width_for_max_height
+
+                # --- Optional: Add a max width constraint based on window/screen ---
+                # Example: Prevent label becoming wider than the main window allows
+                # available_width = self.centralWidget().width() - 50 # Rough estimate
+                # if final_target_width > available_width:
+                #     print("Warning: Calculated width exceeds available space, scaling down.")
+                #     final_target_width = available_width
+                #     final_target_height = int(final_target_width / ratio) # Recalculate height based on constrained width
+
             else:
-                # Handle invalid image dimensions (e.g., 0 width or height)
-                print("Warning: Image has zero width or height. Using default preview size.")
-                target_height = target_width # Default to square-ish
+                # Handle invalid image dimensions (0 width or height)
+                print("Warning: Image has zero width or height. Using default preview size based on max height.")
+                # Use the already initialized defaults (likely square based on max_height)
 
         else:
-            # No image loaded, use default settings (usually square)
-            target_height = target_width
-            # Optionally clear the label if no image
-            # self.live_view_label.clear()
+            # No image loaded
+            print("No image loaded. Using default preview size based on max height.")
+            # Use the already initialized defaults (likely square based on max_height)
+            # self.live_view_label.clear() # Optionally clear the label
 
-        # Ensure minimum dimensions (e.g., 50x50) to prevent UI collapse
-        min_dim = 50
-        target_width = max(min_dim, target_width)
-        target_height = max(min_dim, target_height)
+        # --- Apply Minimum Dimension Constraints ---
+        final_target_width = max(min_dim, final_target_width)
+        final_target_height = max(min_dim, final_target_height)
 
-        # Set the calculated fixed size
-        print(f"Setting preview label size to: {target_width}x{target_height}")
-        self.live_view_label.setFixedSize(target_width, target_height)
+        # --- Set the Calculated Fixed Size ---
+        print(f"Setting preview label size to: {final_target_width}x{final_target_height}")
+        self.live_view_label.setFixedSize(final_target_width, final_target_height)
 
-        # It might be necessary to trigger an update or repaint if the size change
-        # doesn't automatically reflect in the layout immediately.
-        # self.live_view_label.updateGeometry() # Usually not needed with setFixedSize
-        # self.update() # Update the main window if necessary
+        # No explicit update needed usually, setFixedSize triggers layout recalculation.
+        # self.live_view_label.updateGeometry()
+        # self.layout().activate() # Force layout update if needed
         
     def _update_status_bar(self):
         """Updates the status bar labels with current image information."""
