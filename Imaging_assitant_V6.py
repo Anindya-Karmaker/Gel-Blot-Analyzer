@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog
 )
 from PyQt5.QtGui import QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
-from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize
+from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QMimeData
 import json
 import os
 import numpy as np
@@ -6636,42 +6636,82 @@ class CombinedSDSApp(QMainWindow):
     
     
     def copy_to_clipboard(self):
-        """Copy the image from live view label to the clipboard."""
-        if not self.image:
+        """Copy the image from live view label to the clipboard, explicitly providing PNG format."""
+        if not self.image or self.image.isNull():
+            QMessageBox.warning(self, "Warning", "No image to copy.")
             return
     
-        # Define a high-resolution canvas for clipboard copy
+        # --- Create the high-resolution rendered canvas (as before) ---
         render_scale = 3
         high_res_canvas_width = self.live_view_label.width() * render_scale
         high_res_canvas_height = self.live_view_label.height() * render_scale
+    
+        # Use ARGB32_Premultiplied - this is generally good for rendering quality with alpha
         high_res_canvas = QImage(
             high_res_canvas_width, high_res_canvas_height, QImage.Format_ARGB32_Premultiplied
         )
-        high_res_canvas.fill(Qt.transparent)  # White background
+        # IMPORTANT: Fill with TRANSPARENT. This ensures areas outside the rendered image
+        # are transparent, including the padding added in finalize_image if the original had alpha.
+        # If finalize_image padded an opaque image with white, that white will be rendered.
+        high_res_canvas.fill(Qt.transparent)
     
-        # Define cropping boundaries
-        x_start_percent = self.crop_x_start_slider.value() / 100
-        y_start_percent = self.crop_y_start_slider.value() / 100
-        x_start = int(self.image.width() * x_start_percent)
-        y_start = int(self.image.height() * y_start_percent)
+        # --- Render the current view onto the canvas (as before) ---
+        if self.image and not self.image.isNull():
+            # Define cropping boundaries (relative to the *current* self.image)
+            # NOTE: If cropping is already *applied* to self.image (via update_crop),
+            # then x_start/y_start should effectively be 0 for rendering the *already cropped* image.
+            # If cropping is only visual, use the slider values as before. Assuming crop is applied:
+            x_start = 0 # If self.image is already the cropped version
+            y_start = 0 # If self.image is already the cropped version
+            # If self.image is the *original* uncropped image, you need the slider values here:
+            # x_start_percent = self.crop_x_start_slider.value() / 100
+            # y_start_percent = self.crop_y_start_slider.value() / 100
+            # x_start = int(self.image.width() * x_start_percent)
+            # y_start = int(self.image.height() * y_start_percent)
     
-        # Create a scaled version of the image
-        scaled_image = self.image.scaled(
-            high_res_canvas_width,
-            high_res_canvas_height,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-        self.show_grid_checkbox.setChecked(False)
-        self.update_live_view()
-        # Render the high-resolution canvas without guides for clipboard
-        self.render_image_on_canvas(
-            high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
-        )
-        
-        # Copy the high-resolution image to the clipboard
-        clipboard = QApplication.clipboard()
-        clipboard.setImage(high_res_canvas)  # Copy the rendered image
+            # Create a scaled version of the image (current state)
+            scaled_image = self.image.scaled(
+                high_res_canvas_width,
+                high_res_canvas_height,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+    
+            # Render the high-resolution canvas without guides for clipboard
+            self.render_image_on_canvas(
+                high_res_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
+            )
+    
+            # --- Prepare data for clipboard ---
+            clipboard = QApplication.clipboard()
+            mime_data = QMimeData()
+    
+            # 1. Provide PNG data explicitly
+            png_buffer = QBuffer()
+            png_buffer.open(QBuffer.WriteOnly)
+            # Save the canvas (which has transparency) as PNG into the buffer
+            if high_res_canvas.save(png_buffer, "PNG"):
+                png_data = png_buffer.data() # Get QByteArray
+                mime_data.setData("image/png", png_data) # Set data for PNG MIME type
+            else:
+                 QMessageBox.warning(self, "Copy Error", "Failed to encode image as PNG for clipboard.")
+                 return
+            png_buffer.close()
+    
+            # 2. Also set standard image data as fallback
+            # This uses the same high_res_canvas. Applications that prefer standard
+            # image data might still get the black background if they ignore alpha,
+            # but those that understand image/png should prioritize it.
+            mime_data.setImageData(high_res_canvas)
+    
+            # --- Set the QMimeData on the clipboard ---
+            clipboard.setMimeData(mime_data)
+    
+            # Optional: Confirmation message
+            # QMessageBox.information(self, "Copied", "Image copied to clipboard (with PNG format).")
+    
+        else:
+            QMessageBox.warning(self, "Warning", "No image data to render for copying.")
         
     def copy_to_clipboard_SVG(self):
         """Create a temporary SVG file with EMF data, copy it to clipboard."""
