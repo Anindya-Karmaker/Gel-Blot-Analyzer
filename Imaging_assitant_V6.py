@@ -9,14 +9,14 @@ from PIL import ImageGrab, Image, ImageQt  # Import Pillow's ImageGrab for clipb
 from io import BytesIO
 import io
 from PyQt5.QtWidgets import (
-    QDesktopWidget, QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,
+    QDesktopWidget, QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle,
     QScrollArea, QInputDialog, QShortcut, QFrame, QApplication, QSizePolicy,
     QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
     QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
     QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox,
     QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog
 )
-from PyQt5.QtGui import QPixmap, QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
+from PyQt5.QtGui import QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
 from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize
 import json
 import os
@@ -1216,15 +1216,17 @@ class PeakAreaDialog(QDialog):
     def update_plot(self):
         """
         Update plot using the **SMOOTHED** original inverted profile range for
-        line display and area calculations.
+        line display and area calculations. Positions area text BELOW the baseline.
         """
         if self.canvas is None: return
 
-        # --- Profile for Plotting and Calculation is now the SMOOTHED one ---
         profile_to_plot_and_calc = self.profile_original_inverted
 
         if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
-            try: self.fig.clf(); self.ax = self.fig.add_subplot(111); self.ax.text(0.5, 0.5, "No Profile Data", ha='center', va='center', transform=self.ax.transAxes); self.canvas.draw_idle()
+            try:
+                self.fig.clf(); self.ax = self.fig.add_subplot(111)
+                self.ax.text(0.5, 0.5, "No Profile Data", ha='center', va='center', transform=self.ax.transAxes)
+                self.canvas.draw_idle()
             except Exception as e: print(f"Error clearing plot: {e}")
             return
 
@@ -1233,13 +1235,11 @@ class PeakAreaDialog(QDialog):
 
         # --- Calculate Rolling Ball Background (on the SMOOTHED profile) ---
         try:
-            profile_float = profile_to_plot_and_calc # Already float64
+            profile_float = profile_to_plot_and_calc
             safe_radius = max(1, min(self.rolling_ball_radius, len(profile_float) // 2 - 1))
-            # Rolling ball background calculation needs to happen *after* smoothing
-            if safe_radius != self.rolling_ball_radius: print(f"Adjusted rolling ball radius to {safe_radius}")
             if len(profile_float) > 1 :
                 background_smoothed = rolling_ball(profile_float, radius=safe_radius)
-                self.background = np.maximum(background_smoothed, 0) # Ensure background >= 0
+                self.background = np.maximum(background_smoothed, 0)
             else: self.background = profile_float.copy()
         except ImportError: self.background = np.zeros_like(profile_to_plot_and_calc); print("Scikit-image needed")
         except Exception as e: print(f"Error rolling ball: {e}."); self.background = np.zeros_like(profile_to_plot_and_calc)
@@ -1248,21 +1248,22 @@ class PeakAreaDialog(QDialog):
         self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
 
         # --- Plot Smoothed Profile ---
-        self.ax.plot(profile_to_plot_and_calc, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color="black", lw=1.2) # Label indicates smoothing
+        self.ax.plot(profile_to_plot_and_calc, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color="black", lw=1.2)
 
-        # --- Plot Detected Peak Markers (on the smoothed profile line) ---
+        # --- Plot Detected Peak Markers ---
         if len(self.peaks) > 0:
              valid_peaks = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
              if len(valid_peaks) > 0:
-                 # Get Y values from the SMOOTHED profile at the detected peak indices
                  peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks]
                  self.ax.scatter(valid_peaks, peak_y_on_smoothed, color="red", marker='x', s=50, label="Detected Peaks", zorder=5)
 
-        # --- Process Peak Regions (Calculations now use the SMOOTHED profile) ---
+        # --- Process Peak Regions ---
         self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
         num_items_to_plot = len(self.peak_regions)
         profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0
-        max_text_y_position = np.min(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 0
+        # Initialize min_text_y_position to a large value or the profile min
+        min_text_y_position = np.min(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 0
+        max_text_y_position_above = np.min(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 0 # To keep upper limit ok
 
         for i in range(num_items_to_plot):
             start, end = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
@@ -1270,44 +1271,34 @@ class PeakAreaDialog(QDialog):
                  self.peak_areas_rolling_ball.append(0.0); self.peak_areas_straight_line.append(0.0); self.peak_areas_valley.append(0.0); continue
 
             x_region = np.arange(start, end + 1)
-            # Use SMOOTHED profile data for region calculations
             profile_region_smoothed = profile_to_plot_and_calc[start : end + 1]
-            # Use background calculated from SMOOTHED profile
-            bg_start = max(0, min(start, len(self.background)-1))
-            bg_end = max(0, min(end + 1, len(self.background)))
-            if bg_start < bg_end: background_region = self.background[bg_start:bg_end]
-            else: background_region = np.zeros_like(profile_region_smoothed)
-            # Interpolate background if needed
-            if len(background_region) != len(profile_region_smoothed):
-                 try:
-                    interp_func = interp1d(np.arange(len(self.background)), self.background, kind='linear', fill_value="extrapolate")
-                    background_region = interp_func(x_region)
-                 except Exception as interp_err:
-                    print(f"Warning: Background interpolation failed for peak {i+1}: {interp_err}")
-                    background_region = np.zeros_like(profile_region_smoothed)
 
-            if profile_region_smoothed.shape != background_region.shape:
-                print(f"Shape mismatch peak {i+1}. Skip area calculation.");
-                self.peak_areas_rolling_ball.append(0.0); self.peak_areas_straight_line.append(0.0); self.peak_areas_valley.append(0.0); continue
+            # Get background region (interpolation if needed)
+            bg_start = max(0, min(start, len(self.background)-1)); bg_end = max(0, min(end + 1, len(self.background)))
+            background_region = np.zeros_like(profile_region_smoothed) # Default
+            if bg_start < bg_end:
+                 raw_bg_region = self.background[bg_start:bg_end]
+                 if len(raw_bg_region) == len(profile_region_smoothed):
+                     background_region = raw_bg_region
+                 elif len(self.background) > 1: # Can we interpolate?
+                     try:
+                        interp_func_bg = interp1d(np.arange(len(self.background)), self.background, kind='linear', fill_value="extrapolate")
+                        background_region = interp_func_bg(x_region)
+                     except Exception as interp_err_bg: print(f"Warning: BG interp failed peak {i+1}: {interp_err_bg}")
+                 else: print(f"Warning: Cannot get BG region for peak {i+1}")
 
-            # --- Area Calculations on SMOOTHED Profile ---
-            # 1. Rolling Ball Area
+            # --- Area Calculations (Remain the same) ---
             area_rb = max(0, np.trapz(profile_region_smoothed - background_region, x=x_region))
             self.peak_areas_rolling_ball.append(area_rb)
-
-            # 2. Straight Line Area
-            area_sl = 0.0
+            area_sl = 0.0; y_baseline_pts_sl = np.array([0,0]); y_baseline_interp_sl = np.zeros_like(x_region) # Defaults
             if start < len(profile_to_plot_and_calc) and end < len(profile_to_plot_and_calc):
                 y_baseline_pts_sl = np.array([profile_to_plot_and_calc[start], profile_to_plot_and_calc[end]])
                 y_baseline_interp_sl = np.interp(x_region, [start, end], y_baseline_pts_sl)
                 area_sl = max(0, np.trapz(profile_region_smoothed - y_baseline_interp_sl, x=x_region))
             self.peak_areas_straight_line.append(area_sl)
-
-            # 3. Valley-to-Valley Area
-            area_vv = 0.0
+            area_vv = 0.0; valley_start_idx = start; valley_end_idx = end; y_baseline_pts_vv = np.array([0,0]); y_baseline_interp_vv = np.zeros_like(x_region) # Defaults
             try:
                 search_range = max(15, int((end - start) * 1.5))
-                # Use SMOOTHED profile to find valleys
                 valley_start_idx, valley_end_idx = self._find_valleys_inverted(profile_to_plot_and_calc, start, end, search_range)
                 if 0 <= valley_start_idx < len(profile_to_plot_and_calc) and 0 <= valley_end_idx < len(profile_to_plot_and_calc):
                     y_baseline_pts_vv = np.array([profile_to_plot_and_calc[valley_start_idx], profile_to_plot_and_calc[valley_end_idx]])
@@ -1320,56 +1311,107 @@ class PeakAreaDialog(QDialog):
 
             # --- Plot Baselines and Fills (based on smoothed profile) ---
             current_area = 0.0
+            baseline_y_at_center = 0.0 # Y-value of the baseline at the text's x position
+            text_x_pos = (start + end) / 2.0 # Horizontal center for text
+
             if self.method == "Rolling Ball":
                 if i == 0: self.ax.plot(np.arange(len(self.background)), self.background, color="green", ls="--", lw=1, label="Rolling Ball BG")
                 self.ax.fill_between(x_region, background_region, profile_region_smoothed, where=profile_region_smoothed >= background_region, color="yellow", alpha=0.4, interpolate=True)
                 current_area = area_rb
-            elif self.method == "Straight Line" and start < len(profile_to_plot_and_calc) and end < len(profile_to_plot_and_calc):
-                 self.ax.plot([start, end], y_baseline_pts_sl, color="purple", ls="--", lw=1, label="SL BG" if i == 0 else "")
-                 self.ax.fill_between(x_region, y_baseline_interp_sl, profile_region_smoothed, where=profile_region_smoothed >= y_baseline_interp_sl, color="cyan", alpha=0.4, interpolate=True)
-                 current_area = area_sl
-            elif self.method == "Valley-to-Valley" and 0 <= valley_start_idx < len(profile_to_plot_and_calc) and 0 <= valley_end_idx < len(profile_to_plot_and_calc):
-                 self.ax.plot([valley_start_idx, valley_end_idx], y_baseline_pts_vv, color="orange", ls="--", lw=1, label="VV BG" if i == 0 else "")
-                 self.ax.fill_between(x_region, y_baseline_interp_vv, profile_region_smoothed, where=profile_region_smoothed >= y_baseline_interp_vv, color="lightblue", alpha=0.4, interpolate=True)
-                 current_area = area_vv
+                # Get baseline Y at center for text positioning
+                if len(self.background) > 1:
+                    try:
+                        interp_func_bg = interp1d(np.arange(len(self.background)), self.background, kind='linear', fill_value="extrapolate")
+                        baseline_y_at_center = interp_func_bg(text_x_pos)
+                    except: baseline_y_at_center = np.min(background_region) # Fallback
+                else: baseline_y_at_center = np.min(background_region)
 
-            # --- Plot Area Text and Markers ---
+            elif self.method == "Straight Line":
+                 if start < len(profile_to_plot_and_calc) and end < len(profile_to_plot_and_calc):
+                     self.ax.plot([start, end], y_baseline_pts_sl, color="purple", ls="--", lw=1, label="SL BG" if i == 0 else "")
+                     self.ax.fill_between(x_region, y_baseline_interp_sl, profile_region_smoothed, where=profile_region_smoothed >= y_baseline_interp_sl, color="cyan", alpha=0.4, interpolate=True)
+                     current_area = area_sl
+                     # Get baseline Y at center
+                     baseline_y_at_center = np.interp(text_x_pos, [start, end], y_baseline_pts_sl)
+                 else: current_area = 0.0; baseline_y_at_center = 0.0
+
+            elif self.method == "Valley-to-Valley":
+                 if 0 <= valley_start_idx < len(profile_to_plot_and_calc) and 0 <= valley_end_idx < len(profile_to_plot_and_calc):
+                     self.ax.plot([valley_start_idx, valley_end_idx], y_baseline_pts_vv, color="orange", ls="--", lw=1, label="VV BG" if i == 0 else "")
+                     self.ax.fill_between(x_region, y_baseline_interp_vv, profile_region_smoothed, where=profile_region_smoothed >= y_baseline_interp_vv, color="lightblue", alpha=0.4, interpolate=True)
+                     current_area = area_vv
+                     # Get baseline Y at center
+                     baseline_y_at_center = np.interp(text_x_pos, [valley_start_idx, valley_end_idx], y_baseline_pts_vv)
+                 else: current_area = 0.0; baseline_y_at_center = 0.0
+
+
+            # --- Plot Area Text BELOW the Baseline ---
             area_text_format = "{:.0f}"
             combined_text = f"Peak {i + 1}\n{area_text_format.format(current_area)}"
-            # Position text relative to the smoothed profile's peak
-            text_y_base = np.max(profile_region_smoothed)
-            text_y_pos = text_y_base + profile_range_plot * 0.06 # Use profile range for spacing
-            self.ax.text((start + end) / 2, text_y_pos, combined_text, ha="center", va="bottom", fontsize=7, color='black', zorder=6)
-            max_text_y_position = max(max_text_y_position, text_y_pos + profile_range_plot*0.03)
+
+            # Calculate Y position BELOW the baseline
+            text_y_offset = profile_range_plot * 0.06 # Offset distance from baseline
+            text_y_pos = baseline_y_at_center - text_y_offset # Subtract offset to go below
+
+            # Ensure text isn't placed ridiculously low if baseline is near zero
+            # Maybe set a minimum baseline value for text placement?
+            # text_y_pos = max(text_y_pos, some_absolute_minimum_y) # Optional refinement
+
+            self.ax.text(
+                text_x_pos,          # Horizontal center
+                text_y_pos,          # Y position below baseline
+                combined_text,       # Text content
+                ha="center",         # Horizontal alignment: center
+                va="top",            # Vertical alignment: TOP of text at text_y_pos
+                fontsize=7,
+                color='black',
+                zorder=6
+            )
+
+            # Keep track of the minimum Y position reached by text tops
+            min_text_y_position = min(min_text_y_position, text_y_pos) # Track the top Y coord of the text
+
+            # Also track the max Y position above peaks for the upper limit
+            max_text_y_position_above = max(max_text_y_position_above, np.max(profile_region_smoothed) + profile_range_plot*0.03)
+
 
             self.ax.axvline(start, color="gray", ls=":", lw=1.0, alpha=0.8)
             self.ax.axvline(end, color="gray", ls=":", lw=1.0, alpha=0.8)
 
         # --- Final Plot Configuration ---
-        self.ax.set_ylabel("Intensity (Smoothed, Inverted)") # Label reflects smoothing
+        self.ax.set_ylabel("Intensity (Smoothed, Inverted)")
         self.ax.legend(fontsize='small', loc='upper right')
         self.ax.set_title(f"Smoothed Intensity Profile (σ={self.smoothing_sigma:.1f}) and Peak Regions")
         self.ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
 
-        # Set plot limits based on SMOOTHED profile range
+        # Set plot limits based on profile range AND text positions
         if len(profile_to_plot_and_calc) > 1: self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1)
         prof_min_smooth, prof_max_smooth = (np.min(profile_to_plot_and_calc), np.max(profile_to_plot_and_calc)) if len(profile_to_plot_and_calc) > 0 else (0, 1)
-        y_max_limit = max(prof_max_smooth, max_text_y_position) + profile_range_plot * 0.05
-        y_min_limit = prof_min_smooth - profile_range_plot * 0.05
+
+        # Calculate plot limits considering text positions
+        y_max_limit = max(prof_max_smooth, max_text_y_position_above) + profile_range_plot * 0.05
+        # Use min_text_y_position (top of the text) and subtract padding
+        y_min_limit = min(prof_min_smooth, min_text_y_position) - profile_range_plot * 0.05 # Ensure space below text
+
         if y_max_limit <= y_min_limit: y_max_limit = y_min_limit + 1
         self.ax.set_ylim(y_min_limit, y_max_limit)
         if prof_max_smooth > 10000: self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 
-        # --- Display Cropped Image ---
-        # (Image display logic remains the same)
+        # --- Display Cropped Image (No changes here) ---
         ax_image.clear()
         if hasattr(self, 'cropped_image_for_display') and isinstance(self.cropped_image_for_display, Image.Image):
              try:
                  rotated_pil_image = self.cropped_image_for_display.rotate(90, expand=True)
                  im_array_disp = np.array(rotated_pil_image)
+                 # Determine vmin/vmax for display based on original range, handle float case
+                 if self.original_max_value == 1.0 and np.issubdtype(self.intensity_array_original_range.dtype, np.floating):
+                      im_vmin, im_vmax = 0.0, 1.0 # Assume float is 0-1 range
+                 else:
+                      im_vmin, im_vmax = 0, self.original_max_value
+
                  ax_image.imshow(im_array_disp, cmap='gray', aspect='auto',
                                  extent=[0, len(profile_to_plot_and_calc)-1, 0, rotated_pil_image.height],
-                                 vmin=0, vmax=self.original_max_value)
+                                 vmin=im_vmin, vmax=im_vmax) # Use determined vmin/vmax
                  ax_image.set_xlabel("Pixel Index Along Profile Axis")
                  ax_image.set_yticks([]); ax_image.set_ylabel("Lane Width", fontsize='small')
              except Exception as img_e:
@@ -1612,7 +1654,9 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         # window_width = int(self.screen_width * 0.5)  # 60% of screen width
         # window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.label_size=self.screen_width * 0.25
+        self.preview_label_width_setting = int(self.screen_width * 0.28)
+        self.preview_label_max_height_setting = int(self.screen_height * 0.7)
+        self.label_size = self.preview_label_width_setting
         self.window_title="IMAGING ASSISTANT V6.0"
         # --- Initialize Status Bar Labels ---
         self.size_label = QLabel("Image Size: N/A")
@@ -1713,7 +1757,9 @@ class CombinedSDSApp(QMainWindow):
         self.image_array_backup= None
         self.run_predict_MW=False
         
+        self._create_actions()
         self.create_menu_bar()
+        self.create_tool_bar()
         
         # Main container widget
         main_widget = QWidget()
@@ -1733,108 +1779,10 @@ class CombinedSDSApp(QMainWindow):
         )
         # Image display
         self.live_view_label.setStyleSheet("background-color: white; border: 1px solid black;")
-        # self.live_view_label.setCursor(Qt.CrossCursor)
-        self.live_view_label.setFixedSize(self.label_width, self.label_width)
-        # self.live_view_label.mousePressEvent = self.add_band()
-        # self.live_view_label.mousePressEvent = self.add_band
-        
-        
-       
-
-        # Buttons for image loading and saving
-        # Load, save, and crop buttons
-        buttons_layout = QVBoxLayout()
-        load_button = QPushButton("Load Image")
-        load_button.setToolTip("Load an image or a previously saved file. Shortcut: Ctrl+O or CMD+O")
-        load_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        load_button.clicked.connect(self.load_image)
-        buttons_layout.addWidget(load_button)
-        
-        paste_button = QPushButton('Paste Image')
-        paste_button.setToolTip("Paste an image from clipboard or folder. Shortcut: Ctrl+V or CMD+V")
-        paste_button.clicked.connect(self.paste_image)  # Connect the button to the paste_image method
-        paste_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        buttons_layout.addWidget(paste_button)
-    
-        
-        reset_button = QPushButton("Reset Image")  # Add Reset Image button
-        reset_button.setToolTip("Reset all image manipulations and marker placements. Shortcut: Ctrl+R or CMD+R")
-        reset_button.clicked.connect(self.reset_image)  # Connect the reset functionality
-        reset_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        buttons_layout.addWidget(reset_button)
-        
-        
-        
-        copy_button = QPushButton('Copy Image to Clipboard')
-        copy_button.setToolTip("Copy the modified image to clipboard. Shortcut: Ctrl+C or CMD+C")
-        copy_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        copy_button.clicked.connect(self.copy_to_clipboard)
-        buttons_layout.addWidget(copy_button)
-        
-        save_button = QPushButton("Save Image with Configuration")
-        save_button.setToolTip("Save the modified image with the configuration files. Shortcut: Ctrl+S or CMD+S")
-        save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        save_button.clicked.connect(self.save_image)
-        buttons_layout.addWidget(save_button)
-        
-        #if platform.system() == "Windows": # "Darwin" for MacOS # "Windows" for Windows
-        #    copy_svg_button = QPushButton('Copy SVG Image to Clipboard')
-        #    copy_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        #    copy_svg_button.clicked.connect(self.copy_to_clipboard_SVG)
-        #    buttons_layout.addWidget(copy_svg_button)
-            
-        
-        save_svg_button = QPushButton("Save SVG Image (MS Word Import)")
-        save_svg_button.setToolTip("Save the modified image as an SVG file so that it can be modified in MS Word or similar. Shortcut: Ctrl+M or CMD+M")
-        save_svg_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        save_svg_button.clicked.connect(self.save_image_svg)
-        buttons_layout.addWidget(save_svg_button)
-        
-        undo_redo_layout=QHBoxLayout()
-        
-        undo_button = QPushButton("Undo")
-        undo_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        undo_button.clicked.connect(self.undo_action)
-        undo_button.setToolTip("Undo settings related to image. Cannot Undo Marker Placement. Use remove last option. Shortcut: Ctrl+Z or CMD+Z")
-        undo_redo_layout.addWidget(undo_button)
-        
-        redo_button = QPushButton("Redo")
-        redo_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand width
-        redo_button.clicked.connect(self.redo_action)
-        redo_button.setToolTip("Redo settings related to image. Cannot Undo Marker Placement. Use remove last option.Shortcut: Ctrl+Y or CMD+Y")        
-        undo_redo_layout.addWidget(redo_button)
-        
-        buttons_layout.addLayout(undo_redo_layout)
-        
-        # New Zoom buttons layout
-        zoom_layout = QHBoxLayout()
-        
-        # Zoom In button
-        zoom_in_button = QPushButton("Zoom In")
-        zoom_in_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        zoom_in_button.clicked.connect(self.zoom_in)
-        zoom_in_button.setToolTip("Increase zoom level. Click the display window and use arrow keys for moving")
-        
-        # Zoom Out button
-        zoom_out_button = QPushButton("Zoom Out")
-        zoom_out_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        zoom_out_button.clicked.connect(self.zoom_out)
-        zoom_out_button.setToolTip("Decrease zoom level. Click the display window and use arrow keys for moving")
-        
-        # Add Zoom buttons to the zoom layout
-        zoom_layout.addWidget(zoom_in_button)
-        zoom_layout.addWidget(zoom_out_button)
-        
-        # Add Zoom layout below Undo/Redo
-        buttons_layout.addLayout(zoom_layout)
-        
-        # buttons_layout.addStretch()
-        
-        
+        self._update_preview_label_size()
         upper_layout.addWidget(self.live_view_label, stretch=1)
-        upper_layout.addLayout(buttons_layout, stretch=1)
         layout.addLayout(upper_layout)
-
+        
         # Lower section (Tabbed interface)
         self.tab_widget = QTabWidget()
         # self.tab_widget.setToolTip("Change the tabs quickly with shortcut: Ctrl+1,2,3 or 4 and CMD+1,2,3 or 4")
@@ -1847,101 +1795,87 @@ class CombinedSDSApp(QMainWindow):
         
         layout.addWidget(self.tab_widget)
         
-        # Example: Shortcut for loading an image (Ctrl + O)
-        self.load_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
-        self.load_shortcut.activated.connect(self.load_image)
-        
-        # Example: Shortcut for saving an image (Ctrl + S)
-        self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
-        self.save_shortcut.activated.connect(self.save_image)
-        
-        # Example: Shortcut for resetting the image (Ctrl + R)
-        self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
-        self.reset_shortcut.activated.connect(self.reset_image)
-        
-        # Example: Shortcut for copying the image to clipboard (Ctrl + C)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
-        self.copy_shortcut.activated.connect(self.copy_to_clipboard)
-        
-        # Example: Shortcut for pasting an image from clipboard (Ctrl + V)
-        self.paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
-        self.paste_shortcut.activated.connect(self.paste_image)
-        
-        # Example: Shortcut for predicting molecular weight (Ctrl + P)
-        self.predict_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
-        self.predict_shortcut.activated.connect(self.predict_molecular_weight)
-        
-        # Example: Shortcut for clearing the prediction marker (Ctrl + Shift + P)
-        self.clear_predict_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
-        self.clear_predict_shortcut.activated.connect(self.clear_predict_molecular_weight)
-        
-        # Example: Shortcut for saving SVG image (Ctrl + Shift + S)
+        self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O
+        self.load_shortcut.activated.connect(self.load_action.trigger) # Trigger the action
+        self.save_shortcut = QShortcut(QKeySequence.Save, self) # Ctrl+S
+        self.save_shortcut.activated.connect(self.save_action.trigger) # Trigger the action
         self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
-        self.save_svg_shortcut.activated.connect(self.save_image_svg)
-        
-        # Example: Shortcut for enabling left marker mode (Ctrl + L)
+        self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger) # Trigger the action
+        self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self.reset_shortcut.activated.connect(self.reset_action.trigger) # Trigger the action
+
+        # == Edit Operations (Handled by QAction + QShortcut) ==
+        self.undo_shortcut = QShortcut(QKeySequence.Undo, self) # Ctrl+Z
+        self.undo_shortcut.activated.connect(self.undo_action.trigger) # Trigger the action
+        self.redo_shortcut = QShortcut(QKeySequence.Redo, self) # Ctrl+Y
+        self.redo_shortcut.activated.connect(self.redo_action.trigger) # Trigger the action
+        self.copy_shortcut = QShortcut(QKeySequence.Copy, self) # Ctrl+C
+        self.copy_shortcut.activated.connect(self.copy_action.trigger) # Trigger the action
+        self.paste_shortcut = QShortcut(QKeySequence.Paste, self) # Ctrl+V
+        self.paste_shortcut.activated.connect(self.paste_action.trigger) # Trigger the action
+
+        # == View Operations (Handled by QAction + QShortcut) ==
+        self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Ctrl++
+        self.zoom_in_shortcut.activated.connect(self.zoom_in_action.trigger) # Trigger the action
+        self.zoom_out_shortcut = QShortcut(QKeySequence.ZoomOut, self) # Ctrl+-
+        self.zoom_out_shortcut.activated.connect(self.zoom_out_action.trigger) # Trigger the action
+
+        # == Analysis Shortcuts (Specific to QShortcut) ==
+        self.predict_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.predict_shortcut.activated.connect(self.predict_molecular_weight) # Direct method call
+        self.clear_predict_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
+        self.clear_predict_shortcut.activated.connect(self.clear_predict_molecular_weight) # Direct method call
+
+        # == Marker Placement Shortcuts (Specific to QShortcut) ==
         self.left_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
-        self.left_marker_shortcut.activated.connect(self.enable_left_marker_mode)
-        
-        # Example: Shortcut for enabling right marker mode (Ctrl + R)
+        self.left_marker_shortcut.activated.connect(self.enable_left_marker_mode) # Direct method call
         self.right_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
-        self.right_marker_shortcut.activated.connect(self.enable_right_marker_mode)
-        
-        # Example: Shortcut for enabling top marker mode (Ctrl + T)
+        self.right_marker_shortcut.activated.connect(self.enable_right_marker_mode) # Direct method call
         self.top_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+T"), self)
-        self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
-        
-        # Example: Shortcut for toggling grid visibility (Ctrl + G)
-        self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
-        self.grid_shortcut.activated.connect(lambda: self.show_grid_checkbox.setChecked(not self.show_grid_checkbox.isChecked()))
-        
-        # Example: Shortcut for toggling grid visibility (Ctrl + G)
-        self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
-        self.guidelines_shortcut.activated.connect(lambda: self.show_guides_checkbox.setChecked(not self.show_guides_checkbox.isChecked()))
-        
-        # Example: Shortcut for increasing grid size (Ctrl + Shift + Up)
-        self.increase_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Up"), self)
-        self.increase_grid_size_shortcut.activated.connect(lambda: self.grid_size_input.setValue(self.grid_size_input.value() + 1))
-        
-        # Example: Shortcut for decreasing grid size (Ctrl + Shift + Down)
-        self.decrease_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Down"), self)
-        self.decrease_grid_size_shortcut.activated.connect(lambda: self.grid_size_input.setValue(self.grid_size_input.value() - 1))
-        
-        # # Example: Shortcut for increasing font size (Ctrl + Plus)
-        # self.increase_font_size_shortcut = QShortcut(QKeySequence("Ctrl+W+Up"), self)
-        # self.increase_font_size_shortcut.activated.connect(lambda: self.font_size_spinner.setValue(self.font_size_spinner.value() + 1))
-        
-        # # Example: Shortcut for decreasing font size (Ctrl + Minus)
-        # self.decrease_font_size_shortcut = QShortcut(QKeySequence("Ctrl+W+Down"), self)
-        # self.decrease_font_size_shortcut.activated.connect(lambda: self.font_size_spinner.setValue(self.font_size_spinner.value() - 1))
-        
-        # Example: Shortcut for custom marker left arrow (Ctrl + Left Arrow)
+        self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode) # Direct method call
+
+        # == Custom Marker Arrow Shortcuts (Specific to QShortcut) ==
         self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
         self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("←"))
-        self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
-        
-        # Example: Shortcut for custom marker right arrow (Ctrl + Right Arrow)
+        self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode) # Direct method calls
         self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
         self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("→"))
         self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
-        
-        # Example: Shortcut for custom marker top arrow (Ctrl + Up Arrow)
         self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
         self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↑"))
         self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
-        
-        # Example: Shortcut for custom marker bottom arrow (Ctrl + Down Arrow)
         self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
         self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↓"))
         self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
-        
-        # Example: Shortcut for inverting image (Ctrl + T)
+
+        # == View/UI Adjustment Shortcuts (Specific to QShortcut) ==
+        self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
+        self.grid_shortcut.activated.connect(
+            lambda: self.show_grid_checkbox.setChecked(not self.show_grid_checkbox.isChecked())
+            if hasattr(self, 'show_grid_checkbox') else None
+        )
+        self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
+        self.guidelines_shortcut.activated.connect(
+            lambda: self.show_guides_checkbox.setChecked(not self.show_guides_checkbox.isChecked())
+            if hasattr(self, 'show_guides_checkbox') else None
+        )
+        self.increase_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Up"), self)
+        self.increase_grid_size_shortcut.activated.connect(
+            lambda: self.grid_size_input.setValue(self.grid_size_input.value() + 1)
+            if hasattr(self, 'grid_size_input') else None
+        )
+        self.decrease_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Down"), self)
+        self.decrease_grid_size_shortcut.activated.connect(
+            lambda: self.grid_size_input.setValue(self.grid_size_input.value() - 1)
+            if hasattr(self, 'grid_size_input') else None
+        )
+
+        # == Image Manipulation Shortcuts (Specific to QShortcut) ==
         self.invert_shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
-        self.invert_shortcut.activated.connect(self.invert_image)
-        
-        # Example: Shortcut for converting to grayscale (Ctrl + T)
-        self.invert_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
-        self.invert_shortcut.activated.connect(self.convert_to_black_and_white)
+        self.invert_shortcut.activated.connect(self.invert_image) # Direct method call
+        self.bw_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
+        self.bw_shortcut.activated.connect(self.convert_to_black_and_white) # Direct method call
+
         
         # Example: Move quickly between tabs (Ctrl + 1,2,3,4)
         self.move_tab_1_shortcut = QShortcut(QKeySequence("Ctrl+1"), self)
@@ -1963,11 +1897,153 @@ class CombinedSDSApp(QMainWindow):
         self.move_tab_6_shortcut.activated.connect(lambda: self.move_tab(5))
         
         self.undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-        self.undo_shortcut.activated.connect(self.undo_action)
+        self.undo_shortcut.activated.connect(self.undo_action_m)
         
         self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
-        self.redo_shortcut.activated.connect(self.redo_action)
+        self.redo_shortcut.activated.connect(self.redo_action_m)
         self.load_config()
+    
+    def _create_actions(self):
+        """Create QAction objects for menus and toolbars."""
+        # Use QStyle to get standard icons where possible
+        style = self.style() # Get the current application style for other icons
+
+        # --- Create Zoom Icons Directly ---
+        icon_size = QSize(24, 24) # Define desired icon size
+        text_color = self.palette().color(QPalette.ButtonText) # Use theme text color
+
+        # Create Pixmap and Painter for Zoom In (+)
+        zoom_in_pixmap = QPixmap(icon_size)
+        zoom_in_pixmap.fill(Qt.transparent)
+        painter_in = QPainter(zoom_in_pixmap)
+        painter_in.setRenderHint(QPainter.TextAntialiasing, True)
+        font_in = QFont()
+        font_in.setPointSize(max(6, int(icon_size.height() * 0.7))) # Adjust size factor if needed
+        font_in.setBold(True)
+        painter_in.setFont(font_in)
+        painter_in.setPen(text_color)
+        painter_in.drawText(zoom_in_pixmap.rect(), Qt.AlignCenter, "+") # Draw centered '+'
+        painter_in.end()
+        zoom_in_icon = QIcon(zoom_in_pixmap)
+
+        # Create Pixmap and Painter for Zoom Out (-)
+        zoom_out_pixmap = QPixmap(icon_size)
+        zoom_out_pixmap.fill(Qt.transparent)
+        painter_out = QPainter(zoom_out_pixmap)
+        painter_out.setRenderHint(QPainter.TextAntialiasing, True)
+        font_out = QFont()
+        font_out.setPointSize(max(6, int(icon_size.height() * 0.7))) # Adjust size factor if needed
+        font_out.setBold(True)
+        painter_out.setFont(font_out)
+        painter_out.setPen(text_color)
+        painter_out.drawText(zoom_out_pixmap.rect(), Qt.AlignCenter, "-") # Draw centered '-'
+        painter_out.end()
+        zoom_out_icon = QIcon(zoom_out_pixmap)
+
+        # File Actions
+        self.load_action = QAction(style.standardIcon(QStyle.SP_DialogOpenButton), "&Load Image...", self)
+        self.save_action = QAction(style.standardIcon(QStyle.SP_DialogSaveButton), "&Save with Config", self)
+        self.save_svg_action = QAction(style.standardIcon(QStyle.SP_DriveDVDIcon), "Save &SVG...", self) # Example icon
+        self.reset_action = QAction(style.standardIcon(QStyle.SP_DialogDiscardButton), "&Reset Image", self) # Or SP_BrowserReload
+        self.exit_action = QAction(style.standardIcon(QStyle.SP_DialogCloseButton), "E&xit", self)
+
+        # Edit Actions
+        self.undo_action = QAction(style.standardIcon(QStyle.SP_ArrowBack), "&Undo", self)
+        self.redo_action = QAction(style.standardIcon(QStyle.SP_ArrowForward), "&Redo", self)
+        self.copy_action = QAction(style.standardIcon(QStyle.SP_FileDialogContentsView), "&Copy Image", self) # SP_FileLinkIcon might be better
+        self.paste_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "&Paste Image", self) # SP_ToolBarHorizontalExtensionButton might be better
+
+        # View Actions
+        self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
+        self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
+
+        # Set shortcuts and tooltips (can also be done here or in create_menu_bar)
+        self.load_action.setShortcut(QKeySequence.Open)
+        self.load_action.setToolTip("Load an image file (Ctrl+O)")
+        self.save_action.setShortcut(QKeySequence.Save)
+        self.save_action.setToolTip("Save image and configuration (Ctrl+S)")
+        self.save_svg_action.setShortcut(QKeySequence("Ctrl+M"))
+        self.save_svg_action.setToolTip("Save as SVG for Word/vector editing (Ctrl+M)")
+        self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
+        self.reset_action.setToolTip("Reset image and all annotations (Ctrl+R)")
+        self.exit_action.setShortcut(QKeySequence.Quit)
+
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.setToolTip("Undo last action (Ctrl+Z)")
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.redo_action.setToolTip("Redo last undone action (Ctrl+Y)")
+        self.copy_action.setShortcut(QKeySequence.Copy)
+        self.copy_action.setToolTip("Copy rendered image to clipboard (Ctrl+C)")
+        self.paste_action.setShortcut(QKeySequence.Paste)
+        self.paste_action.setToolTip("Paste image from clipboard (Ctrl+V)")
+
+        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
+        self.zoom_in_action.setToolTip("Increase zoom level (Ctrl++)")
+        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
+        self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
+
+        # Connect signals
+        self.load_action.triggered.connect(self.load_image)
+        self.save_action.triggered.connect(self.save_image)
+        self.save_svg_action.triggered.connect(self.save_image_svg)
+        self.reset_action.triggered.connect(self.reset_image)
+        self.exit_action.triggered.connect(self.close)
+        self.undo_action.triggered.connect(self.undo_action_m)
+        self.redo_action.triggered.connect(self.redo_action_m)
+        self.copy_action.triggered.connect(self.copy_to_clipboard)
+        self.paste_action.triggered.connect(self.paste_image)
+        self.zoom_in_action.triggered.connect(self.zoom_in)
+        self.zoom_out_action.triggered.connect(self.zoom_out)
+        
+    def _update_preview_label_size(self):
+        """
+        Updates the fixed size of the live_view_label based on the current image's
+        aspect ratio and the application's preview size settings.
+        """
+        target_width = self.preview_label_width_setting # Use the setting
+        target_height = self.preview_label_width_setting # Default to square if no image
+
+        if self.image and not self.image.isNull():
+            w = self.image.width()
+            h = self.image.height()
+
+            if w > 0 and h > 0:
+                ratio = w / h
+                # Calculate height based on target width and ratio
+                calculated_height = int(target_width / ratio)
+
+                # Apply max height constraint if it exists and is needed
+                if hasattr(self, 'preview_label_max_height_setting') and calculated_height > self.preview_label_max_height_setting:
+                     target_height = self.preview_label_max_height_setting
+                     # Recalculate width based on constrained height and ratio
+                     target_width = int(target_height * ratio)
+                else:
+                    # Use the calculated height if within constraints or no constraint set
+                    target_height = calculated_height
+            else:
+                # Handle invalid image dimensions (e.g., 0 width or height)
+                print("Warning: Image has zero width or height. Using default preview size.")
+                target_height = target_width # Default to square-ish
+
+        else:
+            # No image loaded, use default settings (usually square)
+            target_height = target_width
+            # Optionally clear the label if no image
+            # self.live_view_label.clear()
+
+        # Ensure minimum dimensions (e.g., 50x50) to prevent UI collapse
+        min_dim = 50
+        target_width = max(min_dim, target_width)
+        target_height = max(min_dim, target_height)
+
+        # Set the calculated fixed size
+        print(f"Setting preview label size to: {target_width}x{target_height}")
+        self.live_view_label.setFixedSize(target_width, target_height)
+
+        # It might be necessary to trigger an update or repaint if the size change
+        # doesn't automatically reflect in the layout immediately.
+        # self.live_view_label.updateGeometry() # Usually not needed with setFixedSize
+        # self.update() # Update the main window if necessary
         
     def _update_status_bar(self):
         """Updates the status bar labels with current image information."""
@@ -2398,45 +2474,36 @@ class CombinedSDSApp(QMainWindow):
 
         
     def create_menu_bar(self):
-        # Create the menu bar
         menubar = self.menuBar()
 
-        # Create the "File" menu
-        file_menu = menubar.addMenu("File")
-
-        # Add "Load Image" action
-        load_action = QAction("Load Image", self)
-        load_action.triggered.connect(self.load_image)
-        file_menu.addAction(load_action)
-
-        # Add "Save Image" action
-        save_action = QAction("Save Image", self)
-        save_action.triggered.connect(self.save_image)
-        file_menu.addAction(save_action)
-        
-        # Add "Save Image SVG" action
-        save_action_svg = QAction("Save Image as SVG", self)
-        save_action_svg.triggered.connect(self.save_image_svg)
-        file_menu.addAction(save_action_svg)
-
-        # Add "Reset Image" action
-        reset_action = QAction("Reset Image", self)
-        reset_action.triggered.connect(self.reset_image)
-        file_menu.addAction(reset_action)
-
-        # Add a separator
+        # --- File Menu ---
+        file_menu = menubar.addMenu("&File")
+        file_menu.addAction(self.load_action)
+        file_menu.addAction(self.save_action)
+        file_menu.addAction(self.save_svg_action)
         file_menu.addSeparator()
+        file_menu.addAction(self.reset_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.exit_action)
 
-        # Add "Exit" action
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        # --- Edit Menu ---
+        edit_menu = menubar.addMenu("&Edit")
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.copy_action)
+        edit_menu.addAction(self.paste_action)
 
-        # Create the "About" menu
-        about_menu = menubar.addMenu("About")
+        # --- View Menu ---
+        view_menu = menubar.addMenu("&View")
+        view_menu.addAction(self.zoom_in_action)
+        view_menu.addAction(self.zoom_out_action)
 
-        # Add "GitHub" action
-        github_action = QAction("GitHub", self)
+        # --- About Menu ---
+        about_menu = menubar.addMenu("&About")
+        # Add "GitHub" action directly here or create it in _create_actions
+        github_action = QAction("&GitHub", self)
+        github_action.setToolTip("Open the project's GitHub page")
         github_action.triggered.connect(self.open_github)
         about_menu.addAction(github_action)
         
@@ -2444,6 +2511,31 @@ class CombinedSDSApp(QMainWindow):
     def open_github(self):
         # Open the GitHub link in the default web browser
         QDesktopServices.openUrl(QUrl("https://github.com/Anindya-Karmaker/Imaging-Assistant"))
+    
+    def create_tool_bar(self):
+        """Create the main application toolbar."""
+        self.tool_bar = QToolBar("Main Toolbar")
+        self.tool_bar.setIconSize(QSize(24, 24)) # Adjust icon size as needed
+        self.tool_bar.setMovable(False) # Optional: prevent toolbar moving
+        # Set style to show icons only, icons with text, etc.
+        self.tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly) # Or Qt.ToolButtonTextBesideIcon
+
+        # Add actions to the toolbar
+        self.tool_bar.addAction(self.load_action)
+        self.tool_bar.addAction(self.save_action)
+        self.tool_bar.addAction(self.paste_action)
+        self.tool_bar.addAction(self.copy_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.undo_action)
+        self.tool_bar.addAction(self.redo_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.zoom_in_action)
+        self.tool_bar.addAction(self.zoom_out_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.reset_action)
+
+        # Add the toolbar to the main window
+        self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
         
     def zoom_in(self):
         self.live_view_label.zoom_in()
@@ -2659,7 +2751,7 @@ class CombinedSDSApp(QMainWindow):
         self.undo_stack.append(state)
         self.redo_stack.clear()
     
-    def undo_action(self):
+    def undo_action_m(self):
         """Undo the last action by restoring the previous state."""
         if self.undo_stack:
             # Save the current state to the redo stack
@@ -2708,23 +2800,14 @@ class CombinedSDSApp(QMainWindow):
             self.protein_quantities = previous_state["protein_quantities"]
             self.standard_protein_areas = previous_state["standard_protein_areas"]
             try:
-                w=self.image.width()
-                h=self.image.height()
-                # Preview window
-                ratio=w/h
-                self.label_width=int(self.label_size)
-                label_height=int(self.label_width/ratio)
-                if label_height>self.label_width:
-                    label_height=self.label_width
-                    self.label_width=ratio*label_height
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                self._update_preview_label_size()
             except:
                 pass
             self._update_status_bar()
             self.update_live_view()
             
     
-    def redo_action(self):
+    def redo_action_m(self):
         """Redo the last undone action by restoring the next state."""
         if self.redo_stack:
             # Save the current state to the undo stack
@@ -2773,16 +2856,7 @@ class CombinedSDSApp(QMainWindow):
             self.protein_quantities = next_state["protein_quantities"]
             self.standard_protein_areas = next_state["standard_protein_areas"]
             try:
-                w=self.image.width()
-                h=self.image.height()
-                # Preview window
-                ratio=w/h
-                self.label_width=int(self.label_size)
-                label_height=int(self.label_width/ratio)
-                if label_height>self.label_width:
-                    label_height=self.label_width
-                    self.label_width=ratio*label_height
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                self._update_preview_label_size()
             except:
                 pass
             self._update_status_bar()
@@ -4852,103 +4926,176 @@ class CombinedSDSApp(QMainWindow):
         self.save_state() # Save state after pasting
     
     def load_image_from_clipboard(self):
-        """Load an image from the clipboard into self.image, preserving format."""
+        """
+        Load an image from the clipboard into self.image, preserving format.
+        Prioritizes file paths over raw image data to handle macOS file copying correctly.
+        If loaded from a file path, attempts to load an associated config file.
+        """
+        # Check for unsaved changes before proceeding
+        # if not self.prompt_save_if_needed(): # Optional: uncomment if needed
+        #     return # Abort paste if user cancels save
+
+        self.reset_image() # Clear previous state first
+
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
         loaded_image = None
         source_info = "Clipboard" # Default source
+        config_loaded_from_paste = False # Flag to track if config was loaded
 
-        if mime_data.hasImage():
-            loaded_image = clipboard.image()  # Get QImage
+        # --- PRIORITY 1: Check for File URLs ---
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()
+                if os.path.isfile(file_path) and file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
+                    print(f"Pasting file from URL: {file_path}")
+                    loaded_image = QImage(file_path)
+                    source_info = file_path
+
+                    if loaded_image.isNull():
+                        print(f"QImage failed for file '{os.path.basename(file_path)}', trying Pillow...")
+                        try:
+                            pil_image = Image.open(file_path)
+                            loaded_image = ImageQt.ImageQt(pil_image)
+                            if loaded_image.isNull():
+                                print("Pillow to QImage conversion failed for file.")
+                                loaded_image = None
+                            else:
+                                source_info = f"{file_path} (Pillow)"
+                                print(f"Loaded pasted file using Pillow fallback, QImage format: {loaded_image.format()}")
+                        except Exception as e:
+                            print(f"Pillow failed to load file '{os.path.basename(file_path)}': {e}")
+                            QMessageBox.warning(self, "File Load Error", f"Could not load image from file '{os.path.basename(file_path)}':\n{e}")
+                            loaded_image = None
+
+                    # --- *** ADDED: CONFIG FILE LOADING FOR PASTED FILE *** ---
+                    if loaded_image and not loaded_image.isNull():
+                        self.image_path = file_path # Store the path early for config lookup
+                        base_name_no_ext = os.path.splitext(os.path.basename(file_path))[0]
+                        # Construct potential config file name (remove _original/_modified if present)
+                        config_base = base_name_no_ext.replace("_original", "").replace("_modified", "")
+                        config_path = os.path.join(os.path.dirname(file_path), f"{config_base}_config.txt")
+
+                        print(f"Checking for associated config file: {config_path}")
+                        if os.path.exists(config_path):
+                            try:
+                                print(f"Found config file. Loading...")
+                                with open(config_path, "r") as config_file:
+                                    config_data = json.load(config_file)
+                                self.apply_config(config_data) # Apply loaded settings
+                                config_loaded_from_paste = True # Set flag
+                                print("Config file applied successfully from pasted file.")
+                            except Exception as e:
+                                QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply associated config file '{os.path.basename(config_path)}': {e}")
+                        else:
+                            print("No associated config file found for pasted file.")
+                    # --- *** END OF ADDED CONFIG LOADING *** ---
+
+                # else: # Non-image file URL, fall through to check raw data
+                #     print(f"Pasted URL is not a supported image file: {file_path}")
+                #     pass # Allow checking mime_data.hasImage()
+
+        # --- PRIORITY 2: Check for Raw Image Data (if no valid file was loaded) ---
+        if loaded_image is None and mime_data.hasImage():
+            print("No valid file URL pasted or processed, checking for raw image data...")
+            loaded_image = clipboard.image()
             if not loaded_image.isNull():
-                source_info = "Clipboard Image"
-            else: # Sometimes clipboard.image() fails, try Pillow as backup
+                source_info = "Clipboard Image Data"
+                print(f"Pasted raw image data, QImage format: {loaded_image.format()}")
+            else:
+                print("clipboard.image() returned null, trying Pillow grabclipboard...")
                 try:
                     pil_image = ImageGrab.grabclipboard()
                     if isinstance(pil_image, Image.Image):
                         loaded_image = ImageQt.ImageQt(pil_image)
-                        source_info = "Clipboard Image (Pillow Grab)"
+                        if loaded_image.isNull():
+                             print("Pillow grabclipboard to QImage conversion failed.")
+                             loaded_image = None
+                        else:
+                            source_info = "Clipboard Image Data (Pillow Grab)"
+                            print(f"Pasted raw image data using Pillow fallback, QImage format: {loaded_image.format()}")
                     else:
-                        loaded_image = None # Reset if Pillow didn't get an image
-                except Exception as e:
-                    print(f"Pillow clipboard grab failed: {e}")
+                        loaded_image = None
+                except Exception: # Keep quiet on Pillow grab errors
                     loaded_image = None
 
-        elif mime_data.hasUrls():
-            urls = mime_data.urls()
-            if urls:
-                file_path = urls[0].toLocalFile()
-                if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
-                    loaded_image = QImage(file_path)
-                    source_info = file_path
-                    if loaded_image.isNull():
-                         # Try Pillow fallback for files too
-                        try:
-                            pil_image = Image.open(file_path)
-                            loaded_image = ImageQt.ImageQt(pil_image)
-                            if loaded_image.isNull(): raise ValueError("Pillow failed for file.")
-                            source_info = f"{file_path} (Pillow)"
-                            print(f"Loaded pasted file using Pillow fallback, format: {loaded_image.format()}")
-                        except Exception as e:
-                            QMessageBox.warning(self, "Error", f"Failed to load pasted file '{os.path.basename(file_path)}': {e}")
-                            return
-                else:
-                     QMessageBox.warning(self, "Paste Error", "Pasted file is not a supported image type.")
-                     return
+        # --- Process the successfully loaded image ---
+        if loaded_image and not loaded_image.isNull():
+            self.is_modified = True
+            self.image = loaded_image
+            print(f"Successfully loaded image from {source_info}. Format: {self.image.format()}")
 
-        if not loaded_image or loaded_image.isNull():
-            QMessageBox.warning(self, "Paste Error", "No valid image found on clipboard or in pasted file.")
-            return
-
-        # --- Keep the loaded image format ---
-        self.image = loaded_image
-        print(f"Pasted image format: {self.image.format()}")
-
-        # --- Initialize backups ---
-        if not self.image.isNull():
-            self.original_image = self.image.copy() # Keep original pasted format
+            # Initialize backups
+            self.original_image = self.image.copy()
             self.image_master = self.image.copy()
             self.image_before_padding = None
             self.image_contrasted = self.image.copy()
             self.image_before_contrast = self.image.copy()
             self.image_padded = False
-            self.setWindowTitle(f"{self.window_title}::{source_info}")
+            # self.image_path is set earlier if loaded from file
 
-            # --- Update UI Elements (Label size, sliders) ---
+            # --- Update UI Elements ---
             try:
-                # (UI update logic remains the same)
-                w=self.image.width()
-                h=self.image.height()
-                ratio=w/h if h > 0 else 1
-                self.label_width=int(self.label_size)
-                label_height=int(self.label_width/ratio)
-                if label_height>self.label_width:
-                    label_height=self.label_width
-                    self.label_width=int(ratio*label_height)
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                w = self.image.width()
+                h = self.image.height()
+                if w <= 0 or h <= 0: raise ValueError("Invalid image dimensions after load.")
 
+                # Update preview label size
+                ratio=w/h if h > 0 else 1
+                target_width = int(self.label_size) # Use current label_size setting
+                target_height = int(target_width / ratio)
+                # Optional: Apply max height constraint
+                # if hasattr(self, 'preview_label_max_height_setting') and target_height > self.preview_label_max_height_setting:
+                #     target_height = self.preview_label_max_height_setting
+                #     target_width = int(target_height * ratio)
+                self.live_view_label.setFixedSize(target_width, target_height)
+
+                # Update slider ranges based on *new* label size
                 render_scale = 3
                 render_width = self.live_view_label.width() * render_scale
                 render_height = self.live_view_label.height() * render_scale
-                self.left_slider_range=[-100,int(render_width)+100]
-                self.left_padding_slider.setRange(self.left_slider_range[0],self.left_slider_range[1])
-                self.right_slider_range=[-100,int(render_width)+100]
-                self.right_padding_slider.setRange(self.right_slider_range[0],self.right_slider_range[1])
-                self.top_slider_range=[-100,int(render_height)+100]
-                self.top_padding_slider.setRange(self.top_slider_range[0],self.top_slider_range[1])
+                self.left_slider_range = [-100, int(render_width) + 100]
+                self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
+                self.right_slider_range = [-100, int(render_width) + 100]
+                self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
+                self.top_slider_range = [-100, int(render_height) + 100]
+                self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
 
-                self.left_padding_input.setText(str(int(self.image.width()*0.1)))
-                self.right_padding_input.setText(str(int(self.image.width()*0.1)))
-                self.top_padding_input.setText(str(int(self.image.height()*0.15)))
-                self.bottom_padding_input.setText("0")
+                # Set recommended padding only if config wasn't loaded
+                if not config_loaded_from_paste:
+                    self.left_padding_input.setText(str(int(w * 0.1)))
+                    self.right_padding_input.setText(str(int(w * 0.1)))
+                    self.top_padding_input.setText(str(int(h * 0.15)))
+                    self.bottom_padding_input.setText("0")
+
+                # Update window title and status bar
+                display_source = os.path.basename(source_info.split(" (")[0]) # Show filename or simplified source
+                title_suffix = " (+ Config)" if config_loaded_from_paste else ""
+                self.setWindowTitle(f"{self.window_title}::{display_source}{title_suffix}")
+                self._update_status_bar()
+
             except Exception as e:
                 print(f"Error setting up UI after paste: {e}")
-            # --- End UI Element Update ---
+                QMessageBox.warning(self, "UI Update Error", f"Could not update UI elements after pasting: {e}")
+                self._update_preview_label_size()
+
+            self.update_live_view()
+            self.save_state()
+
         else:
-             QMessageBox.critical(self, "Paste Error", "Failed to initialize image object after pasting.")
-             return
-        self._update_status_bar()
-    # --- END: Modified Loading / Pasting ---
+            # If no image was successfully loaded
+            QMessageBox.warning(self, "Paste Error", "No valid image found on clipboard or in pasted file.")
+            # Clean up state
+            self.image = None
+            self.original_image = None
+            self.image_master = None
+            self.image_path = None
+            self.live_view_label.clear()
+            self._update_preview_label_size()
+            self.setWindowTitle(self.window_title)
+            self._update_status_bar()
+            self.update_live_view()
         
     def update_font(self):
         """Update the font settings based on UI inputs"""
@@ -5047,15 +5194,7 @@ class CombinedSDSApp(QMainWindow):
             if self.image and not self.image.isNull():
                 try:
                     # (UI update logic remains the same as before)
-                    w=self.image.width()
-                    h=self.image.height()
-                    ratio=w/h if h > 0 else 1
-                    self.label_width=int(self.label_size)
-                    label_height=int(self.label_width/ratio)
-                    if label_height>self.label_width:
-                        label_height=self.label_width
-                        self.label_width=int(ratio*label_height)
-                    self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                    self._update_preview_label_size()
 
                     render_scale = 3
                     render_width = self.live_view_label.width() * render_scale
@@ -5557,15 +5696,8 @@ class CombinedSDSApp(QMainWindow):
 
             # --- Update UI (label size, slider ranges, live view) ---
             # (Keep the existing UI update logic here)
-            w = self.image.width()
-            h = self.image.height()
-            ratio = w / h if h > 0 else 1
-            self.label_width = int(self.label_size)
-            label_height = int(self.label_width / ratio)
-            if label_height > self.label_width:
-                label_height = self.label_width
-                self.label_width = int(ratio * label_height)
-            self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+ 
+            self._update_preview_label_size()
 
             render_scale = 3
             render_width = self.live_view_label.width() * render_scale
@@ -5997,20 +6129,11 @@ class CombinedSDSApp(QMainWindow):
         self.orientation_slider.setValue(0)
         try:
             if self.image: # Check if image exists after cropping
-                w = self.image.width()
-                h = self.image.height()
-                # Preview window
-                ratio = w / h if h > 0 else 1 # Avoid division by zero
-                self.label_width = int(self.screen_width * 0.28)
-                label_height = int(self.label_width / ratio)
-                if label_height > self.label_width:
-                    label_height = self.label_width
-                    self.label_width = int(ratio * label_height) # Ensure integer width
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                self._update_preview_label_size()
         except Exception as e:
             print(f"Error resizing label after crop: {e}")
             # Fallback size?
-            self.live_view_label.setFixedSize(int(self.label_size), int(self.label_size))
+            self._update_preview_label_size()
 
 
         self.update_live_view() # Final update with corrected markers and image
@@ -6073,20 +6196,11 @@ class CombinedSDSApp(QMainWindow):
         self.orientation_slider.setValue(0)
         try:
             if self.image: # Check if image exists after cropping
-                w = self.image.width()
-                h = self.image.height()
-                # Preview window
-                ratio = w / h if h > 0 else 1 # Avoid division by zero
-                self.label_width = int(self.screen_width * 0.28)
-                label_height = int(self.label_width / ratio)
-                if label_height > self.label_width:
-                    label_height = self.label_width
-                    self.label_width = int(ratio * label_height) # Ensure integer width
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                self._update_preview_label_size()
         except Exception as e:
             print(f"Error resizing label after crop: {e}")
             # Fallback size?
-            self.live_view_label.setFixedSize(int(self.label_size), int(self.label_size))
+            self._update_preview_label_size()
 
 
         self.update_live_view() # Final update with corrected markers and image
@@ -6179,21 +6293,11 @@ class CombinedSDSApp(QMainWindow):
 
         # Update live view label size based on the *new* image dimensions
         try:
-            if self.image: # Check if image exists after cropping
-                w = self.image.width()
-                h = self.image.height()
-                # Preview window
-                ratio = w / h if h > 0 else 1 # Avoid division by zero
-                self.label_width = int(self.screen_width * 0.28)
-                label_height = int(self.label_width / ratio)
-                if label_height > self.label_width:
-                    label_height = self.label_width
-                    self.label_width = int(ratio * label_height) # Ensure integer width
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+            self._update_preview_label_size()
         except Exception as e:
             print(f"Error resizing label after crop: {e}")
             # Fallback size?
-            self.live_view_label.setFixedSize(int(self.label_size), int(self.label_size))
+            self._update_preview_label_size()
 
 
         self.update_live_view() # Final update with corrected markers and image
@@ -7122,15 +7226,7 @@ class CombinedSDSApp(QMainWindow):
 
         if self.image and not self.image.isNull():
             try:
-                w=self.image.width()
-                h=self.image.height()
-                ratio=w/h if h > 0 else 1
-                self.label_width=int(self.label_size)
-                label_height=int(self.label_width/ratio)
-                if label_height>self.label_width:
-                    label_height=self.label_width
-                    self.label_width=int(ratio*label_height)
-                self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
+                self._update_preview_label_size()
                 self.left_padding_input.setText(str(int(self.image.width()*0.1)))
                 self.right_padding_input.setText(str(int(self.image.width()*0.1)))
                 self.top_padding_input.setText(str(int(self.image.height()*0.15)))
@@ -7138,7 +7234,7 @@ class CombinedSDSApp(QMainWindow):
                 print(f"Error resizing label during reset: {e}")
         else:
             self.live_view_label.clear()
-            self.live_view_label.setFixedSize(int(self.label_size), int(self.label_size))
+            self._update_preview_label_size()
 
         self.update_live_view()
         self._update_status_bar() # <--- Add this
