@@ -83,7 +83,7 @@ class ModifyMarkersDialog(QDialog):
             elif len(marker_data) == 8:
                 self.markers.append(marker_data) # Already new format
             else:
-                print(f"Warning: Skipping marker with unexpected data length: {marker_data}")
+                pass
         # self.markers now contains only 8-element tuples
 
         self._block_signals = False # Flag to prevent recursive signals
@@ -146,7 +146,6 @@ class ModifyMarkersDialog(QDialog):
                 # -->> Unpack 8 elements <<--
                 x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data
             except ValueError as e:
-                 print(f"Error unpacking marker data at row {row_idx}: {marker_data} - {e}")
                  self.table_widget.setItem(row_idx, 0, QTableWidgetItem("Error"))
                  continue
 
@@ -304,7 +303,6 @@ class ModifyMarkersDialog(QDialog):
                     current_marker[7] = is_checked # Index 7 is italic
 
                 self.markers[row] = tuple(current_marker)
-                # print(f"Updated style for marker {row}: {self.markers[row]}") # Debug
             except IndexError:
                 print(f"Error: Index mismatch updating style for marker at row {row}.")
             except Exception as e:
@@ -705,7 +703,6 @@ class PeakAreaDialog(QDialog):
 
         self.original_max_value = 255.0 # Default assumption
         pil_mode = cropped_data.mode
-        print(f"PeakAreaDialog: Initializing with PIL mode = {pil_mode}")
 
         if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
             self.intensity_array_original_range = np.array(cropped_data, dtype=np.float64)
@@ -717,13 +714,11 @@ class PeakAreaDialog(QDialog):
              self.intensity_array_original_range = np.array(cropped_data, dtype=np.float64)
              max_in_float = np.max(self.intensity_array_original_range) if np.any(self.intensity_array_original_range) else 1.0
              self.original_max_value = 1.0 if max_in_float <= 1.0 and max_in_float > 0 else max_in_float
-             print(f"PeakAreaDialog: Float max value detected: {max_in_float}, using original_max_value={self.original_max_value}")
              try:
                  scaled_for_display = np.clip(self.intensity_array_original_range * 255.0 / self.original_max_value, 0, 255).astype(np.uint8)
                  self.cropped_image_for_display = Image.fromarray(scaled_for_display, mode='L')
              except: pass
         else:
-            print(f"PeakAreaDialog: Warning - Mode '{pil_mode}' converting to 8-bit 'L'.")
             try:
                 gray_img = cropped_data.convert("L")
                 self.intensity_array_original_range = np.array(gray_img, dtype=np.float64)
@@ -1654,7 +1649,7 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         # window_width = int(self.screen_width * 0.5)  # 60% of screen width
         # window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.preview_label_width_setting = int(self.screen_width * 0.28)
+        self.preview_label_width_setting = int(self.screen_width * 0.55)
         self.preview_label_max_height_setting = int(self.screen_height * 0.4)
         self.label_size = self.preview_label_width_setting
         self.window_title="IMAGING ASSISTANT V6.0"
@@ -1990,65 +1985,91 @@ class CombinedSDSApp(QMainWindow):
         
     def _update_preview_label_size(self):
         """
-        Updates the fixed size of the live_view_label. The height is fixed based on
-        the preview_label_max_height_setting, and the width is adjusted to
-        maintain the image's aspect ratio.
+        Updates the fixed size of the live_view_label, respecting max width/height
+        and maintaining aspect ratio. Prioritizes fixing height, but adjusts if
+        width constraint is violated.
         """
         # --- Define Defaults and Minimums ---
-        default_max_height = 500  # Fallback if setting is missing
-        min_dim = 50              # Minimum allowed dimension for the label
+        default_max_width = 600  # Fallback if width setting is missing/invalid
+        default_max_height = 500 # Fallback if height setting is missing/invalid
+        min_dim = 50             # Minimum allowed dimension for the label
 
-        # --- Determine the Fixed Target Height ---
-        target_fixed_height = default_max_height
+        # --- Determine Maximum Constraints (with validation) ---
+        max_w = default_max_width
+        if hasattr(self, 'preview_label_width_setting'):
+            try:
+                setting_width = int(self.preview_label_width_setting)
+                if setting_width > 0:
+                    max_w = setting_width
+                else:
+                    print("Warning: preview_label_width_setting is not positive, using default.")
+            except (TypeError, ValueError):
+                print("Warning: preview_label_width_setting is invalid, using default.")
+        else:
+            print("Warning: preview_label_width_setting attribute not found, using default.")
+        max_w = max(min_dim, max_w) # Apply minimum constraint
+
+        max_h = default_max_height
         if hasattr(self, 'preview_label_max_height_setting'):
             try:
                 setting_height = int(self.preview_label_max_height_setting)
                 if setting_height > 0:
-                    target_fixed_height = setting_height
+                    max_h = setting_height
                 else:
-                    print("Warning: preview_label_max_height_setting is not positive, using default height.")
+                    print("Warning: preview_label_max_height_setting is not positive, using default.")
             except (TypeError, ValueError):
-                print("Warning: preview_label_max_height_setting is invalid, using default height.")
+                print("Warning: preview_label_max_height_setting is invalid, using default.")
         else:
-            print("Warning: preview_label_max_height_setting attribute not found, using default height.")
+            print("Warning: preview_label_max_height_setting attribute not found, using default.")
+        max_h = max(min_dim, max_h) # Apply minimum constraint
 
-        # Ensure the target fixed height is not smaller than the minimum
-        target_fixed_height = max(min_dim, target_fixed_height)
 
         # --- Initialize Final Dimensions ---
-        # Default to square if no image, based on the fixed height
-        final_target_width = target_fixed_height
-        final_target_height = target_fixed_height # Height is always fixed to this value
+        final_w = max_w
+        final_h = max_h
 
-        # --- Calculate Width Based on Image Aspect Ratio ---
+        # --- Calculate Dimensions Based on Image ---
         if self.image and not self.image.isNull():
             w = self.image.width()
             h = self.image.height()
 
             if w > 0 and h > 0:
-                ratio = w / h
-                # Calculate the required width to maintain ratio at the fixed height
-                calculated_width = int(target_fixed_height * ratio)
-                final_target_width = calculated_width # Update width based on ratio and fixed height
+                img_ratio = w / h
+
+                # Attempt 1: Calculate width based on fixed max height
+                calc_w_based_on_h = max_h * img_ratio
+
+                if calc_w_based_on_h <= max_w:
+                    # Width is within limits, height is fixed
+                    final_w = calc_w_based_on_h
+                    final_h = max_h
+                    print(f"  Mode 1: Height fixed ({max_h}), Width calculated ({final_w:.0f}) fits <= {max_w}")
+                else:
+                    # Calculated width exceeds max width, so fix width and calculate height
+                    final_w = max_w
+                    final_h = max_w / img_ratio
+                    print(f"  Mode 2: Width fixed ({max_w}), Height calculated ({final_h:.0f})")
+
+                # Ensure calculated dimensions are not below minimum
+                final_w = max(min_dim, int(final_w))
+                final_h = max(min_dim, int(final_h))
+
             else:
                 # Handle invalid image dimensions (0 width or height)
-                print("Warning: Image has zero width or height. Using default square preview size based on fixed height.")
-                # Keep the default square size initialized above
+                print("Warning: Image has zero width or height. Using max constraints as fallback.")
+                final_w = max_w # Already set above
+                final_h = max_h # Already set above
 
         else:
-            # No image loaded
-            print("No image loaded. Using default square preview size based on fixed height.")
-            # Keep the default square size initialized above
+            # No image loaded - Use max constraints as default size
+            print("No image loaded. Using max constraints as fallback size.")
+            final_w = max_w # Already set above
+            final_h = max_h # Already set above
             # self.live_view_label.clear() # Optionally clear the label
 
-        # --- Apply Minimum Dimension Constraints to Width ---
-        # Height is already constrained by target_fixed_height and min_dim check above
-        final_target_width = max(min_dim, final_target_width)
-
         # --- Set the Calculated Fixed Size ---
-        # Height is fixed, width is adjusted.
-        print(f"Setting preview label size to: {final_target_width}x{final_target_height}")
-        self.live_view_label.setFixedSize(final_target_width, final_target_height)
+        print(f"Setting preview label fixed size to: {final_w}x{final_h}")
+        self.live_view_label.setFixedSize(final_w, final_h)
         
     def _update_status_bar(self):
         """Updates the status bar labels with current image information."""
@@ -4258,15 +4279,10 @@ class CombinedSDSApp(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             modified_markers = dialog.get_modified_markers()
             if modified_markers != self.custom_markers:
-                 print("Applying modified markers.")
                  self.save_state()
                  self.custom_markers = modified_markers
                  self.is_modified = True
                  self.update_live_view()
-            else:
-                 print("No changes made to custom markers.")
-        else:
-             print("Marker modification cancelled.")
     
     def add_column(self):
         """Add a new column to the top marker labels."""
@@ -4321,8 +4337,6 @@ class CombinedSDSApp(QMainWindow):
             QMessageBox.information(self, "Info", "Image is already grayscale.")
             return
 
-        print(f"Converting image from format {current_format} to grayscale.")
-
         # Preferred target format for grayscale conversion
         # Let's aim for 16-bit if the source might have high dynamic range (like color)
         # If source was already 8-bit (though format check above prevents this), stick to 8-bit.
@@ -4345,7 +4359,6 @@ class CombinedSDSApp(QMainWindow):
                 gray_np_target = (gray_np / 255.0 * 65535.0).astype(np.uint16)
                 converted_image = self.numpy_to_qimage(gray_np_target)
             elif np_img.ndim == 2: # Already grayscale (but maybe different format code)
-                 print("Warning: Image is NumPy 2D but not Format_Grayscale. Attempting direct conversion.")
                  # Try to convert to the target format
                  if target_format == QImage.Format_Grayscale16 and np_img.dtype == np.uint8:
                      converted_image = self.numpy_to_qimage((np_img * 257.0).astype(np.uint16)) # Scale up
@@ -4360,19 +4373,16 @@ class CombinedSDSApp(QMainWindow):
                 raise ValueError("Grayscale conversion via NumPy failed.")
 
         except Exception as e:
-            print(f"Error during NumPy conversion for grayscale: {e}. Falling back to QImage.convertToFormat.")
             # Fallback to simple QImage conversion (likely Grayscale8)
             converted_image = self.image.convertToFormat(QImage.Format_Grayscale8) # Fallback target
 
         if not converted_image.isNull():
-             print(f"Image converted to grayscale format: {converted_image.format()}")
              self.image = converted_image
              # Update backups consistently
              self.image_before_contrast = self.image.copy()
              self.image_contrasted = self.image.copy()
              # Reset padding state if format changes implicitly? Let's assume padding needs re-application.
              if self.image_padded:
-                 print("Warning: Grayscale conversion applied after padding. Padding might need re-application.")
                  self.image_before_padding = None # Invalidate padding backup
                  self.image_padded = False
              else:
@@ -4508,8 +4518,6 @@ class CombinedSDSApp(QMainWindow):
         # Store the custom marker's position and text
         self.custom_markers = getattr(self, "custom_markers", [])
         self.custom_markers.append((image_x, image_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value(),False,False))
-        # print("CUSTOM_MARKER: ",self.custom_markers)
-        # Update the live view to render the custom marker
         self.update_live_view()
         
     def select_custom_marker_color(self):
@@ -4716,7 +4724,6 @@ class CombinedSDSApp(QMainWindow):
                 max_val = 255.0
             else: # Default for unexpected types (e.g., float input?)
                  max_val = np.max(img_array_float) if np.any(img_array_float) else 1.0
-                 print(f"Warning: Unknown dtype {img_array.dtype}, using max_val={max_val}")
 
             # --- Apply adjustments ---
             if img_array.ndim == 3: # Color Image (e.g., RGB, RGBA, BGR, BGRA)
@@ -4760,7 +4767,6 @@ class CombinedSDSApp(QMainWindow):
                     img_array_final_float = np.dstack((img_array_final_float, alpha_channel))
 
             elif img_array.ndim == 2: # Grayscale Image
-                print("  Processing Grayscale Image")
                 # Normalize to 0-1 range
                 img_array_norm = img_array_float / max_val
 
@@ -4785,7 +4791,6 @@ class CombinedSDSApp(QMainWindow):
                 # Scale back
                 img_array_final_float = img_array_norm_clipped * max_val
             else:
-                print(f"Warning: Unsupported array dimension {img_array.ndim} in apply_contrast_gamma.")
                 return qimage # Return original if unsupported dimensions
 
             # Convert back to original data type
@@ -4873,7 +4878,7 @@ class CombinedSDSApp(QMainWindow):
                     }
                     json.dump(config, f)  # Save both marker_values and top_label_dict
             except Exception as e:
-                print(f"Error saving config: {e}")
+                pass
 
         self.combo_box.setCurrentText(new_name)
         self.load_config()  # Reload the configuration after saving
@@ -4905,7 +4910,6 @@ class CombinedSDSApp(QMainWindow):
             }  # Default top labels
             self.top_label = self.top_label_dict.get("Precision Plus All Blue/Unstained", ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"])
         except Exception as e:
-            print(f"Error loading config: {e}")
             # Fallback to default values if there is an error
             self.marker_values_dict = {
                 "Precision Plus All Blue/Unstained": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
@@ -4955,23 +4959,18 @@ class CombinedSDSApp(QMainWindow):
             if urls:
                 file_path = urls[0].toLocalFile()
                 if os.path.isfile(file_path) and file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
-                    print(f"Pasting file from URL: {file_path}")
                     loaded_image = QImage(file_path)
                     source_info = file_path
 
                     if loaded_image.isNull():
-                        print(f"QImage failed for file '{os.path.basename(file_path)}', trying Pillow...")
                         try:
                             pil_image = Image.open(file_path)
                             loaded_image = ImageQt.ImageQt(pil_image)
                             if loaded_image.isNull():
-                                print("Pillow to QImage conversion failed for file.")
                                 loaded_image = None
                             else:
                                 source_info = f"{file_path} (Pillow)"
-                                print(f"Loaded pasted file using Pillow fallback, QImage format: {loaded_image.format()}")
                         except Exception as e:
-                            print(f"Pillow failed to load file '{os.path.basename(file_path)}': {e}")
                             QMessageBox.warning(self, "File Load Error", f"Could not load image from file '{os.path.basename(file_path)}':\n{e}")
                             loaded_image = None
 
@@ -4983,44 +4982,32 @@ class CombinedSDSApp(QMainWindow):
                         config_base = base_name_no_ext.replace("_original", "").replace("_modified", "")
                         config_path = os.path.join(os.path.dirname(file_path), f"{config_base}_config.txt")
 
-                        print(f"Checking for associated config file: {config_path}")
                         if os.path.exists(config_path):
                             try:
-                                print(f"Found config file. Loading...")
                                 with open(config_path, "r") as config_file:
                                     config_data = json.load(config_file)
                                 self.apply_config(config_data) # Apply loaded settings
                                 config_loaded_from_paste = True # Set flag
-                                print("Config file applied successfully from pasted file.")
                             except Exception as e:
                                 QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply associated config file '{os.path.basename(config_path)}': {e}")
-                        else:
-                            print("No associated config file found for pasted file.")
+
                     # --- *** END OF ADDED CONFIG LOADING *** ---
 
-                # else: # Non-image file URL, fall through to check raw data
-                #     print(f"Pasted URL is not a supported image file: {file_path}")
-                #     pass # Allow checking mime_data.hasImage()
 
         # --- PRIORITY 2: Check for Raw Image Data (if no valid file was loaded) ---
         if loaded_image is None and mime_data.hasImage():
-            print("No valid file URL pasted or processed, checking for raw image data...")
             loaded_image = clipboard.image()
             if not loaded_image.isNull():
                 source_info = "Clipboard Image Data"
-                print(f"Pasted raw image data, QImage format: {loaded_image.format()}")
             else:
-                print("clipboard.image() returned null, trying Pillow grabclipboard...")
                 try:
                     pil_image = ImageGrab.grabclipboard()
                     if isinstance(pil_image, Image.Image):
                         loaded_image = ImageQt.ImageQt(pil_image)
                         if loaded_image.isNull():
-                             print("Pillow grabclipboard to QImage conversion failed.")
                              loaded_image = None
                         else:
                             source_info = "Clipboard Image Data (Pillow Grab)"
-                            print(f"Pasted raw image data using Pillow fallback, QImage format: {loaded_image.format()}")
                     else:
                         loaded_image = None
                 except Exception: # Keep quiet on Pillow grab errors
@@ -5030,7 +5017,6 @@ class CombinedSDSApp(QMainWindow):
         if loaded_image and not loaded_image.isNull():
             self.is_modified = True
             self.image = loaded_image
-            print(f"Successfully loaded image from {source_info}. Format: {self.image.format()}")
 
             # Initialize backups
             self.original_image = self.image.copy()
@@ -5082,7 +5068,6 @@ class CombinedSDSApp(QMainWindow):
                 self._update_status_bar()
 
             except Exception as e:
-                print(f"Error setting up UI after paste: {e}")
                 QMessageBox.warning(self, "UI Update Error", f"Could not update UI elements after pasting: {e}")
                 self._update_preview_label_size()
 
@@ -5146,7 +5131,6 @@ class CombinedSDSApp(QMainWindow):
                     loaded_image = ImageQt.ImageQt(pil_image)
                     if loaded_image.isNull():
                         raise ValueError("Pillow could not convert to QImage.")
-                    print(f"Loaded '{os.path.basename(file_path)}' using Pillow fallback, format: {loaded_image.format()}")
 
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to load image '{os.path.basename(file_path)}': {e}")
@@ -5155,7 +5139,6 @@ class CombinedSDSApp(QMainWindow):
 
             # --- Keep the loaded image format ---
             self.image = loaded_image
-            print(f"Loaded image format: {self.image.format()}")
 
             # --- Initialize backups with the loaded format ---
             if not self.image.isNull():
@@ -5177,19 +5160,14 @@ class CombinedSDSApp(QMainWindow):
                     config_name = self.base_name + "_config.txt"
 
                 config_path = os.path.join(os.path.dirname(file_path), config_name)
-                print(f"Looking for config file at: {config_path}")
 
                 if os.path.exists(config_path):
                     try:
-                        print(f"Found config file. Loading...")
                         with open(config_path, "r") as config_file:
                             config_data = json.load(config_file)
                         self.apply_config(config_data) # Apply loaded settings
-                        print("Config file applied.")
                     except Exception as e:
                         QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
-                else:
-                    print("No associated config file found.")
                 # --- End Config File Loading ---
 
             else:
@@ -5219,7 +5197,7 @@ class CombinedSDSApp(QMainWindow):
                         self.bottom_padding_input.setText("0")
 
                 except Exception as e:
-                    print(f"Error setting up UI after load: {e}")
+                    pass
             # --- End UI Element Update ---
 
             
@@ -5255,7 +5233,6 @@ class CombinedSDSApp(QMainWindow):
             # QMessageBox.warning(self, "Error", f"Invalid marker data in config: {e}")
             pass
         try:
-            # print("TOP LABELS: ",config_data["marker_labels"]["top"])
             self.top_label = [str(label) for label in config_data["marker_labels"]["top"]]
             self.top_marker_input.setText(", ".join(self.top_label))
         except KeyError as e:
@@ -5286,7 +5263,6 @@ class CombinedSDSApp(QMainWindow):
                 self.marker_values_textbox.setEnabled(False)
                 
         except:
-            # print("ERROR IN LEFT/RIGHT MARKER DATA")
             pass
     
         try:
@@ -5307,8 +5283,8 @@ class CombinedSDSApp(QMainWindow):
                         x, y, text, color, font, font_size, is_bold, is_italic
                     ))
                 except (KeyError, ValueError, TypeError) as e:
-                    print(f"Warning: Skipping invalid custom marker entry during load: {marker_dict} - {e}")
-
+                    pass
+                    
             self.custom_markers = loaded_custom_markers
                 
                 
@@ -5423,7 +5399,7 @@ class CombinedSDSApp(QMainWindow):
                     "italic": is_italic    # Save italic flag
                 })
             except (ValueError, TypeError, IndexError) as e:
-                print(f"Warning: Skipping invalid custom marker data during save: {marker_tuple} - {e}")
+                pass
         config["custom_markers"] = custom_markers_data
         # --- End Updated Custom Markers ---
 
@@ -5503,8 +5479,9 @@ class CombinedSDSApp(QMainWindow):
                 else:
                     marker_value_to_add = ""
                     if current_marker_count == len(self.marker_values): # Print warning only once
-                        print(f"Warning: Adding left marker {current_marker_count + 1} beyond preset count. Using empty label.")
+                        pass
 
+                    
                 self.left_markers.append((image_y, marker_value_to_add))
                 self.current_left_marker_index += 1 # Still increment conceptual index
 
@@ -5528,7 +5505,7 @@ class CombinedSDSApp(QMainWindow):
                 else:
                     marker_value_to_add = ""
                     if current_marker_count == len(self.marker_values): # Print warning only once
-                        print(f"Warning: Adding right marker {current_marker_count + 1} beyond preset count. Using empty label.")
+                        pass
 
                 self.right_markers.append((image_y, marker_value_to_add))
                 self.current_right_marker_index += 1
@@ -5552,7 +5529,7 @@ class CombinedSDSApp(QMainWindow):
                 else:
                     label_to_add = ""
                     if current_marker_count == len(self.top_label): # Print warning only once
-                         print(f"Warning: Adding top marker {current_marker_count + 1} beyond preset count. Using empty label.")
+                        pass     
 
                 self.top_markers.append((image_x, label_to_add))
                 self.current_top_label_index += 1
@@ -5567,7 +5544,6 @@ class CombinedSDSApp(QMainWindow):
 
         except Exception as e:
              # Catch other potential errors
-             print(f"ERROR ADDING BANDS: An unexpected error occurred - {type(e).__name__}: {e}")
              import traceback
              traceback.print_exc()
              QMessageBox.critical(self, "Error", f"An unexpected error occurred while adding the marker:\n{e}")
@@ -5642,12 +5618,10 @@ class CombinedSDSApp(QMainWindow):
         try:
             # --- Determine if the source image has transparency ---
             source_has_alpha = self.image.hasAlphaChannel()
-            print(f"Source image has alpha channel: {source_has_alpha}")
 
             # --- Convert source QImage to NumPy array ---
             np_img = self.qimage_to_numpy(self.image)
             if np_img is None: raise ValueError("NumPy conversion failed.")
-            print(f"  Source NumPy array shape: {np_img.shape}, dtype: {np_img.dtype}")
 
             # --- Determine fill value based on source transparency and dimensions ---
             fill_value = None
@@ -5659,13 +5633,10 @@ class CombinedSDSApp(QMainWindow):
                 # OpenCV expects (B, G, R, Alpha) or just Alpha if grayscale+alpha (less common here)
                 # Ensure we provide 4 values for BGRA
                 fill_value = (0, 0, 0, 0) # Transparent Black (B=0, G=0, R=0, A=0)
-                print(f"Padding with transparency. Fill value: {fill_value}")
             elif np_img.ndim == 3: # Opaque Color (BGR)
                 fill_value = (255, 255, 255) # White (B=255, G=255, R=255)
-                print(f"Padding opaque color with white. Fill value: {fill_value}")
             elif np_img.ndim == 2: # Opaque Grayscale
                 fill_value = 65535 if np_img.dtype == np.uint16 else 255 # White
-                print(f"Padding opaque grayscale with white. Fill value: {fill_value}")
             else:
                  raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
 
@@ -5673,18 +5644,15 @@ class CombinedSDSApp(QMainWindow):
             self.adjust_markers_for_padding(padding_left, padding_right, padding_top, padding_bottom)
 
             # --- Pad using OpenCV's copyMakeBorder ---
-            print(f"Applying padding: Top={padding_top}, Bottom={padding_bottom}, Left={padding_left}, Right={padding_right}")
             padded_np = cv2.copyMakeBorder(np_img, padding_top, padding_bottom,
                                            padding_left, padding_right,
                                            cv2.BORDER_CONSTANT, value=fill_value)
-            print(f"  Padded NumPy array shape: {padded_np.shape}, dtype: {padded_np.dtype}")
 
             # --- Convert padded NumPy array back to QImage ---
             # numpy_to_qimage should automatically select a format supporting alpha if padded_np has 4 channels
             padded_image = self.numpy_to_qimage(padded_np)
             if padded_image.isNull():
                  raise ValueError("Conversion back to QImage failed after padding.")
-            print(f"  Converted back to QImage format: {padded_image.format()}, Has alpha: {padded_image.hasAlphaChannel()}")
 
 
             # --- Update main image and backups ---
@@ -5718,7 +5686,6 @@ class CombinedSDSApp(QMainWindow):
 
             self.update_live_view() # Refresh display
             self._update_status_bar() # Update size/depth info
-            print(f"Padding applied successfully.")
 
         except Exception as e:
             QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
@@ -5825,7 +5792,6 @@ class CombinedSDSApp(QMainWindow):
         # Create a perspective transformation using quadToQuad
         transform = QTransform()
         if not QTransform.quadToQuad(source_corners, destination_corners, transform):
-            print("Failed to create transformation matrix")
             return
     
         # Apply the transformation
@@ -6039,7 +6005,6 @@ class CombinedSDSApp(QMainWindow):
                         scaled_font_size = int(int(font_size) * render_scale)
                         if scaled_font_size < 1: scaled_font_size = 1 # Ensure minimum size 1
                     except (ValueError, TypeError):
-                        print(f"Warning: Invalid font size '{font_size}' for marker, using default.")
                         scaled_font_size = int(12 * render_scale) # Default scaled size (e.g., 12pt scaled)
 
                     # Ensure font_family is a string
@@ -6057,7 +6022,6 @@ class CombinedSDSApp(QMainWindow):
                     elif isinstance(color, QColor):
                         current_color = color # It's already a QColor
                     else:
-                         print(f"Warning: Invalid color type '{type(color)}' for marker, using black.")
                          current_color = Qt.black # Fallback color
                     painter.setPen(current_color)
 
@@ -6078,7 +6042,6 @@ class CombinedSDSApp(QMainWindow):
                     )
             except (ValueError, TypeError, IndexError) as e:
                 # Catch errors during unpacking or processing of a single marker tuple
-                print(f"Warning: Skipping drawing invalid/incomplete custom marker tuple: {marker_tuple} - Error: {e}")
                 import traceback
                 traceback.print_exc() # Print stack trace for debugging tuple issues
             
@@ -6137,7 +6100,6 @@ class CombinedSDSApp(QMainWindow):
             if self.image: # Check if image exists after cropping
                 self._update_preview_label_size()
         except Exception as e:
-            print(f"Error resizing label after crop: {e}")
             # Fallback size?
             self._update_preview_label_size()
 
@@ -6204,7 +6166,6 @@ class CombinedSDSApp(QMainWindow):
             if self.image: # Check if image exists after cropping
                 self._update_preview_label_size()
         except Exception as e:
-            print(f"Error resizing label after crop: {e}")
             # Fallback size?
             self._update_preview_label_size()
 
@@ -6301,7 +6262,6 @@ class CombinedSDSApp(QMainWindow):
         try:
             self._update_preview_label_size()
         except Exception as e:
-            print(f"Error resizing label after crop: {e}")
             # Fallback size?
             self._update_preview_label_size()
 
@@ -6334,7 +6294,6 @@ class CombinedSDSApp(QMainWindow):
         # Create a perspective transformation using quadToQuad
         transform = QTransform()
         if not QTransform.quadToQuad(source_corners, destination_corners, transform):
-            print("Failed to create transformation matrix")
             return
     
         # Apply the transformation
@@ -6407,7 +6366,6 @@ class CombinedSDSApp(QMainWindow):
             if save_format_orig == "TIF": save_format_orig = "TIFF" # Use standard TIFF identifier
             elif save_format_orig == "JPEG": save_format_orig = "JPG"
 
-            print(f"Attempting to save original ({img_to_save_orig.format()}) as {save_format_orig} to {original_save_path}")
             # QImage.save attempts to match format, quality is for lossy formats
             quality = 95 if save_format_orig in ["JPG", "JPEG"] else -1 # Default quality (-1) for lossless
 
@@ -6541,7 +6499,6 @@ class CombinedSDSApp(QMainWindow):
                         x_pos, y_pos, marker_text, color, font_family, font_size = marker_tuple
                         # is_bold and is_italic remain False (default)
                     else:
-                        print(f"Warning: Skipping custom marker with unexpected tuple length {len(marker_tuple)}: {marker_tuple}")
                         continue # Skip this marker
 
                     # --- Prepare SVG attributes ---
@@ -6566,7 +6523,6 @@ class CombinedSDSApp(QMainWindow):
                     try:
                         font_size_svg = f"{int(font_size)}px" # Ensure integer and add px
                     except (ValueError, TypeError):
-                         print(f"Warning: Invalid font size '{font_size}' for marker, using 12px.")
                          font_size_svg = "12px" # Default size
 
                     # SVG font weight and style based on boolean flags
@@ -6593,7 +6549,6 @@ class CombinedSDSApp(QMainWindow):
                     )
                 except Exception as e:
                      # Catch errors during processing a single marker tuple
-                     print(f"Error processing custom marker for SVG: {marker_tuple} - {e}")
                      import traceback
                      traceback.print_exc() # Print full traceback for debugging
     
@@ -6664,7 +6619,6 @@ class CombinedSDSApp(QMainWindow):
     def copy_to_clipboard(self):
         """Copy the image from live view label to the clipboard."""
         if not self.image:
-            print("No image to copy.")
             return
     
         # Define a high-resolution canvas for clipboard copy
@@ -6845,7 +6799,6 @@ class CombinedSDSApp(QMainWindow):
                     numeric_markers.append((float(pos), float(val_str)))
                 except (ValueError, TypeError):
                     # Skip markers with non-numeric values for prediction
-                    print(f"Warning: Skipping non-numeric marker value '{val_str}' at position {pos}.")
                     continue
 
             if len(numeric_markers) < 2:
@@ -7069,7 +7022,6 @@ class CombinedSDSApp(QMainWindow):
         """
         # --- Normalize *all* marker positions using the *active* set's scale ---
         if active_max_pos == active_min_pos: # Avoid division by zero
-             print("Warning: Cannot normalize all points - active set min/max are equal.")
              all_norm_distances_for_plot = np.zeros_like(all_marker_positions)
         else:
             all_norm_distances_for_plot = (all_marker_positions - active_min_pos) / (active_max_pos - active_min_pos)
@@ -7118,7 +7070,6 @@ class CombinedSDSApp(QMainWindow):
             pixmap.loadFromData(buffer.read())
             buffer.close()
         except Exception as plot_err:
-            print(f"Error generating plot image: {plot_err}")
             QMessageBox.warning(self, "Plot Error", "Could not generate the prediction plot.")
             # pixmap remains None
         finally:
@@ -7175,7 +7126,6 @@ class CombinedSDSApp(QMainWindow):
             self.image_contrasted = self.image.copy() # Reset contrast state
             self.image_before_contrast = self.image.copy()
             self.image_padded = False # Reset padding flag
-            print(f"Image reset to master format: {self.image.format()}")
         else:
             # No master image loaded, clear everything
             self.image = None
@@ -7185,7 +7135,6 @@ class CombinedSDSApp(QMainWindow):
             self.image_contrasted = None
             self.image_before_contrast = None
             self.image_padded = False
-            print("Image state cleared.")
 
         # (Rest of reset logic for markers, UI elements, etc. remains the same)
         self.warped_image=None
@@ -7228,7 +7177,7 @@ class CombinedSDSApp(QMainWindow):
             self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
             self.on_combobox_changed()
         except Exception as e:
-            print(f"Error resetting combo box: {e}")
+            pass
 
         if self.image and not self.image.isNull():
             try:
@@ -7237,14 +7186,13 @@ class CombinedSDSApp(QMainWindow):
                 self.right_padding_input.setText(str(int(self.image.width()*0.1)))
                 self.top_padding_input.setText(str(int(self.image.height()*0.15)))
             except Exception as e:
-                print(f"Error resizing label during reset: {e}")
+                pass
         else:
             self.live_view_label.clear()
             self._update_preview_label_size()
 
         self.update_live_view()
         self._update_status_bar() # <--- Add this
-        print("Image and settings reset complete.")
 
 
 if __name__ == "__main__":
