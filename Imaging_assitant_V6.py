@@ -1649,8 +1649,8 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         # window_width = int(self.screen_width * 0.5)  # 60% of screen width
         # window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.preview_label_width_setting = int(self.screen_width * 0.55)
-        self.preview_label_max_height_setting = int(self.screen_height * 0.4)
+        self.preview_label_width_setting = int(self.screen_width * 0.45)
+        self.preview_label_max_height_setting = int(self.screen_height * 0.35)
         self.label_size = self.preview_label_width_setting
         self.window_title="IMAGING ASSISTANT V6.0"
         # --- Initialize Status Bar Labels ---
@@ -1808,11 +1808,12 @@ class CombinedSDSApp(QMainWindow):
         self.redo_shortcut = QShortcut(QKeySequence.Redo, self) # Ctrl+Y / Cmd+Shift+Z
         self.redo_shortcut.activated.connect(self.redo_action_m) # Connect directly to method
 
-        self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Ctrl++ / Cmd++
-        self.zoom_in_shortcut.activated.connect(self.zoom_in_action.trigger) # Trigger the action
-
         self.zoom_out_shortcut = QShortcut(QKeySequence.ZoomOut, self) # Ctrl+- / Cmd+-
         self.zoom_out_shortcut.activated.connect(self.zoom_out_action.trigger) # Trigger the action
+
+        # Zoom In - Keep the standard one
+        self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Attempts Ctrl++ / Cmd++
+        self.zoom_in_shortcut.activated.connect(self.zoom_in_action.trigger) # Trigger the action
         # ======================================================
 
 
@@ -1935,6 +1936,9 @@ class CombinedSDSApp(QMainWindow):
         painter_out.drawText(zoom_out_pixmap.rect(), Qt.AlignCenter, "-") # Draw centered '-'
         painter_out.end()
         zoom_out_icon = QIcon(zoom_out_pixmap)
+        
+        self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
+        self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
 
         # File Actions
         self.load_action = QAction(style.standardIcon(QStyle.SP_DialogOpenButton), "&Load Image...", self)
@@ -1950,8 +1954,11 @@ class CombinedSDSApp(QMainWindow):
         self.paste_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "&Paste Image", self) # SP_ToolBarHorizontalExtensionButton might be better
 
         # View Actions
-        self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
-        self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
+        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)   
+        self.zoom_in_action.setToolTip("Increase zoom level (Ctrl++)")
+        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut) 
+        self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
+
 
         # Set tooltips (shortcuts removed for standard keys)
         self.load_action.setToolTip("Load an image file (Ctrl+O)")
@@ -2548,8 +2555,9 @@ class CombinedSDSApp(QMainWindow):
 
         # Add actions to the toolbar
         self.tool_bar.addAction(self.load_action)
-        self.tool_bar.addAction(self.save_action)
         self.tool_bar.addAction(self.paste_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.save_action)
         self.tool_bar.addAction(self.copy_action)
         self.tool_bar.addSeparator()
         self.tool_bar.addAction(self.undo_action)
@@ -6306,6 +6314,10 @@ class CombinedSDSApp(QMainWindow):
     
         
     def save_image(self):
+        self.draw_guides = False
+        self.show_guides_checkbox.setChecked(False)
+        self.show_grid_checkbox.setChecked(False)
+        self.update_live_view()
         """Saves the original image, the modified image (rendered view), and configuration."""
         if not self.image_master: # Check if an initial image was ever loaded/pasted
              QMessageBox.warning(self, "Error", "No image data to save.")
@@ -6360,7 +6372,7 @@ class CombinedSDSApp(QMainWindow):
         config_save_path = f"{base_name_nosuffix}_config.txt"
 
         # --- Save original image (using self.image_master) ---
-        img_to_save_orig = self.image # Use the pristine master copy
+        img_to_save_orig = self.image 
         if img_to_save_orig and not img_to_save_orig.isNull():
             save_format_orig = suffix.replace(".", "").upper() # Determine format from suffix
             if save_format_orig == "TIF": save_format_orig = "TIFF" # Use standard TIFF identifier
