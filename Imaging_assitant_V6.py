@@ -1,4 +1,5 @@
 import logging
+import time
 import traceback
 import sys
 import svgwrite
@@ -17,7 +18,7 @@ from PyQt5.QtWidgets import (
     QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog
 )
 from PyQt5.QtGui import QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
-from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QMimeData
+from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QMimeData, QUrl, QTimer
 import json
 import os
 import numpy as np
@@ -6636,15 +6637,33 @@ class CombinedSDSApp(QMainWindow):
     
     
     def copy_to_clipboard(self):
-        """Copy the image from live view label to the clipboard, converting to straight alpha."""
+        """Copy the image via a temporary file, ensuring image validity before scaling."""
+        # --- Initial Check ---
         if not self.image or self.image.isNull():
             QMessageBox.warning(self, "Warning", "No image to copy.")
             return
     
-        # --- Create the high-resolution rendered canvas (as before) ---
+        # --- Create the high-resolution rendered canvas ---
         render_scale = 3
-        high_res_canvas_width = self.live_view_label.width() * render_scale
-        high_res_canvas_height = self.live_view_label.height() * render_scale
+        try:
+            # Calculate dimensions safely
+            label_width = self.live_view_label.width()
+            label_height = self.live_view_label.height()
+            if label_width <= 0 or label_height <= 0:
+                # Fallback or default size if label size is invalid
+                label_width = 500 # Example fallback
+                label_height = 500 # Example fallback
+                # print("Warning: Live view label size invalid, using fallback for render size.")
+    
+            high_res_canvas_width = label_width * render_scale
+            high_res_canvas_height = label_height * render_scale
+    
+            if high_res_canvas_width <= 0 or high_res_canvas_height <= 0:
+                 raise ValueError("Calculated canvas dimensions are invalid.")
+    
+        except Exception as e:
+            QMessageBox.critical(self, "Internal Error", f"Could not calculate render dimensions: {e}")
+            return
     
         # Start with ARGB32_Premultiplied for rendering quality
         render_canvas = QImage(
@@ -6652,62 +6671,145 @@ class CombinedSDSApp(QMainWindow):
         )
         render_canvas.fill(Qt.transparent) # Fill with transparent background
     
-        # --- Render the current view onto the canvas (as before) ---
+        # --- Render the current view onto the canvas ---
+        # We already checked self.image at the start, but check *again* right before use
         if self.image and not self.image.isNull():
-            # Determine x_start, y_start based on whether self.image is already cropped
-            x_start = 0
-            y_start = 0
-            # (If self.image is NOT pre-cropped, calculate x_start/y_start from sliders here)
+            x_start, y_start = 0, 0 # Assuming self.image is pre-cropped
     
-            scaled_image = self.image.scaled(
-                high_res_canvas_width,
-                high_res_canvas_height,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
+            # *** ADDED ROBUST CHECK before scaling ***
+            if not self.image or self.image.isNull():
+                QMessageBox.critical(self, "Internal Error", "Image became invalid before scaling for clipboard.")
+                # Attempt cleanup just in case
+                self.cleanup_temp_clipboard_file()
+                return
+            # *** END ADDED CHECK ***
+    
+            try:
+                # Perform scaling
+                scaled_image = self.image.scaled(
+                    high_res_canvas_width,
+                    high_res_canvas_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                if scaled_image.isNull():
+                    raise ValueError("QImage.scaled returned an invalid image.")
+            except Exception as e:
+                # This catches the specific TypeError you saw, or other scaling errors
+                QMessageBox.critical(self, "Copy Error", f"Failed to scale image for clipboard: {e}")
+                self.cleanup_temp_clipboard_file() # Attempt cleanup
+                return
+    
+            # Render the scaled image onto the canvas
             self.render_image_on_canvas(
                 render_canvas, scaled_image, x_start, y_start, render_scale, draw_guides=False
             )
     
-            # --- *** NEW: Convert to Straight Alpha *** ---
-            if render_canvas.hasAlphaChannel(): # Only convert if it actually has alpha
+            # Convert to Straight Alpha (Recommended)
+            final_canvas_for_clipboard = render_canvas
+            if render_canvas.hasAlphaChannel():
                 straight_alpha_canvas = render_canvas.convertToFormat(QImage.Format_ARGB32)
-                if straight_alpha_canvas.isNull():
-                    QMessageBox.warning(self, "Copy Error", "Failed to convert image to straight alpha format.")
-                    # Fallback to using the original premultiplied canvas
-                    final_canvas_for_clipboard = render_canvas
-                else:
-                    # Use the successfully converted straight alpha version
+                if not straight_alpha_canvas.isNull():
                     final_canvas_for_clipboard = straight_alpha_canvas
-            else:
-                # Image was opaque to begin with, no conversion needed
-                final_canvas_for_clipboard = render_canvas
-            # --- *** END NEW SECTION *** ---
+                # else: keep using the premultiplied version if conversion failed
+            # --- End Rendering ---
+    
+            # --- Save to Temporary PNG File ---
+            try:
+                # Clean up previous temp file if it exists
+                self.cleanup_temp_clipboard_file() # Call cleanup first
+    
+                # Create a new temporary file
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode='wb') as temp_file: # Ensure binary mode
+                    self.temp_clipboard_file_path = temp_file.name # Store path
+                    # Save using QBuffer to write binary data
+                    png_save_buffer = QBuffer()
+                    png_save_buffer.open(QBuffer.WriteOnly)
+                    if not final_canvas_for_clipboard.save(png_save_buffer, "PNG"):
+                         raise IOError("Failed to save canvas to PNG buffer.")
+                    temp_file.write(png_save_buffer.data()) # Write binary data to file
+                    png_save_buffer.close()
+    
+                # Minimal delay might sometimes help ensure file is fully written/unlocked
+                # time.sleep(0.1)
+    
+                if not os.path.exists(self.temp_clipboard_file_path):
+                    raise IOError("Temporary file was not created successfully.")
     
     
-            # --- Prepare data for clipboard ---
+            except Exception as e:
+                QMessageBox.critical(self, "Copy Error", f"Failed to create/save temporary file: {e}")
+                self.temp_clipboard_file_path = None # Ensure path is cleared on error
+                return
+            # --- End Save to Temp File ---
+    
+    
+            # --- Prepare QMimeData ---
             clipboard = QApplication.clipboard()
             mime_data = QMimeData()
     
-            # 1. Provide PNG data (using the final_canvas_for_clipboard)
-            png_buffer = QBuffer()
-            png_buffer.open(QBuffer.WriteOnly)
-            if final_canvas_for_clipboard.save(png_buffer, "PNG"):
-                png_data = png_buffer.data()
-                mime_data.setData("image/png", png_data)
-            else:
-                 QMessageBox.warning(self, "Copy Error", "Failed to encode image as PNG for clipboard.")
-                 # Don't return yet, maybe standard image data will work
-            png_buffer.close()
+            # 1. Set File URL (Crucial for Windows file copy behavior)
+            try:
+                file_url = QUrl.fromLocalFile(self.temp_clipboard_file_path)
+                if not file_url.isValid() or not file_url.isLocalFile():
+                     raise ValueError("Generated file URL is invalid.")
+                mime_data.setUrls([file_url])
+            except Exception as e:
+                QMessageBox.warning(self, "Copy Warning", f"Could not set file URL for clipboard: {e}")
+                # Continue without the file URL, relying on image data fallbacks
     
-            # 2. Also set standard image data (using the final_canvas_for_clipboard)
+    
+            # 2. Set PNG Data as fallback (Use a fresh buffer)
+            png_buffer_clip = QBuffer()
+            png_buffer_clip.open(QBuffer.WriteOnly)
+            if final_canvas_for_clipboard.save(png_buffer_clip, "PNG"):
+                mime_data.setData("image/png", png_buffer_clip.data())
+            png_buffer_clip.close()
+    
+            # 3. Set Standard Image Data as further fallback
             mime_data.setImageData(final_canvas_for_clipboard)
     
-            # --- Set the QMimeData on the clipboard ---
+            # --- Set clipboard and schedule cleanup ---
             clipboard.setMimeData(mime_data)
     
+            # Schedule deletion of the temp file after a short delay
+            QTimer.singleShot(10000, self.cleanup_temp_clipboard_file) # 10 seconds
+    
+    
         else:
-            QMessageBox.warning(self, "Warning", "No image data to render for copying.")
+            # This case should ideally not be reached if the initial check works,
+            # but handle it defensively.
+            QMessageBox.warning(self, "Warning", "No valid image data to render for copying.")
+        
+    def cleanup_temp_clipboard_file(self):
+        """Deletes the temporary clipboard file if it exists."""
+        path_to_delete = getattr(self, 'temp_clipboard_file_path', None)
+        if path_to_delete:
+            # Clear the attribute immediately to prevent race conditions
+            self.temp_clipboard_file_path = None
+            # Add a small delay before deleting, might help if file is briefly locked
+            time.sleep(0.2)
+            if os.path.exists(path_to_delete):
+                try:
+                    os.remove(path_to_delete)
+                    # print(f"Cleaned up temp file: {path_to_delete}") # Debug
+                except PermissionError:
+                    # If permission denied, schedule another attempt later
+                    print(f"Warning: Permission denied deleting {path_to_delete}. Retrying later.")
+                    QTimer.singleShot(5000, lambda p=path_to_delete: self.retry_delete(p))
+                except OSError as e:
+                    print(f"Warning: Could not delete temp clipboard file {path_to_delete}: {e}") # Log warning
+            # else:
+                # print(f"Temp file already deleted or never existed: {path_to_delete}") # Debug
+    
+    def retry_delete(self, file_path):
+        """Retry deleting a file."""
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                # print(f"Successfully deleted on retry: {file_path}") # Debug
+            except OSError as e:
+                print(f"Error: Failed to delete temp file on retry {file_path}: {e}")
         
     def copy_to_clipboard_SVG(self):
         """Create a temporary SVG file with EMF data, copy it to clipboard."""
