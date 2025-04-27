@@ -5625,26 +5625,33 @@ class CombinedSDSApp(QMainWindow):
 
         try:
             # --- Determine if the source image has transparency ---
+            
             source_has_alpha = self.image.hasAlphaChannel()
 
             # --- Convert source QImage to NumPy array ---
             np_img = self.qimage_to_numpy(self.image)
             if np_img is None: raise ValueError("NumPy conversion failed.")
-
-            # --- Determine fill value based on source transparency and dimensions ---
+            
             fill_value = None
             # Check if NumPy array indicates alpha (4 channels) even if QImage didn't report it explicitly
             numpy_indicates_alpha = (np_img.ndim == 3 and np_img.shape[2] == 4)
+            has_alpha = source_has_alpha or numpy_indicates_alpha # Combine checks
 
-            if source_has_alpha or numpy_indicates_alpha:
-                # Pad with transparency (transparent black)
-                # OpenCV expects (B, G, R, Alpha) or just Alpha if grayscale+alpha (less common here)
-                # Ensure we provide 4 values for BGRA
-                fill_value = Qt.transparent # Transparent Black (B=0, G=0, R=0, A=0)
+            if has_alpha:
+                # Pad images WITH existing alpha using TRANSPARENT black
+                # OpenCV expects (B, G, R, Alpha) or just Alpha if grayscale+alpha
+                # Provide 4 values for safety, assuming color/grayscale + alpha format from qimage_to_numpy
+                fill_value = (0, 0, 0, 0) # Transparent Black for NumPy/OpenCV
             elif np_img.ndim == 3: # Opaque Color (BGR)
-                fill_value = Qt.transparent # White (B=255, G=255, R=255)
+                # Pad opaque color images with WHITE
+                fill_value = (255, 255, 255) # White for BGR format expected by OpenCV
             elif np_img.ndim == 2: # Opaque Grayscale
-                fill_value = Qt.transparent #if np_img.dtype == np.uint16 else 255 # White
+                # Pad opaque grayscale images with WHITE
+                # Determine white value based on dtype
+                if np_img.dtype == np.uint16:
+                    fill_value = 65535 # White for 16-bit grayscale
+                else: # Assume uint8 or other standard grayscale
+                    fill_value = 255 # White for 8-bit grayscale
             else:
                  raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
 
