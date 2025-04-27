@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox,
     QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog
 )
-from PyQt5.QtGui import QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QKeySequence, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
+from PyQt5.QtGui import QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
 from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize
 import json
 import os
@@ -1795,70 +1795,82 @@ class CombinedSDSApp(QMainWindow):
         
         layout.addWidget(self.tab_widget)
         
-        self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O
+        self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
         self.load_shortcut.activated.connect(self.load_action.trigger) # Trigger the action
-        self.save_shortcut = QShortcut(QKeySequence.Save, self) # Ctrl+S
-        self.save_shortcut.activated.connect(self.save_action.trigger) # Trigger the action
-        self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
-        self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger) # Trigger the action
-        self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
-        self.reset_shortcut.activated.connect(self.reset_action.trigger) # Trigger the action
 
-        # == Edit Operations (Handled by QAction + QShortcut) ==
-        self.undo_shortcut = QShortcut(QKeySequence.Undo, self) # Ctrl+Z
-        self.undo_shortcut.activated.connect(self.undo_action.trigger) # Trigger the action
-        self.redo_shortcut = QShortcut(QKeySequence.Redo, self) # Ctrl+Y
-        self.redo_shortcut.activated.connect(self.redo_action.trigger) # Trigger the action
-        self.copy_shortcut = QShortcut(QKeySequence.Copy, self) # Ctrl+C
+        self.save_shortcut = QShortcut(QKeySequence.Save, self) # Ctrl+S / Cmd+S
+        self.save_shortcut.activated.connect(self.save_action.trigger) # Trigger the action
+
+        self.copy_shortcut = QShortcut(QKeySequence.Copy, self) # Ctrl+C / Cmd+C
         self.copy_shortcut.activated.connect(self.copy_action.trigger) # Trigger the action
-        self.paste_shortcut = QShortcut(QKeySequence.Paste, self) # Ctrl+V
+
+        self.paste_shortcut = QShortcut(QKeySequence.Paste, self) # Ctrl+V / Cmd+V
         self.paste_shortcut.activated.connect(self.paste_action.trigger) # Trigger the action
 
-        # == View Operations (Handled by QAction + QShortcut) ==
-        self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Ctrl++
+        self.undo_shortcut = QShortcut(QKeySequence.Undo, self) # Ctrl+Z / Cmd+Z
+        self.undo_shortcut.activated.connect(self.undo_action_m) # Connect directly to method
+
+        self.redo_shortcut = QShortcut(QKeySequence.Redo, self) # Ctrl+Y / Cmd+Shift+Z
+        self.redo_shortcut.activated.connect(self.redo_action_m) # Connect directly to method
+
+        self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Ctrl++ / Cmd++
         self.zoom_in_shortcut.activated.connect(self.zoom_in_action.trigger) # Trigger the action
-        self.zoom_out_shortcut = QShortcut(QKeySequence.ZoomOut, self) # Ctrl+-
+
+        self.zoom_out_shortcut = QShortcut(QKeySequence.ZoomOut, self) # Ctrl+- / Cmd+-
         self.zoom_out_shortcut.activated.connect(self.zoom_out_action.trigger) # Trigger the action
+        # ======================================================
 
-        # == Analysis Shortcuts (Specific to QShortcut) ==
+
+        # === KEEP QShortcut definitions for NON-STANDARD actions ===
+        self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
+        self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger)
+
+        self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self.reset_shortcut.activated.connect(self.reset_action.trigger)
+
         self.predict_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
-        self.predict_shortcut.activated.connect(self.predict_molecular_weight) # Direct method call
+        self.predict_shortcut.activated.connect(self.predict_molecular_weight)
+
         self.clear_predict_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
-        self.clear_predict_shortcut.activated.connect(self.clear_predict_molecular_weight) # Direct method call
+        self.clear_predict_shortcut.activated.connect(self.clear_predict_molecular_weight)
 
-        # == Marker Placement Shortcuts (Specific to QShortcut) ==
         self.left_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
-        self.left_marker_shortcut.activated.connect(self.enable_left_marker_mode) # Direct method call
-        self.right_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
-        self.right_marker_shortcut.activated.connect(self.enable_right_marker_mode) # Direct method call
-        self.top_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+T"), self)
-        self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode) # Direct method call
+        self.left_marker_shortcut.activated.connect(self.enable_left_marker_mode)
 
-        # == Custom Marker Arrow Shortcuts (Specific to QShortcut) ==
+        self.right_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
+        self.right_marker_shortcut.activated.connect(self.enable_right_marker_mode)
+
+        self.top_marker_shortcut = QShortcut(QKeySequence("Ctrl+Shift+T"), self)
+        self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
+
         self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
         self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("←"))
-        self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode) # Direct method calls
+        self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+
         self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
         self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("→"))
         self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+
         self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
         self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↑"))
         self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
+
         self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
         self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↓"))
         self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
-        # == View/UI Adjustment Shortcuts (Specific to QShortcut) ==
         self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
         self.grid_shortcut.activated.connect(
             lambda: self.show_grid_checkbox.setChecked(not self.show_grid_checkbox.isChecked())
             if hasattr(self, 'show_grid_checkbox') else None
         )
+
         self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
         self.guidelines_shortcut.activated.connect(
             lambda: self.show_guides_checkbox.setChecked(not self.show_guides_checkbox.isChecked())
             if hasattr(self, 'show_guides_checkbox') else None
         )
+
         self.increase_grid_size_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Up"), self)
         self.increase_grid_size_shortcut.activated.connect(
             lambda: self.grid_size_input.setValue(self.grid_size_input.value() + 1)
@@ -1870,48 +1882,37 @@ class CombinedSDSApp(QMainWindow):
             if hasattr(self, 'grid_size_input') else None
         )
 
-        # == Image Manipulation Shortcuts (Specific to QShortcut) ==
         self.invert_shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
-        self.invert_shortcut.activated.connect(self.invert_image) # Direct method call
-        self.bw_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
-        self.bw_shortcut.activated.connect(self.convert_to_black_and_white) # Direct method call
+        self.invert_shortcut.activated.connect(self.invert_image)
 
-        
-        # Example: Move quickly between tabs (Ctrl + 1,2,3,4)
+        self.bw_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
+        self.bw_shortcut.activated.connect(self.convert_to_black_and_white)
+
+        # Tab movement shortcuts
         self.move_tab_1_shortcut = QShortcut(QKeySequence("Ctrl+1"), self)
         self.move_tab_1_shortcut.activated.connect(lambda: self.move_tab(0))
-        
         self.move_tab_2_shortcut = QShortcut(QKeySequence("Ctrl+2"), self)
         self.move_tab_2_shortcut.activated.connect(lambda: self.move_tab(1))
-        
         self.move_tab_3_shortcut = QShortcut(QKeySequence("Ctrl+3"), self)
         self.move_tab_3_shortcut.activated.connect(lambda: self.move_tab(2))
-        
         self.move_tab_4_shortcut = QShortcut(QKeySequence("Ctrl+4"), self)
         self.move_tab_4_shortcut.activated.connect(lambda: self.move_tab(3))
-        
         self.move_tab_5_shortcut = QShortcut(QKeySequence("Ctrl+5"), self)
         self.move_tab_5_shortcut.activated.connect(lambda: self.move_tab(4))
-        
         self.move_tab_6_shortcut = QShortcut(QKeySequence("Ctrl+6"), self)
         self.move_tab_6_shortcut.activated.connect(lambda: self.move_tab(5))
         
-        self.undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-        self.undo_shortcut.activated.connect(self.undo_action_m)
-        
-        self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
-        self.redo_shortcut.activated.connect(self.redo_action_m)
         self.load_config()
     
     def _create_actions(self):
-        """Create QAction objects for menus and toolbars."""
+        """Create QAction objects for menus and toolbars. Standard shortcuts removed, handled by QShortcut."""
         # Use QStyle to get standard icons where possible
         style = self.style() # Get the current application style for other icons
 
         # --- Create Zoom Icons Directly ---
         icon_size = QSize(24, 24) # Define desired icon size
         text_color = self.palette().color(QPalette.ButtonText) # Use theme text color
-
+        # ... (Zoom icon creation code remains the same) ...
         # Create Pixmap and Painter for Zoom In (+)
         zoom_in_pixmap = QPixmap(icon_size)
         zoom_in_pixmap.fill(Qt.transparent)
@@ -1957,32 +1958,24 @@ class CombinedSDSApp(QMainWindow):
         self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
         self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
 
-        # Set shortcuts and tooltips (can also be done here or in create_menu_bar)
-        self.load_action.setShortcut(QKeySequence.Open)
+        # Set tooltips (shortcuts removed for standard keys)
         self.load_action.setToolTip("Load an image file (Ctrl+O)")
-        self.save_action.setShortcut(QKeySequence.Save)
         self.save_action.setToolTip("Save image and configuration (Ctrl+S)")
-        self.save_svg_action.setShortcut(QKeySequence("Ctrl+M"))
+        self.save_svg_action.setShortcut(QKeySequence("Ctrl+M")) # Keep specific shortcut
         self.save_svg_action.setToolTip("Save as SVG for Word/vector editing (Ctrl+M)")
-        self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
+        self.reset_action.setShortcut(QKeySequence("Ctrl+R")) # Keep specific shortcut
         self.reset_action.setToolTip("Reset image and all annotations (Ctrl+R)")
-        self.exit_action.setShortcut(QKeySequence.Quit)
+        # self.exit_action.setShortcut(QKeySequence.Quit) # Remove standard shortcut
 
-        self.undo_action.setShortcut(QKeySequence.Undo)
         self.undo_action.setToolTip("Undo last action (Ctrl+Z)")
-        self.redo_action.setShortcut(QKeySequence.Redo)
         self.redo_action.setToolTip("Redo last undone action (Ctrl+Y)")
-        self.copy_action.setShortcut(QKeySequence.Copy)
         self.copy_action.setToolTip("Copy rendered image to clipboard (Ctrl+C)")
-        self.paste_action.setShortcut(QKeySequence.Paste)
         self.paste_action.setToolTip("Paste image from clipboard (Ctrl+V)")
 
-        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
         self.zoom_in_action.setToolTip("Increase zoom level (Ctrl++)")
-        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
         self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
 
-        # Connect signals
+        # Connect signals (Keep these)
         self.load_action.triggered.connect(self.load_image)
         self.save_action.triggered.connect(self.save_image)
         self.save_svg_action.triggered.connect(self.save_image_svg)
@@ -1997,83 +1990,65 @@ class CombinedSDSApp(QMainWindow):
         
     def _update_preview_label_size(self):
         """
-        Updates the fixed size of the live_view_label, prioritizing fitting the height
-        to a maximum setting (from self.preview_label_max_height_setting)
-        while maintaining the image's aspect ratio by adjusting the width.
+        Updates the fixed size of the live_view_label. The height is fixed based on
+        the preview_label_max_height_setting, and the width is adjusted to
+        maintain the image's aspect ratio.
         """
         # --- Define Defaults and Minimums ---
-        # Use settings if available, otherwise use sensible defaults
-        default_max_height = 500 # Fallback if setting is missing
-        min_dim = 50             # Minimum allowed dimension for the label
+        default_max_height = 500  # Fallback if setting is missing
+        min_dim = 50              # Minimum allowed dimension for the label
 
-        # Determine the target maximum height
-        target_max_height = default_max_height
+        # --- Determine the Fixed Target Height ---
+        target_fixed_height = default_max_height
         if hasattr(self, 'preview_label_max_height_setting'):
-            # Ensure the setting is a valid positive number, otherwise use default
             try:
                 setting_height = int(self.preview_label_max_height_setting)
                 if setting_height > 0:
-                    target_max_height = setting_height
+                    target_fixed_height = setting_height
                 else:
-                    print("Warning: preview_label_max_height_setting is not positive, using default.")
+                    print("Warning: preview_label_max_height_setting is not positive, using default height.")
             except (TypeError, ValueError):
-                print("Warning: preview_label_max_height_setting is invalid, using default.")
+                print("Warning: preview_label_max_height_setting is invalid, using default height.")
         else:
-            print("Warning: preview_label_max_height_setting attribute not found, using default.")
+            print("Warning: preview_label_max_height_setting attribute not found, using default height.")
 
-        # Ensure the target height is not smaller than the minimum
-        target_max_height = max(min_dim, target_max_height)
+        # Ensure the target fixed height is not smaller than the minimum
+        target_fixed_height = max(min_dim, target_fixed_height)
 
-        # Initialize target dimensions with defaults for the "no image" case
-        final_target_width = max(min_dim, target_max_height) # Default to square if no image
-        final_target_height = max(min_dim, target_max_height)
+        # --- Initialize Final Dimensions ---
+        # Default to square if no image, based on the fixed height
+        final_target_width = target_fixed_height
+        final_target_height = target_fixed_height # Height is always fixed to this value
 
-        # --- Calculate Size Based on Image ---
+        # --- Calculate Width Based on Image Aspect Ratio ---
         if self.image and not self.image.isNull():
             w = self.image.width()
             h = self.image.height()
 
             if w > 0 and h > 0:
                 ratio = w / h
-
-                # --- Scenario 1: Image fits within max height ---
-                # Calculate width based on max height and ratio
-                calculated_width_for_max_height = int(target_max_height * ratio)
-
-                # Use max height and calculated width directly
-                final_target_height = target_max_height
-                final_target_width = calculated_width_for_max_height
-
-                # --- Optional: Add a max width constraint based on window/screen ---
-                # Example: Prevent label becoming wider than the main window allows
-                # available_width = self.centralWidget().width() - 50 # Rough estimate
-                # if final_target_width > available_width:
-                #     print("Warning: Calculated width exceeds available space, scaling down.")
-                #     final_target_width = available_width
-                #     final_target_height = int(final_target_width / ratio) # Recalculate height based on constrained width
-
+                # Calculate the required width to maintain ratio at the fixed height
+                calculated_width = int(target_fixed_height * ratio)
+                final_target_width = calculated_width # Update width based on ratio and fixed height
             else:
                 # Handle invalid image dimensions (0 width or height)
-                print("Warning: Image has zero width or height. Using default preview size based on max height.")
-                # Use the already initialized defaults (likely square based on max_height)
+                print("Warning: Image has zero width or height. Using default square preview size based on fixed height.")
+                # Keep the default square size initialized above
 
         else:
             # No image loaded
-            print("No image loaded. Using default preview size based on max height.")
-            # Use the already initialized defaults (likely square based on max_height)
+            print("No image loaded. Using default square preview size based on fixed height.")
+            # Keep the default square size initialized above
             # self.live_view_label.clear() # Optionally clear the label
 
-        # --- Apply Minimum Dimension Constraints ---
+        # --- Apply Minimum Dimension Constraints to Width ---
+        # Height is already constrained by target_fixed_height and min_dim check above
         final_target_width = max(min_dim, final_target_width)
-        final_target_height = max(min_dim, final_target_height)
 
         # --- Set the Calculated Fixed Size ---
+        # Height is fixed, width is adjusted.
         print(f"Setting preview label size to: {final_target_width}x{final_target_height}")
         self.live_view_label.setFixedSize(final_target_width, final_target_height)
-
-        # No explicit update needed usually, setFixedSize triggers layout recalculation.
-        # self.live_view_label.updateGeometry()
-        # self.layout().activate() # Force layout update if needed
         
     def _update_status_bar(self):
         """Updates the status bar labels with current image information."""
@@ -3833,22 +3808,23 @@ class CombinedSDSApp(QMainWindow):
         rotation_layout.addWidget(self.align_button)
         rotation_layout.addWidget(self.reset_align_button)      
         
-        
-    
-        
-        
         # Flip Vertical Button
+        flip_layout=QHBoxLayout()
         self.flip_vertical_button = QPushButton("Flip Vertical")
         self.flip_vertical_button.clicked.connect(self.flip_vertical)
     
         # Flip Horizontal Button
         self.flip_horizontal_button = QPushButton("Flip Horizontal")
         self.flip_horizontal_button.clicked.connect(self.flip_horizontal)
+        
+        flip_layout.addWidget(self.flip_vertical_button)
+        flip_layout.addWidget(self.flip_horizontal_button)
     
         alignment_layout.addLayout(rotation_layout)
         
-        alignment_layout.addWidget(self.flip_vertical_button)  
-        alignment_layout.addWidget(self.flip_horizontal_button)  
+        # alignment_layout.addWidget(self.flip_vertical_button)  
+        # alignment_layout.addWidget(self.flip_horizontal_button)  
+        alignment_layout.addLayout(flip_layout)
         alignment_params_group.setLayout(alignment_layout)
         
         
@@ -5079,7 +5055,7 @@ class CombinedSDSApp(QMainWindow):
                 # if hasattr(self, 'preview_label_max_height_setting') and target_height > self.preview_label_max_height_setting:
                 #     target_height = self.preview_label_max_height_setting
                 #     target_width = int(target_height * ratio)
-                self.live_view_label.setFixedSize(target_width, target_height)
+                self._update_preview_label_size()
 
                 # Update slider ranges based on *new* label size
                 render_scale = 3
