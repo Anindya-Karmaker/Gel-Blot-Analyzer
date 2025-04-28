@@ -37,33 +37,76 @@ import cv2
 
 # --- End Style Sheet Definition ---
 # Configure logging to write errors to a log file
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# Construct the absolute path for the log file
+log_file_path = os.path.join(script_dir, "error_log.txt")
+
+
+# --- Configure logging ---
 logging.basicConfig(
-    filename="error_log.txt",
+    filename=log_file_path, # Use the absolute path
     level=logging.ERROR,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+try:
+    logging.error("--- Logging initialized ---")
+except Exception as e:
+    print(f"ERROR: Could not write initial log message: {e}") # Print error if immediate logging fails
+
+
 def log_exception(exc_type, exc_value, exc_traceback):
     """Log uncaught exceptions to the error log."""
+    print("!!! log_exception called !!!") # Add print statement here too
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
+
     # Log the exception
-    logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+    try:
+        logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        # Optional: Force flush if you suspect buffering issues, though unlikely for ERROR level
+        # logging.getLogger().handlers[0].flush()
+    except Exception as log_err:
+        print(f"ERROR: Failed to log exception to file: {log_err}") # Print logging specific errors
 
     # Display a QMessageBox with the error details
-    error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}"
-    QMessageBox.critical(
-        None,  # No parent window
-        "Unexpected Error",  # Title of the message box
-        error_message,  # Error message to display
-        QMessageBox.Ok  # Button to close the dialog
-    )
-    
+    try:
+        error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n(Check error_log.txt for details)"
+        QMessageBox.critical(
+            None,
+            "Unexpected Error",
+            error_message,
+            QMessageBox.Ok
+        )
+    except Exception as q_err:
+         print(f"ERROR: Failed to show QMessageBox: {q_err}")
 
-# # Set the custom exception handler
+
+# Set the custom exception handler
 sys.excepthook = log_exception
 
+def create_text_icon(icon_size: QSize, color: QColor, symbol: str) -> QIcon:
+    """Creates a QIcon by drawing text/symbol onto a pixmap."""
+    pixmap = QPixmap(icon_size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.TextAntialiasing, True) # Good for text
+
+    # Font settings (adjust as needed)
+    font = QFont()
+    # Make arrow slightly smaller than +/-, maybe not bold? Experiment.
+    font.setPointSize(max(12, int(icon_size.height() * 0.55)))
+    # font.setBold(True) # Optional: Make arrows bold or not
+    painter.setFont(font)
+    painter.setPen(color)
+
+    # Draw the symbol centered
+    painter.drawText(pixmap.rect(), Qt.AlignCenter, symbol)
+    painter.end()
+    return QIcon(pixmap)
+    
 class ModifyMarkersDialog(QDialog):
     """
     Dialog to view, edit, delete, and reorder custom markers.
@@ -1566,7 +1609,8 @@ class LiveViewLabel(QLabel):
                 (point.y() - self.pan_offset.y()) / self.zoom_level
             )
         return QPointF(point)
-
+    
+    
     def zoom_in(self):
         self.zoom_level *= 1.1
         self.update()
@@ -1577,6 +1621,7 @@ class LiveViewLabel(QLabel):
             self.zoom_level = 1.0
             self.pan_offset = QPointF(0, 0)  # Reset pan offset when zoom is reset
         self.update()
+        
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -1752,9 +1797,7 @@ class CombinedSDSApp(QMainWindow):
         self.image_array_backup= None
         self.run_predict_MW=False
         
-        self._create_actions()
-        self.create_menu_bar()
-        self.create_tool_bar()
+        
         
         # Main container widget
         main_widget = QWidget()
@@ -1774,6 +1817,11 @@ class CombinedSDSApp(QMainWindow):
         )
         # Image display
         self.live_view_label.setStyleSheet("background-color: white; border: 1px solid black;")
+        
+        self._create_actions()
+        self.create_menu_bar()
+        self.create_tool_bar()
+        
         self._update_preview_label_size()
         upper_layout.addWidget(self.live_view_label, stretch=1)
         layout.addLayout(upper_layout)
@@ -1790,30 +1838,30 @@ class CombinedSDSApp(QMainWindow):
         
         layout.addWidget(self.tab_widget)
         
-        self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
-        self.load_shortcut.activated.connect(self.load_action.trigger) # Trigger the action
+        #self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
+        #self.load_shortcut.activated.connect(self.load_action.trigger) # Trigger the action
 
-        self.save_shortcut = QShortcut(QKeySequence.Save, self) # Ctrl+S / Cmd+S
-        self.save_shortcut.activated.connect(self.save_action.trigger) # Trigger the action
+        #self.save_shortcut = QShortcut(QKeySequence.Save, self) # Ctrl+S / Cmd+S
+        #self.save_shortcut.activated.connect(self.save_action.trigger) # Trigger the action
 
-        self.copy_shortcut = QShortcut(QKeySequence.Copy, self) # Ctrl+C / Cmd+C
-        self.copy_shortcut.activated.connect(self.copy_action.trigger) # Trigger the action
+        #self.copy_shortcut = QShortcut(QKeySequence.Copy, self) # Ctrl+C / Cmd+C
+        #self.copy_shortcut.activated.connect(self.copy_action.trigger) # Trigger the action
 
-        self.paste_shortcut = QShortcut(QKeySequence.Paste, self) # Ctrl+V / Cmd+V
-        self.paste_shortcut.activated.connect(self.paste_action.trigger) # Trigger the action
+        #self.paste_shortcut = QShortcut(QKeySequence.Paste, self) # Ctrl+V / Cmd+V
+        #self.paste_shortcut.activated.connect(self.paste_action.trigger) # Trigger the action
 
-        self.undo_shortcut = QShortcut(QKeySequence.Undo, self) # Ctrl+Z / Cmd+Z
-        self.undo_shortcut.activated.connect(self.undo_action_m) # Connect directly to method
+        #self.undo_shortcut = QShortcut(QKeySequence.Undo, self) # Ctrl+Z / Cmd+Z
+        #self.undo_shortcut.activated.connect(self.undo_action_m) # Connect directly to method
 
-        self.redo_shortcut = QShortcut(QKeySequence.Redo, self) # Ctrl+Y / Cmd+Shift+Z
-        self.redo_shortcut.activated.connect(self.redo_action_m) # Connect directly to method
+        #self.redo_shortcut = QShortcut(QKeySequence.Redo, self) # Ctrl+Y / Cmd+Shift+Z
+        #self.redo_shortcut.activated.connect(self.redo_action_m) # Connect directly to method
 
-        self.zoom_out_shortcut = QShortcut(QKeySequence.ZoomOut, self) # Ctrl+- / Cmd+-
-        self.zoom_out_shortcut.activated.connect(self.zoom_out_action.trigger) # Trigger the action
+        #self.zoom_out_shortcut = QShortcut(QKeySequence.ZoomOut, self) # Ctrl+- / Cmd+-
+        #self.zoom_out_shortcut.activated.connect(self.zoom_out_action.trigger) # Trigger the action
 
         # Zoom In - Keep the standard one
-        self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Attempts Ctrl++ / Cmd++
-        self.zoom_in_shortcut.activated.connect(self.zoom_in_action.trigger) # Trigger the action
+        #self.zoom_in_shortcut = QShortcut(QKeySequence.ZoomIn, self) # Attempts Ctrl++ / Cmd++
+        #self.zoom_in_shortcut.activated.connect(self.zoom_in_action.trigger) # Trigger the action
         # ======================================================
 
 
@@ -1901,83 +1949,92 @@ class CombinedSDSApp(QMainWindow):
         self.load_config()
     
     def _create_actions(self):
-        """Create QAction objects for menus and toolbars. Standard shortcuts removed, handled by QShortcut."""
-        # Use QStyle to get standard icons where possible
-        style = self.style() # Get the current application style for other icons
+        """Create QAction objects for menus and toolbars."""
+        style = self.style() # Still useful for other icons
+        icon_size = QSize(24, 24) # Match your toolbar size
+        text_color = self.palette().color(QPalette.ButtonText) # Use theme color
 
-        # --- Create Zoom Icons Directly ---
-        icon_size = QSize(24, 24) # Define desired icon size
-        text_color = self.palette().color(QPalette.ButtonText) # Use theme text color
-        # ... (Zoom icon creation code remains the same) ...
-        # Create Pixmap and Painter for Zoom In (+)
+        # --- Create Zoom Icons (using previous method) ---
         zoom_in_pixmap = QPixmap(icon_size)
         zoom_in_pixmap.fill(Qt.transparent)
         painter_in = QPainter(zoom_in_pixmap)
-        painter_in.setRenderHint(QPainter.TextAntialiasing, True)
-        font_in = QFont()
-        font_in.setPointSize(max(6, int(icon_size.height() * 0.7))) # Adjust size factor if needed
-        font_in.setBold(True)
-        painter_in.setFont(font_in)
-        painter_in.setPen(text_color)
-        painter_in.drawText(zoom_in_pixmap.rect(), Qt.AlignCenter, "+") # Draw centered '+'
+        # ... (painter setup as before) ...
+        painter_in.drawText(zoom_in_pixmap.rect(), Qt.AlignCenter, "+")
         painter_in.end()
         zoom_in_icon = QIcon(zoom_in_pixmap)
 
-        # Create Pixmap and Painter for Zoom Out (-)
         zoom_out_pixmap = QPixmap(icon_size)
         zoom_out_pixmap.fill(Qt.transparent)
         painter_out = QPainter(zoom_out_pixmap)
-        painter_out.setRenderHint(QPainter.TextAntialiasing, True)
-        font_out = QFont()
-        font_out.setPointSize(max(6, int(icon_size.height() * 0.7))) # Adjust size factor if needed
-        font_out.setBold(True)
-        painter_out.setFont(font_out)
-        painter_out.setPen(text_color)
-        painter_out.drawText(zoom_out_pixmap.rect(), Qt.AlignCenter, "-") # Draw centered '-'
+        # ... (painter setup as before) ...
+        painter_out.drawText(zoom_out_pixmap.rect(), Qt.AlignCenter, "-")
         painter_out.end()
         zoom_out_icon = QIcon(zoom_out_pixmap)
-        
-        self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
-        self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
+        # --- End Zoom Icons ---
 
-        # File Actions
+
+        # --- Create Pan Icons using the helper ---
+        pan_up_icon = create_text_icon(icon_size, text_color, "↑") # Unicode Up Arrow
+        pan_down_icon = create_text_icon(icon_size, text_color, "↓") # Unicode Down Arrow
+        pan_left_icon = create_text_icon(icon_size, text_color, "←") # Unicode Left Arrow
+        pan_right_icon = create_text_icon(icon_size, text_color, "→") # Unicode Right Arrow
+        # --- End Pan Icons ---
+
+
+        # --- File Actions ---
         self.load_action = QAction(style.standardIcon(QStyle.SP_DialogOpenButton), "&Load Image...", self)
         self.save_action = QAction(style.standardIcon(QStyle.SP_DialogSaveButton), "&Save with Config", self)
-        self.save_svg_action = QAction(style.standardIcon(QStyle.SP_DriveDVDIcon), "Save &SVG...", self) # Example icon
-        self.reset_action = QAction(style.standardIcon(QStyle.SP_DialogDiscardButton), "&Reset Image", self) # Or SP_BrowserReload
+        self.save_svg_action = QAction(style.standardIcon(QStyle.SP_DriveDVDIcon), "Save &SVG...", self)
+        self.reset_action = QAction(style.standardIcon(QStyle.SP_DialogDiscardButton), "&Reset Image", self)
         self.exit_action = QAction(style.standardIcon(QStyle.SP_DialogCloseButton), "E&xit", self)
 
-        # Edit Actions
-        self.undo_action = QAction(style.standardIcon(QStyle.SP_ArrowBack), "&Undo", self)
-        self.redo_action = QAction(style.standardIcon(QStyle.SP_ArrowForward), "&Redo", self)
-        self.copy_action = QAction(style.standardIcon(QStyle.SP_FileDialogContentsView), "&Copy Image", self) # SP_FileLinkIcon might be better
-        self.paste_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "&Paste Image", self) # SP_ToolBarHorizontalExtensionButton might be better
+        # --- Edit Actions ---
+        self.undo_action = QAction(style.standardIcon(QStyle.SP_ArrowBack), "&Undo", self) # Standard for now
+        self.redo_action = QAction(style.standardIcon(QStyle.SP_ArrowForward), "&Redo", self) # Standard for now
+        self.copy_action = QAction(style.standardIcon(QStyle.SP_FileDialogContentsView), "&Copy Image", self)
+        self.paste_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "&Paste Image", self)
 
-        # View Actions
-        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)   
-        self.zoom_in_action.setToolTip("Increase zoom level (Ctrl++)")
-        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut) 
-        self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
+        # --- View Actions (using the created icons) ---
+        self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
+        self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
+        self.pan_left_action = QAction(pan_left_icon, "Pan Left", self)
+        self.pan_right_action = QAction(pan_right_icon, "Pan Right", self)
+        self.pan_up_action = QAction(pan_up_icon, "Pan Up", self)
+        self.pan_down_action = QAction(pan_down_icon, "Pan Down", self)
+        # --- END: Add Panning Actions ---
 
+        # --- Set Shortcuts ---
+        self.load_action.setShortcut(QKeySequence.Open)
+        self.save_action.setShortcut(QKeySequence.Save)
+        self.copy_action.setShortcut(QKeySequence.Copy)
+        self.paste_action.setShortcut(QKeySequence.Paste)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
+        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
+        self.save_svg_action.setShortcut(QKeySequence("Ctrl+M"))
+        self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
 
-        # Set tooltips (shortcuts removed for standard keys)
+        # --- Set Tooltips ---
         self.load_action.setToolTip("Load an image file (Ctrl+O)")
         self.save_action.setToolTip("Save image and configuration (Ctrl+S)")
-        self.save_svg_action.setShortcut(QKeySequence("Ctrl+M")) # Keep specific shortcut
         self.save_svg_action.setToolTip("Save as SVG for Word/vector editing (Ctrl+M)")
-        self.reset_action.setShortcut(QKeySequence("Ctrl+R")) # Keep specific shortcut
         self.reset_action.setToolTip("Reset image and all annotations (Ctrl+R)")
-        # self.exit_action.setShortcut(QKeySequence.Quit) # Remove standard shortcut
-
+        self.exit_action.setToolTip("Exit the application")
         self.undo_action.setToolTip("Undo last action (Ctrl+Z)")
         self.redo_action.setToolTip("Redo last undone action (Ctrl+Y)")
         self.copy_action.setToolTip("Copy rendered image to clipboard (Ctrl+C)")
         self.paste_action.setToolTip("Paste image from clipboard (Ctrl+V)")
-
-        self.zoom_in_action.setToolTip("Increase zoom level (Ctrl++)")
+        self.zoom_in_action.setToolTip("Increase zoom level (Ctrl+=)")
         self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
+        # --- START: Set Tooltips for Panning Actions ---
+        self.pan_left_action.setToolTip("Pan the view left (when zoomed)")
+        self.pan_right_action.setToolTip("Pan the view right (when zoomed)")
+        self.pan_up_action.setToolTip("Pan the view up (when zoomed)")
+        self.pan_down_action.setToolTip("Pan the view down (when zoomed)")
+        # --- END: Set Tooltips for Panning Actions ---
 
-        # Connect signals (Keep these)
+        # --- Connect signals ---
         self.load_action.triggered.connect(self.load_image)
         self.save_action.triggered.connect(self.save_image)
         self.save_svg_action.triggered.connect(self.save_image_svg)
@@ -1989,6 +2046,27 @@ class CombinedSDSApp(QMainWindow):
         self.paste_action.triggered.connect(self.paste_image)
         self.zoom_in_action.triggered.connect(self.zoom_in)
         self.zoom_out_action.triggered.connect(self.zoom_out)
+        # --- START: Connect Panning Action Signals ---
+        # Use lambda functions to directly modify the offset
+        pan_step = 30 # Define pan step size here or access from elsewhere if needed
+        self.pan_right_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() + pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+        self.pan_right_action.triggered.connect(self.update_live_view) # Trigger update after offset change
+
+        self.pan_left_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() - pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+        self.pan_left_action.triggered.connect(self.update_live_view)
+
+        self.pan_down_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() + pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+        self.pan_down_action.triggered.connect(self.update_live_view)
+
+        self.pan_up_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() - pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+        self.pan_up_action.triggered.connect(self.update_live_view)
+        # --- END: Connect Panning Action Signals ---
+
+        # --- START: Initially Disable Panning Actions ---
+        self.pan_left_action.setEnabled(False)
+        self.pan_right_action.setEnabled(False)
+        self.pan_up_action.setEnabled(False)
+        self.pan_down_action.setEnabled(False)
         
     def _update_preview_label_size(self):
         """
@@ -2548,10 +2626,9 @@ class CombinedSDSApp(QMainWindow):
     def create_tool_bar(self):
         """Create the main application toolbar."""
         self.tool_bar = QToolBar("Main Toolbar")
-        self.tool_bar.setIconSize(QSize(24, 24)) # Adjust icon size as needed
-        self.tool_bar.setMovable(False) # Optional: prevent toolbar moving
-        # Set style to show icons only, icons with text, etc.
-        self.tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly) # Or Qt.ToolButtonTextBesideIcon
+        self.tool_bar.setIconSize(QSize(24, 24))
+        self.tool_bar.setMovable(False)
+        self.tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
         # Add actions to the toolbar
         self.tool_bar.addAction(self.load_action)
@@ -2563,8 +2640,18 @@ class CombinedSDSApp(QMainWindow):
         self.tool_bar.addAction(self.undo_action)
         self.tool_bar.addAction(self.redo_action)
         self.tool_bar.addSeparator()
+
+        # --- Add Zoom and Pan Buttons ---
         self.tool_bar.addAction(self.zoom_in_action)
         self.tool_bar.addAction(self.zoom_out_action)
+        self.tool_bar.addSeparator() # Optional separator
+
+        self.tool_bar.addAction(self.pan_left_action)
+        self.tool_bar.addAction(self.pan_up_action)   # Group visually
+        self.tool_bar.addAction(self.pan_down_action)
+        self.tool_bar.addAction(self.pan_right_action)
+        # --- End Adding Pan Buttons ---
+
         self.tool_bar.addSeparator()
         self.tool_bar.addAction(self.reset_action)
 
@@ -2572,12 +2659,26 @@ class CombinedSDSApp(QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
         
     def zoom_in(self):
-        self.live_view_label.zoom_in()
+        self.live_view_label.zoom_in() # LiveViewLabel handles its own update
+        # --- START: Update Pan Button State ---
+        enable_pan = self.live_view_label.zoom_level > 1.0
+        if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
+        if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
+        if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
+        if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
         self.update_live_view()
+        # --- END: Update Pan Button State ---
 
     def zoom_out(self):
-        self.live_view_label.zoom_out()
+        self.live_view_label.zoom_out() # LiveViewLabel handles its own update
+        # --- START: Update Pan Button State ---
+        enable_pan = self.live_view_label.zoom_level > 1.0
+        if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
+        if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
+        if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
+        if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
         self.update_live_view()
+        # --- END: Update Pan Button State ---
     
     def enable_standard_protein_mode(self):
         """"Enable mode to define standard protein amounts for creating a standard curve."""
@@ -3184,6 +3285,10 @@ class CombinedSDSApp(QMainWindow):
         extracted_qimage = None # Will hold the QImage of the extracted region
         self.live_view_label.pan_offset = QPointF(0, 0)
         self.live_view_label.zoom_level=1.0
+        if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
+        if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
+        if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
+        if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
         self.update_live_view()       
 
         if len(self.live_view_label.quad_points) == 4:
@@ -3252,6 +3357,10 @@ class CombinedSDSApp(QMainWindow):
     def process_sample(self):
         self.live_view_label.pan_offset = QPointF(0, 0)
         self.live_view_label.zoom_level=1.0
+        if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
+        if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
+        if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
+        if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
         self.update_live_view()  
         """Processes the defined region (quad or rect) as a sample."""
         extracted_qimage = None # Will hold the QImage of the extracted region
@@ -5078,7 +5187,12 @@ class CombinedSDSApp(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "UI Update Error", f"Could not update UI elements after pasting: {e}")
                 self._update_preview_label_size()
-
+                
+            enable_pan = self.live_view_label.zoom_level > 1.0
+            if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
+            if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
+            if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
+            if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
             self.update_live_view()
             self.save_state()
 
@@ -5093,6 +5207,10 @@ class CombinedSDSApp(QMainWindow):
             self.live_view_label.clear()
             self._update_preview_label_size()
             self.setWindowTitle(self.window_title)
+            if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
+            if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
+            if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
+            if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
             self._update_status_bar()
             self.update_live_view()
         
@@ -5207,9 +5325,14 @@ class CombinedSDSApp(QMainWindow):
                 except Exception as e:
                     pass
             # --- End UI Element Update ---
-
+            
             
             self._update_status_bar() # <--- Add this
+            enable_pan = self.live_view_label.zoom_level > 1.0
+            if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
+            if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
+            if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
+            if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
             self.update_live_view() # Render the loaded image
             self.save_state() # Save initial loaded state
     
@@ -7290,7 +7413,12 @@ class CombinedSDSApp(QMainWindow):
         else:
             self.live_view_label.clear()
             self._update_preview_label_size()
-
+        self.live_view_label.zoom_level = 1.0
+        self.live_view_label.pan_offset = QPointF(0, 0)
+        if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
+        if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
+        if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
+        if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
         self.update_live_view()
         self._update_status_bar() # <--- Add this
 
@@ -7321,4 +7449,11 @@ if __name__ == "__main__":
         app.aboutToQuit.connect(window.cleanup_temp_clipboard_file)
         app.exec_()
     except Exception as e:
-        logging.error("Application crashed", exc_info=True)
+        # This top-level except might catch errors *before* the app runs,
+        # so log_exception might not be called. Log directly here as a fallback.
+        print(f"FATAL: Application failed to start: {e}")
+        try:
+            # Try logging one last time if basicConfig worked at all
+            logging.critical("Application failed to start", exc_info=True)
+        except:
+            pass # Ignore errors during this final logging attemp
