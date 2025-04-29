@@ -2028,10 +2028,10 @@ class CombinedSDSApp(QMainWindow):
         self.zoom_in_action.setToolTip("Increase zoom level (Ctrl+=)")
         self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
         # --- START: Set Tooltips for Panning Actions ---
-        self.pan_left_action.setToolTip("Pan the view left (when zoomed)")
-        self.pan_right_action.setToolTip("Pan the view right (when zoomed)")
-        self.pan_up_action.setToolTip("Pan the view up (when zoomed)")
-        self.pan_down_action.setToolTip("Pan the view down (when zoomed)")
+        self.pan_left_action.setToolTip("Pan the view left (when zoomed) (Arrow key left)")
+        self.pan_right_action.setToolTip("Pan the view right (when zoomed) (Arrow key right")
+        self.pan_up_action.setToolTip("Pan the view up (when zoomed) (Arrow key up)")
+        self.pan_down_action.setToolTip("Pan the view down (when zoomed) (Arrow key down")
         # --- END: Set Tooltips for Panning Actions ---
 
         # --- Connect signals ---
@@ -2104,8 +2104,6 @@ class CombinedSDSApp(QMainWindow):
                     print("Warning: preview_label_max_height_setting is not positive, using default.")
             except (TypeError, ValueError):
                 print("Warning: preview_label_max_height_setting is invalid, using default.")
-        else:
-            print("Warning: preview_label_max_height_setting attribute not found, using default.")
         max_h = max(min_dim, max_h) # Apply minimum constraint
 
 
@@ -2128,12 +2126,10 @@ class CombinedSDSApp(QMainWindow):
                     # Width is within limits, height is fixed
                     final_w = calc_w_based_on_h
                     final_h = max_h
-                    print(f"  Mode 1: Height fixed ({max_h}), Width calculated ({final_w:.0f}) fits <= {max_w}")
                 else:
                     # Calculated width exceeds max width, so fix width and calculate height
                     final_w = max_w
                     final_h = max_w / img_ratio
-                    print(f"  Mode 2: Width fixed ({max_w}), Height calculated ({final_h:.0f})")
 
                 # Ensure calculated dimensions are not below minimum
                 final_w = max(min_dim, int(final_w))
@@ -2141,19 +2137,16 @@ class CombinedSDSApp(QMainWindow):
 
             else:
                 # Handle invalid image dimensions (0 width or height)
-                print("Warning: Image has zero width or height. Using max constraints as fallback.")
                 final_w = max_w # Already set above
                 final_h = max_h # Already set above
 
         else:
             # No image loaded - Use max constraints as default size
-            print("No image loaded. Using max constraints as fallback size.")
             final_w = max_w # Already set above
             final_h = max_h # Already set above
             # self.live_view_label.clear() # Optionally clear the label
 
         # --- Set the Calculated Fixed Size ---
-        print(f"Setting preview label fixed size to: {final_w}x{final_h}")
         self.live_view_label.setFixedSize(final_w, final_h)
         
     def _update_status_bar(self):
@@ -6375,11 +6368,11 @@ class CombinedSDSApp(QMainWindow):
 
             new_custom_markers = []
             if hasattr(self, "custom_markers"):
-                for x, y, text, color, font, font_size in self.custom_markers:
+                for x, y, text, color, font, font_size,*optional in self.custom_markers:
                     if x_start <= x < x_end and y_start <= y < y_end:
                         new_x = x - x_start
                         new_y = y - y_start
-                        new_custom_markers.append((new_x, new_y, text, color, font, font_size))
+                        new_custom_markers.append((new_x, new_y, text, color, font, font_size,*optional))
             self.custom_markers = new_custom_markers
             # -----------------------------------------------------
 
