@@ -22,29 +22,32 @@ Features:
 * Powerful Exception Logger builtin to diagnose program crashes or other issues.
   
 Example output from the software:
-<img width="868" alt="image" src="https://github.com/user-attachments/assets/32008260-d4e8-4728-89ad-9d5fc5323d25" />
-<img width="866" alt="image" src="https://github.com/user-attachments/assets/1b06ae38-83a7-4aee-884a-1ca59bef396d" />
-<img width="1101" alt="image" src="https://github.com/user-attachments/assets/549b2422-0697-447e-b724-5c84ffd606db" />
-<img width="867" alt="image" src="https://github.com/user-attachments/assets/f4faa88e-aebc-45d2-a082-645f0ae35182" />
 
-Known Bugs:
-* SVG OUPUT IS STILL BUGGY FOR CUSTOM MARKERS!
+![{2BCF27AF-269C-4CBC-8964-DC568F86E235}](https://github.com/user-attachments/assets/c7c616dd-b2a0-48d6-b3c4-30332668ae91)
+![{76350562-3143-4228-BC41-FCC7DEDBD48B}](https://github.com/user-attachments/assets/3300fe4e-4b08-4ba3-8e17-8c83b8e0ba0b)
+<img width="1101" alt="image" src="https://github.com/user-attachments/assets/549b2422-0697-447e-b724-5c84ffd606db" />
+![{B183AC45-3099-4D70-98BE-644A25AD58C0}](https://github.com/user-attachments/assets/8e0d0603-501e-4428-875b-249eb3f6d99c)
+
+
 
 To run using Anaconda without compatiblity issues:
 
 1.Create a new Conda environment:
-  >Open a terminal or Anaconda Prompt and navigate to the directory where the environment.yml file is located. Then run the following command:
+  Open a terminal or Anaconda Prompt and navigate to the directory where the environment.yml file is located. Then run the following command:
+  
   >conda env create -f environment.yml
 
   This will create a new Conda environment named imaging_assistant_env with all the required libraries.
 
 2.Activate the environment:
   After the environment is created, activate it using the following command:  
+  
   >conda activate imaging_assistant_env
 
 3.Run the program:
   Once the environment is activated, you can run your Python program using:
-  >python Imaging_assistant_V5.py
+  >cd [Directory, e.g: C:\Users\X\Downloads\Imaging-Assistant-main\Imaging-Assistant-main\]
+  >python Imaging_assistant_V6.py
 
 To run the program in Python or Other Distribution(can have compatibility issues with python >3.9.13):
 
@@ -63,8 +66,12 @@ To compile the code into an application:
   3. Modify the directory. Here the directory is the same as Anaconda_prompt (Change as needed)
     
   4. Run the command to get an executable so you can run the software on any PC without needing to install Python or Ananconda Distribution on other computer. (OR USE THE RELEASED VERSION)
-     
-Please see the Instruction Video for more details on how to use the software.
+
+If you get issues during compiling exe, execute these commands:
+1. pip uninstall pyinstaller
+2. pip install --upgrade pyinstaller
+3. pyinstaller --noconfirm --onefile --windowed --hidden-import openpyxl.cell._writer --icon=icon.ico --name=Imaging_assistant_V6 Imaging_assistant_V6.py
+
 
 Would really appreciate if you cite this tool so that other people (Students) can use it without having to spend 4 months on developing something like this:
 
