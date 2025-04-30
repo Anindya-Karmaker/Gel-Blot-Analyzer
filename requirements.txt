@@ -1,5 +1,21 @@
-svgwrite
-Pillow
+# Core GUI Framework
 PyQt5
+
+# Image Processing & Manipulation
+Pillow
+opencv-python
+scikit-image
+
+# Numerical & Scientific Computing
 numpy
+scipy
 matplotlib
+
+# Excel File Handling
+openpyxl
+
+# SVG File Handling
+svgwrite
+
+# Build Tool (Needed to run pyinstaller)
+pyinstaller
