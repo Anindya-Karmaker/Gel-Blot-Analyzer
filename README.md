@@ -1,8 +1,5 @@
 # Imaging-Assistant
-This software makes it easy to label and analyze SDS-PAGE, WB and other GEL images (DNA, RNA etc.) easily with powerful densitometric analysis capabilities. It can save the image with all of the options for easy editing and has copy/paste functionality. NOTHING LIKE THIS EXISTS FOR FREE OTHERWISE I WON'T BE SPENDING MY PRECIOUS PHD WEEKENDS ON WORKING ON IT! 
-Disclaimer: I am not a professional coder and used ChatGPT, Claude, Gemini and DeepSeek to write most of the supporting code based on my algorithms and ideas. Please download the required libraries using requirements.txt. Used python version 3.9.13 on a M1 MacBook Pro to run and test the code. 
-Or directly download the EXE file from releases without needing to install Python or other libraries. 
-If someone wants to help me to get me a signing certificate for the application to make it more trustworthy, I would really appreciate it. 
+This software simplifies the process of editing SDS-PAGE, Western Blot (WB), and other gel images for scientific research and publications, making it effortless to add important details like labels, headings, molecular weight markers, and more. With an intuitive interface, you can customize your images precisely the way you want. Save your work with all annotations intact, so you can revisit and refine your images anytime. Plus, take advantage of powerful densitometric analysis tools built right in-giving you accurate, reliable quantification with just a few clicks. Whether you're preparing figures for publication or analyzing experimental results, this tool streamlines your workflow and helps you present your data clearly and professionally.
 
 Features:
 * Works with most image format (TIFF,PNG,BMP,JPG) from any device or even camera
