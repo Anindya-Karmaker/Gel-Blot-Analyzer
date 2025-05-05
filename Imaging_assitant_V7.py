@@ -4840,7 +4840,7 @@ class CombinedSDSApp(QMainWindow):
 
         self.orientation_label = QLabel("Rotation Angle (0.00°)")
         # Make label width flexible but give it a minimum
-        self.orientation_label.setMinimumWidth(130)
+        self.orientation_label.setMinimumWidth(150)
         # Allow label to shrink/grow slightly if needed:
         self.orientation_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
