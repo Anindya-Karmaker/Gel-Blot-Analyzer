@@ -5442,6 +5442,7 @@ class CombinedSDSApp(QMainWindow):
         self.left_padding_input.setText(str(int(self.image.width()*0.1)))
         self.right_padding_input.setText(str(int(self.image.width()*0.1)))
         self.top_padding_input.setText(str(int(self.image.height()*0.15)))
+        self.bottom_padding_input.setText(str(int(0)))
         self.update_live_view()
         
         
