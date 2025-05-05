@@ -7426,13 +7426,15 @@ class CombinedSDSApp(QMainWindow):
     #     self.update_live_view()
         
     def finalize_image(self): # Padding
-        self.save_state()
+        """
+        Applies padding to the image and adjusts coordinates of all markers and custom shapes.
+        """
         if not self.image or self.image.isNull():
             QMessageBox.warning(self, "Error", "No image loaded to apply padding.")
             return
 
         try:
-            # Ensure padding values are non-negative
+            # Ensure padding values are non-negative integers
             padding_left = max(0, int(self.left_padding_input.text()))
             padding_right = max(0, int(self.right_padding_input.text()))
             padding_top = max(0, int(self.top_padding_input.text()))
@@ -7450,42 +7452,32 @@ class CombinedSDSApp(QMainWindow):
         # --- Check if padding is actually needed ---
         if padding_left == 0 and padding_right == 0 and padding_top == 0 and padding_bottom == 0:
             QMessageBox.information(self, "Info", "No padding specified. Image remains unchanged.")
-            return # Nothing to do
+            return
+
+        # --- Save state BEFORE modifying image and markers/shapes ---
+        self.save_state()
 
         try:
-            # --- Determine if the source image has transparency ---
-            
+            # --- Determine Fill Value (Transparent or White) ---
             source_has_alpha = self.image.hasAlphaChannel()
-
-            # --- Convert source QImage to NumPy array ---
             np_img = self.qimage_to_numpy(self.image)
             if np_img is None: raise ValueError("NumPy conversion failed.")
-            
-            fill_value = None
-            # Check if NumPy array indicates alpha (4 channels) even if QImage didn't report it explicitly
             numpy_indicates_alpha = (np_img.ndim == 3 and np_img.shape[2] == 4)
-            has_alpha = source_has_alpha or numpy_indicates_alpha # Combine checks
+            has_alpha = source_has_alpha or numpy_indicates_alpha
 
+            fill_value = None
             if has_alpha:
-                # Pad images WITH existing alpha using TRANSPARENT black
-                # OpenCV expects (B, G, R, Alpha) or just Alpha if grayscale+alpha
-                # Provide 4 values for safety, assuming color/grayscale + alpha format from qimage_to_numpy
-                fill_value = (0, 0, 0, 0) # Transparent Black for NumPy/OpenCV
-            elif np_img.ndim == 3: # Opaque Color (BGR)
-                # Pad opaque color images with WHITE
-                fill_value = (255, 255, 255) # White for BGR format expected by OpenCV
+                fill_value = (0, 0, 0, 0) # Transparent Black for BGRA
+            elif np_img.ndim == 3: # Opaque Color (assume BGR)
+                fill_value = (255, 255, 255) # White
             elif np_img.ndim == 2: # Opaque Grayscale
-                # Pad opaque grayscale images with WHITE
-                # Determine white value based on dtype
-                if np_img.dtype == np.uint16:
-                    fill_value = 65535 # White for 16-bit grayscale
-                else: # Assume uint8 or other standard grayscale
-                    fill_value = 255 # White for 8-bit grayscale
+                fill_value = 65535 if np_img.dtype == np.uint16 else 255 # White
             else:
-                 raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
+                raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
 
-            # --- Adjust markers BEFORE creating the new padded image ---
-            self.adjust_markers_for_padding(padding_left, padding_right, padding_top, padding_bottom)
+            # --- Adjust Markers and Shapes BEFORE creating the new padded image ---
+            # The new coordinates will be (old_x + padding_left, old_y + padding_top)
+            self.adjust_elements_for_padding(padding_left, padding_top)
 
             # --- Pad using OpenCV's copyMakeBorder ---
             padded_np = cv2.copyMakeBorder(np_img, padding_top, padding_bottom,
@@ -7493,52 +7485,100 @@ class CombinedSDSApp(QMainWindow):
                                            cv2.BORDER_CONSTANT, value=fill_value)
 
             # --- Convert padded NumPy array back to QImage ---
-            # numpy_to_qimage should automatically select a format supporting alpha if padded_np has 4 channels
             padded_image = self.numpy_to_qimage(padded_np)
             if padded_image.isNull():
                  raise ValueError("Conversion back to QImage failed after padding.")
 
-
             # --- Update main image and backups ---
-            # Store the image *before* this padding operation, unless padding was already applied
-            if not self.image_padded:
-                self.image_before_padding = self.image.copy()
-            # Else: keep the existing image_before_padding from the *previous* unpadded state
+            # Store the image *before* this padding operation
+            # No need to store separately if save_state() was called
+            # self.image_before_padding = self.image.copy() # Already saved in undo stack
 
             self.image = padded_image
             self.image_padded = True # Indicate padding has been applied
+            self.is_modified = True
 
             # Update backups consistently to reflect the new padded state
             self.image_contrasted = self.image.copy()
-            self.image_before_contrast = self.image.copy() # Contrast baseline resets after padding
+            self.image_before_contrast = self.image.copy() # Contrast baseline resets
 
-            # --- Update UI (label size, slider ranges, live view) ---
-            # (Keep the existing UI update logic here)
- 
+            # --- Update UI ---
             self._update_preview_label_size()
-
-            render_scale = 3
-            render_width = self.live_view_label.width() * render_scale
-            render_height = self.live_view_label.height() * render_scale
-            self._update_marker_slider_ranges()
-            # --- End UI Update ---
-
+            self._update_marker_slider_ranges() # Ranges change due to new image size
             self.update_live_view() # Refresh display
             self._update_status_bar() # Update size/depth info
 
         except Exception as e:
             QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
             traceback.print_exc()
-    # --- END: Modified Image Operations ---
-    
-    def adjust_markers_for_padding(self, padding_left, padding_right, padding_top, padding_bottom):
-        """Adjust marker positions based on padding."""
-        # Adjust left markers
-        self.left_markers = [(y + padding_top, label) for y, label in self.left_markers]
-        # Adjust right markers
-        self.right_markers = [(y + padding_top, label) for y, label in self.right_markers]
-        # Adjust top markers
-        self.top_markers = [(x + padding_left, label) for x, label in self.top_markers]        
+            # Attempt to undo if padding failed midway
+            # self.undo_action_m() # Consider if this is safe/desirable
+
+    def adjust_elements_for_padding(self, padding_left, padding_top):
+        """Adjusts coordinates of all markers and custom shapes for added padding."""
+
+        # Adjust standard markers (only Y for left/right, only X for top)
+        self.left_markers = [(y + padding_top, label) for y, label in getattr(self, 'left_markers', [])]
+        self.right_markers = [(y + padding_top, label) for y, label in getattr(self, 'right_markers', [])]
+        self.top_markers = [(x + padding_left, label) for x, label in getattr(self, 'top_markers', [])]
+
+        # Adjust custom markers (both X and Y)
+        new_custom_markers = []
+        for marker_data in getattr(self, "custom_markers", []):
+            try:
+                # Create a mutable list from the tuple/list
+                m_list = list(marker_data)
+                m_list[0] = m_list[0] + padding_left # Adjust X
+                m_list[1] = m_list[1] + padding_top  # Adjust Y
+                new_custom_markers.append(m_list) # Add adjusted list
+            except (IndexError, TypeError):
+                 print(f"Warning: Skipping malformed custom marker during padding adjustment: {marker_data}")
+                 new_custom_markers.append(marker_data) # Keep original if malformed
+        self.custom_markers = new_custom_markers
+
+        # --- Adjust Custom Shapes ---
+        new_custom_shapes = []
+        for shape_data_orig in getattr(self, "custom_shapes", []):
+            shape_data = shape_data_orig.copy() # Work on a copy
+            try:
+                shape_type = shape_data.get('type')
+                if shape_type == 'line':
+                    sx, sy = shape_data['start']
+                    ex, ey = shape_data['end']
+                    shape_data['start'] = (sx + padding_left, sy + padding_top)
+                    shape_data['end'] = (ex + padding_left, ey + padding_top)
+                elif shape_type == 'rectangle':
+                    x, y, w, h = shape_data['rect']
+                    # Only need to adjust the top-left corner (x, y)
+                    # Width and height remain the same
+                    shape_data['rect'] = (x + padding_left, y + padding_top, w, h)
+                # Add other shape types here if needed
+                new_custom_shapes.append(shape_data) # Add adjusted shape
+            except (KeyError, IndexError, TypeError, ValueError):
+                 print(f"Warning: Skipping malformed custom shape during padding adjustment: {shape_data_orig}")
+                 new_custom_shapes.append(shape_data_orig) # Keep original if malformed
+        self.custom_shapes = new_custom_shapes
+        # --- End Custom Shape Adjustment ---
+
+        # Also adjust the internal offset variables used by sliders/rendering
+        self.left_marker_shift_added += padding_left
+        self.right_marker_shift_added += padding_left
+        self.top_marker_shift_added += padding_top
+
+        # Update the sliders visually to reflect the new offsets
+        # (Block signals to prevent update_live_view calls from slider changes)
+        if hasattr(self, 'left_padding_slider'):
+            self.left_padding_slider.blockSignals(True)
+            self.left_padding_slider.setValue(self.left_marker_shift_added)
+            self.left_padding_slider.blockSignals(False)
+        if hasattr(self, 'right_padding_slider'):
+            self.right_padding_slider.blockSignals(True)
+            self.right_padding_slider.setValue(self.right_marker_shift_added)
+            self.right_padding_slider.blockSignals(False)
+        if hasattr(self, 'top_padding_slider'):
+             self.top_padding_slider.blockSignals(True)
+             self.top_padding_slider.setValue(self.top_marker_shift_added)
+             self.top_padding_slider.blockSignals(False)        
         
     
     def update_left_padding(self):
