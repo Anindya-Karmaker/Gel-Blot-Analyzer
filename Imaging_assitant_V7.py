@@ -4454,7 +4454,7 @@ class CombinedSDSApp(QMainWindow):
         # Resize Slider
         image1_layout.addWidget(QLabel("Resize (%):"), 3, 0)
         self.image1_resize_slider = QSlider(Qt.Horizontal)
-        self.image1_resize_slider.setRange(10, 300)  # Range 10% to 300%
+        self.image1_resize_slider.setRange(10, 600)  # Range 10% to 300%
         self.image1_resize_slider.setValue(100)
         self.image1_resize_slider.valueChanged.connect(self.update_live_view)
         self.image1_resize_label = QLabel("100%") # Show current percentage
@@ -4497,7 +4497,7 @@ class CombinedSDSApp(QMainWindow):
 
         image2_layout.addWidget(QLabel("Resize (%):"), 3, 0)
         self.image2_resize_slider = QSlider(Qt.Horizontal)
-        self.image2_resize_slider.setRange(10, 300)
+        self.image2_resize_slider.setRange(10, 600)
         self.image2_resize_slider.setValue(100)
         self.image2_resize_slider.valueChanged.connect(self.update_live_view)
         self.image2_resize_label = QLabel("100%")
