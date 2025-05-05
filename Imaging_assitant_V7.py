@@ -97,7 +97,7 @@ def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: 
     # Font settings (adjust as needed)
     font = QFont(font_type)
     # Make arrow slightly smaller than +/-, maybe not bold? Experiment.
-    font.setPointSize(max(12, int(icon_size.width()*0.85)))
+    font.setPointSize(min(16, int(icon_size.height()*0.8)))
     # font.setBold(True) # Optional: Make arrows bold or not
     painter.setFont(font)
     painter.setPen(color)
@@ -2517,7 +2517,7 @@ class CombinedSDSApp(QMainWindow):
     def _create_actions(self):
         """Create QAction objects for menus and toolbars."""
         style = self.style() # Still useful for other icons
-        icon_size = QSize(30, 30) # Match your toolbar size
+        icon_size = QSize(24, 24) # Match your toolbar size
         text_color = self.palette().color(QPalette.ButtonText) # Use theme color
 
         # # --- Create Zoom Icons (using previous method) ---
@@ -5446,279 +5446,258 @@ class CombinedSDSApp(QMainWindow):
         
         
         
+    # In class CombinedSDSApp:
+
     def create_markers_tab(self):
-        """Create the Markers tab with preset, label, placement, offset, and custom controls."""
+        """Create the Markers tab with a more compact and organized layout."""
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setSpacing(8)  # Reduce main vertical spacing
+        # Main vertical layout for the tab
+        main_layout = QVBoxLayout(tab)
+        main_layout.setSpacing(10) # Consistent spacing between major sections
 
-        # --- Combined Group Box for Presets and Labels ---
-        presets_labels_group = QGroupBox("Marker Presets and Labels")
-        presets_labels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        presets_labels_layout = QGridLayout(presets_labels_group)
-        presets_labels_layout.setSpacing(5) # Reduce spacing within the grid
+        # --- Top Row: Presets and Top Labels ---
+        top_row_layout = QHBoxLayout()
+        top_row_layout.setSpacing(10)
 
-        # -- Left/Right Marker Options (Columns 0 & 1) --
-        presets_labels_layout.addWidget(QLabel("Preset:"), 0, 0) # Label for combo
+        # Group Box for Presets (Left/Right Markers)
+        presets_group = QGroupBox("Left/Right Marker Presets")
+        presets_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        presets_layout = QGridLayout(presets_group)
+        presets_layout.setSpacing(5) # Compact grid spacing
+
+        presets_layout.addWidget(QLabel("Preset:"), 0, 0)
         self.combo_box = QComboBox(self)
-        if not hasattr(self, 'marker_values_dict'):
-             self.load_config() # Load config attempts to initialize it
+        if not hasattr(self, 'marker_values_dict'): self.load_config()
         self.combo_box.addItems(self.marker_values_dict.keys())
         self.combo_box.addItem("Custom")
-        self.combo_box.setCurrentText("Precision Plus All Blue/Unstained") # Default or load last used?
+        self.combo_box.setCurrentText("Precision Plus Protein All Blue Prestained (Bio-Rad)") # Sensible default
         self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
-        presets_labels_layout.addWidget(self.combo_box, 0, 1) # Combo box in col 1
+        presets_layout.addWidget(self.combo_box, 0, 1)
 
         self.marker_values_textbox = QLineEdit(self)
-        self.marker_values_textbox.setPlaceholderText("Custom values (comma-separated)") # Shorter text
+        self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-sep)")
         self.marker_values_textbox.setEnabled(False)
-        presets_labels_layout.addWidget(self.marker_values_textbox, 1, 0, 1, 2) # Span text box across cols 0 & 1
+        presets_layout.addWidget(self.marker_values_textbox, 1, 0, 1, 2) # Span both columns
 
         self.rename_input = QLineEdit(self)
-        self.rename_input.setPlaceholderText("New name for Custom")
+        self.rename_input.setPlaceholderText("New name for Custom preset")
         self.rename_input.setEnabled(False)
-        presets_labels_layout.addWidget(self.rename_input, 2, 0, 1, 2) # Span rename input
+        presets_layout.addWidget(self.rename_input, 2, 0, 1, 2) # Span both columns
 
         preset_buttons_layout = QHBoxLayout()
-        self.save_button = QPushButton("Save Config", self)
+        preset_buttons_layout.setContentsMargins(0, 0, 0, 0) # No extra margins
+        self.save_button = QPushButton("Save Preset", self)
         self.save_button.clicked.connect(self.save_config)
-        self.remove_config_button = QPushButton("Remove Config", self)
+        self.remove_config_button = QPushButton("Remove Preset", self)
         self.remove_config_button.clicked.connect(self.remove_config)
         preset_buttons_layout.addWidget(self.save_button)
         preset_buttons_layout.addWidget(self.remove_config_button)
-        preset_buttons_layout.addStretch() # Push buttons left
-        presets_labels_layout.addLayout(preset_buttons_layout, 3, 0, 1, 2) # Add button layout, spanning
+        preset_buttons_layout.addStretch() # Keep buttons left-aligned
+        presets_layout.addLayout(preset_buttons_layout, 3, 0, 1, 2) # Add button row
 
-        # -- Top Marker Options (Columns 2 & 3) --
-        presets_labels_layout.addWidget(QLabel("Top Labels:"), 0, 2) # Label for text edit
+        presets_layout.setColumnStretch(1, 1) # Allow combobox/textbox to expand
+        top_row_layout.addWidget(presets_group, 1) # Add preset group, set stretch factor 1
+
+        # Group Box for Top Labels
+        top_labels_group = QGroupBox("Top Marker Labels")
+        top_labels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        top_labels_layout = QVBoxLayout(top_labels_group) # Simple vertical layout
+        top_labels_layout.setSpacing(5)
+
         self.top_marker_input = QTextEdit(self)
-        if not hasattr(self, 'top_label'):
-            self.top_label = ["MWM", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "MWM"] # Default
-        self.top_marker_input.setText(", ".join(map(str, self.top_label))) # Ensure all elements are strings for join
-        self.top_marker_input.setMinimumHeight(40)
-        self.top_marker_input.setMaximumHeight(80) # Reduced max height
-        self.top_marker_input.setPlaceholderText("Labels (comma-separated)") # Shorter text
-        presets_labels_layout.addWidget(self.top_marker_input, 0, 3, 3, 1) # Row 0, Col 3, Span 3 rows, 1 col
+        if not hasattr(self, 'top_label'): self.load_config() # Ensure defaults are loaded
+        self.top_marker_input.setText(", ".join(map(str, getattr(self, 'top_label', [])))) # Ensure strings, handle missing attr
+        self.top_marker_input.setMinimumHeight(40) # Min height
+        self.top_marker_input.setMaximumHeight(100) # Max height, slightly more generous
+        self.top_marker_input.setPlaceholderText("Top labels (comma-separated)")
+        top_labels_layout.addWidget(self.top_marker_input) # Text edit takes most space
 
-        self.update_top_labels_button = QPushButton("Update All Labels")
+        self.update_top_labels_button = QPushButton("Update All L/R/Top Labels")
+        self.update_top_labels_button.setToolTip("Apply values from text boxes to current markers.")
         self.update_top_labels_button.clicked.connect(self.update_all_labels)
-        presets_labels_layout.addWidget(self.update_top_labels_button, 3, 3) # Place below text edit in col 3
+        top_labels_layout.addWidget(self.update_top_labels_button) # Button below
 
-        presets_labels_layout.setColumnStretch(1, 1)
-        presets_labels_layout.setColumnStretch(3, 1)
+        top_row_layout.addWidget(top_labels_group, 1) # Add top labels group, stretch factor 1
 
-        layout.addWidget(presets_labels_group)
+        main_layout.addLayout(top_row_layout) # Add the first row (presets + top labels)
 
-        # --- Marker Placement and Offsets Group ---
-        padding_params_group = QGroupBox("Marker Placement and Offsets")
-        padding_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        padding_layout = QGridLayout(padding_params_group)
-        padding_layout.setVerticalSpacing(5)
-        padding_layout.setHorizontalSpacing(8)
 
-        # Initialize slider ranges if not already done (e.g., by loading config)
+        # --- Middle Section: Marker Placement and Offsets ---
+        placement_group = QGroupBox("Marker Placement and Offsets")
+        placement_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        # Use QGridLayout for precise alignment
+        placement_layout = QGridLayout(placement_group)
+        placement_layout.setSpacing(5) # Compact spacing
+        # Set column stretches for balanced appearance
+        placement_layout.setColumnStretch(0, 0) # Place button column (fixed size)
+        placement_layout.setColumnStretch(1, 0) # Remove button column (fixed size)
+        placement_layout.setColumnStretch(2, 0) # Reset/Copy button column (fixed size)
+        placement_layout.setColumnStretch(3, 0) # Offset label column (fixed size)
+        placement_layout.setColumnStretch(4, 1) # Slider column (expand)
+        placement_layout.setColumnStretch(5, 0) # Reset/Copy button column (fixed size)
+
+        # Initialize slider ranges if needed (ensure load_config was called)
         if not hasattr(self, 'left_slider_range'): self.left_slider_range = [-100, 1000]
         if not hasattr(self, 'right_slider_range'): self.right_slider_range = [-100, 1000]
         if not hasattr(self, 'top_slider_range'): self.top_slider_range = [-100, 1000]
-        # Initialize shift values if not already done
         if not hasattr(self, 'left_marker_shift_added'): self.left_marker_shift_added = 0
         if not hasattr(self, 'right_marker_shift_added'): self.right_marker_shift_added = 0
         if not hasattr(self, 'top_marker_shift_added'): self.top_marker_shift_added = 0
 
-        # --- Row 0: Left Marker ---
-        left_marker_button = QPushButton("Place Left")
-        left_marker_button.setToolTip("Place left markers. Shortcut: Ctrl+Shift+L")
+        # Row 0: Left Marker
+        left_marker_button = QPushButton("Place Left"); left_marker_button.setToolTip("Ctrl+Shift+L")
         left_marker_button.clicked.connect(self.enable_left_marker_mode)
-        self.left_padding_slider = QSlider(Qt.Horizontal)
-        self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
-        self.left_padding_slider.setValue(self.left_marker_shift_added) # Use initialized/loaded value
-        self.left_padding_slider.valueChanged.connect(self.update_left_padding)
         remove_left_button = QPushButton("Remove Last")
         remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove'))
-        reset_left_button = QPushButton("Reset")
+        reset_left_button = QPushButton("Reset All"); reset_left_button.setToolTip("Reset All Left Markers")
         reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
-        duplicate_left_button = QPushButton("Copy Right")
+        self.left_padding_slider = QSlider(Qt.Horizontal)
+        self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
+        self.left_padding_slider.setValue(self.left_marker_shift_added)
+        self.left_padding_slider.valueChanged.connect(self.update_left_padding)
+        duplicate_left_button = QPushButton("Copy →") # Use arrow for direction
+        duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left")
         duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left'))
-        padding_layout.addWidget(QLabel("Offset Left:"), 0, 3)
-        padding_layout.addWidget(left_marker_button, 0, 0)
-        padding_layout.addWidget(remove_left_button, 0, 1)
-        padding_layout.addWidget(reset_left_button, 0, 2)
-        padding_layout.addWidget(self.left_padding_slider, 0, 4, 1, 3) # Span 3 columns
-        padding_layout.addWidget(duplicate_left_button, 0, 7)
+        placement_layout.addWidget(left_marker_button, 0, 0)
+        placement_layout.addWidget(remove_left_button, 0, 1)
+        placement_layout.addWidget(reset_left_button, 0, 2)
+        placement_layout.addWidget(QLabel("Offset Left:"), 0, 3, Qt.AlignRight | Qt.AlignVCenter) # Align label
+        placement_layout.addWidget(self.left_padding_slider, 0, 4)
+        placement_layout.addWidget(duplicate_left_button, 0, 5)
 
-        # --- Row 1: Right Marker ---
-        right_marker_button = QPushButton("Place Right")
-        right_marker_button.setToolTip("Place right markers. Shortcut: Ctrl+Shift+R")
+        # Row 1: Right Marker
+        right_marker_button = QPushButton("Place Right"); right_marker_button.setToolTip("Ctrl+Shift+R")
         right_marker_button.clicked.connect(self.enable_right_marker_mode)
+        remove_right_button = QPushButton("Remove Last")
+        remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove'))
+        reset_right_button = QPushButton("Reset All"); reset_right_button.setToolTip("Reset All Right Markers")
+        reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
         self.right_padding_slider = QSlider(Qt.Horizontal)
         self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
         self.right_padding_slider.setValue(self.right_marker_shift_added)
         self.right_padding_slider.valueChanged.connect(self.update_right_padding)
-        remove_right_button = QPushButton("Remove Last")
-        remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove'))
-        reset_right_button = QPushButton("Reset")
-        reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
-        duplicate_right_button = QPushButton("Copy Left")
+        duplicate_right_button = QPushButton("← Copy") # Use arrow for direction
+        duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right")
         duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right'))
-        padding_layout.addWidget(QLabel("Offset Right:"), 1, 3)
-        padding_layout.addWidget(right_marker_button, 1, 0)
-        padding_layout.addWidget(remove_right_button, 1, 1)
-        padding_layout.addWidget(reset_right_button, 1, 2)
-        padding_layout.addWidget(self.right_padding_slider, 1, 4, 1, 3) # Span 3 columns
-        padding_layout.addWidget(duplicate_right_button, 1, 7)
+        placement_layout.addWidget(right_marker_button, 1, 0)
+        placement_layout.addWidget(remove_right_button, 1, 1)
+        placement_layout.addWidget(reset_right_button, 1, 2)
+        placement_layout.addWidget(QLabel("Offset Right:"), 1, 3, Qt.AlignRight | Qt.AlignVCenter)
+        placement_layout.addWidget(self.right_padding_slider, 1, 4)
+        placement_layout.addWidget(duplicate_right_button, 1, 5)
 
-        # --- Row 2: Top Marker ---
-        top_marker_button = QPushButton("Place Top")
-        top_marker_button.setToolTip("Place top markers. Shortcut: Ctrl+Shift+T")
+        # Row 2: Top Marker
+        top_marker_button = QPushButton("Place Top"); top_marker_button.setToolTip("Ctrl+Shift+T")
         top_marker_button.clicked.connect(self.enable_top_marker_mode)
+        remove_top_button = QPushButton("Remove Last")
+        remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove'))
+        reset_top_button = QPushButton("Reset All"); reset_top_button.setToolTip("Reset All Top Markers")
+        reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
         self.top_padding_slider = QSlider(Qt.Horizontal)
         self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
         self.top_padding_slider.setValue(self.top_marker_shift_added)
         self.top_padding_slider.valueChanged.connect(self.update_top_padding)
-        remove_top_button = QPushButton("Remove Last")
-        remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove'))
-        reset_top_button = QPushButton("Reset")
-        reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
-        padding_layout.addWidget(QLabel("Offset Top:"), 2, 3)
-        padding_layout.addWidget(top_marker_button, 2, 0)
-        padding_layout.addWidget(remove_top_button, 2, 1)
-        padding_layout.addWidget(reset_top_button, 2, 2)
-        padding_layout.addWidget(self.top_padding_slider, 2, 4, 1, 4)  # Span 4 columns (takes space of duplicate btn too)
+        placement_layout.addWidget(top_marker_button, 2, 0)
+        placement_layout.addWidget(remove_top_button, 2, 1)
+        placement_layout.addWidget(reset_top_button, 2, 2)
+        placement_layout.addWidget(QLabel("Offset Top:"), 2, 3, Qt.AlignRight | Qt.AlignVCenter)
+        placement_layout.addWidget(self.top_padding_slider, 2, 4)
+        # Column 5 is empty for top markers row
 
-        # --- Row 3: Custom Marker Main Controls ---
+        main_layout.addWidget(placement_group) # Add placement group
+
+
+        # --- Bottom Section: Custom Markers / Shapes / Grid ---
+        custom_group = QGroupBox("Custom Markers, Shapes, and Grid")
+        custom_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        custom_layout = QGridLayout(custom_group)
+        custom_layout.setSpacing(5)
+        # Set column stretches
+        custom_layout.setColumnStretch(1, 1) # Allow text entry/font combo to expand
+        custom_layout.setColumnStretch(4, 1) # Allow grid controls to space out
+
+        # Row 0: Custom Marker Placement Controls
         self.custom_marker_button = QPushButton("Place Custom", self)
-        self.custom_marker_button.setToolTip("Click to activate, then click on image to place the text/arrow")
+        self.custom_marker_button.setToolTip("Click to activate, then click on image to place text/arrow")
         self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
         self.custom_marker_text_entry = QLineEdit(self)
-        self.custom_marker_text_entry.setPlaceholderText("Custom text")
+        self.custom_marker_text_entry.setPlaceholderText("Custom text or use arrows →")
 
+        # Arrow buttons in a compact layout
         marker_buttons_layout = QHBoxLayout()
-        marker_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        marker_buttons_layout.setSpacing(2)
-        self.custom_marker_button_left_arrow = QPushButton("←", self)
-        self.custom_marker_button_right_arrow = QPushButton("→", self)
-        self.custom_marker_button_top_arrow = QPushButton("↑", self)
-        self.custom_marker_button_bottom_arrow = QPushButton("↓", self)
+        marker_buttons_layout.setContentsMargins(0, 0, 0, 0); marker_buttons_layout.setSpacing(2)
         arrow_size = 25
-        self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size)
-        self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size)
-        self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size)
-        self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size)
-        self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left: Add ← and activate placement")
-        self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right: Add → and activate placement")
-        self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up: Add ↑ and activate placement")
-        self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down: Add ↓ and activate placement")
-        marker_buttons_layout.addWidget(self.custom_marker_button_left_arrow)
-        marker_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
-        marker_buttons_layout.addWidget(self.custom_marker_button_top_arrow)
-        marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
+        self.custom_marker_button_left_arrow = QPushButton("←"); self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left")
+        self.custom_marker_button_right_arrow = QPushButton("→"); self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right")
+        self.custom_marker_button_top_arrow = QPushButton("↑"); self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up")
+        self.custom_marker_button_bottom_arrow = QPushButton("↓"); self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down")
+        marker_buttons_layout.addWidget(self.custom_marker_button_left_arrow); marker_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
+        marker_buttons_layout.addWidget(self.custom_marker_button_top_arrow); marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
         marker_buttons_layout.addStretch()
         self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
         self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
         self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
         self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
 
-        self.remove_custom_marker_button = QPushButton("Remove Last", self)
-        self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
-        self.reset_custom_marker_button = QPushButton("Reset", self)
-        self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
-        self.modify_custom_marker_button = QPushButton("Modify", self) # << THE NEW BUTTON
-        self.modify_custom_marker_button.setToolTip("Open a dialog to manage custom markers")
-        self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog) # << CONNECTED
+        # Custom Marker Management Buttons
+        custom_manage_layout = QHBoxLayout(); custom_manage_layout.setContentsMargins(0,0,0,0); custom_manage_layout.setSpacing(4)
+        self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
+        self.reset_custom_marker_button = QPushButton("Reset All"); self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
+        self.modify_custom_marker_button = QPushButton("Modify All..."); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes")
+        self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
+        custom_manage_layout.addWidget(self.remove_custom_marker_button); custom_manage_layout.addWidget(self.reset_custom_marker_button); custom_manage_layout.addWidget(self.modify_custom_marker_button)
+
+        custom_layout.addWidget(self.custom_marker_button, 0, 0)
+        custom_layout.addWidget(self.custom_marker_text_entry, 0, 1)
+        custom_layout.addLayout(marker_buttons_layout, 0, 2) # Arrow buttons next to text
+        custom_layout.addLayout(custom_manage_layout, 0, 3, 1, 3) # Management buttons span remaining cols
+
+        # Row 1: Font, Size, Color, Shapes, Grid
+        custom_style_layout = QHBoxLayout(); custom_style_layout.setContentsMargins(0,0,0,0); custom_style_layout.setSpacing(5)
+        self.custom_font_type_label = QLabel("Font:")#, self) # Removed parent
+        self.custom_font_type_dropdown = QFontComboBox()# Removed parent
+        initial_font = QFont("Arial"); self.custom_font_type_dropdown.setCurrentFont(initial_font)
+        self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
+        self.custom_font_size_label = QLabel("Size:")#, self)
+        self.custom_font_size_spinbox = QSpinBox()# Removed parent
+        self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12)
         self.custom_marker_color_button = QPushButton("Color")
         self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
         if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
         self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
+        custom_style_layout.addWidget(self.custom_font_type_label); custom_style_layout.addWidget(self.custom_font_type_dropdown)
+        custom_style_layout.addWidget(self.custom_font_size_label); custom_style_layout.addWidget(self.custom_font_size_spinbox)
+        custom_style_layout.addWidget(self.custom_marker_color_button)
+        custom_style_layout.addStretch() # Push font controls left
 
-        padding_layout.addWidget(self.custom_marker_button, 3, 0)
-        padding_layout.addWidget(self.custom_marker_text_entry, 3, 1, 1, 2)
-        padding_layout.addLayout(marker_buttons_layout, 3, 3)
-        padding_layout.addWidget(self.remove_custom_marker_button, 3, 4)
-        padding_layout.addWidget(self.reset_custom_marker_button, 3, 5)
-        padding_layout.addWidget(self.modify_custom_marker_button, 3, 6) # Added Modify Button
-        padding_layout.addWidget(self.custom_marker_color_button, 3, 7)   # Color Button shifted
-
-        # --- Row 4: Custom Marker Font and Grid ---
-        self.custom_font_type_label = QLabel("Custom Font:", self)
-        self.custom_font_type_dropdown = QFontComboBox()
-        # Initialize font: Check if 'Arial' exists, otherwise use first available
-        initial_font = QFont("Arial")
-        # if initial_font.family() not in [f.family() for f in self.custom_font_type_dropdown.availableFonts()]:
-        #      initial_font = self.custom_font_type_dropdown.availableFonts()[0] if self.custom_font_type_dropdown.availableFonts() else QFont()
-        self.custom_font_type_dropdown.setCurrentFont(initial_font)
-        self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
-
-        self.custom_font_size_label = QLabel("Size:", self)
-        self.custom_font_size_spinbox = QSpinBox(self)
-        self.custom_font_size_spinbox.setRange(1, 150)
-        self.custom_font_size_spinbox.setValue(12) # Default
-
-        # self.show_grid_checkbox = QCheckBox("Snap Grid", self)
-        # self.show_grid_checkbox.setToolTip("Places a snapping grid. Shortcut: Ctrl+Shift+G")
-        # self.show_grid_checkbox.setChecked(False)
-        # self.show_grid_checkbox.stateChanged.connect(self.update_live_view)
-        
-        self.show_grid_checkbox_x = QCheckBox("Snap X", self)
-        self.show_grid_checkbox_x.setToolTip("Snaps marker placement horizontally to the grid. Ctrl+Shift+G toggles X & Y.")
-        self.show_grid_checkbox_x.setChecked(False)
-        self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view) # Trigger redraw if grid lines depend on this
-
-        self.show_grid_checkbox_y = QCheckBox("Snap Y", self)
-        self.show_grid_checkbox_y.setToolTip("Snaps marker placement vertically to the grid. Ctrl+Shift+G toggles X & Y.")
-        self.show_grid_checkbox_y.setChecked(False)
-        self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view) # Trigger redraw if grid lines depend on this
-
-        self.grid_size_input = QSpinBox(self)
-        self.grid_size_input.setRange(5, 100)
-        self.grid_size_input.setValue(20)
-        self.grid_size_input.setPrefix("Grid (px): ")
-        self.grid_size_input.valueChanged.connect(self.update_live_view)
-        
-        shape_button_layout = QHBoxLayout()
-        shape_button_layout.setContentsMargins(0,0,0,0)
-        shape_button_layout.setSpacing(2)
-
-        self.draw_line_button = QPushButton("L")
-        self.draw_line_button.setToolTip("Draw Line: Click and drag on the image.\nUses current Custom Color and Size/Thickness.")
-        self.draw_line_button.setFixedSize(25, 25) # Small square button
-        self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
-
-        self.draw_rect_button = QPushButton("R")
-        self.draw_rect_button.setToolTip("Draw Rectangle: Click and drag on the image.\nUses current Custom Color and Size/Thickness.")
-        self.draw_rect_button.setFixedSize(25, 25) # Small square button
-        self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
-        
-        self.remove_shape_button = QPushButton("X")
-        self.remove_shape_button.setToolTip("Remove Last Drawn Shape (Line/Rectangle)")
-        self.remove_shape_button.setFixedSize(25, 25)
-        self.remove_shape_button.clicked.connect(self.remove_last_custom_shape) # Connect to specific method
-        
-        shape_button_layout.addWidget(self.draw_line_button)
-        shape_button_layout.addWidget(self.draw_rect_button)
-        shape_button_layout.addWidget(self.remove_shape_button)
+        # Shape buttons compact layout
+        shape_button_layout = QHBoxLayout(); shape_button_layout.setContentsMargins(0,0,0,0); shape_button_layout.setSpacing(2)
+        shape_size = 25
+        self.draw_line_button = QPushButton("L"); self.draw_line_button.setToolTip("Draw Line"); self.draw_line_button.setFixedSize(shape_size, shape_size); self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
+        self.draw_rect_button = QPushButton("R"); self.draw_rect_button.setToolTip("Draw Rectangle"); self.draw_rect_button.setFixedSize(shape_size, shape_size); self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
+        self.remove_shape_button = QPushButton("X"); self.remove_shape_button.setToolTip("Remove Last Shape"); self.remove_shape_button.setFixedSize(shape_size, shape_size); self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
+        shape_button_layout.addWidget(QLabel("Shapes:")) # Label for shapes
+        shape_button_layout.addWidget(self.draw_line_button); shape_button_layout.addWidget(self.draw_rect_button); shape_button_layout.addWidget(self.remove_shape_button)
         shape_button_layout.addStretch()
 
-        padding_layout.addWidget(self.custom_font_type_label, 4, 0)
-        padding_layout.addWidget(self.custom_font_type_dropdown, 4, 1)
-        padding_layout.addWidget(self.custom_font_size_label, 4, 2)
-        padding_layout.addWidget(self.custom_font_size_spinbox, 4, 3)
-        padding_layout.addWidget(self.show_grid_checkbox_x, 4, 4)
-        padding_layout.addWidget(self.show_grid_checkbox_y, 4, 5)
-        padding_layout.addWidget(self.grid_size_input, 4, 6, 1, 1) # Span 3 columns
-        padding_layout.addLayout(shape_button_layout, 4, 7)
+        # Grid controls compact layout
+        grid_layout = QHBoxLayout(); grid_layout.setContentsMargins(0,0,0,0); grid_layout.setSpacing(5)
+        self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+G toggles X&Y.")
+        self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
+        self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+G toggles X&Y.")
+        self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
+        self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
+        self.grid_size_input.valueChanged.connect(self.update_live_view)
+        grid_layout.addWidget(self.show_grid_checkbox_x); grid_layout.addWidget(self.show_grid_checkbox_y); grid_layout.addWidget(self.grid_size_input)
+        grid_layout.addStretch()
 
-        # Set column stretches - Now 8 columns (0-7)
-        padding_layout.setColumnStretch(0, 1) # Place buttons
-        padding_layout.setColumnStretch(1, 1) # Remove/Custom Text/Font Combo
-        padding_layout.setColumnStretch(2, 1) # Reset/Custom Text/Font Size Label
-        padding_layout.setColumnStretch(3, 1) # Offset Label/Arrows/Font Size Spin
-        padding_layout.setColumnStretch(4, 2) # Slider/Remove/Grid Check
-        padding_layout.setColumnStretch(5, 1) # Slider/Reset/Grid Size
-        padding_layout.setColumnStretch(6, 1) # Slider/Modify/Grid Size
-        padding_layout.setColumnStretch(7, 1) # Duplicate/Color/Grid Size
+        custom_layout.addLayout(custom_style_layout, 1, 0, 1, 2) # Font/Size/Color span first 2 cols
+        custom_layout.addLayout(shape_button_layout, 1, 2, 1, 2) # Shapes span next 2 cols
+        custom_layout.addLayout(grid_layout, 1, 4, 1, 2)        # Grid span last 2 cols
 
-        layout.addWidget(padding_params_group)
-        layout.addStretch()
+        main_layout.addWidget(custom_group) # Add custom group
+
+        main_layout.addStretch() # Push all content upwards
 
         return tab
 
