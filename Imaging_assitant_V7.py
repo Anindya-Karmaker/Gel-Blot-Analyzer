@@ -107,59 +107,543 @@ def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: 
     painter.end()
     return QIcon(pixmap)
 
-class LoadingDialog(QDialog):
-    """A simple modal dialog to show while the main application loads."""
-    def __init__(self, parent=None):
+class AutoLaneTuneDialog(QDialog):
+    """
+    Simplified dialog for tuning peak detection parameters for automatic lane markers.
+    Shows the intensity profile and detected peaks. Allows adjustment of detection parameters.
+    Does NOT handle area calculation or individual band boundary adjustments.
+    """
+    def __init__(self, pil_image_data, initial_settings, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint) # Frameless splash screen style
-        self.setAttribute(Qt.WA_TranslucentBackground) # Optional: Allows for shaped windows if using masks
-        self.setModal(True) # Block interaction with other windows (though none exist yet)
+        self.setWindowTitle("Tune Automatic Peak Detection")
+        self.setGeometry(150, 150, 800, 700) # Adjusted height
+        self.pil_image_for_display = pil_image_data
+        self.selected_peak_index = -1
+        self.deleted_peak_indices = set()
+        self._all_initial_peaks = np.array([])
+        self.add_peak_mode_active = False
 
-        # --- Styling ---
-        self.setStyleSheet("""
-            QDialog {
-                background-color: rgba(50, 50, 60, 230); /* Semi-transparent dark background */
-                border: 1px solid #AAAAAA;
-                border-radius: 8px;
-            }
-            QLabel {
-                color: #E0E0E0; /* Light text color */
-                padding: 20px; /* Add padding around text */
-            }
-        """)
+        # --- Validate and Store Input Image ---
+        if not isinstance(pil_image_data, Image.Image):
+            raise TypeError("Input 'pil_image_data' must be a PIL Image object")
 
-        # --- Layout and Label ---
-        layout = QVBoxLayout(self)
-        self.label = QLabel("Initializing Application...\nPlease Wait")
-        font = QFont()
-        font.setPointSize(14)
-        font.setBold(True)
-        self.label.setFont(font)
-        self.label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.label)
-        self.setLayout(layout)
-
-        # --- Size and Position ---
-        self.setFixedSize(350, 150) # Adjust size as needed
-        self.center_on_screen()
-
-    def center_on_screen(self):
-        """Centers the dialog on the primary screen."""
+        # Determine intensity range and create numpy array
+        self.intensity_array_original_range = None
+        self.original_max_value = 255.0 # Default
+        pil_mode = pil_image_data.mode
         try:
-            screen_geo = QDesktopWidget().availableGeometry() # Get available geometry
-            dialog_geo = self.frameGeometry()
-            center_point = screen_geo.center()
-            dialog_geo.moveCenter(center_point)
-            self.move(dialog_geo.topLeft())
-        except Exception as e:
-            print(f"Warning: Could not center loading dialog: {e}")
-            # Fallback position if centering fails
-            self.move(100, 100)
+            # Handle common grayscale modes used in the main app
+            if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
+                self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
+                self.original_max_value = 65535.0
+            elif pil_mode == 'L':
+                self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
+                self.original_max_value = 255.0
+            elif pil_mode == 'F': # Handle float images
+                self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
+                max_in_float = np.max(self.intensity_array_original_range) if np.any(self.intensity_array_original_range) else 1.0
+                self.original_max_value = max(1.0, max_in_float) # Use max value or 1.0
+            else: # Attempt conversion to grayscale 'L' as fallback
+                gray_img = pil_image_data.convert("L")
+                self.intensity_array_original_range = np.array(gray_img, dtype=np.float64)
+                self.original_max_value = 255.0
+                print(f"AutoLaneTuneDialog: Converted input mode '{pil_mode}' to 'L'.")
 
-    def set_message(self, message):
-        """Updates the message displayed on the loading screen."""
-        self.label.setText(message)
-        QApplication.processEvents() # Process events to ensure the label updates
+            if self.intensity_array_original_range is None:
+                raise ValueError("Failed to convert PIL image to NumPy array.")
+            if self.intensity_array_original_range.ndim != 2:
+                raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
+
+        except Exception as e:
+            raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
+
+        self.profile_original_inverted = None # Smoothed, inverted profile (original range)
+        self.profile = None # Scaled (0-255), inverted, SMOOTHED profile for detection
+        self.detected_peaks = np.array([]) # Store indices of detected peaks
+
+        # --- Settings and State ---
+        # Use settings passed from the main app (likely self.peak_dialog_settings)
+        self.smoothing_sigma = initial_settings.get('smoothing_sigma', 2.0)
+        self.peak_height_factor = initial_settings.get('peak_height_factor', 0.1)
+        self.peak_distance = initial_settings.get('peak_distance', 30)
+        self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', 0.02)
+        # Band estimation method is needed to generate the profile
+        self.band_estimation_method = initial_settings.get('band_estimation_method', "Mean")
+        self._final_settings = initial_settings.copy() # Store a copy to return modifications
+
+        # Check dependencies needed for profile generation and peak detection
+        if find_peaks is None or gaussian_filter1d is None:
+             QMessageBox.critical(self, "Dependency Error",
+                                  "Missing SciPy library functions.\n"
+                                  "Peak detection and smoothing require SciPy.\n"
+                                  "Please install it (e.g., 'pip install scipy') and restart.")
+             # Don't call accept/reject here, let init fail or handle gracefully
+             # self.close() # Or close immediately
+
+        # Build UI & Initial Setup
+        self._setup_ui()
+        self.run_peak_detection_and_plot() # Initial calculation and plot
+
+    def _setup_ui(self):
+        """Creates and arranges the UI elements, including image preview."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(10)
+
+        # --- Matplotlib Plot Canvas Area ---
+        plot_widget = QWidget() # Container for the plots
+        plot_layout = QVBoxLayout(plot_widget)
+        plot_layout.setContentsMargins(0, 0, 0, 0) # No margins for the layout
+
+        # Use GridSpec for plot and image preview arrangement
+        # More height for the profile plot
+        self.fig = plt.figure(figsize=(7, 5)) # Adjusted height for gridspec
+        gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
+        self.ax_profile = self.fig.add_subplot(gs[0]) # Axis for the profile
+        self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile) # Axis for the image preview
+
+        self.canvas = FigureCanvas(self.fig)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # --- Enable picking on the canvas ---
+        self.canvas.mpl_connect('button_press_event', self.on_canvas_click)
+        # --- End Enable picking ---
+        plot_layout.addWidget(self.canvas)
+        main_layout.addWidget(plot_widget, stretch=1)
+
+        # --- Controls Group ---
+        controls_group = QGroupBox("Peak Detection Parameters")
+        controls_layout = QGridLayout(controls_group)
+        controls_layout.setSpacing(8)
+
+        # Band Estimation (Needed for profile generation)
+        controls_layout.addWidget(QLabel("Profile Method:"), 0, 0)
+        self.band_estimation_combobox = QComboBox()
+        self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
+        self.band_estimation_combobox.setCurrentText(self.band_estimation_method)
+        self.band_estimation_combobox.currentIndexChanged.connect(self.run_peak_detection_and_plot)
+        controls_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2) # Span 2 columns
+
+        # Smoothing Sigma
+        self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
+        self.smoothing_slider = QSlider(Qt.Horizontal)
+        self.smoothing_slider.setRange(0, 100) # 0.0 to 10.0
+        self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
+        self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
+        self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+        controls_layout.addWidget(self.smoothing_label, 1, 0)
+        controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
+
+        # Peak Prominence
+        self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})")
+        self.peak_prominence_slider = QSlider(Qt.Horizontal)
+        self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
+        self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
+        self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})"))
+        self.peak_prominence_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+        controls_layout.addWidget(self.peak_prominence_slider_label, 2, 0)
+        controls_layout.addWidget(self.peak_prominence_slider, 2, 1, 1, 2)
+
+        # Peak Height
+        self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})")
+        self.peak_height_slider = QSlider(Qt.Horizontal)
+        self.peak_height_slider.setRange(0, 100)
+        self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
+        self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})"))
+        self.peak_height_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+        controls_layout.addWidget(self.peak_height_slider_label, 3, 0)
+        controls_layout.addWidget(self.peak_height_slider, 3, 1, 1, 2)
+
+        # Peak Distance
+        self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px")
+        self.peak_distance_slider = QSlider(Qt.Horizontal)
+        self.peak_distance_slider.setRange(1, 200)
+        self.peak_distance_slider.setValue(self.peak_distance)
+        self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px"))
+        self.peak_distance_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+        controls_layout.addWidget(self.peak_distance_slider_label, 4, 0)
+        controls_layout.addWidget(self.peak_distance_slider, 4, 1, 1, 2)
+
+
+        # --- Add Delete Peak Button ---
+        self.delete_peak_button = QPushButton("Delete Selected Peak")
+        self.delete_peak_button.setEnabled(False)
+        self.delete_peak_button.setToolTip("Click on a peak marker in the plot to select it, then click this.")
+        self.delete_peak_button.clicked.connect(self.delete_selected_peak)
+        controls_layout.addWidget(self.delete_peak_button, 5, 0, 1, 1) # Column 0, span 1
+
+        # --- NEW: Add Peak Manually Button ---
+        self.add_peak_button = QPushButton("Add Peak at Click")
+        self.add_peak_button.setCheckable(True) # Make it a toggle button
+        self.add_peak_button.setToolTip("Toggle: Click on the profile to add a new peak marker.")
+        self.add_peak_button.clicked.connect(self.toggle_add_peak_mode)
+        controls_layout.addWidget(self.add_peak_button, 5, 1, 1, 2) # Next to delete, span 2
+        # --- End Add Delete Button ---
+
+        controls_layout.setColumnStretch(1, 1) # Slider column stretch
+        main_layout.addWidget(controls_group)
+
+        # --- Bottom Buttons ---
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept_and_return_peaks)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        
+    def toggle_add_peak_mode(self, checked):
+        """Toggles the manual peak adding mode."""
+        self.add_peak_mode_active = checked
+        if checked:
+            self.canvas.setCursor(Qt.CrossCursor)
+            # Deselect any peak selected for deletion
+            self.selected_peak_index = -1
+            self.delete_peak_button.setEnabled(False)
+            self.update_plot_highlights() # Clear selection highlight
+            print("Add Peak Mode: ON. Click on the profile.")
+        else:
+            self.canvas.setCursor(Qt.ArrowCursor)
+            print("Add Peak Mode: OFF.")
+
+    def on_canvas_click(self, event):
+        """Handles clicks on the canvas for adding or selecting peaks."""
+        # Ignore clicks outside the profile axes or if no data
+        if event.inaxes != self.ax_profile or self.profile_original_inverted is None:
+            return
+        if event.button != 1: # Only process left-clicks
+            return
+
+        clicked_x = int(round(event.xdata)) # Get x-coordinate of the click
+
+        if self.add_peak_mode_active:
+            # --- Add Peak Mode ---
+            if 0 <= clicked_x < len(self.profile_original_inverted):
+                self.add_manual_peak(clicked_x)
+            else:
+                print(f"Clicked X ({clicked_x}) is outside profile bounds.")
+            # Deactivate add mode after one click for single additions
+            # self.add_peak_button.setChecked(False) # Optional: Toggle off after one add
+            # self.toggle_add_peak_mode(False)       # Or call the toggle function
+
+        else:
+            # --- Select Peak Mode (for deletion) ---
+            # Find the closest *existing* peak marker to the click
+            if len(self.detected_peaks) > 0:
+                # Calculate distance from click to all active peak X-coordinates
+                distances = np.abs(self.detected_peaks - clicked_x)
+                min_dist_idx = np.argmin(distances)
+                # Define a click tolerance (e.g., 5 pixels on the x-axis)
+                click_tolerance_x = max(5, self.peak_distance / 4) # Heuristic based on peak distance
+
+                if distances[min_dist_idx] <= click_tolerance_x:
+                    # A peak is close enough to the click
+                    self.selected_peak_index = self.detected_peaks[min_dist_idx]
+                    self.delete_peak_button.setEnabled(True)
+                    print(f"Selected peak for deletion at index: {self.selected_peak_index}")
+                else:
+                    # Click was not close enough to an existing peak
+                    self.selected_peak_index = -1
+                    self.delete_peak_button.setEnabled(False)
+                self.update_plot_highlights() # Update plot to show selection or clear it
+            else:
+                # No peaks to select
+                self.selected_peak_index = -1
+                self.delete_peak_button.setEnabled(False)
+                self.update_plot_highlights()
+
+
+    def add_manual_peak(self, x_coord):
+        """Adds a new peak at the given x-coordinate if not already present or deleted."""
+        if x_coord in self._all_initial_peaks or x_coord in self.deleted_peak_indices:
+            print(f"Peak at {x_coord} already exists or was previously deleted.")
+            # Optionally, undelete if it was in deleted_peak_indices
+            if x_coord in self.deleted_peak_indices:
+                 reply = QMessageBox.question(self, "Undelete Peak?",
+                                              f"A peak at index {x_coord} was previously deleted. Undelete it?",
+                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                 if reply == QMessageBox.Yes:
+                     self.deleted_peak_indices.discard(x_coord)
+                     # Add to _all_initial_peaks if it wasn't there (unlikely if deleted, but for safety)
+                     if x_coord not in self._all_initial_peaks:
+                          self._all_initial_peaks = np.sort(np.append(self._all_initial_peaks, x_coord))
+                     # Update active peaks
+                     self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
+                     print(f"Undeleted peak at {x_coord}.")
+                     self.update_plot_highlights() # Update plot
+                 return # Don't proceed to add again
+            else: # Already an initial peak
+                 return
+
+        # Add to both _all_initial_peaks and detected_peaks
+        self._all_initial_peaks = np.sort(np.append(self._all_initial_peaks, x_coord))
+        self.detected_peaks = np.sort(np.append(self.detected_peaks, x_coord))
+
+        print(f"Manually added peak at index: {x_coord}")
+        self.update_plot_highlights() # Update plot to show the new peak
+
+    def run_peak_detection_and_plot(self):
+        """Generates profile, detects peaks, updates plot and image preview."""
+        # --- Reset deleted peaks if parameters change ---
+        self.deleted_peak_indices.clear()
+        self.selected_peak_index = -1
+        self.delete_peak_button.setEnabled(False)
+        # --- End Reset ---
+
+        if self.intensity_array_original_range is None: return
+        if find_peaks is None or gaussian_filter1d is None: return
+
+        # ... (Keep parameter updates and profile generation logic) ...
+        self.band_estimation_method = self.band_estimation_combobox.currentText()
+        self.smoothing_sigma = self.smoothing_slider.value() / 10.0
+        self.peak_height_factor = self.peak_height_slider.value() / 100.0
+        self.peak_distance = self.peak_distance_slider.value()
+        self.peak_prominence_factor = self.peak_prominence_slider.value() / 100.0
+
+        profile_temp = None
+        if self.band_estimation_method == "Mean":
+            profile_temp = np.mean(self.intensity_array_original_range, axis=1)
+        elif self.band_estimation_method.startswith("Percentile"):
+            try:
+                percent = int(self.band_estimation_method.split(":")[1].replace('%', ''))
+                profile_temp = np.percentile(self.intensity_array_original_range, max(0, min(100, percent)), axis=1)
+            except:
+                profile_temp = np.percentile(self.intensity_array_original_range, 5, axis=1)
+                print("AutoLaneTuneDialog: Defaulting to 5th percentile for profile.")
+        else:
+            profile_temp = np.mean(self.intensity_array_original_range, axis=1)
+
+        if profile_temp is None or not np.all(np.isfinite(profile_temp)):
+            print("AutoLaneTuneDialog: Profile calculation failed or resulted in NaN/Inf.")
+            profile_temp = np.zeros(self.intensity_array_original_range.shape[0])
+
+        profile_original_inv_raw = self.original_max_value - profile_temp.astype(np.float64)
+        min_inverted_raw = np.min(profile_original_inv_raw)
+        profile_original_inv_raw -= min_inverted_raw
+
+        self.profile_original_inverted = profile_original_inv_raw
+        try:
+            current_sigma = self.smoothing_sigma
+            if current_sigma > 0.1 and len(self.profile_original_inverted) > int(3 * current_sigma) * 2 + 1:
+                self.profile_original_inverted = gaussian_filter1d(self.profile_original_inverted, sigma=current_sigma)
+        except Exception as smooth_err:
+            print(f"AutoLaneTuneDialog: Error smoothing profile: {smooth_err}")
+
+        prof_min_inv, prof_max_inv = np.min(self.profile_original_inverted), np.max(self.profile_original_inverted)
+        if prof_max_inv > prof_min_inv + 1e-6:
+            self.profile = (self.profile_original_inverted - prof_min_inv) / (prof_max_inv - prof_min_inv) * 255.0
+        else:
+            self.profile = np.zeros_like(self.profile_original_inverted)
+
+        profile_range_detect = np.ptp(self.profile); min_val_profile_detect = np.min(self.profile)
+        if profile_range_detect < 1e-6 : profile_range_detect = 1.0
+        min_height_abs = min_val_profile_detect + profile_range_detect * self.peak_height_factor
+        min_prominence_abs = profile_range_detect * self.peak_prominence_factor
+        min_prominence_abs = max(1.0, min_prominence_abs)
+
+        try:
+            peaks_indices, _ = find_peaks(
+                self.profile, height=min_height_abs, prominence=min_prominence_abs,
+                distance=self.peak_distance, width=1
+            )
+            # *** Store ALL initially detected peaks ***
+            self._all_initial_peaks = np.sort(peaks_indices)
+            # *** Filter out user-deleted peaks for display ***
+            self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
+
+        except Exception as e:
+            print(f"AutoLaneTuneDialog: Peak detection error: {e}")
+            self._all_initial_peaks = np.array([])
+            self.detected_peaks = np.array([])
+
+
+        # --- Update Plot ---
+        self.ax_profile.clear()
+        self.ax_image.clear() # Clear image axis too
+
+        if self.profile_original_inverted is not None and len(self.profile_original_inverted) > 0:
+            self.ax_profile.plot(self.profile_original_inverted, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color="black", lw=1.0)
+
+            # Plot *currently active* detected peaks
+            # These are the peaks that `on_canvas_click` will try to select for deletion
+            if len(self.detected_peaks) > 0:
+                valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(self.profile_original_inverted))]
+                if len(valid_peaks) > 0:
+                    peak_y_values = self.profile_original_inverted[valid_peaks]
+                    # No need for `picker=True` if on_canvas_click handles selection by coordinate
+                    self.peak_plot_artist, = self.ax_profile.plot(
+                        valid_peaks, peak_y_values, "rx", markersize=8,
+                        label=f"Active Peaks ({len(valid_peaks)})") # Removed picker
+
+                    # --- Highlight selected peak (logic remains the same) ---
+                    if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
+                         idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
+                         if len(idx_in_valid) > 0:
+                              self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]],
+                                                 'o', markersize=12, markeredgecolor='blue', markerfacecolor='none',
+                                                 label='Selected')
+                    # --- End Highlight ---
+            
+            # Profile plot styling
+            self.ax_profile.set_ylabel("Intensity (Smoothed, Inverted)", fontsize=9)
+            self.ax_profile.legend(fontsize='x-small')
+            self.ax_profile.set_title("Intensity Profile and Detected Peaks", fontsize=10)
+            self.ax_profile.grid(True, linestyle=':', alpha=0.6)
+            # Remove x-axis labels/ticks for the top plot
+            self.ax_profile.tick_params(axis='x', labelbottom=False)
+            if np.max(self.profile_original_inverted) > 10000:
+                self.ax_profile.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+
+            # --- Plot Image Preview ---
+            try:
+                # Rotate the PIL image 90 degrees for horizontal display matching profile axis
+                rotated_pil_image = self.pil_image_for_display.rotate(90, expand=True)
+                im_array_disp = np.array(rotated_pil_image)
+
+                # Determine vmin/vmax for imshow based on original data range
+                im_vmin, im_vmax = 0, self.original_max_value
+                # Handle float case specifically if needed
+                if self.pil_image_for_display.mode == 'F':
+                    im_vmin, im_vmax = 0.0, self.original_max_value # Or 0.0, 1.0 if normalized
+
+                profile_length = len(self.profile_original_inverted)
+                extent = [0, profile_length - 1 if profile_length > 0 else 0, 0, rotated_pil_image.height]
+
+                self.ax_image.imshow(im_array_disp, cmap='gray', aspect='auto',
+                                     extent=extent, vmin=im_vmin, vmax=im_vmax)
+                self.ax_image.set_xlabel("Pixel Index along Profile Axis", fontsize=9)
+                self.ax_image.set_yticks([]) # Hide Y ticks for image preview
+                self.ax_image.set_ylabel("Lane Width", fontsize=9)
+            except Exception as img_e:
+                print(f"AutoLaneTuneDialog: Error displaying image preview: {img_e}")
+                self.ax_image.text(0.5, 0.5, 'Error displaying preview', ha='center', va='center', transform=self.ax_image.transAxes)
+                self.ax_image.set_xticks([]); self.ax_image.set_yticks([])
+
+        else:
+            self.ax_profile.text(0.5, 0.5, "No Profile Data", ha='center', va='center', transform=self.ax_profile.transAxes)
+            self.ax_image.text(0.5, 0.5, "No Image Data", ha='center', va='center', transform=self.ax_image.transAxes)
+
+        # Use tight_layout or constrained_layout
+        try:
+            self.fig.tight_layout(pad=0.5)
+        except ValueError: # Can happen with certain plot states
+            try:
+                self.fig.set_constrained_layout(True)
+            except AttributeError: pass # Older matplotlib
+
+        self.canvas.draw_idle()
+        plt.close()
+
+    def on_pick(self, event):
+        """Handles clicking on a peak marker."""
+        # Check if the picked artist is the one we stored for the peaks
+        if event.artist != getattr(self, 'peak_plot_artist', None):
+            return
+
+        # Get the index of the clicked data point within the plotted data
+        ind = event.ind[0] # Get the first index if multiple points are close
+
+        # Map this index back to the actual peak coordinate value (Y-index)
+        # Ensure self.detected_peaks is valid and index is within bounds
+        if ind < len(self.detected_peaks):
+            clicked_peak_coord = self.detected_peaks[ind]
+            # Check if this peak wasn't already deleted internally
+            if clicked_peak_coord in self._all_initial_peaks and clicked_peak_coord not in self.deleted_peak_indices:
+                self.selected_peak_index = clicked_peak_coord
+                self.delete_peak_button.setEnabled(True)
+                print(f"Selected peak at index: {self.selected_peak_index}") # Debug
+                # Re-plot to show selection highlight
+                self.update_plot_highlights() # Separate function for replotting highlights
+            else:
+                # Clicked on a potentially invalid/deleted point marker
+                self.selected_peak_index = -1
+                self.delete_peak_button.setEnabled(False)
+                self.update_plot_highlights()
+        else:
+             # Index out of bounds (shouldn't normally happen)
+             self.selected_peak_index = -1
+             self.delete_peak_button.setEnabled(False)
+             self.update_plot_highlights()
+
+    def update_plot_highlights(self):
+        """Redraws only the peak markers and highlights without full recalculation."""
+        if not hasattr(self, 'ax_profile'): return
+
+        # Clear only the peak markers and highlights from the profile axis
+        # Keep the main profile line
+        artists_to_remove = []
+        for artist in self.ax_profile.lines + self.ax_profile.collections:
+            label = artist.get_label()
+            if label and ('Peaks' in label or 'Selected' in label):
+                 artists_to_remove.append(artist)
+        for artist in artists_to_remove:
+            artist.remove()
+
+        # Re-plot the *currently active* detected peaks
+        if len(self.detected_peaks) > 0:
+            valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(self.profile_original_inverted))]
+            if len(valid_peaks) > 0:
+                peak_y_values = self.profile_original_inverted[valid_peaks]
+                # Re-store the artist for picking
+                self.peak_plot_artist, = self.ax_profile.plot(
+                    valid_peaks, peak_y_values, "rx", markersize=8,
+                    label=f"Active Peaks ({len(valid_peaks)})", picker=True, pickradius=5)
+
+                # Re-apply highlight if a peak is selected
+                if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
+                    idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
+                    if len(idx_in_valid) > 0:
+                        self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]],
+                                             'o', markersize=12, markeredgecolor='blue', markerfacecolor='none',
+                                             label='Selected') # Visual indicator
+
+        # Update the legend and redraw
+        handles, labels = self.ax_profile.get_legend_handles_labels()
+        # Filter out duplicate labels if any were added accidentally
+        by_label = dict(zip(labels, handles))
+        self.ax_profile.legend(by_label.values(), by_label.keys(), fontsize='x-small')
+        self.canvas.draw_idle()
+
+
+    def delete_selected_peak(self):
+        """Marks the selected peak as deleted and updates the plot."""
+        if self.selected_peak_index != -1:
+            # Add the index to the set of deleted peaks
+            self.deleted_peak_indices.add(self.selected_peak_index)
+
+            # Update the list of currently active peaks
+            self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
+
+            print(f"Deleted peak at index: {self.selected_peak_index}") # Debug
+
+            # Reset selection and disable button
+            self.selected_peak_index = -1
+            self.delete_peak_button.setEnabled(False)
+
+            # Re-plot to remove the deleted peak visually
+            self.update_plot_highlights() # Use highlight update for efficiency
+
+    # MODIFY this method
+    def accept_and_return_peaks(self):
+        """Store final settings and accept the dialog."""
+        # *** Settings are updated when sliders change now ***
+        # We just need to ensure the final state is stored if needed elsewhere
+        self._final_settings = {
+            'smoothing_sigma': self.smoothing_slider.value() / 10.0,
+            'peak_height_factor': self.peak_height_slider.value() / 100.0,
+            'peak_distance': self.peak_distance_slider.value(),
+            'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
+            'band_estimation_method': self.band_estimation_combobox.currentText(),
+            'rolling_ball_radius': self._final_settings.get('rolling_ball_radius', 50),
+            'area_subtraction_method': self._final_settings.get('area_subtraction_method', "Valley-to-Valley"),
+        }
+        self.accept()
+
+    # MODIFY this method
+    def get_detected_peaks(self):
+        """Returns the FINAL list/array of detected peak Y-coordinates (indices), excluding user-deleted ones."""
+        # Return the filtered list
+        return self.detected_peaks
+
+    def get_final_settings(self):
+        """Returns the final detection settings dictionary."""
+        return self._final_settings
+
     
 class ModifyMarkersDialog(QDialog):
     """
@@ -2301,6 +2785,8 @@ class CombinedSDSApp(QMainWindow):
         self.x_offset_s=0
         self.y_offset_s=0
         self.peak_area=[]
+        self.auto_marker_side = None # To store 'left' or 'right' for auto mode
+        self.auto_lane_quad_points = [] # Store points defined for auto lane
         self.is_modified=False
         self.crop_rectangle_mode = False
         self.crop_rect_start_view = None # Temp storage for starting point in view coords
@@ -2427,8 +2913,8 @@ class CombinedSDSApp(QMainWindow):
 
 
         # === KEEP QShortcut definitions for NON-STANDARD actions ===
-        self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
-        self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger)
+        # self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
+        # self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger)
 
         self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
         self.reset_shortcut.activated.connect(self.reset_action.trigger)
@@ -2473,6 +2959,19 @@ class CombinedSDSApp(QMainWindow):
                 self.show_grid_checkbox_x.setChecked(target_state),
                 self.show_grid_checkbox_y.setChecked(target_state)
             ) if hasattr(self, 'show_grid_checkbox_x') and hasattr(self, 'show_grid_checkbox_y') else None
+        )
+        
+        self.grid_shortcut_x = QShortcut(QKeySequence("Ctrl+Shift+X"), self) # Use uppercase X for consistency
+        self.grid_shortcut_x.activated.connect(
+            lambda: self.show_grid_checkbox_x.setChecked(not self.show_grid_checkbox_x.isChecked())
+            if hasattr(self, 'show_grid_checkbox_x') else None
+        )
+
+        # Shortcut for Y Grid Snapping
+        self.grid_shortcut_y = QShortcut(QKeySequence("Ctrl+Shift+Y"), self) # Use uppercase Y
+        self.grid_shortcut_y.activated.connect(
+            lambda: self.show_grid_checkbox_y.setChecked(not self.show_grid_checkbox_y.isChecked())
+            if hasattr(self, 'show_grid_checkbox_y') else None
         )
 
         self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
@@ -2556,16 +3055,14 @@ class CombinedSDSApp(QMainWindow):
         pan_down_icon = create_text_icon("Arial",icon_size, text_color, "↓") # Unicode Down Arrow
         pan_left_icon = create_text_icon("Arial",icon_size, text_color, "←") # Unicode Left Arrow
         pan_right_icon = create_text_icon("Arial",icon_size, text_color, "→") # Unicode Right Arrow
-        # open_icon = create_text_icon(icon_size, text_color, "") # Unicode Right Arrow
-        # paste_icon = create_text_icon(icon_size, text_color, "→") # Unicode Right Arrow
-        # copy_icon = create_text_icon(icon_size, text_color, "→") # Unicode Right Arrow
-        # --- End Pan Icons ---
+        bounding_box_icon = create_text_icon("Arial", icon_size, text_color, "□")
+        draw_line_icon = create_text_icon("Arial", icon_size, text_color, "__")
 
 
         # --- File Actions ---
         self.load_action = QAction(open_icon, "&Load Image...", self)
         self.save_action = QAction(save_icon, "&Save with Config", self)
-        self.save_svg_action = QAction(save_svg_icon, "Save &SVG...", self)
+        # self.save_svg_action = QAction(save_svg_icon, "Save &SVG...", self)
         self.reset_action = QAction(reset_icon, "&Reset Image", self)
         self.exit_action = QAction(exit_icon, "E&xit", self)
 
@@ -2583,6 +3080,9 @@ class CombinedSDSApp(QMainWindow):
         self.pan_up_action = QAction(pan_up_icon, "Pan Up", self)
         self.pan_down_action = QAction(pan_down_icon, "Pan Down", self)
         # --- END: Add Panning Actions ---
+        self.auto_lane_action = QAction(create_text_icon("Arial", icon_size, text_color, "A"), "&Automatic Lane Markers", self)
+        self.auto_lane_action.setToolTip("Automatically detect and place lane markers based on a defined region.")
+        self.auto_lane_action.triggered.connect(self.start_auto_lane_marker)
 
         # --- Set Shortcuts ---
         self.load_action.setShortcut(QKeySequence.Open)
@@ -2593,32 +3093,39 @@ class CombinedSDSApp(QMainWindow):
         self.redo_action.setShortcut(QKeySequence.Redo)
         self.zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
         self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
-        self.save_svg_action.setShortcut(QKeySequence("Ctrl+M"))
+        # self.save_svg_action.setShortcut(QKeySequence("Ctrl+M"))
         self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
 
         # --- Set Tooltips ---
         self.load_action.setToolTip("Load an image file (Ctrl+O)")
         self.save_action.setToolTip("Save image and configuration (Ctrl+S)")
-        self.save_svg_action.setToolTip("Save as SVG for Word/vector editing (Ctrl+M)")
+        # self.save_svg_action.setToolTip("Save as SVG for Word/vector editing (Ctrl+M)")
         self.reset_action.setToolTip("Reset image and all annotations (Ctrl+R)")
         self.exit_action.setToolTip("Exit the application")
-        self.undo_action.setToolTip("Undo last action (Ctrl+Z)")
-        self.redo_action.setToolTip("Redo last undone action (Ctrl+Y)")
+        self.undo_action.setToolTip("Undo last action (Default Shortcut: OS dependent")
+        self.redo_action.setToolTip("Redo last undone action (Default Shortcut: OS dependent)")
         self.copy_action.setToolTip("Copy rendered image to clipboard (Ctrl+C)")
         self.paste_action.setToolTip("Paste image from clipboard (Ctrl+V)")
         self.zoom_in_action.setToolTip("Increase zoom level (Ctrl+=)")
-        self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-)")
+        self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+-). Auto resets the zoom when reaches zero.")
         # --- START: Set Tooltips for Panning Actions ---
         self.pan_left_action.setToolTip("Pan the view left (when zoomed) (Arrow key left)")
         self.pan_right_action.setToolTip("Pan the view right (when zoomed) (Arrow key right")
         self.pan_up_action.setToolTip("Pan the view up (when zoomed) (Arrow key up)")
         self.pan_down_action.setToolTip("Pan the view down (when zoomed) (Arrow key down")
+        self.draw_bounding_box_action = QAction(bounding_box_icon, "Draw &Bounding Box", self)
+        self.draw_bounding_box_action.setToolTip("Draw a bounding rectangle on the image. Use the marker tab, custom marker options for color and size")
+        self.draw_bounding_box_action.triggered.connect(self.enable_rectangle_drawing_mode)
+        
+        self.draw_line_action = QAction(draw_line_icon, "Draw &a line", self)
+        self.draw_line_action.setToolTip("Draw a line on the image. Use the marker tab, custom marker options for color and size")
+        self.draw_line_action.triggered.connect(self.enable_line_drawing_mode)
         # --- END: Set Tooltips for Panning Actions ---
 
         # --- Connect signals ---
         self.load_action.triggered.connect(self.load_image)
         self.save_action.triggered.connect(self.save_image)
-        self.save_svg_action.triggered.connect(self.save_image_svg)
+        # self.save_svg_action.triggered.connect(self.save_image_svg)
         self.reset_action.triggered.connect(self.reset_image)
         self.exit_action.triggered.connect(self.close)
         self.undo_action.triggered.connect(self.undo_action_m)
@@ -3340,7 +3847,7 @@ class CombinedSDSApp(QMainWindow):
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(self.load_action)
         file_menu.addAction(self.save_action)
-        file_menu.addAction(self.save_svg_action)
+        # file_menu.addAction(self.save_svg_action)
         file_menu.addSeparator()
         file_menu.addAction(self.reset_action)
         file_menu.addSeparator()
@@ -3358,6 +3865,9 @@ class CombinedSDSApp(QMainWindow):
         view_menu = menubar.addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
         view_menu.addAction(self.zoom_out_action)
+        
+        tools_menu = menubar.addMenu("&Tools")
+        tools_menu.addAction(self.auto_lane_action)
 
         # --- About Menu ---
         about_menu = menubar.addMenu("&About")
@@ -3402,10 +3912,331 @@ class CombinedSDSApp(QMainWindow):
         # --- End Adding Pan Buttons ---
 
         self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.auto_lane_action) # Add new button
+        
+        self.tool_bar.addSeparator() # Optional: Group drawing tools
+        self.tool_bar.addAction(self.draw_line_action) # Add the new action
+        self.tool_bar.addAction(self.draw_bounding_box_action) # Add the new action
+        
+        self.tool_bar.addSeparator()
         self.tool_bar.addAction(self.reset_action)
 
         # Add the toolbar to the main window
         self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
+        
+    def start_auto_lane_marker(self):
+        """Initiates the automatic lane marker placement process using a rectangle."""
+        if not self.image or self.image.isNull():
+            QMessageBox.warning(self, "Error", "Please load an image first.")
+            return
+    
+        # --- 1. Ask User for Marker Side ---
+        items = ["Left", "Right"]
+        side, ok = QInputDialog.getItem(self, "Select Marker Side",
+                                        "Place markers on which side?", items, 0, False)
+        if not ok or not side:
+            return # User cancelled
+    
+        self.auto_marker_side = side.lower() # Store 'left' or 'right'
+    
+        # --- 2. Instruct User and Enable Rectangle Mode ---
+        QMessageBox.information(self, "Define Lane Region",
+                                "Please click and drag on the image preview\n"
+                                "to define the rectangular lane region for automatic marker detection.\n"
+                                "Press ESC to cancel.")
+    
+        self.live_view_label.mode = 'auto_lane_rect' # Set specific mode
+        self.live_view_label.bounding_box_preview = None # Clear previous rect preview
+        self.live_view_label.rectangle_start = None
+        self.live_view_label.rectangle_end = None
+        self.live_view_label.setCursor(Qt.CrossCursor)
+        self.live_view_label.setMouseTracking(True)
+    
+        # Use standard rectangle drawing handlers, but point release to our new function
+        self.live_view_label.mousePressEvent = self.start_rectangle # Reuse existing
+        self.live_view_label.mouseMoveEvent = self.update_rectangle_preview # Reuse existing
+        self.live_view_label.mouseReleaseEvent = self.finalize_rectangle_for_auto_lane # NEW finalize
+    
+        self.update_live_view()
+
+    
+    def finalize_rectangle_for_auto_lane(self, event):
+        """Finalizes the rectangle for auto lane mode and starts processing."""
+        if self.live_view_label.mode != 'auto_lane_rect' or not self.live_view_label.rectangle_start:
+            # If not in the correct mode or drag didn't start, do nothing or call base
+            if hasattr(self.live_view_label, 'mouseReleaseEvent') and callable(getattr(QLabel, 'mouseReleaseEvent', None)):
+                 QLabel.mouseReleaseEvent(self.live_view_label, event)
+            return
+    
+        if event.button() == Qt.LeftButton:
+            self.live_view_label.rectangle_end = self.live_view_label.transform_point(event.pos())
+    
+            # Keep the visual preview bounding box for now
+            self.live_view_label.bounding_box_preview = (
+                self.live_view_label.rectangle_start.x(), self.live_view_label.rectangle_start.y(),
+                self.live_view_label.rectangle_end.x(), self.live_view_label.rectangle_end.y()
+            )
+    
+            # --- Calculate Image Coordinates ---
+            try:
+                start_x_view, start_y_view = self.live_view_label.rectangle_start.x(), self.live_view_label.rectangle_start.y()
+                end_x_view, end_y_view = self.live_view_label.rectangle_end.x(), self.live_view_label.rectangle_end.y()
+    
+                # (Coordinate Transformation Logic - reuse from process_sample/standard or finalize_crop_rectangle)
+                zoom = self.live_view_label.zoom_level
+                offset_x, offset_y = self.live_view_label.pan_offset.x(), self.live_view_label.pan_offset.y()
+                start_x_unzoomed = (start_x_view - offset_x) / zoom
+                start_y_unzoomed = (start_y_view - offset_y) / zoom
+                end_x_unzoomed = (end_x_view - offset_x) / zoom
+                end_y_unzoomed = (end_y_view - offset_y) / zoom
+                if not self.image or self.image.isNull(): raise ValueError("Base image invalid.")
+                img_w, img_h = self.image.width(), self.image.height()
+                label_w, label_h = self.live_view_label.width(), self.live_view_label.height()
+                scale_factor = min(label_w / img_w, label_h / img_h) if img_w > 0 and img_h > 0 else 1
+                display_offset_x = (label_w - img_w * scale_factor) / 2
+                display_offset_y = (label_h - img_h * scale_factor) / 2
+                start_x_img = (start_x_unzoomed - display_offset_x) / scale_factor
+                start_y_img = (start_y_unzoomed - display_offset_y) / scale_factor
+                end_x_img = (end_x_unzoomed - display_offset_x) / scale_factor
+                end_y_img = (end_y_unzoomed - display_offset_y) / scale_factor
+                rect_x = int(min(start_x_img, end_x_img))
+                rect_y = int(min(start_y_img, end_y_img))
+                rect_w = int(abs(end_x_img - start_x_img))
+                rect_h = int(abs(end_y_img - start_y_img))
+    
+                # Clamp to image boundaries
+                rect_x = max(0, rect_x)
+                rect_y = max(0, rect_y)
+                rect_w = max(1, min(rect_w, img_w - rect_x)) # Ensure at least 1 pixel width/height
+                rect_h = max(1, min(rect_h, img_h - rect_y))
+                # --- End Coordinate Transformation ---
+    
+                rect_coords_img = (rect_x, rect_y, rect_w, rect_h)
+    
+                # --- Exit Rectangle Drawing Mode ---
+                self.live_view_label.mode = None
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+                self.live_view_label.mousePressEvent = None # Reset handlers
+                self.live_view_label.mouseMoveEvent = None
+                self.live_view_label.mouseReleaseEvent = None
+                # Don't clear bounding_box_preview yet, might be useful for process function
+    
+                # --- Trigger Processing ---
+                self.process_auto_lane_rect(rect_coords_img)
+    
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to finalize rectangle for auto lane: {e}")
+                traceback.print_exc()
+                # Reset state on error
+                self.live_view_label.mode = None
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+                self.live_view_label.mousePressEvent = None
+                self.live_view_label.mouseMoveEvent = None
+                self.live_view_label.mouseReleaseEvent = None
+                self.live_view_label.bounding_box_preview = None
+                self.live_view_label.rectangle_start = None
+                self.update_live_view()
+    
+    
+    # ADD this new method
+    def process_auto_lane_rect(self, rect_coords_img):
+        """Processes the defined rectangle, extracts region, opens tuning dialog."""
+        if not rect_coords_img or len(rect_coords_img) != 4:
+            print("Warning: process_auto_lane_rect called with invalid rect_coords.")
+            return
+    
+        rect_x, rect_y, rect_w, rect_h = rect_coords_img
+    
+        if rect_w <= 0 or rect_h <= 0:
+            QMessageBox.warning(self, "Error", "Defined rectangle has zero width or height.")
+            return
+    
+        # --- 1. Extract the Rectangular Region ---
+        try:
+            extracted_qimage = self.image.copy(rect_x, rect_y, rect_w, rect_h)
+            if extracted_qimage.isNull():
+                raise ValueError("QImage copy failed for rectangle.")
+            extracted_image_height = extracted_qimage.height() # Store height for mapping
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to extract rectangular region: {e}")
+            return
+    
+        # --- 2. Convert Extracted Region to Grayscale PIL ---
+        lane_pil_image = self.convert_qimage_to_grayscale_pil(extracted_qimage)
+        if not lane_pil_image:
+            QMessageBox.warning(self, "Error", "Failed to convert extracted lane to grayscale for analysis.")
+            return
+    
+        # --- 3. Open the Tuning Dialog ---
+        dialog = AutoLaneTuneDialog(
+            pil_image_data=lane_pil_image,
+            initial_settings=self.peak_dialog_settings,
+            parent=self
+        )
+    
+        if dialog.exec_() == QDialog.Accepted:
+            # --- 4. Get Results and Place Markers ---
+            detected_peak_coords = dialog.get_detected_peaks()
+            final_settings = dialog.get_final_settings()
+    
+            if self.persist_peak_settings_enabled:
+                self.peak_dialog_settings.update(final_settings)
+    
+            if detected_peak_coords is not None and len(detected_peak_coords) > 0:
+                # Pass the original rectangle coordinates and the height of the *extracted* image
+                self.place_markers_at_peaks_rect(rect_coords_img, detected_peak_coords, self.auto_marker_side, extracted_image_height)
+            else:
+                QMessageBox.information(self, "Auto Lane", "No peaks were detected with the current settings.")
+                # Clear the rectangle preview if no peaks found
+                self.live_view_label.bounding_box_preview = None
+                self.update_live_view()
+        else:
+            print("Automatic lane marker tuning cancelled.")
+            # Clear the rectangle preview if cancelled
+            self.live_view_label.bounding_box_preview = None
+            self.update_live_view()
+    
+    
+    # RENAME and MODIFY this method
+    def place_markers_at_peaks_rect(self, rect_coords_img, peak_coords, side, extracted_image_height):
+        """
+        Places markers based on peaks detected within a rectangular region.
+        Maps peak positions relative to the rectangle's height onto the original image.
+        Sets the initial horizontal offset slider to the rectangle's left/right edge.
+        """
+        # ... (Keep initial checks and marker clearing/value retrieval) ...
+        if not peak_coords.any():
+            print("No peak coordinates provided to place_markers_at_peaks_rect.")
+            return
+        if extracted_image_height <= 0:
+            print("Error: Invalid extracted_image_height passed.")
+            return
+        if not rect_coords_img or len(rect_coords_img) != 4:
+            print("Error: Invalid rect_coords_img passed.")
+            return
+    
+        rect_x_img, rect_y_img, rect_w_img, rect_h_img = rect_coords_img # These are in original image space
+        if rect_h_img <= 0:
+            print("Error: Original rectangle height is zero, cannot map peak coordinates.")
+            return
+    
+        self.save_state()
+    
+        if side == 'left':
+            self.left_markers.clear()
+            self.current_left_marker_index = 0
+        elif side == 'right':
+            self.right_markers.clear()
+            self.current_right_marker_index = 0
+        else:
+            print(f"Invalid side '{side}' for marker placement.")
+            return
+    
+        self.on_combobox_changed()
+        if self.combo_box.currentText() == "Custom":
+            try:
+                self.marker_values = [int(num) if num.strip().isdigit() else num.strip() for num in self.marker_values_textbox.text().strip("[]").split(",")]
+            except: self.marker_values = []
+        current_marker_values = self.marker_values
+        if not current_marker_values:
+            current_marker_values = [""] * len(peak_coords)
+    
+        num_labels = len(current_marker_values)
+        sorted_peaks = np.sort(peak_coords)
+    
+        for i, peak_y_in_rect in enumerate(sorted_peaks):
+            denominator = float(extracted_image_height - 1)
+            t = peak_y_in_rect / denominator if denominator > 0 else 0.5
+            image_y_pos = rect_y_img + t * rect_h_img # Y position in original image space
+            label = str(current_marker_values[i]) if i < num_labels else ""
+            if side == 'left':
+                self.left_markers.append((image_y_pos, label))
+            elif side == 'right':
+                self.right_markers.append((image_y_pos, label))
+    
+        # --- Calculate Target Slider Position (Absolute on Render Canvas) ---
+        render_scale = 3
+        target_slider_value = 0 # This will be the value for the slider
+    
+        # Determine the target X coordinate in *original image space*
+        target_x_in_image_space = 0
+        if side == 'left':
+            target_x_in_image_space = rect_x_img  # Left edge of the defined rectangle
+        elif side == 'right':
+            target_x_in_image_space = rect_x_img + rect_w_img # Right edge
+    
+        # Map this image-space X to the render canvas space
+        if self.image and not self.image.isNull() and self.image.width() > 0 and \
+           self.live_view_label and self.live_view_label.width() > 0:
+            try:
+                # Dimensions of the *current self.image* (could be cropped/padded already)
+                current_img_width = self.image.width()
+                current_img_height = self.image.height() # Not directly used for X, but good to have
+    
+                # Dimensions of the render canvas
+                view_width = self.live_view_label.width()
+                render_canvas_width = view_width * render_scale
+    
+                # Scale factor for how the current self.image is scaled to fit the render canvas
+                scale_current_img_to_render_canvas = render_canvas_width / current_img_width \
+                    if current_img_width > 0 and view_width == current_img_width * (render_canvas_width/current_img_width)/render_scale \
+                    else min(render_canvas_width / current_img_width if current_img_width > 0 else 1,
+                               (self.live_view_label.height()*render_scale) / current_img_height if current_img_height > 0 else 1)
+    
+    
+                # Effective width of current self.image on the render canvas
+                effective_img_width_on_canvas = current_img_width * scale_current_img_to_render_canvas
+    
+                # Centering offset of the current self.image on the render canvas
+                centering_offset_x_on_canvas = (render_canvas_width - effective_img_width_on_canvas) / 2.0
+    
+                # The crop_offset_x and crop_offset_y store how much the *current self.image*
+                # is offset from the *very original master image* due to previous crops.
+                # The rect_coords_img (rect_x_img, rect_y_img) are ALREADY in the coordinate
+                # system of the *current self.image* because they were calculated relative to it
+                # in finalize_rectangle_for_auto_lane.
+    
+                # So, target_x_in_image_space is already relative to the current self.image's origin.
+                # We just need to scale it and add the centering offset.
+                target_slider_value = int(centering_offset_x_on_canvas + target_x_in_image_space * scale_current_img_to_render_canvas)
+    
+            except Exception as e:
+                print(f"Warning: Error calculating precise target slider value: {e}. Using simpler scaling.")
+                # Fallback: simpler scaling if precise calculation fails
+                target_slider_value = int(target_x_in_image_space * render_scale)
+        else:
+            # Fallback if image/label info is critically missing
+            target_slider_value = int(target_x_in_image_space * render_scale)
+            print(f"Warning: Missing image/label info for slider calculation. Fallback value: {target_slider_value}")
+    
+        # --- Set the Slider Value ---
+        # The slider's value directly becomes self.left/right_marker_shift_added
+        # which is the absolute X offset on the render canvas.
+        if side == 'left':
+            if hasattr(self, 'left_padding_slider'):
+                self._update_marker_slider_ranges() # Ensure range is up-to-date
+                min_r, max_r = self.left_slider_range
+                # For left markers, text_anchor="end", so the value is where the text *ends*.
+                # If target_slider_value is the left edge, this is correct.
+                slider_val_clamped = max(min_r, min(target_slider_value, max_r))
+                print(f"Setting LEFT slider to: {slider_val_clamped} (original target: {target_slider_value})") # Debug
+                self.left_padding_slider.setValue(slider_val_clamped)
+        elif side == 'right':
+             if hasattr(self, 'right_padding_slider'):
+                 self._update_marker_slider_ranges()
+                 min_r, max_r = self.right_slider_range
+                 # For right markers, text_anchor="start", so the value is where the text *starts*.
+                 # If target_slider_value is the right edge, this is correct.
+                 slider_val_clamped = max(min_r, min(target_slider_value, max_r))
+                 print(f"Setting RIGHT slider to: {slider_val_clamped} (original target: {target_slider_value})") # Debug
+                 self.right_padding_slider.setValue(slider_val_clamped)
+    
+        # --- Clear the temporary rectangle preview ---
+        if hasattr(self.live_view_label, 'bounding_box_preview'):
+            self.live_view_label.bounding_box_preview = None
+    
+        self.is_modified = True
+        self.update_live_view()
         
     def zoom_in(self):
         self.live_view_label.zoom_in() # LiveViewLabel handles its own update
@@ -4149,27 +4980,35 @@ class CombinedSDSApp(QMainWindow):
 
     
     def start_rectangle(self, event):
-        """Record the start position of the rectangle."""
-        if self.live_view_label.mode == "rectangle":
+        """Record the start position of the rectangle (Works for 'rectangle' and 'auto_lane_rect' modes)."""
+        # *** MODIFIED: Check for both modes ***
+        if self.live_view_label.mode in ["rectangle", "auto_lane_rect"]:
             self.live_view_label.rectangle_start = self.live_view_label.transform_point(event.pos())
+            # Clear previous points/preview specific to rectangle mode
             self.live_view_label.rectangle_points = [self.live_view_label.rectangle_start]
-            self.live_view_label.bounding_box_preview = None  # Reset bounding box preview
-            self.update_live_view()
+            self.live_view_label.bounding_box_preview = None # Reset preview until drag starts
+            # No update_live_view() here, wait for move or release
+            # print(f"Rectangle start in mode: {self.live_view_label.mode}") # Debug
     
     def update_rectangle_preview(self, event):
-        """Update the rectangle preview as the mouse moves."""
-        if self.live_view_label.mode == "rectangle" and self.live_view_label.rectangle_start:
+        """Update the rectangle preview as the mouse moves (Works for 'rectangle' and 'auto_lane_rect' modes)."""
+        # *** MODIFIED: Check for both modes ***
+        if self.live_view_label.mode in ["rectangle", "auto_lane_rect"] and self.live_view_label.rectangle_start:
             self.live_view_label.rectangle_end = self.live_view_label.transform_point(event.pos())
-            self.live_view_label.rectangle_points = [self.live_view_label.rectangle_start, self.live_view_label.rectangle_end]
-            
-            # Update bounding_box_preview with the rectangle coordinates
-            self.live_view_label.bounding_box_preview = (
-                self.live_view_label.rectangle_start.x(),
-                self.live_view_label.rectangle_start.y(),
-                self.live_view_label.rectangle_end.x(),
-                self.live_view_label.rectangle_end.y(),
-            )
-            self.update_live_view()
+            # Update rectangle_points if needed by other logic (though bounding_box_preview is used for drawing)
+            # self.live_view_label.rectangle_points = [self.live_view_label.rectangle_start, self.live_view_label.rectangle_end]
+    
+            # Update bounding_box_preview which is used by LiveViewLabel.paintEvent
+            # Ensure start and end points exist before creating the tuple
+            if self.live_view_label.rectangle_start and self.live_view_label.rectangle_end:
+                self.live_view_label.bounding_box_preview = (
+                    self.live_view_label.rectangle_start.x(),
+                    self.live_view_label.rectangle_start.y(),
+                    self.live_view_label.rectangle_end.x(),
+                    self.live_view_label.rectangle_end.y(),
+                )
+                self.update_live_view() # Trigger repaint to show the drag preview
+            # print(f"Rectangle update in mode: {self.live_view_label.mode}") # Debug
     
     def finalize_rectangle(self, event):
         """Finalize the rectangle when the mouse is released."""
@@ -5683,9 +6522,9 @@ class CombinedSDSApp(QMainWindow):
 
         # Grid controls compact layout
         grid_layout = QHBoxLayout(); grid_layout.setContentsMargins(0,0,0,0); grid_layout.setSpacing(5)
-        self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+G toggles X&Y.")
+        self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X toggles X and Ctrl+Shift+G for both X and Y.")
         self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
-        self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+G toggles X&Y.")
+        self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y toggles Y and Ctrl+Shift+G for both X and Y.")
         self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
         self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
         self.grid_size_input.valueChanged.connect(self.update_live_view)
@@ -5926,6 +6765,18 @@ class CombinedSDSApp(QMainWindow):
         # --- Escape Key Handling ---
         if event.key() == Qt.Key_Escape:
             # 1. PRIORITIZE CANCELLING CROP MODE if active
+            if self.live_view_label.mode == 'auto_lane_quad':
+                # print("Debug: Escape pressed, cancelling auto lane quad definition.") # Optional Debug
+                self.live_view_label.mode = None
+                self.live_view_label.quad_points = []
+                self.live_view_label.selected_point = -1
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+                self.live_view_label.mousePressEvent = None # Reset handlers
+                self.live_view_label.mouseMoveEvent = None
+                self.live_view_label.mouseReleaseEvent = None
+                self.update_live_view() # Clear potential quad drawing
+                return # Consume the event
+            
             if self.crop_rectangle_mode:
                 # print("Debug: Escape pressed, cancelling crop mode.") # Optional Debug
                 self.cancel_rectangle_crop_mode()
@@ -7611,14 +8462,14 @@ class CombinedSDSApp(QMainWindow):
             # Disable buttons that require an image
             if hasattr(self, 'predict_button'): self.predict_button.setEnabled(False)
             if hasattr(self, 'save_action'): self.save_action.setEnabled(False)
-            if hasattr(self, 'save_svg_action'): self.save_svg_action.setEnabled(False)
+            # if hasattr(self, 'save_svg_action'): self.save_svg_action.setEnabled(False)
             if hasattr(self, 'copy_action'): self.copy_action.setEnabled(False)
             # ... disable others in different tabs if necessary ...
             return
         else:
             # If image is valid, enable relevant buttons
             if hasattr(self, 'save_action'): self.save_action.setEnabled(True)
-            if hasattr(self, 'save_svg_action'): self.save_svg_action.setEnabled(True)
+            # if hasattr(self, 'save_svg_action'): self.save_svg_action.setEnabled(True)
             if hasattr(self, 'copy_action'): self.copy_action.setEnabled(True)
 
 
@@ -9632,39 +10483,9 @@ if __name__ == "__main__":
     import sys
     import traceback # Import traceback for better error reporting
     from PyQt5.QtWidgets import QApplication
-    # The LoadingDialog class defined above must be accessible here
-
     main_window = None # Initialize variable to hold the main window instance
     app = QApplication(sys.argv) # Create application first
-
-    # --- Create and Show Loading Screen ---
-    loading_dialog = LoadingDialog()
     try:
-        loading_dialog.show()
-        app.processEvents() # IMPORTANT: Allow the event loop to process and show the dialog
-    except Exception as e:
-        print(f"ERROR: Could not show loading dialog: {e}")
-        # Continue without loading screen if it fails
-
-    # --- Now perform heavy imports and main window initialization ---
-    try:
-        # Update loading message (optional)
-        loading_dialog.set_message("Loading Libraries...")
-
-        # <<< Move your main application class import HERE >>>
-        # This delays the import until after the loading screen is shown
-        # from Imaging_assistant_V7 import CombinedSDSApp # Assuming your file is named this
-        # <<< You might also move other *very heavy* library imports here >>>
-        # (e.g., if numpy, scipy, matplotlib import takes significant time)
-        # import numpy as np
-        # import matplotlib.pyplot as plt
-        # ... etc ...
-        # However, imports inside CombinedSDSApp.__init__ are usually the main delay.
-
-
-        # Update loading message (optional)
-        loading_dialog.set_message("Creating Main Window...")
-
         # Set Style *before* creating the main window if desired
         app.setStyle("Fusion")
         app.setStyleSheet("""
@@ -9691,10 +10512,7 @@ if __name__ == "__main__":
         # --- Create the Main Window Instance ---
         # This is likely the most time-consuming part after imports
         main_window = CombinedSDSApp()
-
         # --- Initialization finished ---
-        loading_dialog.close() # Close the loading screen
-
         main_window.show()
         app.aboutToQuit.connect(main_window.cleanup_temp_clipboard_file)
         sys.exit(app.exec_()) # Start the main event loop
