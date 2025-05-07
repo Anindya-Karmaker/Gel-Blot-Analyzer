@@ -18,19 +18,18 @@ Features:
 * Powerful Exception Logger builtin to diagnose program crashes or other issues.
   
 Example output from the software:
-
 <img width="902" alt="image" src="https://github.com/user-attachments/assets/639edac5-089e-4219-a3f5-6d7a06ad1932" />
 
-Auto Lane Detection
+*Auto Lane Detection
 <img width="1112" alt="image" src="https://github.com/user-attachments/assets/392e9592-639f-4517-b35a-41f947034d6e" />
 
-
+*Predict Molecular Weight
 <img width="900" alt="image" src="https://github.com/user-attachments/assets/e5add862-6615-4db6-b62b-aaf5859c5917" />
 
-Powerful Densitometric Analyis for predicting protein quantity and purity
+*Powerful Densitometric Analyis for predicting protein quantity and purity
 <img width="904" alt="image" src="https://github.com/user-attachments/assets/5157eead-bf64-4302-ba37-c979716825f6" />
 
-Fully transparent background with alpha-channel for different applications (Making posters)
+*Fully transparent background with alpha-channel for different applications (Making posters)
 <img width="541" alt="image" src="https://github.com/user-attachments/assets/bb55025e-43ba-496f-a22c-477bf3a59973" />
 
 
