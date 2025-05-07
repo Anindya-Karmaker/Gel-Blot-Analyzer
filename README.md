@@ -5,14 +5,13 @@ Features:
 * Works with most image format (TIFF,PNG,BMP,JPG) from any device or even camera
 * Fully integrated Image Cropping, Alignment and Skew Correction toolkit builtin
 * Adjust Low/High Image Contrast and Gamma (For visualizing proteins with faint bands)
-* Easily place left/right or top/bottom markers fast
+* Easily place left/right or top/bottom markers fast with auto detection and marker placement.
 * Save your images with transparent labels for those beautiful posters that you will make with this tool!
 * Save your Gel Marker Preset as Custom: Includes left/right/top/bottom marker values
 * Powerful Undo/Redo process operation
 * Option to add custom markers with custom font type, size and color on the image with default top/bottom/left/right arrows builtin and can add more using Webdings font
 * Inbuilt Snapping tool to help set markers at the center
 * Option to load image from clipboard and save to clipboard for faster operation
-* Added SVG export option so the image generated can be edited in Microsoft Word or Other Applications (Work In Progress!)
 * Powerful Keyboard Shortcuts and Tooltips for faster and easier accesibility
 * Can perform detailed densitometric analysis including band analysis and band quantification with custom quadrilateral or rectangular selection window
 * Different modes and types of background subtraction and peak detection are included
@@ -20,10 +19,15 @@ Features:
   
 Example output from the software:
 
-![{2BCF27AF-269C-4CBC-8964-DC568F86E235}](https://github.com/user-attachments/assets/c7c616dd-b2a0-48d6-b3c4-30332668ae91)
-![{76350562-3143-4228-BC41-FCC7DEDBD48B}](https://github.com/user-attachments/assets/3300fe4e-4b08-4ba3-8e17-8c83b8e0ba0b)
-<img width="1101" alt="image" src="https://github.com/user-attachments/assets/549b2422-0697-447e-b724-5c84ffd606db" />
-![{B183AC45-3099-4D70-98BE-644A25AD58C0}](https://github.com/user-attachments/assets/8e0d0603-501e-4428-875b-249eb3f6d99c)
+<img width="902" alt="image" src="https://github.com/user-attachments/assets/639edac5-089e-4219-a3f5-6d7a06ad1932" />
+<img width="1112" alt="image" src="https://github.com/user-attachments/assets/392e9592-639f-4517-b35a-41f947034d6e" />
+
+<img width="900" alt="image" src="https://github.com/user-attachments/assets/e5add862-6615-4db6-b62b-aaf5859c5917" />
+Powerful Densitometric Analyis for predicting protein quantity and purity
+<img width="904" alt="image" src="https://github.com/user-attachments/assets/5157eead-bf64-4302-ba37-c979716825f6" />
+Fully transparent background with alpha-channel for different applications (Making posters)
+<img width="541" alt="image" src="https://github.com/user-attachments/assets/bb55025e-43ba-496f-a22c-477bf3a59973" />
+
 
 
 
