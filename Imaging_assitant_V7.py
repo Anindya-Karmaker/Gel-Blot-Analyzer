@@ -2731,8 +2731,8 @@ class CombinedSDSApp(QMainWindow):
         self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
         # window_width = int(self.screen_width * 0.5)  # 60% of screen width
         # window_height = int(self.screen_height * 0.75)  # 95% of screen height
-        self.preview_label_width_setting = int(self.screen_width * 0.45)
-        self.preview_label_max_height_setting = int(self.screen_height * 0.35)
+        self.preview_label_width_setting = int(self.screen_width * 0.35)
+        self.preview_label_max_height_setting = int(self.screen_height * 0.30)
         self.label_size = self.preview_label_width_setting
         self.window_title="IMAGING ASSISTANT V7.0"
         # --- Initialize Status Bar Labels ---
@@ -2866,7 +2866,7 @@ class CombinedSDSApp(QMainWindow):
         self.live_view_label.setStyleSheet("background-color: white; border: 1px solid black;")
         
         self._create_actions()
-        self.create_menu_bar()
+        #self.create_menu_bar()
         self.create_tool_bar()
         
         self._update_preview_label_size()
@@ -3057,6 +3057,7 @@ class CombinedSDSApp(QMainWindow):
         pan_right_icon = create_text_icon("Arial",icon_size, text_color, "→") # Unicode Right Arrow
         bounding_box_icon = create_text_icon("Wingdings 2", icon_size, text_color, "0")
         draw_line_icon = create_text_icon("Arial", icon_size, text_color, "__")
+        info_icon = create_text_icon("Wingdings", icon_size, text_color, "'")
 
 
         # --- File Actions ---
@@ -3083,6 +3084,10 @@ class CombinedSDSApp(QMainWindow):
         self.auto_lane_action = QAction(create_text_icon("Arial", icon_size, text_color, "A"), "&Automatic Lane Markers", self)
         self.auto_lane_action.setToolTip("Automatically detect and place lane markers based on a defined region.")
         self.auto_lane_action.triggered.connect(self.start_auto_lane_marker)
+        
+        self.info_action = QAction(info_icon, "&Info/GitHub", self)
+        self.info_action.setToolTip("Open Project GitHub Page")
+        self.info_action.triggered.connect(self.open_github)
 
         # --- Set Shortcuts ---
         self.load_action.setShortcut(QKeySequence.Open)
@@ -3920,6 +3925,9 @@ class CombinedSDSApp(QMainWindow):
         
         self.tool_bar.addSeparator()
         self.tool_bar.addAction(self.reset_action)
+        
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.info_action)
 
         # Add the toolbar to the main window
         self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
@@ -7839,7 +7847,6 @@ class CombinedSDSApp(QMainWindow):
             
     def load_image(self):
         self.prompt_save_if_needed()
-        self.is_modified = True # Mark as modified when loading new image
         # self.undo_stack = []
         # self.redo_stack = []
         self.reset_image() # Clear previous state
@@ -7898,7 +7905,7 @@ class CombinedSDSApp(QMainWindow):
                     except Exception as e:
                         QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
                 # --- End Config File Loading ---
-
+                self.is_modified = True # Mark as modified when loading new image
             else:
                  QMessageBox.critical(self, "Load Error", "Failed to initialize image object after loading.")
                  return
