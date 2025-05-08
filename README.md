@@ -66,7 +66,7 @@ To compile the code into an application:
   1. You need to install pyinstaller: pip install pyinstaller
   2. Extract the files into your folder of choice and modify this command(FOR SOME REASON IN SOME ANACONDA VERSION OPENPYXL IS NOT PACKAGED INTO THE FINAL SOFTWARE):
 
-    pyinstaller --noconfirm --onefile --windowed --hidden-import openpyxl.cell._writer --icon=icon.ico --name=Imaging_assistant_v5 Imaging_assistant_V5.py
+    pyinstaller --noconfirm --onefile --windowed --hidden-import openpyxl.cell._writer --icon=icon.ico --name=Imaging_assistant_v7 Imaging_assitant_V7.py
 
   3. Modify the directory. Here the directory is the same as Anaconda_prompt (Change as needed)
     
