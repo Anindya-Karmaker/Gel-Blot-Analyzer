@@ -97,7 +97,7 @@ def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: 
     # Font settings (adjust as needed)
     font = QFont(font_type)
     # Make arrow slightly smaller than +/-, maybe not bold? Experiment.
-    font.setPointSize(max(16, int(icon_size.height()*0.75)))
+    font.setPointSize(min(14, int(icon_size.height()*0.75)))
     # font.setBold(True) # Optional: Make arrows bold or not
     painter.setFont(font)
     painter.setPen(color)
