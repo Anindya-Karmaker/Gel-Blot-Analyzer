@@ -97,7 +97,7 @@ def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: 
     # Font settings (adjust as needed)
     font = QFont(font_type)
     # Make arrow slightly smaller than +/-, maybe not bold? Experiment.
-    font.setPointSize(min(16, int(icon_size.height()*0.8)))
+    font.setPointSize(max(16, int(icon_size.height()*0.75)))
     # font.setBold(True) # Optional: Make arrows bold or not
     painter.setFont(font)
     painter.setPen(color)
@@ -3016,7 +3016,7 @@ class CombinedSDSApp(QMainWindow):
     def _create_actions(self):
         """Create QAction objects for menus and toolbars."""
         style = self.style() # Still useful for other icons
-        icon_size = QSize(24, 24) # Match your toolbar size
+        icon_size = QSize(30, 30) # Match your toolbar size
         text_color = self.palette().color(QPalette.ButtonText) # Use theme color
 
         # # --- Create Zoom Icons (using previous method) ---
@@ -3044,7 +3044,7 @@ class CombinedSDSApp(QMainWindow):
         save_svg_icon = create_text_icon("Wingdings",icon_size, text_color, "3")
         undo_icon = create_text_icon("Wingdings 3",icon_size, text_color, "O")
         redo_icon = create_text_icon("Wingdings 3",icon_size, text_color, "N")
-        paste_icon = create_text_icon("Wingdings",icon_size, text_color, "2")
+        paste_icon = create_text_icon("Wingdings 2",icon_size, text_color, "2")
         copy_icon = create_text_icon("Wingdings",icon_size, text_color, "4")
         reset_icon = create_text_icon("Wingdings 3",icon_size, text_color, "Q")
         exit_icon = create_text_icon("Wingdings 2",icon_size, text_color, "V")
@@ -3055,7 +3055,7 @@ class CombinedSDSApp(QMainWindow):
         pan_down_icon = create_text_icon("Arial",icon_size, text_color, "↓") # Unicode Down Arrow
         pan_left_icon = create_text_icon("Arial",icon_size, text_color, "←") # Unicode Left Arrow
         pan_right_icon = create_text_icon("Arial",icon_size, text_color, "→") # Unicode Right Arrow
-        bounding_box_icon = create_text_icon("Arial", icon_size, text_color, "□")
+        bounding_box_icon = create_text_icon("Wingdings 2", icon_size, text_color, "0")
         draw_line_icon = create_text_icon("Arial", icon_size, text_color, "__")
 
 
@@ -3885,7 +3885,7 @@ class CombinedSDSApp(QMainWindow):
     def create_tool_bar(self):
         """Create the main application toolbar."""
         self.tool_bar = QToolBar("Main Toolbar")
-        self.tool_bar.setIconSize(QSize(24, 24))
+        self.tool_bar.setIconSize(QSize(30, 30))
         self.tool_bar.setMovable(False)
         self.tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
@@ -7361,41 +7361,166 @@ class CombinedSDSApp(QMainWindow):
             QMessageBox.warning(self, "Error", f"Error removing config: {e}")
 
     def save_config(self):
-        """Rename the 'Custom' marker values option and save the configuration."""
+        """Rename the 'Custom' marker values option and save the configuration, converting numbers."""
         new_name = self.rename_input.text().strip()
-        
-        # Ensure that the correct dictionary (self.marker_values_dict) is being used
-        if self.rename_input.text() != "Enter new name for Custom" and self.rename_input.text() != "":  # Correct condition
-            # Save marker values list
-            self.marker_values_dict[new_name] = [int(num) if num.strip().isdigit() else num.strip() for num in self.marker_values_textbox.text().strip("[]").split(",")]
-            
-            # Save top_label list under the new_name key
-            self.top_label_dict[new_name] = [int(num) if num.strip().isdigit() else num.strip() for num in self.top_marker_input.toPlainText().strip("[]").split(",")]
+        config_saved = False # Flag to track if save actually happens
 
+        # --- Path determination (same as load_config) ---
+        config_filename = "Imaging_assistant_config.txt"
+        if getattr(sys, 'frozen', False):
+            application_path = os.path.dirname(sys.executable)
+        else:
+            try: application_path = os.path.dirname(os.path.abspath(__file__))
+            except NameError: application_path = os.getcwd()
+        config_filepath = os.path.join(application_path, config_filename)
+        # --- End Path determination ---
+
+        # --- Data Preparation and Type Conversion ---
+        custom_marker_values_converted = []
+        custom_top_labels = []
+        can_parse_custom = True
+        try:
+            raw_markers_text = self.marker_values_textbox.text().strip("[]")
+            if raw_markers_text:
+                raw_markers = raw_markers_text.split(",")
+                for val_str in raw_markers:
+                    val_str_stripped = val_str.strip()
+                    if not val_str_stripped: continue
+                    try:
+                        num_val = float(val_str_stripped)
+                        custom_marker_values_converted.append(int(num_val) if num_val.is_integer() else num_val)
+                    except ValueError:
+                        custom_marker_values_converted.append(val_str_stripped)
+            else:
+                custom_marker_values_converted = []
+            custom_top_labels = [label.strip() for label in self.top_marker_input.toPlainText().split(",") if label.strip()]
+        except Exception as e:
+            print(f"Warning: Could not parse custom marker/label inputs for saving: {e}")
+            can_parse_custom = False
+
+
+        # --- Logic for Saving/Updating ---
+        # Only proceed if a *new name* was actually entered for a custom preset
+        if new_name and self.rename_input.isEnabled() and can_parse_custom:
+            if new_name == "Custom":
+                 QMessageBox.warning(self, "Invalid Name", "Cannot save preset with the name 'Custom'. Please choose another name.")
+                 return
+
+            # --- Check if name already exists ---
+            if new_name in self.marker_values_dict:
+                 reply = QMessageBox.question(self, "Overwrite Preset?",
+                                              f"A preset named '{new_name}' already exists. Overwrite it?",
+                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                 if reply == QMessageBox.No:
+                     return # Abort saving if user doesn't want to overwrite
+
+            print(f"DEBUG: Saving/Updating custom entry as '{new_name}'") # Debug
+
+            # Update the in-memory dictionaries
+            self.marker_values_dict[new_name] = custom_marker_values_converted
+            self.top_label_dict[new_name] = custom_top_labels
+
+            # --- Update the combo box UI ---
+            self.combo_box.blockSignals(True)
+            # Add the new name if it's not already there
+            if self.combo_box.findText(new_name) == -1:
+                # Find the index of "Custom" to insert before it
+                custom_index = self.combo_box.findText("Custom")
+                if custom_index != -1:
+                     self.combo_box.insertItem(custom_index, new_name)
+                else: # Should not happen if load_config works, but fallback
+                     self.combo_box.addItem(new_name)
+                     # Ensure "Custom" is still added if it somehow got removed
+                     if self.combo_box.findText("Custom") == -1:
+                         self.combo_box.addItem("Custom")
+
+            # *** Select the NEWLY saved/updated name ***
+            self.combo_box.setCurrentText(new_name)
+            self.combo_box.blockSignals(False)
+            # --- End Combo Box Update ---
+
+            # Update UI state
+            self.marker_values_textbox.setEnabled(False) # Disable after saving
+            self.rename_input.setEnabled(False)
+            self.rename_input.clear()
+
+            config_saved = True
+
+        elif self.combo_box.currentText() != "Custom":
+            print(f"DEBUG: Saving config with standard preset '{self.combo_box.currentText()}' selected.")
+            config_saved = True # Save the current state of dictionaries
+        else:
+            print(f"DEBUG: 'Custom' selected but no new name provided or parse failed. Config not saved.")
+            return # Exit without saving
+
+
+        # --- Perform the actual file save operation ---
+        if config_saved:
             try:
-                # Save both the marker values and top label (under new_name) to the config file
-                with open("Imaging_assistant_config.txt", "w") as f:
-                    config = {
-                        "marker_values": self.marker_values_dict,
-                        "top_label": self.top_label_dict  # Save top_label_dict as a dictionary with new_name as key
-                    }
-                    json.dump(config, f)  # Save both marker_values and top_label_dict
-            except Exception as e:
-                pass
+                # Prepare the data structure to save (using current dictionaries)
+                final_marker_values_dict = {}
+                for key, values in self.marker_values_dict.items():
+                    converted_values = []
+                    for item in values:
+                        if isinstance(item, str):
+                            try:
+                                num_val = float(item)
+                                converted_values.append(int(num_val) if num_val.is_integer() else num_val)
+                            except ValueError:
+                                converted_values.append(item)
+                        else:
+                            converted_values.append(item)
+                    final_marker_values_dict[key] = converted_values
 
-        self.combo_box.setCurrentText(new_name)
-        self.load_config()  # Reload the configuration after saving
+                config_to_save = {
+                    "marker_values": final_marker_values_dict,
+                    "top_label": self.top_label_dict
+                }
+                print(f"DEBUG: Attempting to save config to: {config_filepath}")
+
+                with open(config_filepath, "w", encoding='utf-8') as f:
+                    json.dump(config_to_save, f, indent=4)
+                print(f"INFO: Configuration saved successfully to {config_filepath}")
+                QMessageBox.information(self, "Preset Saved", f"Configuration saved successfully.")
+
+            except Exception as e:
+                print(f"ERROR: Failed to save config file '{config_filepath}': {e}")
+                traceback.print_exc()
+                QMessageBox.critical(self, "Save Config Error", f"Could not save configuration:\n{e}")
+                # Consider reverting the in-memory dictionary change if save fails?
     
     
     def load_config(self):
         """
         Load configuration from file. If the file doesn't exist,
         create it with default popular marker standards.
+        Handles running from script vs. compiled EXE.
         """
-        # Define the path to the config file (e.g., in the same directory as the script)
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        config_filepath = os.path.join(script_dir, "Imaging_assistant_config.txt")
         config_loaded_successfully = False
+        config_filename = "Imaging_assistant_config.txt" # Define filename centrally
+
+        # --- Determine Application Path (Handles running as script or bundled EXE) ---
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Running in a bundled environment (PyInstaller's --onefile temp dir)
+            # Config file should be next to the EXE, not in _MEIPASS for user editing
+            application_path = os.path.dirname(sys.executable)
+        elif getattr(sys, 'frozen', False):
+             # Running bundled (e.g., PyInstaller --onedir or cx_freeze)
+             application_path = os.path.dirname(sys.executable)
+        else:
+            # Running as a normal script
+            try:
+                # __file__ exists when running as script
+                application_path = os.path.dirname(os.path.abspath(__file__))
+            except NameError:
+                 # Fallback if __file__ is not defined (e.g., interactive console)
+                 application_path = os.getcwd()
+
+        # --- End Application Path Detection ---
+
+        # Construct the absolute path to the config file
+        config_filepath = os.path.join(application_path, config_filename)
+        print(f"INFO: Attempting to load/create config at: {config_filepath}") # Debug log
 
         # --- Define Default Marker Data ---
         # Use kDa for proteins, bp for DNA for clarity in keys, but values are just numbers
@@ -7410,8 +7535,8 @@ class CombinedSDSApp(QMainWindow):
             # DNA (bp)
             "1 kb DNA Ladder (NEB N3232)": [10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 500],
             "1 kb Plus DNA Ladder (Thermo 10787018)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 75],
-            "TrackIt 1 Kb Plus DNA Ladder (Invitrogen 10488085)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100], # Often 100 bp, not 75
-            "Lambda DNA/HindIII Marker (NEB N3012)": [23130, 9416, 6557, 4361, 2322, 2027, 564], # Approx values
+            "TrackIt 1 Kb Plus DNA Ladder (Invitrogen 10488085)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100],
+            "Lambda DNA/HindIII Marker (NEB N3012)": [23130, 9416, 6557, 4361, 2322, 2027, 564],
         }
         # Generic default top labels
         default_top_labels_generic = ["MWM", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "L11", "L12", "L13", "L14", "L15"]
@@ -7423,91 +7548,104 @@ class CombinedSDSApp(QMainWindow):
         }
         # --- End Default Marker Data ---
 
+        # --- Initialize internal dictionaries BEFORE trying to load/create ---
+        # Start with defaults, then overwrite if load is successful.
+        self.marker_values_dict = default_marker_values.copy()
+        self.top_label_dict = default_top_label_dict.copy()
+
         # --- Check if config file exists ---
         if os.path.exists(config_filepath):
-            # --- Try to load existing file ---
             try:
-                with open(config_filepath, "r") as f:
+                with open(config_filepath, "r", encoding='utf-8') as f: # Specify encoding
                     config = json.load(f)
 
-                # Load marker values and top label from the file
-                # Use .get() for safety, falling back to DEFAULTS if key is missing in file
-                self.marker_values_dict = config.get("marker_values", default_marker_values.copy())
-                self.top_label_dict = config.get("top_label", default_top_label_dict.copy())
+                # --- Overwrite defaults ONLY if loading is successful AND keys exist ---
+                loaded_markers = config.get("marker_values")
+                loaded_top_labels = config.get("top_label")
+
+                if loaded_markers is not None and isinstance(loaded_markers, dict):
+                    self.marker_values_dict = loaded_markers # Replace default with loaded
+                else:
+                    pass
+                if loaded_top_labels is not None and isinstance(loaded_top_labels, dict):
+                    self.top_label_dict = loaded_top_labels # Replace default with loaded
+                else:
+                    print(f"WARNING: 'top_label' key missing or invalid in config. Using defaults.")
+
                 config_loaded_successfully = True
 
-            except (json.JSONDecodeError, IOError) as e:
-                print(f"Error loading config file '{config_filepath}': {e}. Using default values.")
-                # Fallback to defaults if loading fails
-                self.marker_values_dict = default_marker_values.copy()
-                self.top_label_dict = default_top_label_dict.copy()
+            except (json.JSONDecodeError, IOError, TypeError) as e: # Added TypeError
+                QMessageBox.warning(self, "Config Load Error",
+                                    f"Could not load '{config_filename}':\n{e}\n\nUsing default marker presets.")
+                # Dictionaries already hold defaults from initialization above
             except Exception as e:
-                print(f"An unexpected error occurred loading config: {e}. Using default values.")
-                traceback.print_exc() # Print full traceback for unexpected errors
-                self.marker_values_dict = default_marker_values.copy()
-                self.top_label_dict = default_top_label_dict.copy()
+                traceback.print_exc()
+                QMessageBox.warning(self, "Config Load Error",
+                                    f"Unexpected error loading '{config_filename}'.\n\nUsing default marker presets.")
+                # Dictionaries already hold defaults
 
         else:
             # --- Config file NOT found, create it with defaults ---
-            print(f"Config file not found at '{config_filepath}'. Creating with defaults.")
             try:
-                with open(config_filepath, "w") as f:
-                    json.dump(default_config_data, f, indent=4)
-
-                # Use the defaults we just wrote
-                self.marker_values_dict = default_marker_values.copy()
-                self.top_label_dict = default_top_label_dict.copy()
-                config_loaded_successfully = True # Technically created, not loaded, but state is set
-
-            except IOError as e:
-                print(f"Error creating default config file '{config_filepath}': {e}. Using in-memory defaults.")
-                # Fallback to in-memory defaults if creation fails
-                self.marker_values_dict = default_marker_values.copy()
-                self.top_label_dict = default_top_label_dict.copy()
+                # Dictionaries already hold the defaults we want to save
+                config_to_save = {
+                    "marker_values": self.marker_values_dict,
+                    "top_label": self.top_label_dict
+                }
+                with open(config_filepath, "w", encoding='utf-8') as f: # Specify encoding
+                    json.dump(config_to_save, f, indent=4)
+                config_loaded_successfully = True # Created successfully
             except Exception as e:
-                 print(f"An unexpected error occurred creating config: {e}. Using in-memory defaults.")
-                 traceback.print_exc()
-                 self.marker_values_dict = default_marker_values.copy()
-                 self.top_label_dict = default_top_label_dict.copy()
+                QMessageBox.critical(self, "Config Creation Error",
+                                     f"Could not create default config file:\n{e}\n\nDefault presets will be used for this session only.")
+                # Dictionaries already hold defaults
 
 
-        # --- Update UI based on the loaded/default data ---
+        # --- Update UI based on the final state of the dictionaries ---
         try:
             # Ensure combo_box exists before manipulating it
             if hasattr(self, 'combo_box'):
+                self.combo_box.blockSignals(True) # Block signals during population
                 self.combo_box.clear()
                 # Add marker names sorted alphabetically for better usability
                 sorted_marker_names = sorted(self.marker_values_dict.keys())
                 self.combo_box.addItems(sorted_marker_names)
                 self.combo_box.addItem("Custom") # Add Custom option last
-                # Optionally set a default selection
-                if "Precision Plus Protein All Blue Prestained (Bio-Rad)" in self.marker_values_dict:
-                    self.combo_box.setCurrentText("Precision Plus Protein All Blue Prestained (Bio-Rad)")
-                elif sorted_marker_names: # Select first alphabetically if default not present
-                    self.combo_box.setCurrentText(sorted_marker_names[0])
 
-                # Trigger initial population of text boxes based on current selection
+                # Set current item AFTER populating
+                current_selection_index = -1
+                # Try selecting the Bio-Rad default first
+                default_biorad = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
+                if default_biorad in self.marker_values_dict:
+                    current_selection_index = self.combo_box.findText(default_biorad)
+
+                # If Bio-Rad default not found or not present, select the first actual item
+                if current_selection_index == -1 and sorted_marker_names:
+                     current_selection_index = self.combo_box.findText(sorted_marker_names[0])
+
+                # If still no valid index (e.g., dict was empty except Custom), select Custom maybe?
+                if current_selection_index == -1 and self.combo_box.count() > 0:
+                    custom_index = self.combo_box.findText("Custom")
+                    if custom_index != -1:
+                        current_selection_index = custom_index
+                    else: # Fallback to index 0 if even "Custom" wasn't added somehow
+                        current_selection_index = 0
+
+                # Set the determined index
+                if current_selection_index != -1:
+                    self.combo_box.setCurrentIndex(current_selection_index)
+
+                self.combo_box.blockSignals(False) # Unblock signals
+                # Manually trigger update based on new selection AFTER unblocking
+                # This ensures on_combobox_changed runs with the correct loaded data
                 self.on_combobox_changed()
+
             else:
                  print("Warning: combo_box UI element not found during config load.")
 
-            # Set the initial top_label based on the combobox selection, if possible
-            if hasattr(self, 'top_marker_input'):
-                current_selection = self.combo_box.currentText() if hasattr(self, 'combo_box') else None
-                if current_selection and current_selection != "Custom" and current_selection in self.top_label_dict:
-                    self.top_label = self.top_label_dict[current_selection][:] # Use a copy
-                else:
-                    # Use a generic default if selection is Custom or not found
-                    self.top_label = default_top_labels_generic[:]
-                # Ensure all items are strings before joining
-                self.top_label = [str(item) for item in self.top_label]
-                self.top_marker_input.setText(", ".join(self.top_label))
-            else:
-                 print("Warning: top_marker_input UI element not found during config load.")
-
+            # Update top label input - This is now handled by on_combobox_changed call above
 
         except Exception as e:
-             print(f"Error updating UI after config load/create: {e}")
              traceback.print_exc()
     
     def paste_image(self):
