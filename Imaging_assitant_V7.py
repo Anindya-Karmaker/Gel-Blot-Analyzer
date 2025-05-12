@@ -5406,14 +5406,14 @@ if __name__ == "__main__":
                 # Position Sliders
                 image1_layout.addWidget(QLabel("Horizontal Pos:"), 1, 0)
                 self.image1_left_slider = QSlider(Qt.Horizontal)
-                self.image1_left_slider.setRange(-render_width, render_width) # Wider range
+                self.image1_left_slider.setRange(int(-render_width*1.5), int(render_width*1.5)) # Wider range
                 self.image1_left_slider.setValue(0)
                 self.image1_left_slider.valueChanged.connect(self.update_live_view)
                 image1_layout.addWidget(self.image1_left_slider, 1, 1, 1, 2) # Span 2 columns
 
                 image1_layout.addWidget(QLabel("Vertical Pos:"), 2, 0)
                 self.image1_top_slider = QSlider(Qt.Horizontal)
-                self.image1_top_slider.setRange(-render_height, render_height) # Wider range
+                self.image1_top_slider.setRange(int(-render_height*1.5), int(render_height*1.5)) # Wider range
                 self.image1_top_slider.setValue(0)
                 self.image1_top_slider.valueChanged.connect(self.update_live_view)
                 image1_layout.addWidget(self.image1_top_slider, 2, 1, 1, 2) # Span 2 columns
@@ -9707,8 +9707,8 @@ if __name__ == "__main__":
                     # Remove common suffixes if they exist from previous saves
                     base = base.replace("_original", "").replace("_modified", "")
                     suggested_name = f"{base}" # Suggest PNG for modified view
-                elif hasattr(self, 'base_name') and self.base_name:
-                    suggested_name = f"{base}"
+                # elif hasattr(self, 'base_name') and self.base_name:
+                #     suggested_name = f"{base}"
                 else:
                     suggested_name = "untitled_image"
 
