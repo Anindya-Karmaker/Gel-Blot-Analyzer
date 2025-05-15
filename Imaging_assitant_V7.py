@@ -166,7 +166,7 @@ if __name__ == "__main__":
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox,
-            QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog
+            QDialog, QHeaderView, QAbstractItemView, QMenu, QAction, QMenuBar, QFontDialog, QListWidget
         )
         from PyQt5.QtGui import QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QPen, QTransform,QFontMetrics,QDesktopServices
         from PyQt5.QtCore import Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QSizeF, QMimeData, QUrl
@@ -185,6 +185,7 @@ if __name__ == "__main__":
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
         from scipy.interpolate import interp1d # Needed for interpolation
         import cv2
+        import datetime
 
         def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: str) -> QIcon:
             """Creates a QIcon by drawing text/symbol onto a pixmap."""
@@ -231,10 +232,24 @@ if __name__ == "__main__":
             Simplified dialog for tuning peak detection parameters for automatic lane markers.
             Shows the intensity profile and detected peaks. Allows adjustment of detection parameters.
             Does NOT handle area calculation or individual band boundary adjustments.
+
+            This dialog operates on a rectangular PIL.Image object provided as `pil_image_data`.
+            If this data comes from a warped quadrilateral region of an original image (i.e.,
+            the `pil_image_data` itself is the rectangular result of a warp), the detected
+            peak coordinates will be relative to this warped rectangular image. The calling
+            code is responsible for any geometric transformations to map these coordinates
+            back to the original image space if needed. The `is_from_quad_warp` parameter
+            can be used to indicate this context, which will adjust the dialog's title.
             """
-            def __init__(self, pil_image_data, initial_settings, parent=None):
+            def __init__(self, pil_image_data, initial_settings, parent=None, is_from_quad_warp=False): # Added is_from_quad_warp
                 super().__init__(parent)
-                self.setWindowTitle("Tune Automatic Peak Detection")
+
+                # Set window title based on the source of the image data
+                if is_from_quad_warp:
+                    self.setWindowTitle("Tune Peaks (Warped Region)")
+                else:
+                    self.setWindowTitle("Tune Automatic Peak Detection")
+
                 self.setGeometry(150, 150, 800, 700) # Adjusted height
                 self.pil_image_for_display = pil_image_data
                 self.selected_peak_index = -1
@@ -317,6 +332,7 @@ if __name__ == "__main__":
                 # More height for the profile plot
                 self.fig = plt.figure(figsize=(7, 5)) # Adjusted height for gridspec
                 gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
+                self.fig.tight_layout(pad=0.5)
                 self.ax_profile = self.fig.add_subplot(gs[0]) # Axis for the profile
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile) # Axis for the image preview
 
@@ -638,12 +654,12 @@ if __name__ == "__main__":
                     self.ax_image.text(0.5, 0.5, "No Image Data", ha='center', va='center', transform=self.ax_image.transAxes)
 
                 # Use tight_layout or constrained_layout
-                try:
-                    self.fig.tight_layout(pad=0.5)
-                except ValueError: # Can happen with certain plot states
-                    try:
-                        self.fig.set_constrained_layout(True)
-                    except AttributeError: pass # Older matplotlib
+                # try:
+                #     self.fig.tight_layout(pad=0.5)
+                # except ValueError: # Can happen with certain plot states
+                #     try:
+                #         self.fig.set_constrained_layout(True)
+                #     except AttributeError: pass # Older matplotlib
 
                 self.canvas.draw_idle()
                 plt.close()
@@ -1253,270 +1269,576 @@ if __name__ == "__main__":
                 final_markers = [tuple(m) for m in self.markers]
                 return final_markers, self.shapes
 
-
         class TableWindow(QDialog):
             """
-            A dialog window to display peak analysis results in a table.
-            Includes functionality to copy selected data to the clipboard
-            in a format pasteable into Excel (tab-separated).
-            Also includes Excel export functionality and standard curve plot.
+            A dialog window to display peak analysis results in a table,
+            manage a history of previous analyses, and compare results.
+            Includes functionality to copy selected data and export to Excel.
             """
-            # *** MODIFIED: Added standard_dictionary to the constructor ***
-            def __init__(self, peak_areas, standard_dictionary, standard, calculated_quantities, parent=None):
-                super().__init__(parent)
-                self.setWindowTitle("Analysis Results and Standard Curve") # Updated title
-                self.setGeometry(100, 100, 700, 650) # Increased height for plot
-                self.calculated_quantities = calculated_quantities
-                self.standard_dictionary = standard_dictionary # Store standard data
+            HISTORY_FILE_NAME = "analysis_history.json"
 
-                # --- Main Layout ---
+            def __init__(self, current_peak_areas, current_standard_dictionary, current_is_standard_mode, current_calculated_quantities, parent_app_instance=None):
+                super().__init__(parent_app_instance)
+                self.setWindowTitle("Analysis Results and History")
+                self.setGeometry(100, 100, 850, 700)
+
+                self.parent_app = parent_app_instance
+
+                self.current_peak_areas = current_peak_areas if current_peak_areas is not None else []
+                self.current_standard_dictionary = current_standard_dictionary if current_standard_dictionary is not None else {}
+                self.current_is_standard_mode = current_is_standard_mode
+                self.current_calculated_quantities = current_calculated_quantities if current_calculated_quantities is not None else []
+                self.source_image_name_current = "Unknown"
+                if self.parent_app and hasattr(self.parent_app, 'image_path') and self.parent_app.image_path:
+                    # Ensure image_path is a string before calling os.path.basename
+                    if isinstance(self.parent_app.image_path, str):
+                        self.source_image_name_current = os.path.basename(self.parent_app.image_path)
+                    else:
+                        print(f"Warning: parent_app.image_path is not a string: {self.parent_app.image_path}")
+
+
+                self.analysis_history = []
+                self.delete_entry_button = None
+                self.export_previous_button = None
+                self.previous_sessions_listwidget = None
+                self.previous_results_table = None
+                self.previous_plot_placeholder_label = None
+                self.previous_plot_groupbox_layout = None
+                self.previous_plot_canvas_widget = None
+
+                self._load_history() # Load history first
+
                 main_layout = QVBoxLayout(self)
+                self.tab_widget = QTabWidget()
+                main_layout.addWidget(self.tab_widget)
 
-                # --- Standard Curve Plot Area (Conditional) ---
-                plot_widget = self._create_standard_curve_plot() # Create plot or placeholder
-                if plot_widget:
-                    plot_group = QGroupBox("Standard Curve")
-                    plot_layout = QVBoxLayout(plot_group)
-                    plot_layout.addWidget(plot_widget)
-                    # Set a fixed or maximum height for the plot group if needed
-                    plot_group.setMaximumHeight(300) # Example max height
-                    plot_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                    main_layout.addWidget(plot_group) # Add plot at the top
+                self._create_current_results_tab()
+                self._create_previous_results_tab() # This also calls _populate_previous_sessions_list
 
+                self.dialog_button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                self.dialog_button_box.accepted.connect(self._accept_dialog_and_save_current) # Correct connection
+                self.dialog_button_box.rejected.connect(self.reject)
+                main_layout.addWidget(self.dialog_button_box)
 
-                # --- Table Setup ---
-                self.scroll_area = QScrollArea(self)
-                self.scroll_area.setWidgetResizable(True)
-                self.table = QTableWidget()
-                self.table.setColumnCount(4)
-                self.table.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
-                self.table.setEditTriggers(QTableWidget.NoEditTriggers) # Data is read-only
-                self.table.setSelectionBehavior(QTableWidget.SelectRows) # Select whole rows
-                self.table.setSelectionMode(QTableWidget.ContiguousSelection) # Allow selecting multiple adjacent rows
-
-                # --- Populate Table ---
-                self.populate_table(peak_areas, standard_dictionary, standard)
-
-                self.scroll_area.setWidget(self.table)
-                main_layout.addWidget(self.scroll_area) # Add table below plot
-
-
-                # --- Buttons ---
-                self.copy_button = QPushButton("Copy Selected to Clipboard")
-                self.copy_button.setToolTip("Copy selected rows to clipboard (tab-separated)")
-                self.copy_button.clicked.connect(self.copy_table_data) # Connect copy function
-
-                self.export_button = QPushButton("Export Table to Excel")
-                self.export_button.clicked.connect(self.export_to_excel)
-
-                # --- Layout Buttons ---
-                button_layout = QHBoxLayout()
-                button_layout.addWidget(self.copy_button)
-                button_layout.addStretch()
-                button_layout.addWidget(self.export_button)
-
-                main_layout.addLayout(button_layout) # Add buttons at the bottom
                 self.setLayout(main_layout)
 
-                # Enable keyboard copy (Ctrl+C / Cmd+C)
-                self.copy_shortcut = QShortcut(QKeySequence.Copy, self.table)
-                self.copy_shortcut.activated.connect(self.copy_table_data)
-                # Make table focusable to receive shortcut events
-                self.table.setFocusPolicy(Qt.StrongFocus)
+                # Determine initial tab based on whether *new* current data was passed
+                if self.current_peak_areas: # If there's fresh data for "Current Analysis"
+                    self.tab_widget.setCurrentIndex(0)
+                elif self.analysis_history: # Otherwise, if history exists, show it
+                    self.tab_widget.setCurrentIndex(1)
+                else: # Default to current tab if no new data and no history
+                    self.tab_widget.setCurrentIndex(0)
 
 
-            def _create_standard_curve_plot(self):
-                """Creates and returns the Matplotlib canvas for the standard curve, or None."""
-                if not self.standard_dictionary or len(self.standard_dictionary) < 2:
-                    # Return a placeholder label if no/insufficient standard data
-                    no_curve_label = QLabel("Standard curve requires at least 2 standard points.")
-                    no_curve_label.setAlignment(Qt.AlignCenter)
-                    return no_curve_label
+            def _get_config_dir(self):
+                """Determines the directory for storing configuration/history files."""
+                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                    application_path = os.path.dirname(sys.executable)
+                elif getattr(sys, 'frozen', False):
+                    application_path = os.path.dirname(sys.executable)
+                else:
+                    try: application_path = os.path.dirname(os.path.abspath(__file__))
+                    except NameError: application_path = os.getcwd()
+                return application_path
 
-                try:
-                    # Extract data
-                    quantities = np.array(list(self.standard_dictionary.keys()), dtype=float)
-                    areas = np.array(list(self.standard_dictionary.values()), dtype=float)
-
-                    # Perform linear regression (Area vs Quantity)
-                    coeffs = np.polyfit(areas, quantities, 1)
-                    slope, intercept = coeffs
-
-                    # Calculate R-squared
-                    predicted_quantities = np.polyval(coeffs, areas)
-                    residuals = quantities - predicted_quantities
-                    ss_res = np.sum(residuals**2)
-                    ss_tot = np.sum((quantities - np.mean(quantities))**2)
-                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 1.0
-
-                    # Create Matplotlib figure and axes
-                    fig, ax = plt.subplots(figsize=(5, 3)) # Keep adjusted size
-                    fig.set_dpi(90)
-
-                    # Plot data points
-                    ax.scatter(areas, quantities, label='Standard Points', color='red', zorder=5)
-
-                    # Plot regression line
-                    x_line = np.linspace(min(areas) * 0.95, max(areas) * 1.05, 100)
-                    y_line = slope * x_line + intercept
-
-                    # *** MODIFICATION: Create multi-line label for the legend ***
-                    fit_label = (
-                        f'Linear Fit\n'
-                        f'Qty = {slope}*Area + {intercept}\n'
-                        f'R² = {r_squared:.3f}'
-                    )
-                    ax.plot(x_line, y_line, label=fit_label, color='blue') # Use the combined label
-
-                    # *** REMOVED: Separate text annotation is no longer needed ***
-                    # eq_text = f'Qty = {slope:.2f} * Area + {intercept:.2f}\nR² = {r_squared:.3f}'
-                    # ax.text(0.05, 0.05, eq_text, transform=ax.transAxes, fontsize=8,
-                    #         verticalalignment='bottom', # Align text bottom to position
-                    #         horizontalalignment='left', # Align text left to position
-                    #         bbox=dict(boxstyle='round,pad=0.3', fc='wheat', alpha=0.5))
-
-                    # Customize plot
-                    ax.set_xlabel('Total Peak Area (Arbitrary Units)', fontsize=9)
-                    ax.set_ylabel('Known Quantity (Unit)', fontsize=9)
-                    ax.set_title('Standard Curve', fontsize=10, fontweight='bold')
-                    # Keep legend font size small and specify location
-                    ax.legend(fontsize=8, loc='best') # Use 'best' or 'upper right', etc.
-                    ax.grid(True, linestyle='--', alpha=0.6)
-                    ax.tick_params(axis='both', which='major', labelsize=8)
-                    ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
-
-                    # Use constrained_layout for potentially better automatic spacing
+            def _load_history(self):
+                """Loads analysis history from the JSON file."""
+                history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
+                if os.path.exists(history_file_path):
                     try:
-                        fig.set_constrained_layout(True)
-                    except AttributeError: # Fallback for older Matplotlib
-                        plt.tight_layout(pad=0.5)
+                        with open(history_file_path, "r", encoding='utf-8') as f:
+                            loaded_data = json.load(f)
+                        if isinstance(loaded_data, list):
+                            self.analysis_history = [entry for entry in loaded_data if isinstance(entry, dict)]
+                        else:
+                            self.analysis_history = []
+                    except (json.JSONDecodeError, IOError) as e:
+                        self.analysis_history = []
+                else:
+                    self.analysis_history = []
 
-                    # Create canvas
-                    canvas = FigureCanvas(fig)
-                    canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                    canvas.updateGeometry()
-                    return canvas
+            def _save_history(self):
+                """Saves the current analysis_history list to the JSON file."""
+                history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
+                try:
+                    with open(history_file_path, "w", encoding='utf-8') as f:
+                        json.dump(self.analysis_history, f, indent=4)
+                except IOError as e:
+                    QMessageBox.critical(self, "Save History Error", f"Could not save analysis history to {history_file_path}: {e}")
 
-                except Exception as e:
-                    print(f"Error creating standard curve plot: {e}")
-                    error_label = QLabel(f"Error generating plot:\n{e}")
-                    error_label.setAlignment(Qt.AlignCenter)
-                    error_label.setStyleSheet("color: red;")
-                    return error_label
-
-
-            def populate_table(self, peak_areas, standard_dictionary, standard):
-                """Populates the table with the provided peak analysis data."""
-                total_area = sum(peak_areas) if peak_areas else 0.0 # Handle empty list
-                self.table.setRowCount(len(peak_areas))
-
-                for row, area in enumerate(peak_areas):
-                    band_label = f"Band {row + 1}"
-                    self.table.setItem(row, 0, QTableWidgetItem(band_label))
-
-                    peak_area_rounded = round(area, 3)
-                    self.table.setItem(row, 1, QTableWidgetItem(str(peak_area_rounded)))
-
-                    if total_area != 0:
-                        percentage = (area / total_area) * 100
-                        percentage_rounded = round(percentage, 2)
-                    else:
-                        percentage_rounded = 0.0
-                    self.table.setItem(row, 2, QTableWidgetItem(f"{percentage_rounded:.2f}%"))
-
-                    # --- Use pre-calculated quantities if available ---
-                    quantity_str = "" # Default empty string
-                    if standard and row < len(self.calculated_quantities): # Check if standard mode and index is valid
-                        quantity_str = f"{self.calculated_quantities[row]:.2f}" # Format as needed
-                    # Always set the item, even if empty
-                    self.table.setItem(row, 3, QTableWidgetItem(quantity_str))
-                    # --- End quantity handling ---
-
-                self.table.resizeColumnsToContents() # Adjust column widths
+            def _accept_dialog_and_save_current(self):
+                """Saves the current analysis results to history if they are new, then accepts the dialog."""
+                # Only save if there's actual *current* data passed to this dialog instance
+                # self.current_peak_areas is initialized with the data from CombinedSDSApp
+                if self.current_peak_areas: # Check if there's current data to save
+                    peak_dialog_settings_current = {}
+                    if self.parent_app and hasattr(self.parent_app, 'peak_dialog_settings'):
+                        peak_dialog_settings_current = self.parent_app.peak_dialog_settings.copy()
 
 
-            def copy_table_data(self):
-                """Copy selected table data to the clipboard in a tab-separated format."""
-                selected_ranges = self.table.selectedRanges()
-                if not selected_ranges:
-                    return # Nothing selected
+                    new_entry = {
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "source_image_name": self.source_image_name_current,
+                        "peak_areas": self.current_peak_areas,
+                        "calculated_quantities": self.current_calculated_quantities,
+                        "standard_dictionary": self.current_standard_dictionary,
+                        "analysis_settings": peak_dialog_settings_current
+                    }
+                    self.analysis_history.insert(0, new_entry) # Add to top (newest first)
+                    self._save_history()
+                    # If the history tab UI is already created, refresh its list
+                    if self.previous_sessions_listwidget:
+                        self._populate_previous_sessions_list()
+                self.accept() # Close the dialog
 
-                # We copy contiguous blocks as selected. If multiple non-contiguous blocks are selected,
-                # this standard implementation will only copy the first one.
-                # For pasting into Excel, copying a single contiguous block is usually expected.
-                selected_range = selected_ranges[0]
-                start_row = selected_range.topRow()
-                end_row = selected_range.bottomRow()
-                start_col = selected_range.leftColumn()
-                end_col = selected_range.rightColumn()
+            def _create_current_results_tab(self):
+                """Creates the tab for displaying current analysis results."""
+                current_tab_widget = QWidget()
+                current_layout = QVBoxLayout(current_tab_widget)
 
-                clipboard_string = ""
-                for row in range(start_row, end_row + 1):
-                    row_data = []
-                    for col in range(start_col, end_col + 1):
-                        item = self.table.item(row, col)
-                        row_data.append(item.text() if item else "")
-                    clipboard_string += "\t".join(row_data) + "\n" # Tab separated, newline at end of row
-
-                # Copy to clipboard
-                clipboard = QApplication.clipboard()
-                clipboard.setText(clipboard_string.strip()) # Remove trailing newline
-
-
-            def export_to_excel(self):
-                """Export the table data to an Excel file."""
-                # Prompt the user to select a save location
-                options = QFileDialog.Options()
-                file_path, _ = QFileDialog.getSaveFileName(
-                    self, "Save Excel File", "", "Excel Files (*.xlsx)", options=options
+                current_plot_widget = self._create_standard_curve_plot_generic(
+                    self.current_standard_dictionary,
+                    self.current_is_standard_mode,
+                    for_history=False
                 )
-                if not file_path:
+                if current_plot_widget:
+                    plot_group_current = QGroupBox("Standard Curve (Current Analysis)")
+                    plot_layout_current = QVBoxLayout(plot_group_current)
+                    plot_layout_current.addWidget(current_plot_widget)
+                    plot_group_current.setMaximumHeight(300)
+                    plot_group_current.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                    current_layout.addWidget(plot_group_current)
+
+                scroll_area_current = QScrollArea(current_tab_widget)
+                scroll_area_current.setWidgetResizable(True)
+                self.current_results_table = QTableWidget()
+                self.current_results_table.setColumnCount(4)
+                self.current_results_table.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
+                self.current_results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+                self.current_results_table.setSelectionBehavior(QTableWidget.SelectRows)
+                self.current_results_table.setSelectionMode(QTableWidget.ContiguousSelection)
+
+                # Populate with current data *if it exists*
+                if self.current_peak_areas:
+                     self._populate_table_generic(self.current_results_table, self.current_peak_areas, self.current_is_standard_mode, self.current_calculated_quantities)
+                else: # Display placeholder if no current data
+                    self.current_results_table.setRowCount(1)
+                    placeholder_item = QTableWidgetItem("No current analysis data to display.")
+                    placeholder_item.setTextAlignment(Qt.AlignCenter)
+                    self.current_results_table.setItem(0,0, placeholder_item)
+                    self.current_results_table.setSpan(0,0,1,4)
+
+
+                scroll_area_current.setWidget(self.current_results_table)
+                current_layout.addWidget(scroll_area_current)
+
+                current_buttons_layout = QHBoxLayout()
+                copy_current_button = QPushButton("Copy Current Table")
+                copy_current_button.clicked.connect(lambda: self._copy_table_data_generic(self.current_results_table))
+                export_current_button = QPushButton("Export Current Table to Excel")
+                # Prepare default filename for current export
+                current_timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                default_filename_current = f"Analysis_{current_timestamp_str}_{self.source_image_name_current.replace('.', '_')}"
+
+                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(self.current_results_table, default_filename_current, self.current_standard_dictionary))
+
+                current_buttons_layout.addWidget(copy_current_button)
+                current_buttons_layout.addStretch()
+                current_buttons_layout.addWidget(export_current_button)
+                current_layout.addLayout(current_buttons_layout)
+
+                self.tab_widget.addTab(current_tab_widget, "Current Analysis")
+
+            def _create_previous_results_tab(self):
+                """Creates the tab for browsing and managing analysis history."""
+                previous_tab_widget = QWidget()
+                previous_main_layout = QHBoxLayout(previous_tab_widget)
+
+                left_pane_widget = QWidget()
+                left_layout = QVBoxLayout(left_pane_widget)
+                left_layout.setContentsMargins(0, 0, 5, 0)
+
+                left_layout.addWidget(QLabel("Saved Analyses:"))
+                self.previous_sessions_listwidget = QListWidget()
+                self.previous_sessions_listwidget.itemSelectionChanged.connect(self._on_history_session_selected)
+                # _populate_previous_sessions_list is called after UI creation now in __init__
+                left_layout.addWidget(self.previous_sessions_listwidget)
+
+                history_buttons_layout = QHBoxLayout()
+                self.delete_entry_button = QPushButton("Delete Selected")
+                self.delete_entry_button.clicked.connect(self._delete_selected_history_entry)
+                self.delete_entry_button.setEnabled(False)
+                history_buttons_layout.addWidget(self.delete_entry_button)
+                history_buttons_layout.addStretch()
+                self.clear_history_button = QPushButton("Clear All History")
+                self.clear_history_button.clicked.connect(self._clear_all_history)
+                history_buttons_layout.addWidget(self.clear_history_button)
+                left_layout.addLayout(history_buttons_layout)
+
+                previous_main_layout.addWidget(left_pane_widget, 1)
+
+                right_pane_widget = QWidget()
+                right_layout = QVBoxLayout(right_pane_widget)
+
+                self.previous_plot_groupbox = QGroupBox("Standard Curve (Selected History)")
+                self.previous_plot_groupbox_layout = QVBoxLayout(self.previous_plot_groupbox)
+                self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details.")
+                self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
+                self.previous_plot_groupbox_layout.addWidget(self.previous_plot_placeholder_label)
+                self.previous_plot_groupbox.setMaximumHeight(300)
+                self.previous_plot_groupbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                right_layout.addWidget(self.previous_plot_groupbox)
+
+                self.previous_results_table = QTableWidget()
+                self.previous_results_table.setColumnCount(4)
+                self.previous_results_table.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
+                self.previous_results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+                right_layout.addWidget(self.previous_results_table)
+
+                previous_table_buttons_layout = QHBoxLayout()
+                copy_previous_button = QPushButton("Copy Selected History Table")
+                copy_previous_button.clicked.connect(lambda: self._copy_table_data_generic(self.previous_results_table))
+                self.export_previous_button = QPushButton("Export Selected History Table")
+                self.export_previous_button.clicked.connect(self._export_selected_history_to_excel)
+                self.export_previous_button.setEnabled(False)
+                previous_table_buttons_layout.addWidget(copy_previous_button)
+                previous_table_buttons_layout.addStretch()
+                previous_table_buttons_layout.addWidget(self.export_previous_button)
+                right_layout.addLayout(previous_table_buttons_layout)
+
+                previous_main_layout.addWidget(right_pane_widget, 2)
+                self.tab_widget.addTab(previous_tab_widget, "Analysis History")
+
+                # Now that previous_sessions_listwidget is created, populate it
+                self._populate_previous_sessions_list()
+
+            def _populate_previous_sessions_list(self):
+                self.previous_sessions_listwidget.clear()
+                if not self.analysis_history:
+                    self.previous_sessions_listwidget.addItem("No history available.")
+                    if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
+                    if self.export_previous_button: self.export_previous_button.setEnabled(False)
                     return
 
-                # Create a new Excel workbook and worksheet
+                for i, entry in enumerate(self.analysis_history):
+                    ts_str = entry.get("timestamp", f"Entry {len(self.analysis_history) - i}")
+                    img_name = entry.get("source_image_name", "Unknown Image")
+                    try:
+                        # Attempt to parse only the date-time part, ignore sub-second precision if problematic
+                        dt_obj = datetime.datetime.fromisoformat(ts_str.split('.')[0])
+                        display_name = f"{dt_obj.strftime('%Y-%m-%d %H:%M:%S')} ({img_name})"
+                    except ValueError:
+                        display_name = f"{ts_str} ({img_name})"
+                    self.previous_sessions_listwidget.addItem(display_name)
+                
+                if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
+                if self.export_previous_button: self.export_previous_button.setEnabled(False)
+
+            # ... (Rest of the TableWindow class methods: _clear_previous_details_view,
+            #      _on_history_session_selected, _delete_selected_history_entry, _clear_all_history,
+            #      _export_selected_history_to_excel, and the generic helpers
+            #      _create_standard_curve_plot_generic, _populate_table_generic,
+            #      _copy_table_data_generic, _export_to_excel_generic
+            #      should remain largely the same as in the previous corrected version)
+            # Make sure they use the self. attributes correctly.
+
+            def _clear_previous_details_view(self):
+                """Clears the right pane of the history tab."""
+                if self.previous_results_table:
+                    self.previous_results_table.setRowCount(0) # Clear table
+                    # Add placeholder if empty
+                    placeholder_item = QTableWidgetItem("Select an analysis to view details.")
+                    placeholder_item.setTextAlignment(Qt.AlignCenter)
+                    self.previous_results_table.setRowCount(1)
+                    self.previous_results_table.setItem(0,0, placeholder_item)
+                    self.previous_results_table.setSpan(0,0,1,4)
+
+
+                if hasattr(self, 'previous_plot_canvas_widget') and self.previous_plot_canvas_widget and self.previous_plot_groupbox_layout:
+                    self.previous_plot_groupbox_layout.removeWidget(self.previous_plot_canvas_widget)
+                    self.previous_plot_canvas_widget.deleteLater()
+                    self.previous_plot_canvas_widget = None
+                
+                if self.previous_plot_placeholder_label: # Check if it exists
+                    self.previous_plot_placeholder_label.setText("Select an analysis from the list to view details.")
+                    if self.previous_plot_placeholder_label.isHidden(): # Check if it's hidden
+                        self.previous_plot_placeholder_label.show()
+                
+                if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
+                if self.export_previous_button: self.export_previous_button.setEnabled(False)
+
+            def _on_history_session_selected(self):
+                """Handles selection change in the previous_sessions_listwidget."""
+                if not self.previous_sessions_listwidget: return
+
+                selected_items = self.previous_sessions_listwidget.selectedItems()
+                if not selected_items or "No history available." in selected_items[0].text():
+                    self._clear_previous_details_view()
+                    return
+
+                selected_row_index = self.previous_sessions_listwidget.currentRow()
+                if 0 <= selected_row_index < len(self.analysis_history):
+                    entry = self.analysis_history[selected_row_index]
+                    if self.delete_entry_button: self.delete_entry_button.setEnabled(True)
+                    if self.export_previous_button: self.export_previous_button.setEnabled(True)
+
+                    hist_peak_areas = entry.get("peak_areas", [])
+                    hist_std_dict = entry.get("standard_dictionary", {})
+                    hist_is_std_mode = bool(hist_std_dict)
+                    hist_calc_qty = entry.get("calculated_quantities", [])
+                    self._populate_table_generic(self.previous_results_table, hist_peak_areas, hist_is_std_mode, hist_calc_qty)
+
+                    if hasattr(self, 'previous_plot_canvas_widget') and self.previous_plot_canvas_widget and self.previous_plot_groupbox_layout:
+                        self.previous_plot_groupbox_layout.removeWidget(self.previous_plot_canvas_widget)
+                        self.previous_plot_canvas_widget.deleteLater()
+                        self.previous_plot_canvas_widget = None
+                    
+                    if self.previous_plot_placeholder_label and not self.previous_plot_placeholder_label.isHidden():
+                         self.previous_plot_placeholder_label.hide()
+
+                    hist_plot_widget = self._create_standard_curve_plot_generic(hist_std_dict, hist_is_std_mode, for_history=True)
+                    self.previous_plot_canvas_widget = hist_plot_widget
+                    if self.previous_plot_groupbox_layout: # Ensure layout exists
+                        self.previous_plot_groupbox_layout.addWidget(self.previous_plot_canvas_widget)
+                else:
+                    self._clear_previous_details_view()
+
+
+            def _delete_selected_history_entry(self):
+                if not self.previous_sessions_listwidget: return
+                current_row = self.previous_sessions_listwidget.currentRow()
+                if current_row >= 0 and current_row < len(self.analysis_history):
+                    reply = QMessageBox.question(self, "Confirm Delete",
+                                                 "Are you sure you want to delete this history entry?",
+                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply == QMessageBox.Yes:
+                        del self.analysis_history[current_row]
+                        self._save_history()
+                        self._populate_previous_sessions_list()
+                        self._clear_previous_details_view()
+                else:
+                    QMessageBox.information(self, "No Selection", "Please select an entry to delete.")
+
+            def _clear_all_history(self):
+                reply = QMessageBox.question(self, "Confirm Clear All History",
+                                             "Are you sure you want to delete ALL saved analysis entries?\nThis action cannot be undone.",
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.analysis_history = []
+                    self._save_history()
+                    self._populate_previous_sessions_list() # This will show "No history available."
+                    self._clear_previous_details_view()
+
+            def _export_selected_history_to_excel(self):
+                if not self.previous_sessions_listwidget: return
+                current_row = self.previous_sessions_listwidget.currentRow()
+                if current_row >= 0 and current_row < len(self.analysis_history):
+                    entry = self.analysis_history[current_row]
+                    ts_str_raw = entry.get("timestamp", f"History_Entry_{current_row+1}")
+                    try:
+                        # Attempt to parse and reformat, remove sub-seconds if present
+                        dt_obj_export = datetime.datetime.fromisoformat(ts_str_raw.split('.')[0])
+                        timestamp_str = dt_obj_export.strftime("%Y%m%d_%H%M%S")
+                    except ValueError:
+                        timestamp_str = ts_str_raw.replace(":", "-").replace("T", "_").split('.')[0]
+
+
+                    img_name_part = entry.get("source_image_name", "UnknownImg").replace('.', '_').replace(' ', '_') # Sanitize
+                    default_filename_base = f"Analysis_{timestamp_str}_{img_name_part}"
+
+                    if self.previous_results_table:
+                        self._export_to_excel_generic(self.previous_results_table, default_filename_base, entry.get("standard_dictionary", {}))
+                    else:
+                         QMessageBox.warning(self, "Error", "History table UI element not found.")
+                else:
+                    QMessageBox.information(self, "No Selection", "Please select a history entry to export.")
+
+            # --- Generic Helper Methods (Keep these as they were, they are fine) ---
+            def _create_standard_curve_plot_generic(self, standard_dictionary, is_standard_mode, for_history=False):
+                if not is_standard_mode or not standard_dictionary or len(standard_dictionary) < 2:
+                    no_curve_label = QLabel("Standard curve requires at least 2 standard points." if not for_history else "No standard data for this historical entry.")
+                    no_curve_label.setAlignment(Qt.AlignCenter)
+                    return no_curve_label
+                try:
+                    quantities = np.array(list(standard_dictionary.keys()), dtype=float)
+                    areas = np.array(list(standard_dictionary.values()), dtype=float)
+                    if len(quantities) < 2: # Double check after potential type conversion
+                         no_curve_label = QLabel("Insufficient valid standard points (less than 2).")
+                         no_curve_label.setAlignment(Qt.AlignCenter)
+                         return no_curve_label
+
+                    coeffs = np.polyfit(areas, quantities, 1); slope, intercept = coeffs
+                    predicted_quantities = np.polyval(coeffs, areas); residuals = quantities - predicted_quantities
+                    ss_res = np.sum(residuals**2); ss_tot = np.sum((quantities - np.mean(quantities))**2)
+                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0 # Avoid division by zero if all quantities are same
+                    
+                    fig, ax = plt.subplots(figsize=(4.5, 3.2)) # Slightly adjusted for dialog
+                    fig.set_dpi(90)
+
+                    ax.scatter(areas, quantities, label='Standard Points', color='red', zorder=5, s=30)
+                    
+                    # Ensure x_line covers the range of areas, handle empty/single point arrays
+                    x_min_plot = np.min(areas) * 0.9 if areas.size > 0 else 0
+                    x_max_plot = np.max(areas) * 1.1 if areas.size > 0 else 1
+                    if x_min_plot == x_max_plot: # Handle case where all areas are the same
+                        x_min_plot -= 0.5
+                        x_max_plot += 0.5
+
+                    x_line = np.linspace(x_min_plot, x_max_plot, 100)
+                    y_line = slope * x_line + intercept
+                    
+                    fit_label = (f'Qty = {slope:.3g}*Area + {intercept:.3g}\nR² = {r_squared:.3f}')
+                    ax.plot(x_line, y_line, label=fit_label, color='blue', linewidth=1.2)
+                    
+                    ax.set_xlabel('Total Peak Area', fontsize=8)
+                    ax.set_ylabel('Known Quantity', fontsize=8)
+                    title_prefix = "Historical " if for_history else "" # Removed "Current" as it's implied
+                    ax.set_title(f'{title_prefix}Standard Curve', fontsize=9, fontweight='bold')
+                    
+                    ax.legend(fontsize='xx-small', loc='best'); ax.grid(True, linestyle=':', alpha=0.7, linewidth=0.5)
+                    ax.tick_params(axis='both', which='major', labelsize=7)
+                    
+                    if np.any(areas > 1e4) or (np.any(areas < 1e-2) and np.any(areas != 0)): ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
+                    if np.any(quantities > 1e4) or (np.any(quantities < 1e-2) and np.any(quantities != 0)): ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+                    
+                    try: fig.set_constrained_layout(True)
+                    except AttributeError: plt.tight_layout(pad=0.3)
+                    
+                    canvas = FigureCanvas(fig)
+                    canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
+                    plt.close(fig)
+
+                    return canvas
+                except Exception as e:
+                    traceback.print_exc()
+                    error_label = QLabel(f"Error generating plot:\n{str(e)[:100]}...") # Show truncated error
+                    error_label.setAlignment(Qt.AlignCenter); error_label.setStyleSheet("color: red;")
+                    return error_label
+
+            def _populate_table_generic(self, table_widget, peak_areas, is_standard_mode, calculated_quantities):
+                table_widget.clearContents()
+                if not peak_areas: # If peak_areas is empty or None
+                    table_widget.setRowCount(1)
+                    placeholder_item = QTableWidgetItem("No data to display in table.")
+                    placeholder_item.setTextAlignment(Qt.AlignCenter)
+                    table_widget.setItem(0,0, placeholder_item)
+                    table_widget.setSpan(0,0,1,table_widget.columnCount()) # Span across all columns
+                    table_widget.resizeColumnsToContents()
+                    return
+
+                total_area = sum(peak_areas) if peak_areas else 0.0
+                table_widget.setRowCount(len(peak_areas))
+                for row, area in enumerate(peak_areas):
+                    band_label = f"Band {row + 1}"
+                    table_widget.setItem(row, 0, QTableWidgetItem(band_label))
+                    table_widget.setItem(row, 1, QTableWidgetItem(f"{area:.3f}"))
+                    percentage_str = f"{(area / total_area * 100):.2f}%" if total_area != 0 else "0.00%"
+                    table_widget.setItem(row, 2, QTableWidgetItem(percentage_str))
+                    quantity_str = ""
+                    if is_standard_mode and calculated_quantities and row < len(calculated_quantities):
+                        quantity_str = f"{calculated_quantities[row]:.2f}"
+                    table_widget.setItem(row, 3, QTableWidgetItem(quantity_str))
+                table_widget.resizeColumnsToContents()
+
+
+            def _copy_table_data_generic(self, table_widget_source):
+                if not table_widget_source: return
+                selected_ranges = table_widget_source.selectedRanges()
+                if not selected_ranges: return
+                # ... (rest of copy logic is fine)
+                selected_range = selected_ranges[0]
+                start_row, end_row = selected_range.topRow(), selected_range.bottomRow()
+                start_col, end_col = selected_range.leftColumn(), selected_range.rightColumn()
+                clipboard_string = ""
+                for r in range(start_row, end_row + 1):
+                    row_data = []
+                    for c in range(start_col, end_col + 1):
+                        item = table_widget_source.item(r, c)
+                        # Check if item is the placeholder span
+                        if table_widget_source.rowSpan(r,c) > 1 or table_widget_source.columnSpan(r,c) > 1:
+                            if "No data" in item.text() or "Select an analysis" in item.text():
+                                row_data.append("") # Add empty string for placeholder cells
+                                continue
+                        row_data.append(item.text() if item else "")
+                    if any(cell_text for cell_text in row_data): # Only add row if not all empty
+                        clipboard_string += "\t".join(row_data) + "\n"
+                QApplication.clipboard().setText(clipboard_string.strip())
+
+
+            def _export_to_excel_generic(self, table_widget_source, default_filename_base="Analysis_Results", standard_dict_for_export=None):
+                if not table_widget_source or table_widget_source.rowCount() == 0:
+                    QMessageBox.information(self, "No Data", "The table is empty. Nothing to export.")
+                    return
+                # Check if the only row is a placeholder
+                if table_widget_source.rowCount() == 1:
+                    item = table_widget_source.item(0,0)
+                    if item and ("No data" in item.text() or "Select an analysis" in item.text()):
+                         QMessageBox.information(self, "No Data", "The table contains no analysis data to export.")
+                         return
+
+                options = QFileDialog.Options()
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Save Excel File", f"{default_filename_base}.xlsx", "Excel Files (*.xlsx)", options=options
+                )
+                if not file_path: return
+                # ... (rest of excel export logic is fine) ...
                 workbook = openpyxl.Workbook()
-                worksheet = workbook.active
-                worksheet.title = "Peak Analysis Results" # More descriptive title
-
-                # Write the table headers to the Excel sheet
-                headers = [self.table.horizontalHeaderItem(col).text() for col in range(self.table.columnCount())]
+                worksheet_data = workbook.active
+                worksheet_data.title = "Peak Analysis"
+                headers = [table_widget_source.horizontalHeaderItem(col).text() for col in range(table_widget_source.columnCount())]
                 for col, header in enumerate(headers, start=1):
-                    cell = worksheet.cell(row=1, column=col, value=header)
-                    cell.font = Font(bold=True)  # Make headers bold
+                    cell = worksheet_data.cell(row=1, column=col, value=header); cell.font = Font(bold=True)
+                
+                r_offset = 0 # Offset for writing data if header is present
+                for r_idx in range(table_widget_source.rowCount()):
+                    # Skip placeholder rows
+                    first_item_in_row = table_widget_source.item(r_idx, 0)
+                    if first_item_in_row and ("No data" in first_item_in_row.text() or "Select an analysis" in first_item_in_row.text()):
+                        continue
 
-                # Write the table data to the Excel sheet
-                for row in range(self.table.rowCount()):
-                    for col in range(self.table.columnCount()):
-                        item = self.table.item(row, col)
+                    for c_idx in range(table_widget_source.columnCount()):
+                        item = table_widget_source.item(r_idx, c_idx)
                         value = item.text() if item else ""
-                        # Attempt to convert numeric strings back to numbers for Excel
                         try:
-                            if '%' in value: # Handle percentages
+                            if '%' in value:
                                 numeric_value = float(value.replace('%', '')) / 100.0
-                                cell = worksheet.cell(row=row + 2, column=col + 1, value=numeric_value)
-                                cell.number_format = '0.00%' # Apply percentage format
+                                cell = worksheet_data.cell(row=r_idx + 2 - r_offset, column=c_idx + 1, value=numeric_value); cell.number_format = '0.00%'
                             else:
                                 numeric_value = float(value)
-                                worksheet.cell(row=row + 2, column=col + 1, value=numeric_value)
+                                worksheet_data.cell(row=r_idx + 2 - r_offset, column=c_idx + 1, value=numeric_value)
                         except ValueError:
-                            # Keep as text if conversion fails
-                            worksheet.cell(row=row + 2, column=col + 1, value=value)
-
-                # Auto-adjust column widths (optional, but nice)
-                for col_idx, column_letter in enumerate(worksheet.columns, start=1):
+                            worksheet_data.cell(row=r_idx + 2 - r_offset, column=c_idx + 1, value=value)
+                
+                # Auto-size columns after writing data
+                for col_idx_letter in range(1, worksheet_data.max_column + 1):
+                    column_letter = openpyxl.utils.get_column_letter(col_idx_letter)
                     max_length = 0
-                    column = column_letter[0].column_letter # Get the column letter ('A', 'B', ...)
-                    for cell in worksheet[column]:
-                        try: # Necessary to avoid error on empty cells
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(cell.value)
-                        except:
-                            pass
-                    adjusted_width = (max_length + 2) * 1.2 # Add padding and factor
-                    worksheet.column_dimensions[column].width = adjusted_width
+                    for cell in worksheet_data[column_letter]:
+                        try:
+                            if cell.value:
+                                cell_len = len(str(cell.value))
+                                if '%' in str(cell.value) and cell.number_format == '0.00%': # Adjust for % display
+                                    cell_len += 1 # approx for '%'
+                                max_length = max(max_length, cell_len)
+                        except: pass
+                    adjusted_width = (max_length + 2) * 1.1 # A bit more padding
+                    worksheet_data.column_dimensions[column_letter].width = min(max(adjusted_width, len(headers[col_idx_letter-1])+2 if col_idx_letter-1 < len(headers) else 0), 50) # Max width 50
 
-
-                # Save the Excel file
+                if standard_dict_for_export and len(standard_dict_for_export) >= 2:
+                    worksheet_std = workbook.create_sheet("Standard Curve Data")
+                    worksheet_std.cell(row=1, column=1, value="Known Quantity").font = Font(bold=True)
+                    worksheet_std.cell(row=1, column=2, value="Total Peak Area").font = Font(bold=True)
+                    current_row_std = 2
+                    for qty_key, area_val in sorted(standard_dict_for_export.items()):
+                        try:
+                            worksheet_std.cell(row=current_row_std, column=1, value=float(qty_key))
+                            worksheet_std.cell(row=current_row_std, column=2, value=float(area_val))
+                            current_row_std += 1
+                        except ValueError: print(f"Warning: Skipping invalid standard data for Excel: Qty={qty_key}, Area={area_val}")
+                    for col_dim_std_letter in range(1, worksheet_std.max_column + 1): # Auto-size
+                         column_letter_std = openpyxl.utils.get_column_letter(col_dim_std_letter)
+                         worksheet_std.column_dimensions[column_letter_std].auto_size = True
                 try:
                     workbook.save(file_path)
                     QMessageBox.information(self, "Success", f"Table data exported to\n{file_path}")
@@ -1811,15 +2133,12 @@ if __name__ == "__main__":
                 """
                 # Check if SciPy functions are available
                 if grey_opening is None:
-                    print("Error: SciPy (grey_opening) is required for custom rolling ball but not found.")
                     return np.zeros_like(profile) # Return zeros if function missing
 
                 # --- Input Validation ---
                 if profile is None or profile.ndim != 1 or profile.size == 0:
-                    print("Warning (_custom_rolling_ball): Invalid profile provided.")
                     return np.zeros_like(profile) if profile is not None else np.array([])
                 if radius <= 0:
-                    print("Warning (_custom_rolling_ball): Radius must be positive.")
                     # Return profile itself or zeros? Returning zeros is safer for background.
                     return np.zeros_like(profile)
 
@@ -4053,316 +4372,420 @@ if __name__ == "__main__":
                 self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
                 
             def start_auto_lane_marker(self):
-                """Initiates the automatic lane marker placement process using a rectangle."""
+                """Initiates the automatic lane marker placement process, allowing user to choose region type."""
                 if not self.image or self.image.isNull():
                     QMessageBox.warning(self, "Error", "Please load an image first.")
                     return
-            
+
                 # --- 1. Ask User for Marker Side ---
-                items = ["Left", "Right"]
-                side, ok = QInputDialog.getItem(self, "Select Marker Side",
-                                                "Place markers on which side?", items, 0, False)
-                if not ok or not side:
+                items_side = ["Left", "Right"]
+                side, ok_side = QInputDialog.getItem(self, "Select Marker Side",
+                                                     "Place markers on which side?", items_side, 0, False)
+                if not ok_side or not side:
+                    return  # User cancelled
+                self.auto_marker_side = side.lower()
+
+                # --- 2. Ask User for Region Definition Type ---
+                items_region = ["Rectangle (for straight lanes)", "Quadrilateral (for skewed lanes)"]
+                region_type_str, ok_region = QInputDialog.getItem(self, "Select Region Type",
+                                                                 "How do you want to define the lane region?",
+                                                                 items_region, 0, False)
+                if not ok_region or not region_type_str:
                     return # User cancelled
-            
-                self.auto_marker_side = side.lower() # Store 'left' or 'right'
-            
-                # --- 2. Instruct User and Enable Rectangle Mode ---
-                QMessageBox.information(self, "Define Lane Region",
-                                        "Please click and drag on the image preview\n"
-                                        "to define the rectangular lane region for automatic marker detection.\n"
-                                        "Press ESC to cancel.")
-            
-                self.live_view_label.mode = 'auto_lane_rect' # Set specific mode
-                self.live_view_label.bounding_box_preview = None # Clear previous rect preview
+
+                self.live_view_label.quad_points = [] # Clear any previous quad points
+                self.live_view_label.bounding_box_preview = None
                 self.live_view_label.rectangle_start = None
                 self.live_view_label.rectangle_end = None
                 self.live_view_label.setCursor(Qt.CrossCursor)
-                self.live_view_label.setMouseTracking(True)
-            
-                # Use standard rectangle drawing handlers, but point release to our new function
-                self.live_view_label.mousePressEvent = self.start_rectangle # Reuse existing
-                self.live_view_label.mouseMoveEvent = self.update_rectangle_preview # Reuse existing
-                self.live_view_label.mouseReleaseEvent = self.finalize_rectangle_for_auto_lane # NEW finalize
-            
+                self.live_view_label.setMouseTracking(True) # Ensure tracking is on
+
+                if "Rectangle" in region_type_str:
+                    QMessageBox.information(self, "Define Lane Region",
+                                            "Please click and drag on the image preview\n"
+                                            "to define the rectangular lane region for automatic marker detection.\n"
+                                            "Press ESC to cancel.")
+                    self.live_view_label.mode = 'auto_lane_rect'
+                    self.live_view_label.mousePressEvent = self.start_rectangle
+                    self.live_view_label.mouseMoveEvent = self.update_rectangle_preview
+                    self.live_view_label.mouseReleaseEvent = self.finalize_rectangle_for_auto_lane
+                elif "Quadrilateral" in region_type_str:
+                    QMessageBox.information(self, "Define Lane Region",
+                                            "Please click 4 corner points on the image preview\n"
+                                            "to define the quadrilateral lane region for automatic marker detection.\n"
+                                            "Press ESC to cancel.")
+                    self.live_view_label.mode = 'auto_lane_quad'
+                    self.live_view_label.mousePressEvent = self.handle_auto_lane_quad_click
+                    self.live_view_label.mouseMoveEvent = None # No drag for quad point placement
+                    self.live_view_label.mouseReleaseEvent = None # Not needed for single clicks
+
                 self.update_live_view()
 
-            
+            def handle_auto_lane_quad_click(self, event):
+                """Handles mouse clicks for defining quadrilateral for auto lane detection.
+                Stores points in 'label space' (unzoomed, unpanned view coordinates).
+                """
+                if self.live_view_label.mode != 'auto_lane_quad':
+                    return
+
+                if event.button() == Qt.LeftButton:
+                    # point_view is in "label space" (unzoomed, unpanned view coordinates)
+                    # as returned by LiveViewLabel.transform_point()
+                    point_label_space = self.live_view_label.transform_point(event.pos())
+                    self.live_view_label.quad_points.append(point_label_space)
+                    self.update_live_view() # Show the point being added for visual feedback
+
+                    if len(self.live_view_label.quad_points) == 4:
+                        # All 4 points collected. These points are in "label space".
+                        # Pass them directly to finalize_quad_for_auto_lane.
+                        # print(f"DEBUG AutoLaneQuad (handle): Collected 4 label space points: {[(p.x(), p.y()) for p in self.live_view_label.quad_points]}")
+                        self.finalize_quad_for_auto_lane(self.live_view_label.quad_points)
+                        # quad_points will be cleared inside finalize_quad_for_auto_lane after processing
+
+            def finalize_quad_for_auto_lane(self, quad_points_label_space):
+                """
+                Finalizes the quadrilateral using points from "label space",
+                warps the corresponding region from self.image, and proceeds to processing.
+                quad_points_label_space: List of 4 QPointF in "label space".
+                """
+                if len(quad_points_label_space) != 4:
+                    QMessageBox.warning(self, "Error", "Quadrilateral definition incomplete for auto lane.")
+                    self.live_view_label.mode = None # Reset mode
+                    self.live_view_label.quad_points = []
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.update_live_view()
+                    return
+                
+                warped_qimage_region = self.quadrilateral_to_rect(self.image, quad_points_label_space)
+
+                if warped_qimage_region and not warped_qimage_region.isNull():
+                    quad_points_image_space_for_marker_placement = []
+                    try:
+                        native_img_w = float(self.image.width())
+                        native_img_h = float(self.image.height())
+                        label_w_widget = float(self.live_view_label.width())
+                        label_h_widget = float(self.live_view_label.height())
+                        if native_img_w <= 0 or native_img_h <= 0 or label_w_widget <= 0 or label_h_widget <= 0:
+                            raise ValueError("Invalid image_to_warp or label dimensions.")
+                        scale_native_to_label = min(label_w_widget / native_img_w, label_h_widget / native_img_h)
+                        displayed_w_in_label = native_img_w * scale_native_to_label
+                        displayed_h_in_label = native_img_h * scale_native_to_label
+                        offset_x_centering = (label_w_widget - displayed_w_in_label) / 2.0
+                        offset_y_centering = (label_h_widget - displayed_h_in_label) / 2.0
+                        for p_label in quad_points_label_space:
+                            x_rel_display = p_label.x() - offset_x_centering
+                            y_rel_display = p_label.y() - offset_y_centering
+                            if scale_native_to_label < 1e-9: raise ValueError("Scale factor too small.")
+                            img_x = x_rel_display / scale_native_to_label
+                            img_y = y_rel_display / scale_native_to_label
+                            quad_points_image_space_for_marker_placement.append(QPointF(img_x, img_y))
+                        
+                        # print(f"DEBUG AutoLaneQuad (finalize): Mapped image space points for marker placement: {[(p.x(), p.y()) for p in quad_points_image_space_for_marker_placement]}")
+
+                        self.process_auto_lane_region(warped_qimage_region, 
+                                                      quad_points_image_space_for_marker_placement, # Pass image-space points
+                                                      is_quad_warp=True)
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", f"Failed to map quad points for marker placement: {e}")
+                        traceback.print_exc()
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to warp quadrilateral region for auto lane.")
+
+                # Reset state after processing or error
+                self.live_view_label.mode = None
+                self.live_view_label.quad_points = [] # Clear points from label
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+                self.live_view_label.mousePressEvent = None # Important to reset
+                self.live_view_label.mouseMoveEvent = None
+                self.live_view_label.mouseReleaseEvent = None
+                self.update_live_view()
+
+
             def finalize_rectangle_for_auto_lane(self, event):
                 """Finalizes the rectangle for auto lane mode and starts processing."""
                 if self.live_view_label.mode != 'auto_lane_rect' or not self.live_view_label.rectangle_start:
-                    # If not in the correct mode or drag didn't start, do nothing or call base
                     if hasattr(self.live_view_label, 'mouseReleaseEvent') and callable(getattr(QLabel, 'mouseReleaseEvent', None)):
                          QLabel.mouseReleaseEvent(self.live_view_label, event)
                     return
-            
+
                 if event.button() == Qt.LeftButton:
                     self.live_view_label.rectangle_end = self.live_view_label.transform_point(event.pos())
-            
-                    # Keep the visual preview bounding box for now
-                    self.live_view_label.bounding_box_preview = (
-                        self.live_view_label.rectangle_start.x(), self.live_view_label.rectangle_start.y(),
-                        self.live_view_label.rectangle_end.x(), self.live_view_label.rectangle_end.y()
-                    )
-            
-                    # --- Calculate Image Coordinates ---
+                    rect_coords_img = None
                     try:
                         start_x_view, start_y_view = self.live_view_label.rectangle_start.x(), self.live_view_label.rectangle_start.y()
                         end_x_view, end_y_view = self.live_view_label.rectangle_end.x(), self.live_view_label.rectangle_end.y()
-            
-                        # (Coordinate Transformation Logic - reuse from process_sample/standard or finalize_crop_rectangle)
+
+                        # Coordinate Transformation (same as before)
                         zoom = self.live_view_label.zoom_level
-                        offset_x, offset_y = self.live_view_label.pan_offset.x(), self.live_view_label.pan_offset.y()
-                        start_x_unzoomed = (start_x_view - offset_x) / zoom
-                        start_y_unzoomed = (start_y_view - offset_y) / zoom
-                        end_x_unzoomed = (end_x_view - offset_x) / zoom
-                        end_y_unzoomed = (end_y_view - offset_y) / zoom
+                        offset_x_pan, offset_y_pan = self.live_view_label.pan_offset.x(), self.live_view_label.pan_offset.y()
+                        start_x_unzoomed = (start_x_view - offset_x_pan) / zoom
+                        start_y_unzoomed = (start_y_view - offset_y_pan) / zoom
+                        end_x_unzoomed = (end_x_view - offset_x_pan) / zoom
+                        end_y_unzoomed = (end_y_view - offset_y_pan) / zoom
+
                         if not self.image or self.image.isNull(): raise ValueError("Base image invalid.")
                         img_w, img_h = self.image.width(), self.image.height()
                         label_w, label_h = self.live_view_label.width(), self.live_view_label.height()
-                        scale_factor = min(label_w / img_w, label_h / img_h) if img_w > 0 and img_h > 0 else 1
+                        if img_w <= 0 or img_h <=0 or label_w <=0 or label_h <=0:
+                            raise ValueError("Invalid image or label dimensions for coord conversion.")
+
+                        scale_factor = min(label_w / img_w, label_h / img_h)
                         display_offset_x = (label_w - img_w * scale_factor) / 2
                         display_offset_y = (label_h - img_h * scale_factor) / 2
+
                         start_x_img = (start_x_unzoomed - display_offset_x) / scale_factor
                         start_y_img = (start_y_unzoomed - display_offset_y) / scale_factor
                         end_x_img = (end_x_unzoomed - display_offset_x) / scale_factor
                         end_y_img = (end_y_unzoomed - display_offset_y) / scale_factor
+
                         rect_x = int(min(start_x_img, end_x_img))
                         rect_y = int(min(start_y_img, end_y_img))
                         rect_w = int(abs(end_x_img - start_x_img))
                         rect_h = int(abs(end_y_img - start_y_img))
-            
-                        # Clamp to image boundaries
+
                         rect_x = max(0, rect_x)
                         rect_y = max(0, rect_y)
-                        rect_w = max(1, min(rect_w, img_w - rect_x)) # Ensure at least 1 pixel width/height
+                        rect_w = max(1, min(rect_w, img_w - rect_x))
                         rect_h = max(1, min(rect_h, img_h - rect_y))
-                        # --- End Coordinate Transformation ---
-            
                         rect_coords_img = (rect_x, rect_y, rect_w, rect_h)
-            
-                        # --- Exit Rectangle Drawing Mode ---
-                        self.live_view_label.mode = None
-                        self.live_view_label.setCursor(Qt.ArrowCursor)
-                        self.live_view_label.mousePressEvent = None # Reset handlers
-                        self.live_view_label.mouseMoveEvent = None
-                        self.live_view_label.mouseReleaseEvent = None
-                        # Don't clear bounding_box_preview yet, might be useful for process function
-            
-                        # --- Trigger Processing ---
-                        self.process_auto_lane_rect(rect_coords_img)
-            
+
+                        # Extract the region as QImage
+                        extracted_qimage_region = self.image.copy(rect_x, rect_y, rect_w, rect_h)
+                        if extracted_qimage_region.isNull():
+                            raise ValueError("QImage copy failed for rectangle.")
+
+                        self.process_auto_lane_region(extracted_qimage_region, rect_coords_img, is_quad_warp=False)
+
                     except Exception as e:
                         QMessageBox.critical(self, "Error", f"Failed to finalize rectangle for auto lane: {e}")
                         traceback.print_exc()
-                        # Reset state on error
+                    finally:
+                        # Reset state
                         self.live_view_label.mode = None
                         self.live_view_label.setCursor(Qt.ArrowCursor)
                         self.live_view_label.mousePressEvent = None
                         self.live_view_label.mouseMoveEvent = None
                         self.live_view_label.mouseReleaseEvent = None
-                        self.live_view_label.bounding_box_preview = None
+                        self.live_view_label.bounding_box_preview = None # Clear preview after processing
                         self.live_view_label.rectangle_start = None
                         self.update_live_view()
-            
-            
-            # ADD this new method
-            def process_auto_lane_rect(self, rect_coords_img):
-                """Processes the defined rectangle, extracts region, opens tuning dialog."""
-                if not rect_coords_img or len(rect_coords_img) != 4:
-                    print("Warning: process_auto_lane_rect called with invalid rect_coords.")
+
+            def process_auto_lane_region(self, qimage_region, original_region_definition, is_quad_warp):
+                """
+                Processes the extracted/warped region, opens tuning dialog, and places markers.
+                qimage_region: The QImage (rectangular) to be analyzed.
+                original_region_definition: For rect, tuple (x,y,w,h) in original image space.
+                                            For quad, list of 4 QPointF in original image space.
+                is_quad_warp: Boolean indicating if qimage_region came from a warped quadrilateral.
+                """
+                if qimage_region.isNull():
+                    QMessageBox.warning(self, "Error", "No valid image region provided for auto lane processing.")
                     return
-            
-                rect_x, rect_y, rect_w, rect_h = rect_coords_img
-            
-                if rect_w <= 0 or rect_h <= 0:
-                    QMessageBox.warning(self, "Error", "Defined rectangle has zero width or height.")
-                    return
-            
-                # --- 1. Extract the Rectangular Region ---
-                try:
-                    extracted_qimage = self.image.copy(rect_x, rect_y, rect_w, rect_h)
-                    if extracted_qimage.isNull():
-                        raise ValueError("QImage copy failed for rectangle.")
-                    extracted_image_height = extracted_qimage.height() # Store height for mapping
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to extract rectangular region: {e}")
-                    return
-            
-                # --- 2. Convert Extracted Region to Grayscale PIL ---
-                lane_pil_image = self.convert_qimage_to_grayscale_pil(extracted_qimage)
-                if not lane_pil_image:
+
+                dialog_image_pil = self.convert_qimage_to_grayscale_pil(qimage_region)
+                if not dialog_image_pil:
                     QMessageBox.warning(self, "Error", "Failed to convert extracted lane to grayscale for analysis.")
                     return
-            
-                # --- 3. Open the Tuning Dialog ---
+
+                # Store height AND WIDTH of the image passed to the dialog for later mapping
+                dialog_image_height = dialog_image_pil.height
+                dialog_image_width = dialog_image_pil.width # <<< --- ADDED
+
                 dialog = AutoLaneTuneDialog(
-                    pil_image_data=lane_pil_image,
+                    pil_image_data=dialog_image_pil,
                     initial_settings=self.peak_dialog_settings,
-                    parent=self
+                    parent=self,
+                    is_from_quad_warp=is_quad_warp
                 )
-            
+
                 if dialog.exec_() == QDialog.Accepted:
-                    # --- 4. Get Results and Place Markers ---
-                    detected_peak_coords = dialog.get_detected_peaks()
+                    detected_peak_coords_dialog = dialog.get_detected_peaks()
                     final_settings = dialog.get_final_settings()
-            
+
                     if self.persist_peak_settings_enabled:
                         self.peak_dialog_settings.update(final_settings)
-            
-                    if detected_peak_coords is not None and len(detected_peak_coords) > 0:
-                        # Pass the original rectangle coordinates and the height of the *extracted* image
-                        self.place_markers_at_peaks_rect(rect_coords_img, detected_peak_coords, self.auto_marker_side, extracted_image_height)
+
+                    if detected_peak_coords_dialog is not None and len(detected_peak_coords_dialog) > 0:
+                        self.place_markers_from_dialog(
+                            original_region_definition,
+                            detected_peak_coords_dialog,
+                            self.auto_marker_side,
+                            dialog_image_height,
+                            dialog_image_width, # <<< --- PASS WIDTH
+                            is_quad_warp
+                        )
                     else:
                         QMessageBox.information(self, "Auto Lane", "No peaks were detected with the current settings.")
-                        # Clear the rectangle preview if no peaks found
-                        self.live_view_label.bounding_box_preview = None
-                        self.update_live_view()
                 else:
                     print("Automatic lane marker tuning cancelled.")
-                    # Clear the rectangle preview if cancelled
-                    self.live_view_label.bounding_box_preview = None
-                    self.update_live_view()
-            
-            
-            # RENAME and MODIFY this method
-            def place_markers_at_peaks_rect(self, rect_coords_img, peak_coords, side, extracted_image_height):
+
+                self.live_view_label.bounding_box_preview = None
+                self.live_view_label.quad_points = []
+                self.update_live_view()
+
+
+            def place_markers_from_dialog(self, original_region_definition, peak_coords_in_dialog, side,
+                                          dialog_image_height, dialog_image_width, # Added dialog_image_width
+                                          is_from_quad_warp):
                 """
-                Places markers based on peaks detected within a rectangular region.
-                Maps peak positions relative to the rectangle's height onto the original image.
-                Sets the initial horizontal offset slider to the rectangle's left/right edge.
+                Places markers on the main image based on peaks detected in the AutoLaneTuneDialog.
+                Maps peak positions from the dialog's image space back to the original image space.
+                original_region_definition: For rect, tuple (x,y,w,h) in original image space.
+                                            For quad, list of 4 QPointF/tuples (image-space corners: TL, TR, BR, BL).
+                peak_coords_in_dialog: Y-coordinates of peaks detected within the dialog's (potentially warped) image.
+                side: 'left' or 'right'.
+                dialog_image_height: The height of the image that was analyzed in AutoLaneTuneDialog.
+                dialog_image_width: The width of the image that was analyzed in AutoLaneTuneDialog.
+                is_from_quad_warp: Boolean indicating if the dialog image was from a quad.
                 """
-                # ... (Keep initial checks and marker clearing/value retrieval) ...
-                if not peak_coords.any():
-                    print("No peak coordinates provided to place_markers_at_peaks_rect.")
+                if not peak_coords_in_dialog.any() or dialog_image_height <= 0 or dialog_image_width <= 0:
+                    print("No peak coordinates or invalid dialog image dimensions.")
                     return
-                if extracted_image_height <= 0:
-                    print("Error: Invalid extracted_image_height passed.")
-                    return
-                if not rect_coords_img or len(rect_coords_img) != 4:
-                    print("Error: Invalid rect_coords_img passed.")
-                    return
-            
-                rect_x_img, rect_y_img, rect_w_img, rect_h_img = rect_coords_img # These are in original image space
-                if rect_h_img <= 0:
-                    print("Error: Original rectangle height is zero, cannot map peak coordinates.")
-                    return
-            
+
                 self.save_state()
-            
                 if side == 'left':
-                    self.left_markers.clear()
-                    self.current_left_marker_index = 0
+                    self.left_markers.clear(); self.current_left_marker_index = 0
                 elif side == 'right':
-                    self.right_markers.clear()
-                    self.current_right_marker_index = 0
+                    self.right_markers.clear(); self.current_right_marker_index = 0
                 else:
-                    print(f"Invalid side '{side}' for marker placement.")
-                    return
-            
+                    print(f"Invalid side '{side}' for marker placement."); return
+
                 self.on_combobox_changed()
-                if self.combo_box.currentText() == "Custom":
-                    try:
-                        self.marker_values = [int(num) if num.strip().isdigit() else num.strip() for num in self.marker_values_textbox.text().strip("[]").split(",")]
-                    except: self.marker_values = []
                 current_marker_values = self.marker_values
                 if not current_marker_values:
-                    current_marker_values = [""] * len(peak_coords)
-            
-                num_labels = len(current_marker_values)
-                sorted_peaks = np.sort(peak_coords)
-            
-                for i, peak_y_in_rect in enumerate(sorted_peaks):
-                    denominator = float(extracted_image_height - 1)
-                    t = peak_y_in_rect / denominator if denominator > 0 else 0.5
-                    image_y_pos = rect_y_img + t * rect_h_img # Y position in original image space
-                    label = str(current_marker_values[i]) if i < num_labels else ""
-                    if side == 'left':
-                        self.left_markers.append((image_y_pos, label))
-                    elif side == 'right':
-                        self.right_markers.append((image_y_pos, label))
-            
-                # --- Calculate Target Slider Position (Absolute on Render Canvas) ---
-                render_scale = 3
-                target_slider_value = 0 # This will be the value for the slider
-            
-                # Determine the target X coordinate in *original image space*
-                target_x_in_image_space = 0
-                if side == 'left':
-                    target_x_in_image_space = rect_x_img  # Left edge of the defined rectangle
-                elif side == 'right':
-                    target_x_in_image_space = rect_x_img + rect_w_img # Right edge
-            
-                # Map this image-space X to the render canvas space
-                if self.image and not self.image.isNull() and self.image.width() > 0 and \
-                   self.live_view_label and self.live_view_label.width() > 0:
+                    current_marker_values = [""] * len(peak_coords_in_dialog)
+
+                sorted_peaks_dialog = np.sort(peak_coords_in_dialog)
+                
+                # For quadrilateral warp, we need the inverse transform
+                inv_perspective_matrix = None
+                src_points_for_transform_np = None # Original quad corners (image space)
+                dst_points_for_transform_np = None # Destination rect corners (dialog/warped space)
+
+                if is_from_quad_warp:
+                    if len(original_region_definition) != 4:
+                        print("Error: Quadrilateral definition requires 4 points for inverse mapping.")
+                        return
+
+                    # original_region_definition are the image-space corners of the quad (src_np for the warp)
+                    # Ensure they are in [x, y] format for OpenCV
+                    src_points_for_transform_list = []
+                    for p in original_region_definition:
+                        try: src_points_for_transform_list.append([p.x(), p.y()])
+                        except AttributeError: src_points_for_transform_list.append([p[0], p[1]]) # if tuple
+                    src_points_for_transform_np = np.array(src_points_for_transform_list, dtype=np.float32)
+
+                    # Destination points for the warped rectangle (TL, TR, BR, BL order)
+                    # These correspond to the dimensions of the image analyzed in the dialog
+                    dst_points_for_transform_np = np.array([
+                        [0, 0],
+                        [dialog_image_width - 1, 0],
+                        [dialog_image_width - 1, dialog_image_height - 1],
+                        [0, dialog_image_height - 1]
+                    ], dtype=np.float32)
+                    
                     try:
-                        # Dimensions of the *current self.image* (could be cropped/padded already)
-                        current_img_width = self.image.width()
-                        current_img_height = self.image.height() # Not directly used for X, but good to have
-            
-                        # Dimensions of the render canvas
-                        view_width = self.live_view_label.width()
-                        render_canvas_width = view_width * render_scale
-            
-                        # Scale factor for how the current self.image is scaled to fit the render canvas
-                        scale_current_img_to_render_canvas = render_canvas_width / current_img_width \
-                            if current_img_width > 0 and view_width == current_img_width * (render_canvas_width/current_img_width)/render_scale \
-                            else min(render_canvas_width / current_img_width if current_img_width > 0 else 1,
-                                       (self.live_view_label.height()*render_scale) / current_img_height if current_img_height > 0 else 1)
-            
-            
-                        # Effective width of current self.image on the render canvas
-                        effective_img_width_on_canvas = current_img_width * scale_current_img_to_render_canvas
-            
-                        # Centering offset of the current self.image on the render canvas
-                        centering_offset_x_on_canvas = (render_canvas_width - effective_img_width_on_canvas) / 2.0
-            
-                        # The crop_offset_x and crop_offset_y store how much the *current self.image*
-                        # is offset from the *very original master image* due to previous crops.
-                        # The rect_coords_img (rect_x_img, rect_y_img) are ALREADY in the coordinate
-                        # system of the *current self.image* because they were calculated relative to it
-                        # in finalize_rectangle_for_auto_lane.
-            
-                        # So, target_x_in_image_space is already relative to the current self.image's origin.
-                        # We just need to scale it and add the centering offset.
-                        target_slider_value = int(centering_offset_x_on_canvas + target_x_in_image_space * scale_current_img_to_render_canvas)
-            
+                        # We need the transform from destination (dialog/warped) back to source (original image quad)
+                        perspective_matrix_dst_to_src = cv2.getPerspectiveTransform(dst_points_for_transform_np, src_points_for_transform_np)
+                        inv_perspective_matrix = perspective_matrix_dst_to_src
                     except Exception as e:
-                        print(f"Warning: Error calculating precise target slider value: {e}. Using simpler scaling.")
-                        # Fallback: simpler scaling if precise calculation fails
-                        target_slider_value = int(target_x_in_image_space * render_scale)
+                        print(f"Error calculating inverse perspective matrix for marker placement: {e}")
+                        return
+
+                final_marker_placements_for_slider_offset = [] # Store (y_img, x_img) for slider
+
+                for i, peak_y_dialog in enumerate(sorted_peaks_dialog):
+                    label = str(current_marker_values[i]) if i < len(current_marker_values) else ""
+                    
+                    y_final_img = 0.0
+                    x_final_img_for_marker = 0.0 # This will be the X where the marker is conceptually placed
+
+                    if not is_from_quad_warp: # Rectangle case (simpler linear interpolation)
+                        rect_x_img, rect_y_img, rect_w_img, rect_h_img = original_region_definition
+                        t = peak_y_dialog / float(dialog_image_height - 1) if dialog_image_height > 1 else 0.5
+                        t = max(0.0, min(1.0, t))
+                        y_final_img = rect_y_img + t * rect_h_img
+                        if side == 'left':
+                            x_final_img_for_marker = rect_x_img # Marker placed at the left edge of the rect
+                        else: # right
+                            x_final_img_for_marker = rect_x_img + rect_w_img # Marker at the right edge
+                    else: # Quadrilateral case - use inverse perspective transform
+                        if inv_perspective_matrix is None: continue # Should have returned earlier
+
+                        # Define the point in the dialog/warped image space.
+                        # For placing markers, we typically want them along an "edge".
+                        # Let's use X=0 for left side and X=dialog_width-1 for right side in the warped image.
+                        # This ensures the 't' maps more directly to the perceived lane edge.
+                        x_in_dialog_space = 0.0
+                        if side == 'left':
+                            x_in_dialog_space = dialog_image_width * 0.05 # Slightly inside the left edge of warped
+                        elif side == 'right':
+                            x_in_dialog_space = dialog_image_width * 0.95 # Slightly inside the right edge of warped
+                        
+                        point_in_dialog = np.array([[[x_in_dialog_space, float(peak_y_dialog)]]], dtype=np.float32)
+                        
+                        try:
+                            original_image_point = cv2.perspectiveTransform(point_in_dialog, inv_perspective_matrix)
+                            x_final_img_for_marker = original_image_point[0,0,0]
+                            y_final_img = original_image_point[0,0,1]
+                        except Exception as e:
+                            print(f"Error transforming point back to original image space: {e}")
+                            # Fallback to simpler linear interpolation if transform fails (less accurate)
+                            t = peak_y_dialog / float(dialog_image_height - 1) if dialog_image_height > 1 else 0.5
+                            t = max(0.0, min(1.0, t))
+                            p0 = QPointF(src_points_for_transform_np[0,0], src_points_for_transform_np[0,1])
+                            p1 = QPointF(src_points_for_transform_np[1,0], src_points_for_transform_np[1,1])
+                            p2 = QPointF(src_points_for_transform_np[2,0], src_points_for_transform_np[2,1])
+                            p3 = QPointF(src_points_for_transform_np[3,0], src_points_for_transform_np[3,1])
+                            if side == 'left':
+                                y_final_img = p0.y() * (1 - t) + p3.y() * t
+                                x_final_img_for_marker = p0.x() * (1 - t) + p3.x() * t
+                            else:
+                                y_final_img = p1.y() * (1 - t) + p2.y() * t
+                                x_final_img_for_marker = p1.x() * (1 - t) + p2.x() * t
+                    
+                    final_marker_placements_for_slider_offset.append((y_final_img, x_final_img_for_marker))
+
+                    if side == 'left':
+                        self.left_markers.append((y_final_img, label))
+                    elif side == 'right':
+                        self.right_markers.append((y_final_img, label))
+
+                # --- Set Slider Offset based on the average X of the placed markers ---
+                target_x_in_image_space_for_slider = 0
+                if final_marker_placements_for_slider_offset:
+                    avg_x = np.mean([x_img for _, x_img in final_marker_placements_for_slider_offset])
+                    target_x_in_image_space_for_slider = avg_x
+                
+                # Convert this image-space X to render canvas slider value (same logic as before)
+                render_scale = 3
+                target_slider_val = 0
+                if self.image and not self.image.isNull() and self.live_view_label and self.live_view_label.width() > 0:
+                    current_img_width = self.image.width()
+                    view_width = self.live_view_label.width()
+                    render_canvas_width = view_width * render_scale
+                    
+                    scale_x_fit = render_canvas_width / current_img_width if current_img_width > 0 else 1
+                    scale_y_fit = (self.live_view_label.height()*render_scale) / self.image.height() if self.image.height() > 0 else 1
+                    scale_current_img_to_render_canvas = min(scale_x_fit, scale_y_fit)
+
+                    effective_img_width_on_canvas = current_img_width * scale_current_img_to_render_canvas
+                    centering_offset_x_on_canvas = (render_canvas_width - effective_img_width_on_canvas) / 2.0
+                    target_slider_val = int(centering_offset_x_on_canvas + target_x_in_image_space_for_slider * scale_current_img_to_render_canvas)
                 else:
-                    # Fallback if image/label info is critically missing
-                    target_slider_value = int(target_x_in_image_space * render_scale)
-                    print(f"Warning: Missing image/label info for slider calculation. Fallback value: {target_slider_value}")
-            
-                # --- Set the Slider Value ---
-                # The slider's value directly becomes self.left/right_marker_shift_added
-                # which is the absolute X offset on the render canvas.
+                    target_slider_val = int(target_x_in_image_space_for_slider * render_scale) 
+
                 if side == 'left':
                     if hasattr(self, 'left_padding_slider'):
-                        self._update_marker_slider_ranges() # Ensure range is up-to-date
+                        self._update_marker_slider_ranges()
                         min_r, max_r = self.left_slider_range
-                        # For left markers, text_anchor="end", so the value is where the text *ends*.
-                        # If target_slider_value is the left edge, this is correct.
-                        slider_val_clamped = max(min_r, min(target_slider_value, max_r))
-                        print(f"Setting LEFT slider to: {slider_val_clamped} (original target: {target_slider_value})") # Debug
-                        self.left_padding_slider.setValue(slider_val_clamped)
+                        self.left_padding_slider.setValue(max(min_r, min(target_slider_val, max_r)))
                 elif side == 'right':
                      if hasattr(self, 'right_padding_slider'):
                          self._update_marker_slider_ranges()
                          min_r, max_r = self.right_slider_range
-                         # For right markers, text_anchor="start", so the value is where the text *starts*.
-                         # If target_slider_value is the right edge, this is correct.
-                         slider_val_clamped = max(min_r, min(target_slider_value, max_r))
-                         print(f"Setting RIGHT slider to: {slider_val_clamped} (original target: {target_slider_value})") # Debug
-                         self.right_padding_slider.setValue(slider_val_clamped)
-            
-                # --- Clear the temporary rectangle preview ---
-                if hasattr(self.live_view_label, 'bounding_box_preview'):
-                    self.live_view_label.bounding_box_preview = None
-            
+                         self.right_padding_slider.setValue(max(min_r, min(target_slider_val, max_r)))
+
                 self.is_modified = True
                 self.update_live_view()
                 
@@ -5045,28 +5468,19 @@ if __name__ == "__main__":
                 return nearest_point
             
             def open_table_window(self):
-                # Use the latest calculated peak areas
-                peak_areas_to_export = self.latest_peak_areas
-                calculated_quantities_to_export = self.latest_calculated_quantities
-
-                if not peak_areas_to_export:
-                    QMessageBox.information(self, "No Data", "No analysis results available to export.")
-                    return
-
-                standard_dict = self.quantities_peak_area_dict
-                # Determine if quantities should be calculated/displayed based on standards
-                standard_flag = len(standard_dict) >= 2
-
-                # Open the table window with the latest data
-                # Pass the pre-calculated quantities if available
-                self.table_window = TableWindow(
-                    peak_areas_to_export,
-                    standard_dict,
-                    standard_flag,
-                    calculated_quantities_to_export, # Pass the calculated quantities
+                peak_areas_to_show_current = self.latest_peak_areas
+                calculated_quantities_to_show_current = self.latest_calculated_quantities
+                standard_dict_to_show_current = self.quantities_peak_area_dict
+                is_standard_mode_current = len(standard_dict_to_show_current) >= 2
+            
+                self.table_window_instance = TableWindow(
+                    peak_areas_to_show_current,
+                    standard_dict_to_show_current,
+                    is_standard_mode_current,
+                    calculated_quantities_to_show_current,
                     self
                 )
-                self.table_window.show()
+                self.table_window_instance.show()
             
             def enable_quad_mode(self):
                 """Enable mode to define a quadrilateral area."""
@@ -6895,26 +7309,31 @@ if __name__ == "__main__":
             def keyPressEvent(self, event):
                 # --- Escape Key Handling ---
                 if event.key() == Qt.Key_Escape:
-                    # 1. PRIORITIZE CANCELLING CROP MODE if active
+                    # 0. NEW: Cancel Auto Lane Quadrilateral Definition
                     if self.live_view_label.mode == 'auto_lane_quad':
-                        # print("Debug: Escape pressed, cancelling auto lane quad definition.") # Optional Debug
+                        print("Debug: Escape pressed, cancelling auto lane quad definition.") # Optional Debug
                         self.live_view_label.mode = None
-                        self.live_view_label.quad_points = []
-                        self.live_view_label.selected_point = -1
+                        self.live_view_label.quad_points = [] # Clear points from label
+                        self.live_view_label.selected_point = -1 # Not really used here, but good practice
                         self.live_view_label.setCursor(Qt.ArrowCursor)
                         self.live_view_label.mousePressEvent = None # Reset handlers
                         self.live_view_label.mouseMoveEvent = None
                         self.live_view_label.mouseReleaseEvent = None
                         self.update_live_view() # Clear potential quad drawing
                         return # Consume the event
-                    
-                    if self.crop_rectangle_mode:
-                        # print("Debug: Escape pressed, cancelling crop mode.") # Optional Debug
-                        self.cancel_rectangle_crop_mode()
-                        # Optionally, clear the visual preview immediately on Escape
+                    # 1. PRIORITIZE CANCELLING CROP MODE if active (Rectangle or Auto Lane Rectangle)
+                    if self.crop_rectangle_mode or self.live_view_label.mode == 'auto_lane_rect':
+                        print("Debug: Escape pressed, cancelling crop/auto_lane_rect mode.") # Optional Debug
+                        self.cancel_rectangle_crop_mode() # This handles both now if auto_lane_rect is part of crop_rectangle_mode logic
+                        if self.live_view_label.mode == 'auto_lane_rect': # Specific reset for auto_lane_rect if not covered
+                            self.live_view_label.mode = None
+                            self.live_view_label.setCursor(Qt.ArrowCursor)
+                            self.live_view_label.mousePressEvent = None
+                            self.live_view_label.mouseMoveEvent = None
+                            self.live_view_label.mouseReleaseEvent = None
                         self.live_view_label.clear_crop_preview()
-                        self.update_live_view() # Refresh view after clearing preview
-                        return # Consume the event, don't process further Escape logic
+                        self.update_live_view()
+                        return # Consume the event
 
                     # 2. Cancel Line/Rectangle Drawing Mode
                     if self.drawing_mode in ['line', 'rectangle']:
@@ -6958,11 +7377,7 @@ if __name__ == "__main__":
                         self.live_view_label.setCursor(Qt.ArrowCursor)
                         self.update_live_view()
                         return # Consume the event
-
-                    # If none of the above modes were active, let the base class handle it (if necessary)
-                    # super().keyPressEvent(event) # Or just pass if no specific base class action needed
-
-                # --- Panning with Arrow Keys (Keep as is) ---
+                # ... (rest of keyPressEvent for panning) ...
                 if self.live_view_label.zoom_level != 1.0:
                     step = 20
                     offset_changed = False # Flag to update view only if changed
@@ -6985,8 +7400,6 @@ if __name__ == "__main__":
                     if offset_changed:
                         self.update_live_view()
                         return # Consume arrow keys if panning occurred
-
-                # Allow other key presses to be handled by the base class or shortcuts
                 super().keyPressEvent(event)
             
             def update_marker_text_font(self, font: QFont):
@@ -10138,97 +10551,6 @@ if __name__ == "__main__":
                 # Clear the attribute *after* attempting deletion (optional on exit)
                 self.temp_clipboard_file_path = None
                 
-            def copy_to_clipboard_SVG(self):
-                """Create a temporary SVG file with EMF data, copy it to clipboard."""
-                if not self.image:
-                    QMessageBox.warning(self, "Warning", "No image to save.")
-                    return
-            
-                # Get scaling factors to match the live view window
-                view_width = self.live_view_label.width()
-                view_height = self.live_view_label.height()
-                scale_x = self.image.width() / view_width
-                scale_y = self.image.height() / view_height
-            
-                # Create a temporary file to store the SVG
-                with NamedTemporaryFile(suffix=".svg", delete=False) as temp_file:
-                    temp_file_path = temp_file.name
-            
-                # Create an SVG file with svgwrite
-                dwg = svgwrite.Drawing(temp_file_path, profile='tiny', size=(self.image.width(), self.image.height()))
-            
-                # Convert the QImage to a base64-encoded PNG for embedding
-                buffer = QBuffer()
-                buffer.open(QBuffer.ReadWrite)
-                self.image.save(buffer, "PNG")
-                image_data = base64.b64encode(buffer.data()).decode('utf-8')
-                buffer.close()
-            
-                # Embed the image as a base64 data URI
-                dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}", insert=(0, 0)))
-            
-                # Add custom markers to the SVG
-                for x, y, text, color, font, font_size in getattr(self, "custom_markers", []):
-                    dwg.add(
-                        dwg.text(
-                            text,
-                            insert=(x * scale_x, y * scale_y),
-                            fill=color.name(),
-                            font_family=font,
-                            font_size=f"{font_size}px"
-                        )
-                    )
-            
-                # Add left labels
-                for y, text in getattr(self, "left_markers", []):
-                    dwg.add(
-                        dwg.text(
-                            text,
-                            insert=(self.left_marker_shift_added / scale_x, y),
-                            fill=self.font_color.name(),
-                            font_family=self.font_family,
-                            font_size=f"{self.font_size}px"
-                        )
-                    )
-            
-                # Add right labels
-                for y, text in getattr(self, "right_markers", []):
-                    dwg.add(
-                        dwg.text(
-                            text,
-                            insert=((self.image.width() / scale_x + self.right_marker_shift_added / scale_x), y),
-                            fill=self.font_color.name(),
-                            font_family=self.font_family,
-                            font_size=f"{self.font_size}px"
-                        )
-                    )
-            
-                # Add top labels
-                for x, text in getattr(self, "top_markers", []):
-                    dwg.add(
-                        dwg.text(
-                            text,
-                            insert=(x, self.top_marker_shift_added / scale_y),
-                            fill=self.font_color.name(),
-                            font_family=self.font_family,
-                            font_size=f"{self.font_size}px",
-                            transform=f"rotate({self.font_rotation}, {x}, {self.top_marker_shift_added / scale_y})"
-                        )
-                    )
-            
-                # Save the SVG to the temporary file
-                dwg.save()
-            
-                # Read the SVG content
-                with open(temp_file_path, "r", encoding="utf-8") as temp_file:
-                    svg_content = temp_file.read()
-            
-                # Copy SVG content to clipboard (macOS-compatible approach)
-                clipboard = QApplication.clipboard()
-                clipboard.setText(svg_content, mode=clipboard.Clipboard)
-            
-                QMessageBox.information(self, "Success", "SVG content copied to clipboard.")
-
                 
             def clear_predict_molecular_weight(self):
                 self.live_view_label.preview_marker_enabled = False
