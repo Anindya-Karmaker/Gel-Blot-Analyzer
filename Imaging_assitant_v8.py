@@ -6086,7 +6086,7 @@ if __name__ == "__main__":
                 # --- Molecular Weight Prediction ---
                 mw_group = QGroupBox("Molecular Weight Prediction")
                 mw_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                mw_layout = QVBoxLayout(mw_group)
+                mw_layout = QVBoxLayout(mw_group) # Changed to QVBoxLayout for easier stacking
                 # mw_layout.setSpacing(8)
 
                 self.predict_button = QPushButton("Predict Molecular Weight")
@@ -6094,6 +6094,26 @@ if __name__ == "__main__":
                 self.predict_button.setEnabled(False)  # Initially disabled
                 self.predict_button.clicked.connect(self.predict_molecular_weight)
                 mw_layout.addWidget(self.predict_button)
+
+                # --- NEW: Regression Model Selection ---
+                mw_model_layout = QHBoxLayout()
+                mw_model_layout.addWidget(QLabel("Regression Model:"))
+                self.mw_regression_model_combo = QComboBox()
+                self.mw_regression_model_combo.addItems([
+                    "Log-Linear (Degree 1)",
+                    "Log-Polynomial (Degree 2)",
+                    "Log-Polynomial (Degree 3)"
+                ])
+                self.mw_regression_model_combo.setToolTip(
+                    "Select the regression model for MW prediction.\n"
+                    "Degree 1: Standard log-linear fit.\n"
+                    "Degree 2/3: Polynomial fit on log(MW) vs. migration distance.\n"
+                    "Higher degrees may better suit gradient gels or non-linear migration patterns."
+                )
+                mw_model_layout.addWidget(self.mw_regression_model_combo)
+                mw_layout.addLayout(mw_model_layout) # Add this layout to the main mw_layout
+                # --- END NEW ---
+
 
                 layout.addWidget(mw_group)
 
@@ -11539,158 +11559,164 @@ if __name__ == "__main__":
                 pos = event.pos()
                 cursor_x, cursor_y = pos.x(), pos.y()
 
-                # Account for zoom and pan
                 if self.live_view_label.zoom_level != 1.0:
                     cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
                     cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
 
-                # Transform cursor position from view coordinates to image coordinates
                 displayed_width = self.live_view_label.width()
                 displayed_height = self.live_view_label.height()
                 image_width = self.image.width() if self.image and self.image.width() > 0 else 1
                 image_height = self.image.height() if self.image and self.image.height() > 0 else 1
 
-                scale = min(displayed_width / image_width, displayed_height / image_height)
+                scale = min(displayed_width / image_width, displayed_height / image_height) if image_width > 0 and image_height > 0 else 1.0
                 x_offset = (displayed_width - image_width * scale) / 2
                 y_offset = (displayed_height - image_height * scale) / 2
 
                 protein_y_image = (cursor_y - y_offset) / scale if scale != 0 else 0
-                # protein_x_image = (cursor_x - x_offset) / scale if scale != 0 else 0 # Keep X if needed later
-
-                # Store the clicked location in *view* coordinates for drawing the marker later
-                self.protein_location = (cursor_x, cursor_y) # Use view coordinates for the marker
+                self.protein_location = (cursor_x, cursor_y)
 
                 # --- 2. Identify Potential Standard Sets (Partitioning) ---
                 transition_index = -1
-                # Find the first index where the molecular weight INCREASES after initially decreasing
-                # (indicates a likely switch from Gel high->low MW to WB high->low MW)
                 initial_decrease = False
                 for k in range(1, len(all_marker_values)):
-                     if all_marker_values[k] < all_marker_values[k-1]:
-                         initial_decrease = True # Confirm we've started migrating down
-                     # Check for increase *after* we've seen a decrease
-                     if initial_decrease and all_marker_values[k] > all_marker_values[k-1]:
-                         transition_index = k
-                         break # Found the likely transition
+                    if all_marker_values[k] < all_marker_values[k-1]:
+                        initial_decrease = True
+                    if initial_decrease and all_marker_values[k] > all_marker_values[k-1]:
+                        transition_index = k
+                        break
 
-                # --- 3. Select the Active Standard Set based on Click Proximity ---
+                # --- 3. Select the Active Standard Set ---
                 active_marker_positions = None
                 active_marker_values = None
-                set_name = "Full Set" # Default name
+                set_name = "Full Set"
 
                 if transition_index != -1:
-                    # We have two potential sets
                     set1_positions = all_marker_positions[:transition_index]
                     set1_values = all_marker_values[:transition_index]
                     set2_positions = all_marker_positions[transition_index:]
                     set2_values = all_marker_values[transition_index:]
-
-                    # Check if both sets are valid (at least 2 points)
                     valid_set1 = len(set1_positions) >= 2
                     valid_set2 = len(set2_positions) >= 2
 
                     if valid_set1 and valid_set2:
-                        # Calculate the mean Y position for each set
                         mean_y_set1 = np.mean(set1_positions)
                         mean_y_set2 = np.mean(set2_positions)
-
-                        # Assign the click to the set whose mean Y is closer
                         if abs(protein_y_image - mean_y_set1) <= abs(protein_y_image - mean_y_set2):
                             active_marker_positions = set1_positions
                             active_marker_values = set1_values
-                            set_name = "Set 1 (Gel?)" # Tentative name
+                            set_name = "Set 1 (e.g., Gel)"
                         else:
                             active_marker_positions = set2_positions
                             active_marker_values = set2_values
-                            set_name = "Set 2 (WB?)" # Tentative name
-                    elif valid_set1: # Only set 1 is valid
-                         active_marker_positions = set1_positions
-                         active_marker_values = set1_values
-                         set_name = "Set 1 (Gel?)"
-                    elif valid_set2: # Only set 2 is valid
-                         active_marker_positions = set2_positions
-                         active_marker_values = set2_values
-                         set_name = "Set 2 (WB?)"
-                    else: # Neither set is valid after splitting
-                         QMessageBox.warning(self, "Error", "Could not form valid standard sets after partitioning.")
-                         self.live_view_label.setCursor(Qt.ArrowCursor)
-                         if hasattr(self, "protein_location"): del self.protein_location
-                         return
+                            set_name = "Set 2 (e.g., WB)"
+                    elif valid_set1:
+                        active_marker_positions = set1_positions
+                        active_marker_values = set1_values
+                        set_name = "Set 1 (e.g., Gel)"
+                    elif valid_set2:
+                        active_marker_positions = set2_positions
+                        active_marker_values = set2_values
+                        set_name = "Set 2 (e.g., WB)"
+                    else:
+                        QMessageBox.warning(self, "Error", "Could not form valid standard sets after partitioning (need >= 2 points per set).")
+                        self.live_view_label.setCursor(Qt.ArrowCursor)
+                        if hasattr(self, "protein_location"): del self.protein_location
+                        return
                 else:
-                    # Only one set detected, use all markers
                     if len(all_marker_positions) >= 2:
                         active_marker_positions = all_marker_positions
                         active_marker_values = all_marker_values
                         set_name = "Single Set"
-                    else: # Should have been caught earlier, but double-check
-                         QMessageBox.warning(self, "Error", "Not enough markers in the single set.")
-                         self.live_view_label.setCursor(Qt.ArrowCursor)
-                         if hasattr(self, "protein_location"): del self.protein_location
-                         return
+                    else:
+                        QMessageBox.warning(self, "Error", "Not enough markers in the single set (need >= 2 points).")
+                        self.live_view_label.setCursor(Qt.ArrowCursor)
+                        if hasattr(self, "protein_location"): del self.protein_location
+                        return
+
+                if active_marker_positions is None or len(active_marker_positions) < 2:
+                    QMessageBox.warning(self, "Error", f"Selected active set '{set_name}' has insufficient points ({len(active_marker_positions) if active_marker_positions is not None else 0}).")
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    if hasattr(self, "protein_location"): del self.protein_location
+                    return
 
                 # --- 4. Perform Regression on the Active Set ---
-                # Normalize distances *within the active set*
+                # THESE ARE THE CORRECT DEFINITIONS:
                 min_pos_active = np.min(active_marker_positions)
                 max_pos_active = np.max(active_marker_positions)
-                if max_pos_active == min_pos_active: # Avoid division by zero if all points are the same
-                    QMessageBox.warning(self, "Error", "All markers in the selected set have the same position.")
+
+                if max_pos_active == min_pos_active:
+                    QMessageBox.warning(self, "Error", "All markers in the selected active set have the same position.")
                     self.live_view_label.setCursor(Qt.ArrowCursor)
                     if hasattr(self, "protein_location"): del self.protein_location
                     return
 
                 normalized_distances_active = (active_marker_positions - min_pos_active) / (max_pos_active - min_pos_active)
-
-                # Log transform marker values
                 try:
                     log_marker_values_active = np.log10(active_marker_values)
                 except Exception as e:
-                     QMessageBox.warning(self, "Error", f"Could not log-transform marker values (are they all positive?): {e}")
-                     self.live_view_label.setCursor(Qt.ArrowCursor)
-                     if hasattr(self, "protein_location"): del self.protein_location
-                     return
+                    QMessageBox.warning(self, "Error", f"Could not log-transform marker values for active set (are they all positive?): {e}")
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    if hasattr(self, "protein_location"): del self.protein_location
+                    return
 
-                # Perform linear regression (log-linear fit)
-                coefficients = np.polyfit(normalized_distances_active, log_marker_values_active, 1)
+                selected_model_text = "Log-Linear (Degree 1)"
+                if hasattr(self, 'mw_regression_model_combo'):
+                    selected_model_text = self.mw_regression_model_combo.currentText()
 
-                # Calculate R-squared for the fit on the active set
+                poly_degree = 1
+                if "Degree 2" in selected_model_text: poly_degree = 2
+                elif "Degree 3" in selected_model_text: poly_degree = 3
+
+                if len(normalized_distances_active) <= poly_degree:
+                    QMessageBox.warning(self, "Regression Error",
+                                        f"Not enough data points ({len(normalized_distances_active)}) in the active set for a polynomial of degree {poly_degree}.\n"
+                                        "Please select a lower degree or add more markers to the active set.")
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    if hasattr(self, "protein_location"): del self.protein_location
+                    return
+
+                coefficients = np.polyfit(normalized_distances_active, log_marker_values_active, poly_degree)
                 residuals = log_marker_values_active - np.polyval(coefficients, normalized_distances_active)
                 ss_res = np.sum(residuals**2)
                 ss_tot = np.sum((log_marker_values_active - np.mean(log_marker_values_active))**2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 1 # Handle case of perfect fit or single point mean
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
 
                 # --- 5. Predict MW for the Clicked Protein ---
-                # Normalize the protein's Y position *using the active set's min/max*
                 normalized_protein_position = (protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
-
-                # Predict using the derived coefficients
                 predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
                 predicted_weight = 10 ** predicted_log10_weight
 
                 # --- 6. Update View and Plot ---
-                self.update_live_view() # Draw the '*' marker at self.protein_location
+                self.update_live_view()
 
-                # Plot the results, passing both active and all data for context
+                fit_line_x_dense_norm = np.linspace(np.min(normalized_distances_active), np.max(normalized_distances_active), 200)
+                fit_line_y_log_dense = np.polyval(coefficients, fit_line_x_dense_norm)
+                fit_line_y_mw_dense = 10**fit_line_y_log_dense
+
+                # Normalize all marker positions using the active set's min/max for plotting
+                # THIS IS WHERE min_pos_active and max_pos_active ARE USED:
+                if (max_pos_active - min_pos_active) == 0: # Should have been caught by earlier check
+                    all_norm_distances_plot = np.zeros_like(all_marker_positions.astype(float))
+                else:
+                    all_norm_distances_plot = (all_marker_positions.astype(float) - min_pos_active) / (max_pos_active - min_pos_active)
+
                 self.plot_molecular_weight_graph(
-                    # Active set data for fitting and line plot:
-                    normalized_distances_active,
-                    active_marker_values,
-                    10 ** np.polyval(coefficients, normalized_distances_active), # Fitted values for active set
-                    # Full set data for context (plotting all points):
-                    all_marker_positions, # Pass original positions
-                    all_marker_values,
-                    min_pos_active,       # Pass min/max of *active* set for normalization context
-                    max_pos_active,
-                    # Prediction results:
-                    normalized_protein_position, # Position relative to active set scale
-                    predicted_weight,
-                    r_squared,
-                    set_name # Name of the set used
+                    all_norm_distances_plot=all_norm_distances_plot,
+                    all_marker_values_plot=all_marker_values.astype(float),
+                    active_norm_distances_points=normalized_distances_active,
+                    active_marker_values_points=active_marker_values.astype(float),
+                    fit_line_x_dense=fit_line_x_dense_norm,
+                    fit_line_y_dense=fit_line_y_mw_dense,
+                    predicted_norm_position_plot=normalized_protein_position,
+                    predicted_mw_value=predicted_weight,
+                    r_squared=r_squared,
+                    active_set_name=set_name,
+                    regression_model_name=selected_model_text
                 )
 
-                # Reset mouse event handler after prediction
                 self.live_view_label.mousePressEvent = None
                 self.live_view_label.setCursor(Qt.ArrowCursor)
-                self.run_predict_MW = True # Indicate prediction was attempted/completed
+                self.run_predict_MW = True
 
             def get_protein_location_and_clear_preview(self, event, all_marker_positions, all_marker_values):
                 # First, call the original logic
@@ -11716,72 +11742,42 @@ if __name__ == "__main__":
                 
             def plot_molecular_weight_graph(
                 self,
-                # Data for the active set (used for the fit line and highlighted points)
-                active_norm_distances,  # Normalized distances for the active set points
-                active_marker_values,   # Original MW values of the active set points
-                active_fitted_values,   # Fitted MW values corresponding to active_norm_distances
-
-                # Data for *all* markers (for plotting all points for context)
-                all_marker_positions,   # *Original* Y positions of all markers
-                all_marker_values,      # *Original* MW values of all markers
-                active_min_pos,         # Min Y position of the *active* set (for normalizing all points)
-                active_max_pos,         # Max Y position of the *active* set (for normalizing all points)
-
-                # Prediction results
-                predicted_norm_position,# Predicted protein position normalized relative to active set scale
-                predicted_weight,       # Predicted MW value
-
-                # Fit quality and set info
-                r_squared,              # R-squared of the fit on the active set
-                set_name                # Name of the set used (e.g., "Set 1", "Set 2", "Single Set")
+                all_norm_distances_plot, all_marker_values_plot,
+                active_norm_distances_points, active_marker_values_points,
+                fit_line_x_dense, fit_line_y_dense,
+                predicted_norm_position_plot, predicted_mw_value,
+                r_squared, active_set_name, regression_model_name
             ):
                 """
                 Plots the molecular weight prediction graph and displays it in a custom dialog.
+                This function now expects `all_norm_distances_plot` to be pre-calculated.
                 """
-                # --- Normalize *all* marker positions using the *active* set's scale ---
-                if active_max_pos == active_min_pos: # Avoid division by zero
-                     all_norm_distances_for_plot = np.zeros_like(all_marker_positions)
-                else:
-                    all_norm_distances_for_plot = (all_marker_positions - active_min_pos) / (active_max_pos - active_min_pos)
+                fig, ax = plt.subplots(figsize=(4.5, 3.5))
 
-                # --- Create Plot ---
-                # Adjust figsize and DPI for a more compact plot suitable for a dialog
-                fig, ax = plt.subplots(figsize=(4.5, 3.5)) # Smaller figure size
+                ax.scatter(all_norm_distances_plot, all_marker_values_plot, color="grey", alpha=0.5, label="All Markers (Context)", s=25)
+                ax.scatter(active_norm_distances_points, active_marker_values_points, color="red", label=f"Active Set Data", s=40, marker='o')
 
-                # 1. Plot *all* marker points lightly for context
-                ax.scatter(all_norm_distances_for_plot, all_marker_values, color="grey", alpha=0.5, label="All Markers", s=25) # Slightly smaller
+                simple_model_name_for_legend = regression_model_name.split('(')[0].strip()
+                fit_line_label = f"Fit ({simple_model_name_for_legend})"
+                ax.plot(fit_line_x_dense, fit_line_y_dense, color="blue", label=fit_line_label, linewidth=1.5)
 
-                # 2. Plot the *active* marker points prominently
-                ax.scatter(active_norm_distances, active_marker_values, color="red", label=f"Active Set ({set_name})", s=40, marker='o') # Slightly smaller
+                target_line_label = f"Target Protein ({predicted_mw_value:.1f} units)"
+                ax.axvline(predicted_norm_position_plot, color="green", linestyle="--",
+                            label=target_line_label, linewidth=1.5)
 
-                # 3. Plot the fitted line for the *active* set
-                sort_indices = np.argsort(active_norm_distances)
-                # Move R^2 out of the legend
-                ax.plot(active_norm_distances[sort_indices], active_fitted_values[sort_indices],
-                         color="blue", label="Fit Line", linewidth=1.5)
-
-                # 4. Plot the predicted protein position
-                # Move predicted value out of the legend
-                ax.axvline(predicted_norm_position, color="green", linestyle="--",
-                            label="Target Protein", linewidth=1.5)
-
-                # --- Configure Plot ---
-                ax.set_xlabel(f"Normalized Distance (Relative to {set_name})", fontsize=9)
+                ax.set_xlabel(f"Normalized Distance (Relative to {active_set_name})", fontsize=9)
                 ax.set_ylabel("Molecular Weight (units)", fontsize=9)
                 ax.set_yscale("log")
-                # Smaller legend font size
-                ax.legend(fontsize='x-small', loc='best') # Use 'best' location
-                ax.set_title(f"Molecular Weight Prediction", fontsize=10) # Simpler title
+                ax.legend(fontsize='x-small', loc='best')
+                ax.set_title(f"MW Prediction (Using: {regression_model_name}, Active Set: {active_set_name})\nFit R² on active set: {r_squared:.3f}", fontsize=9, wrap=True)
                 ax.grid(True, which='both', linestyle=':', linewidth=0.5)
-                ax.tick_params(axis='both', which='major', labelsize=8) # Smaller tick labels
+                ax.tick_params(axis='both', which='major', labelsize=8)
 
-                plt.tight_layout(pad=0.5) # Adjust layout to prevent labels overlapping
+                plt.tight_layout(pad=0.5)
 
-                # --- Save Plot to Buffer ---
                 pixmap = None
                 try:
                     buffer = BytesIO()
-                    # Use a moderate DPI suitable for screen display in a dialog
                     plt.savefig(buffer, format="png", bbox_inches="tight", dpi=100)
                     buffer.seek(0)
                     pixmap = QPixmap()
@@ -11789,52 +11785,42 @@ if __name__ == "__main__":
                     buffer.close()
                 except Exception as plot_err:
                     QMessageBox.warning(self, "Plot Error", "Could not generate the prediction plot.")
-                    # pixmap remains None
                 finally:
-                     plt.close(fig) # Ensure figure is always closed using the fig object
+                     plt.close(fig)
 
-                # --- Display Results in a Custom Dialog ---
                 if pixmap:
-                    # Create a custom dialog instead of modifying QMessageBox layout
                     dialog = QDialog(self)
                     dialog.setWindowTitle("Prediction Result")
+                    layout_diag = QVBoxLayout(dialog)
 
-                    # Layout for the dialog
-                    layout = QVBoxLayout(dialog)
-
-                    # Text label for results
                     results_text = (
-                        f"<b>Prediction using {set_name}:</b><br>"
-                        f"Predicted MW: <b>{predicted_weight:.2f}</b> units<br>"
-                        f"Fit R²: {r_squared:.3f}"
+                        f"<b>Prediction using {active_set_name} and {regression_model_name}:</b><br>"
+                        f"Predicted MW: <b>{predicted_mw_value:.2f}</b> units<br>"
+                        f"Fit R² (on active set): {r_squared:.3f}"
                     )
-                    info_label = QLabel(results_text)
-                    info_label.setTextFormat(Qt.RichText) # Allow basic HTML like <b>
-                    info_label.setWordWrap(True)
-                    layout.addWidget(info_label)
+                    info_label_diag = QLabel(results_text)
+                    info_label_diag.setTextFormat(Qt.RichText)
+                    info_label_diag.setWordWrap(True)
+                    layout_diag.addWidget(info_label_diag)
 
-                    # Label to display the plot
-                    plot_label = QLabel()
-                    plot_label.setPixmap(pixmap)
-                    plot_label.setAlignment(Qt.AlignCenter) # Center the plot
-                    layout.addWidget(plot_label)
+                    plot_label_diag = QLabel()
+                    plot_label_diag.setPixmap(pixmap)
+                    plot_label_diag.setAlignment(Qt.AlignCenter)
+                    layout_diag.addWidget(plot_label_diag)
 
-                    # OK button
-                    button_box = QDialogButtonBox(QDialogButtonBox.Ok)
-                    button_box.accepted.connect(dialog.accept)
-                    layout.addWidget(button_box)
+                    button_box_diag = QDialogButtonBox(QDialogButtonBox.Ok)
+                    button_box_diag.accepted.connect(dialog.accept)
+                    layout_diag.addWidget(button_box_diag)
 
-                    dialog.setLayout(layout)
-                    dialog.exec_() # Show the custom dialog modally
+                    dialog.setLayout(layout_diag)
+                    dialog.exec_()
                 else:
-                     # If plot generation failed, show a simpler message box
                      QMessageBox.information(self, "Prediction Result (No Plot)",
-                        f"Used {set_name} for prediction.\n"
-                        f"Predicted MW: {predicted_weight:.2f} units\n"
-                        f"Fit R²: {r_squared:.3f}"
+                        f"Used {active_set_name} and {regression_model_name} for prediction.\n"
+                        f"Predicted MW: {predicted_mw_value:.2f} units\n"
+                        f"Fit R² (on active set): {r_squared:.3f}"
                      )
 
-          
                 
             def reset_image(self):
                 self.cancel_rectangle_crop_mode()
