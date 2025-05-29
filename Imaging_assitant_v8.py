@@ -10876,7 +10876,7 @@ if __name__ == "__main__":
 
                 scaled_image_for_save_modified = self.image.scaled(
                     high_res_canvas_mod_width, high_res_canvas_mod_height,
-                    Qt.KeepAspectRatio,
+                    Qt.KeepAspectRatio, 
                     Qt.SmoothTransformation
                 )
                 if scaled_image_for_save_modified.isNull():
@@ -10901,8 +10901,8 @@ if __name__ == "__main__":
                 painter_mod_annotations.setRenderHint(QPainter.Antialiasing, True)
                 painter_mod_annotations.setRenderHint(QPainter.TextAntialiasing, True)
 
-                img_w_current_save = self.image.width()
-                img_h_current_save = self.image.height()
+                img_w_current_save = self.image.width() 
+                img_h_current_save = self.image.height() 
                 if img_w_current_save <= 0: img_w_current_save = 1
                 if img_h_current_save <= 0: img_h_current_save = 1
 
@@ -10929,7 +10929,7 @@ if __name__ == "__main__":
                         )
                         if not resized_overlay1_img.isNull():
                             anchor_point_on_canvas = map_img_coords_to_save_canvas_modified(overlay1_native_offset_x, overlay1_native_offset_y)
-                            overlay1_display_width = resized_overlay1_img.width() * scale_factor_x_img_to_scaled_mod_on_canvas # Scale by main image's scale factor
+                            overlay1_display_width = resized_overlay1_img.width() * scale_factor_x_img_to_scaled_mod_on_canvas 
                             overlay1_display_height = resized_overlay1_img.height() * scale_factor_y_img_to_scaled_mod_on_canvas
 
                             if overlay1_display_width > 0 and overlay1_display_height > 0:
@@ -10968,7 +10968,7 @@ if __name__ == "__main__":
                         print(f"Error rendering overlay image 2 for save: {e_overlay2}")
 
                 # --- A. Draw Standard L/R/Top Markers ---
-                std_font_size_on_canvas_mod = int(self.font_size * render_scale) # FIXED: Use render_scale
+                std_font_size_on_canvas_mod = int(self.font_size * render_scale) 
                 std_marker_font_mod = QFont(self.font_family, std_font_size_on_canvas_mod)
                 painter_mod_annotations.setFont(std_marker_font_mod)
                 painter_mod_annotations.setPen(self.font_color)
@@ -11012,7 +11012,7 @@ if __name__ == "__main__":
                         x_pos_img, y_pos_img, marker_text_str, qcolor_obj, \
                         font_family_str, font_size_int, is_bold, is_italic = marker_data_list
                         anchor_on_canvas = map_img_coords_to_save_canvas_modified(x_pos_img, y_pos_img)
-                        custom_font_size_on_canvas_mod = int(font_size_int * render_scale) # FIXED: Use render_scale
+                        custom_font_size_on_canvas_mod = int(font_size_int * render_scale) 
                         custom_font_mod = QFont(font_family_str, custom_font_size_on_canvas_mod)
                         custom_font_mod.setBold(is_bold)
                         custom_font_mod.setItalic(is_italic)
@@ -11034,8 +11034,8 @@ if __name__ == "__main__":
                         shape_type = shape_data.get('type')
                         color = QColor(shape_data.get('color', '#000000'))
                         base_thickness_img_pixels = float(shape_data.get('thickness', 1.0))
-                        # Scale thickness by the same factor as fonts for consistency
-                        thickness_on_canvas_mod = max(1.0, base_thickness_img_pixels * render_scale) # FIXED: Use render_scale
+                        # FIXED: Scale thickness by the actual image content scale factor on the canvas
+                        thickness_on_canvas_mod = max(1.0, base_thickness_img_pixels * scale_factor_x_img_to_scaled_mod_on_canvas)
                         pen = QPen(color)
                         pen.setWidthF(thickness_on_canvas_mod)
                         painter_mod_annotations.setPen(pen)
