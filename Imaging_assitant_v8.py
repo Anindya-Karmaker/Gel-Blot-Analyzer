@@ -10780,10 +10780,10 @@ if __name__ == "__main__":
             
                 
             def save_image(self):
-                self.draw_guides = False 
+                self.draw_guides = False
                 if hasattr(self, 'show_guides_checkbox'): self.show_guides_checkbox.setChecked(False)
-                
-                if not self.image or self.image.isNull(): 
+
+                if not self.image or self.image.isNull():
                      QMessageBox.warning(self, "Error", "No image data to save.")
                      return False
 
@@ -10804,200 +10804,275 @@ if __name__ == "__main__":
                 )
 
                 if not base_save_path:
-                    return False 
+                    return False
 
                 base_name_nosuffix = os.path.splitext(base_save_path)[0].replace("_original", "").replace("_modified", "")
-                suffix = ".png" 
+                suffix = ".png"
                 if "tif" in selected_filter.lower(): suffix = ".tif"
                 elif "jpg" in selected_filter.lower() or "jpeg" in selected_filter.lower(): suffix = ".jpg"
                 elif "bmp" in selected_filter.lower(): suffix = ".bmp"
-                else: 
+                else:
                     user_suffix = os.path.splitext(base_save_path)[1]
                     if user_suffix: suffix = user_suffix
-                
+
                 original_save_path = f"{base_name_nosuffix}_original{suffix}"
                 modified_save_path = f"{base_name_nosuffix}_modified{suffix}"
                 config_save_path = f"{base_name_nosuffix}_config.txt"
 
-                img_to_save_as_original = self.image.copy() 
+                # --- Save _original image (direct copy of self.image) ---
+                img_to_save_as_original = self.image.copy()
                 if img_to_save_as_original and not img_to_save_as_original.isNull():
                     save_format_orig_str = suffix.replace(".", "").upper()
                     if save_format_orig_str == "TIF": save_format_orig_str = "TIFF"
                     elif save_format_orig_str == "JPEG": save_format_orig_str = "JPG"
                     quality_orig = 95 if save_format_orig_str in ["JPG", "JPEG"] else -1
                     if save_format_orig_str in ["JPG", "JPEG", "BMP"] and img_to_save_as_original.hasAlphaChannel():
-                        temp_opaque_canvas = QImage(img_to_save_as_original.size(), QImage.Format_RGB888) 
-                        temp_opaque_canvas.fill(Qt.white)
-                        painter_opaque = QPainter(temp_opaque_canvas)
-                        painter_opaque.drawImage(0,0, img_to_save_as_original)
-                        painter_opaque.end()
-                        if not temp_opaque_canvas.save(original_save_path, format=save_format_orig_str if save_format_orig_str else None, quality=quality_orig):
+                        temp_opaque_canvas_orig = QImage(img_to_save_as_original.size(), QImage.Format_RGB888)
+                        temp_opaque_canvas_orig.fill(Qt.white)
+                        painter_opaque_orig = QPainter(temp_opaque_canvas_orig)
+                        painter_opaque_orig.drawImage(0,0, img_to_save_as_original)
+                        painter_opaque_orig.end()
+                        if not temp_opaque_canvas_orig.save(original_save_path, format=save_format_orig_str if save_format_orig_str else None, quality=quality_orig):
                             QMessageBox.warning(self, "Error", f"Failed to save original (composited) image to {original_save_path}.")
-                    else: 
+                    else:
                         if not img_to_save_as_original.save(original_save_path, format=save_format_orig_str if save_format_orig_str else None, quality=quality_orig):
                             QMessageBox.warning(self, "Error", f"Failed to save original image to {original_save_path}.")
                 else:
                      QMessageBox.warning(self, "Error", "Current working image (for '_original') is missing or invalid.")
 
-                render_scale = 3 
-                if not self.image or self.image.isNull() or self.image.width() <= 0 or self.image.height() <= 0:
-                    QMessageBox.critical(self, "Save Error", "Cannot create canvas for modified image; base image invalid.")
+                # --- Save _modified image (rendered with annotations, similar to copy_to_clipboard) ---
+                render_scale = 3
+                try:
+                    # Canvas dimensions based on view label size * render_scale
+                    view_width = self.live_view_label.width(); view_height = self.live_view_label.height()
+                    if view_width <= 0: view_width = 600 # Fallback
+                    if view_height <= 0: view_height = 400 # Fallback
+                    high_res_canvas_mod_width = view_width * render_scale
+                    high_res_canvas_mod_height = view_height * render_scale
+                    if high_res_canvas_mod_width <= 0 or high_res_canvas_mod_height <= 0:
+                        raise ValueError("Invalid canvas size for modified image.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Save Error", f"Could not calculate render dimensions for modified image: {e}")
                     return False
-                    
-                high_res_canvas_width = self.image.width() * render_scale
-                high_res_canvas_height = self.image.height() * render_scale
-                
-                save_format_mod_str = suffix.replace(".", "").upper()
-                canvas_format_mod = QImage.Format_ARGB32_Premultiplied 
-                fill_color_mod = Qt.transparent 
-                if save_format_mod_str in ["JPG", "JPEG", "BMP"]:
-                    fill_color_mod = Qt.white 
 
-                high_res_canvas_mod = QImage(high_res_canvas_width, high_res_canvas_height, canvas_format_mod)
+                save_format_mod_str = suffix.replace(".", "").upper()
+                if save_format_mod_str == "TIF": save_format_mod_str = "TIFF"
+                elif save_format_mod_str == "JPEG": save_format_mod_str = "JPG"
+
+                canvas_format_mod = QImage.Format_ARGB32_Premultiplied
+                fill_color_mod = Qt.transparent
+                if save_format_mod_str in ["JPG", "JPEG", "BMP"]:
+                    fill_color_mod = Qt.white
+
+                high_res_canvas_mod = QImage(high_res_canvas_mod_width, high_res_canvas_mod_height, canvas_format_mod)
                 if high_res_canvas_mod.isNull():
                     QMessageBox.critical(self, "Save Error", "Failed to create high-resolution canvas for modified image.")
                     return False
                 high_res_canvas_mod.fill(fill_color_mod)
 
-                scaled_image_mod = self.image.scaled(
-                    high_res_canvas_width, high_res_canvas_height,
-                    Qt.IgnoreAspectRatio, 
-                    Qt.SmoothTransformation)
-                if scaled_image_mod.isNull():
+                if not self.image or self.image.isNull() or self.image.width() <= 0 or self.image.height() <= 0:
+                    QMessageBox.critical(self, "Save Error", "Base image for modified version is invalid.")
+                    return False
+
+                scaled_image_for_save_modified = self.image.scaled(
+                    high_res_canvas_mod_width, high_res_canvas_mod_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                if scaled_image_for_save_modified.isNull():
                     QMessageBox.critical(self, "Save Error", "Failed to scale current image for saving modified version.")
                     return False
 
-                painter_mod = QPainter(high_res_canvas_mod)
-                if not painter_mod.isActive(): 
-                    QMessageBox.critical(self, "Save Error", "Failed to create painter for modified image canvas.")
+                painter_mod_base = QPainter(high_res_canvas_mod)
+                if not painter_mod_base.isActive():
+                    QMessageBox.critical(self, "Save Error", "Failed to create painter for base modified image.")
                     return False
-                painter_mod.drawImage(0, 0, scaled_image_mod) 
                 
-                painter_mod.setRenderHint(QPainter.Antialiasing, True)
-                painter_mod.setRenderHint(QPainter.TextAntialiasing, True)
+                base_x_offset_mod = (high_res_canvas_mod.width() - scaled_image_for_save_modified.width()) // 2
+                base_y_offset_mod = (high_res_canvas_mod.height() - scaled_image_for_save_modified.height()) // 2
+                painter_mod_base.drawImage(base_x_offset_mod, base_y_offset_mod, scaled_image_for_save_modified)
+                painter_mod_base.end()
 
-                # --- Define Local Coordinate Mapping Helper for Modified Canvas ---
-                # This maps coordinates from self.image (native) to high_res_canvas_mod
-                img_w_current_save = self.image.width() if self.image.width() > 0 else 1
-                img_h_current_save = self.image.height() if self.image.height() > 0 else 1
+
+                painter_mod_annotations = QPainter(high_res_canvas_mod)
+                if not painter_mod_annotations.isActive():
+                    QMessageBox.critical(self, "Save Error", "Failed to create painter for modified image annotations.")
+                    return False
+                painter_mod_annotations.setRenderHint(QPainter.Antialiasing, True)
+                painter_mod_annotations.setRenderHint(QPainter.TextAntialiasing, True)
+
+                img_w_current_save = self.image.width()
+                img_h_current_save = self.image.height()
+                if img_w_current_save <= 0: img_w_current_save = 1
+                if img_h_current_save <= 0: img_h_current_save = 1
+
+                scale_factor_x_img_to_scaled_mod_on_canvas = scaled_image_for_save_modified.width() / img_w_current_save
+                scale_factor_y_img_to_scaled_mod_on_canvas = scaled_image_for_save_modified.height() / img_h_current_save
+
+                def map_img_coords_to_save_canvas_modified(img_x, img_y):
+                    scaled_img_x_on_canvas = img_x * scale_factor_x_img_to_scaled_mod_on_canvas
+                    scaled_img_y_on_canvas = img_y * scale_factor_y_img_to_scaled_mod_on_canvas
+                    final_canvas_x = base_x_offset_mod + scaled_img_x_on_canvas
+                    final_canvas_y = base_y_offset_mod + scaled_img_y_on_canvas
+                    return QPointF(final_canvas_x, final_canvas_y)
+
+                # --- Draw Image Overlays (Image1, Image2) ---
+                if hasattr(self, 'image1_original') and hasattr(self, 'image1_position') and not self.image1_original.isNull():
+                    try:
+                        overlay1_resize_factor = self.image1_resize_slider.value() / 100.0
+                        overlay1_native_offset_x = self.image1_position[0]
+                        overlay1_native_offset_y = self.image1_position[1]
+                        resized_overlay1_img = self.image1_original.scaled(
+                            int(self.image1_original.width() * overlay1_resize_factor),
+                            int(self.image1_original.height() * overlay1_resize_factor),
+                            Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        )
+                        if not resized_overlay1_img.isNull():
+                            anchor_point_on_canvas = map_img_coords_to_save_canvas_modified(overlay1_native_offset_x, overlay1_native_offset_y)
+                            overlay1_display_width = resized_overlay1_img.width() * scale_factor_x_img_to_scaled_mod_on_canvas # Scale by main image's scale factor
+                            overlay1_display_height = resized_overlay1_img.height() * scale_factor_y_img_to_scaled_mod_on_canvas
+
+                            if overlay1_display_width > 0 and overlay1_display_height > 0:
+                                final_scaled_overlay1_for_canvas = resized_overlay1_img.scaled(
+                                    int(overlay1_display_width), int(overlay1_display_height),
+                                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                                )
+                                if not final_scaled_overlay1_for_canvas.isNull():
+                                     painter_mod_annotations.drawImage(anchor_point_on_canvas, final_scaled_overlay1_for_canvas)
+                    except Exception as e_overlay1:
+                        print(f"Error rendering overlay image 1 for save: {e_overlay1}")
                 
-                # scaled_image_mod is self.image scaled directly to high_res_canvas_mod dimensions.
-                # So, canvas_center_x/y_offset will be 0 as scaled_image_mod fills high_res_canvas_mod.
-                canvas_center_x_offset_mod = (high_res_canvas_mod.width() - scaled_image_mod.width()) // 2 # Should be 0
-                canvas_center_y_offset_mod = (high_res_canvas_mod.height() - scaled_image_mod.height()) // 2 # Should be 0
+                if hasattr(self, 'image2_original') and hasattr(self, 'image2_position') and not self.image2_original.isNull():
+                    try:
+                        overlay2_resize_factor = self.image2_resize_slider.value() / 100.0
+                        overlay2_native_offset_x = self.image2_position[0]
+                        overlay2_native_offset_y = self.image2_position[1]
+                        resized_overlay2_img = self.image2_original.scaled(
+                            int(self.image2_original.width() * overlay2_resize_factor),
+                            int(self.image2_original.height() * overlay2_resize_factor),
+                            Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        )
+                        if not resized_overlay2_img.isNull():
+                            anchor_point_on_canvas = map_img_coords_to_save_canvas_modified(overlay2_native_offset_x, overlay2_native_offset_y)
+                            overlay2_display_width = resized_overlay2_img.width() * scale_factor_x_img_to_scaled_mod_on_canvas
+                            overlay2_display_height = resized_overlay2_img.height() * scale_factor_y_img_to_scaled_mod_on_canvas
 
-                # Scale factor from self.image coordinates to coordinates on scaled_image_mod (which is on high_res_canvas_mod)
-                # This is simply render_scale if IgnoreAspectRatio was used for scaling.
-                scale_factor_x_img_to_canvas_mod = scaled_image_mod.width() / img_w_current_save # Should be render_scale
-                scale_factor_y_img_to_canvas_mod = scaled_image_mod.height() / img_h_current_save # Should be render_scale
+                            if overlay2_display_width > 0 and overlay2_display_height > 0:
+                                final_scaled_overlay2_for_canvas = resized_overlay2_img.scaled(
+                                    int(overlay2_display_width), int(overlay2_display_height),
+                                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                                )
+                                if not final_scaled_overlay2_for_canvas.isNull():
+                                     painter_mod_annotations.drawImage(anchor_point_on_canvas, final_scaled_overlay2_for_canvas)
+                    except Exception as e_overlay2:
+                        print(f"Error rendering overlay image 2 for save: {e_overlay2}")
 
-                def map_img_coords_to_save_canvas(img_x, img_y): # Specific name for this function's scope
-                    # Since scaled_image_mod fills high_res_canvas_mod, mapping is direct scaling
-                    canvas_x = img_x * scale_factor_x_img_to_canvas_mod 
-                    canvas_y = img_y * scale_factor_y_img_to_canvas_mod
-                    return QPointF(canvas_x, canvas_y)
-                # --- End Local Coordinate Mapping Helper ---
+                # --- A. Draw Standard L/R/Top Markers ---
+                std_font_size_on_canvas_mod = int(self.font_size * render_scale) # FIXED: Use render_scale
+                std_marker_font_mod = QFont(self.font_family, std_font_size_on_canvas_mod)
+                painter_mod_annotations.setFont(std_marker_font_mod)
+                painter_mod_annotations.setPen(self.font_color)
+                font_metrics_std_mod = QFontMetrics(std_marker_font_mod)
+                text_height_std_mod_canvas = font_metrics_std_mod.height()
+                y_offset_text_baseline_std_canvas_mod = text_height_std_mod_canvas * 0.3
 
-                # A. Draw Standard L/R/Top Markers
-                std_font_size_on_canvas_save = int(self.font_size * render_scale) 
-                std_marker_font_config_save = QFont(self.font_family, std_font_size_on_canvas_save)
-                painter_mod.setFont(std_marker_font_config_save)
-                painter_mod.setPen(self.font_color)
-                font_metrics_std_mod_save = QFontMetrics(std_marker_font_config_save)
-                text_height_std_mod_canvas_save = font_metrics_std_mod_save.height()
-                y_offset_text_baseline_std_canvas_save = text_height_std_mod_canvas_save * 0.3 
-
-                # Left Markers
-                left_marker_offset_x_on_canvas_save = self.left_marker_shift_added * scale_factor_x_img_to_canvas_mod
+                left_marker_offset_x_on_canvas_mod = self.left_marker_shift_added * scale_factor_x_img_to_scaled_mod_on_canvas
                 for y_pos_img, marker_text_val in self.left_markers:
-                    anchor_on_canvas = map_img_coords_to_save_canvas(0, y_pos_img) 
+                    anchor_on_canvas = map_img_coords_to_save_canvas_modified(0, y_pos_img)
                     text_to_draw = f"{marker_text_val} ⎯"
-                    text_width_canvas = font_metrics_std_mod_save.horizontalAdvance(text_to_draw)
-                    # No canvas_center_x_offset_mod needed here if scaled_image_mod fills the canvas
-                    draw_x_c = left_marker_offset_x_on_canvas_save - text_width_canvas 
-                    draw_y_c = anchor_on_canvas.y() + y_offset_text_baseline_std_canvas_save
-                    painter_mod.drawText(QPointF(draw_x_c, draw_y_c), text_to_draw)
-                
-                # Right Markers
-                right_marker_offset_x_on_canvas_save = self.right_marker_shift_added * scale_factor_x_img_to_canvas_mod
-                for y_pos_img, marker_text_val in self.right_markers:
-                    anchor_on_canvas = map_img_coords_to_save_canvas(0, y_pos_img)
-                    text_to_draw = f"⎯ {marker_text_val}"
-                    draw_x_c = right_marker_offset_x_on_canvas_save
-                    draw_y_c = anchor_on_canvas.y() + y_offset_text_baseline_std_canvas_save
-                    painter_mod.drawText(QPointF(draw_x_c, draw_y_c), text_to_draw)
+                    text_width_canvas = font_metrics_std_mod.horizontalAdvance(text_to_draw)
+                    draw_x_c = base_x_offset_mod + left_marker_offset_x_on_canvas_mod - text_width_canvas
+                    draw_y_c = anchor_on_canvas.y() + y_offset_text_baseline_std_canvas_mod
+                    painter_mod_annotations.drawText(QPointF(draw_x_c, draw_y_c), text_to_draw)
 
-                # Top Markers
-                top_marker_offset_y_on_canvas_save = self.top_marker_shift_added * scale_factor_y_img_to_canvas_mod
+                right_marker_offset_x_on_canvas_mod = self.right_marker_shift_added * scale_factor_x_img_to_scaled_mod_on_canvas
+                for y_pos_img, marker_text_val in self.right_markers:
+                    anchor_on_canvas = map_img_coords_to_save_canvas_modified(0, y_pos_img)
+                    text_to_draw = f"⎯ {marker_text_val}"
+                    draw_x_c = base_x_offset_mod + right_marker_offset_x_on_canvas_mod
+                    draw_y_c = anchor_on_canvas.y() + y_offset_text_baseline_std_canvas_mod
+                    painter_mod_annotations.drawText(QPointF(draw_x_c, draw_y_c), text_to_draw)
+
+                top_marker_offset_y_on_canvas_mod = self.top_marker_shift_added * scale_factor_y_img_to_scaled_mod_on_canvas
                 rotation_angle_save = self.font_rotation
                 for x_pos_img, marker_text_val in self.top_markers:
-                    anchor_on_canvas = map_img_coords_to_save_canvas(x_pos_img, 0) 
+                    anchor_on_canvas = map_img_coords_to_save_canvas_modified(x_pos_img, 0)
                     text_to_draw = str(marker_text_val)
-                    painter_mod.save()
+                    painter_mod_annotations.save()
                     translate_x_c = anchor_on_canvas.x()
-                    # No canvas_center_y_offset_mod if scaled_image_mod fills the canvas
-                    translate_y_c = top_marker_offset_y_on_canvas_save + y_offset_text_baseline_std_canvas_save
-                    painter_mod.translate(translate_x_c, translate_y_c)
-                    painter_mod.rotate(rotation_angle_save)
-                    painter_mod.drawText(QPointF(0, 0), text_to_draw) 
-                    painter_mod.restore()
+                    translate_y_c = base_y_offset_mod + top_marker_offset_y_on_canvas_mod + y_offset_text_baseline_std_canvas_mod
+                    painter_mod_annotations.translate(translate_x_c, translate_y_c)
+                    painter_mod_annotations.rotate(rotation_angle_save)
+                    painter_mod_annotations.drawText(QPointF(0, 0), text_to_draw)
+                    painter_mod_annotations.restore()
 
-                # B. Draw Custom Markers
+                # --- B. Draw Custom Markers ---
                 for marker_data_list in getattr(self, "custom_markers", []):
                     try:
                         x_pos_img, y_pos_img, marker_text_str, qcolor_obj, \
                         font_family_str, font_size_int, is_bold, is_italic = marker_data_list
-                        anchor_on_canvas = map_img_coords_to_save_canvas(x_pos_img, y_pos_img) # Use local helper
-                        custom_font_size_on_canvas_save = int(font_size_int * render_scale)
-                        custom_font_save = QFont(font_family_str, custom_font_size_on_canvas_save)
-                        custom_font_save.setBold(is_bold)
-                        custom_font_save.setItalic(is_italic)
-                        painter_mod.setFont(custom_font_save)
+                        anchor_on_canvas = map_img_coords_to_save_canvas_modified(x_pos_img, y_pos_img)
+                        custom_font_size_on_canvas_mod = int(font_size_int * render_scale) # FIXED: Use render_scale
+                        custom_font_mod = QFont(font_family_str, custom_font_size_on_canvas_mod)
+                        custom_font_mod.setBold(is_bold)
+                        custom_font_mod.setItalic(is_italic)
+                        painter_mod_annotations.setFont(custom_font_mod)
                         current_color = QColor(qcolor_obj) if isinstance(qcolor_obj, QColor) else QColor(str(qcolor_obj))
                         if not current_color.isValid(): current_color = Qt.black
-                        painter_mod.setPen(current_color)
-                        font_metrics_custom_mod_save = QFontMetrics(custom_font_save)
-                        text_bounding_rect_custom_save = font_metrics_custom_mod_save.boundingRect(marker_text_str)
-                        draw_x_c = anchor_on_canvas.x() - (text_bounding_rect_custom_save.left() + text_bounding_rect_custom_save.width() / 2.0)
-                        draw_y_c = anchor_on_canvas.y() - (text_bounding_rect_custom_save.top() + text_bounding_rect_custom_save.height() / 2.0)
-                        painter_mod.drawText(QPointF(draw_x_c, draw_y_c), marker_text_str)
-                    except Exception as e_cm_save:
-                        print(f"Error drawing custom marker during save: {marker_data_list}, {e_cm_save}")
+                        painter_mod_annotations.setPen(current_color)
+                        font_metrics_custom_mod = QFontMetrics(custom_font_mod)
+                        text_bounding_rect_custom_mod = font_metrics_custom_mod.boundingRect(marker_text_str)
+                        draw_x_c = anchor_on_canvas.x() - (text_bounding_rect_custom_mod.left() + text_bounding_rect_custom_mod.width() / 2.0)
+                        draw_y_c = anchor_on_canvas.y() - (text_bounding_rect_custom_mod.top() + text_bounding_rect_custom_mod.height() / 2.0)
+                        painter_mod_annotations.drawText(QPointF(draw_x_c, draw_y_c), marker_text_str)
+                    except Exception as e_cm_save_mod:
+                        print(f"Error drawing custom marker for modified save: {marker_data_list}, {e_cm_save_mod}")
 
-                # C. Draw Custom Shapes
+                # --- C. Draw Custom Shapes ---
                 for shape_data in getattr(self, "custom_shapes", []):
                     try:
                         shape_type = shape_data.get('type')
                         color = QColor(shape_data.get('color', '#000000'))
                         base_thickness_img_pixels = float(shape_data.get('thickness', 1.0))
-                        thickness_on_canvas_save = max(1.0, base_thickness_img_pixels * scale_factor_x_img_to_canvas_mod) # Use consistent scale factor
+                        # Scale thickness by the same factor as fonts for consistency
+                        thickness_on_canvas_mod = max(1.0, base_thickness_img_pixels * render_scale) # FIXED: Use render_scale
                         pen = QPen(color)
-                        pen.setWidthF(thickness_on_canvas_save) 
-                        painter_mod.setPen(pen)
+                        pen.setWidthF(thickness_on_canvas_mod)
+                        painter_mod_annotations.setPen(pen)
                         if shape_type == 'line':
-                            start_img_coords = shape_data.get('start') 
-                            end_img_coords = shape_data.get('end')   
+                            start_img_coords = shape_data.get('start')
+                            end_img_coords = shape_data.get('end')
                             if start_img_coords and end_img_coords:
-                                start_canvas = map_img_coords_to_save_canvas(start_img_coords[0], start_img_coords[1])
-                                end_canvas = map_img_coords_to_save_canvas(end_img_coords[0], end_img_coords[1])       
-                                painter_mod.drawLine(start_canvas, end_canvas)
+                                start_canvas = map_img_coords_to_save_canvas_modified(start_img_coords[0], start_img_coords[1])
+                                end_canvas = map_img_coords_to_save_canvas_modified(end_img_coords[0], end_img_coords[1])
+                                painter_mod_annotations.drawLine(start_canvas, end_canvas)
                         elif shape_type == 'rectangle':
-                            rect_img_coords = shape_data.get('rect') 
+                            rect_img_coords = shape_data.get('rect')
                             if rect_img_coords:
                                 x_img, y_img, w_img, h_img = rect_img_coords
-                                top_left_canvas = map_img_coords_to_save_canvas(x_img, y_img)
-                                w_on_canvas = w_img * scale_factor_x_img_to_canvas_mod # Scale width
-                                h_on_canvas = h_img * scale_factor_y_img_to_canvas_mod # Scale height
-                                painter_mod.drawRect(QRectF(top_left_canvas, QSizeF(w_on_canvas, h_on_canvas)))
-                    except Exception as e_cs_save:
-                         print(f"Error drawing custom shape during save: {shape_data}, {e_cs_save}")
-                
-                painter_mod.end() 
+                                top_left_canvas = map_img_coords_to_save_canvas_modified(x_img, y_img)
+                                w_on_canvas = w_img * scale_factor_x_img_to_scaled_mod_on_canvas
+                                h_on_canvas = h_img * scale_factor_y_img_to_scaled_mod_on_canvas
+                                painter_mod_annotations.drawRect(QRectF(top_left_canvas, QSizeF(w_on_canvas, h_on_canvas)))
+                    except Exception as e_cs_save_mod:
+                         print(f"Error drawing custom shape for modified save: {shape_data}, {e_cs_save_mod}")
+
+                painter_mod_annotations.end()
 
                 quality_mod = 95 if save_format_mod_str in ["JPG", "JPEG"] else -1
-                if not high_res_canvas_mod.save(modified_save_path, format=save_format_mod_str if save_format_mod_str else None, quality=quality_mod):
+                final_canvas_to_save = high_res_canvas_mod
+                if save_format_mod_str in ["JPG", "JPEG", "BMP"] and high_res_canvas_mod.hasAlphaChannel():
+                    opaque_canvas_for_save = QImage(high_res_canvas_mod.size(), QImage.Format_RGB888)
+                    opaque_canvas_for_save.fill(Qt.white)
+                    painter_opaque_save = QPainter(opaque_canvas_for_save)
+                    painter_opaque_save.drawImage(0, 0, high_res_canvas_mod)
+                    painter_opaque_save.end()
+                    final_canvas_to_save = opaque_canvas_for_save
+
+                if not final_canvas_to_save.save(modified_save_path, format=save_format_mod_str if save_format_mod_str else None, quality=quality_mod):
                     QMessageBox.warning(self, "Error", f"Failed to save modified image to {modified_save_path}.")
-                
+                    return False
+
                 config_data = self.get_current_config()
                 try:
                     with open(config_save_path, "w", encoding='utf-8') as config_file:
@@ -11006,7 +11081,7 @@ if __name__ == "__main__":
                     QMessageBox.warning(self, "Error", f"Failed to save config file: {e}")
                     return False
 
-                self.is_modified = False 
+                self.is_modified = False
                 QMessageBox.information(self, "Saved", f"Files saved successfully:\n- {os.path.basename(original_save_path)}\n- {os.path.basename(modified_save_path)}\n- {os.path.basename(config_save_path)}")
                 self.setWindowTitle(f"{self.window_title}::{base_name_nosuffix}")
                 return True
