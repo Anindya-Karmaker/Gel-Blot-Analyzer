@@ -3628,28 +3628,42 @@ if __name__ == "__main__":
                 self.setFocusPolicy(Qt.StrongFocus)
                 self.mw_predict_preview_enabled = False
                 self.mw_predict_preview_position = None # QPointF in unzoomed label space
-                self.bounding_box_preview = []
-                self.measure_quantity_mode = False
+                self.bounding_box_preview = [] # Used for single rect, multi-lane rect, auto-lane rect previews
+                self.measure_quantity_mode = False # App-level flag, LiveViewLabel checks it
                 self.counter = 0
                 self.zoom_level = 1.0
                 self.pan_offset = QPointF(0, 0)
                 self.is_panning = False
                 self.pan_start_view_coords = None # Stores QPoint of mouse press in widget coords
                 self.pan_offset_at_drag_start = None # Stores QPointF of pan_offset at drag start
-                self.quad_points = []
-                self.selected_point = -1
-                self.drag_threshold = 10
-                self.bounding_box_complete = False
-                self.mode=None
-                self.rectangle_start = None
-                self.rectangle_end = None
-                self.rectangle_points = []
-                self.drag_start_pos = None
-                self.draw_edges=True
+                
+                # self.quad_points is used for:
+                # 1. Defining a NEW single analysis quad (when self.mode == "quad")
+                # 2. Defining a NEW auto-lane quad (when self.mode == "auto_lane_quad")
+                # 3. Displaying a FINALIZED single quad (when self.mode is None, and it's the active single shape)
+                self.quad_points = [] 
+                self.selected_point = -1 # For interactive quad point definition
+                self.drag_threshold = 10 # Click radius for selecting quad points
+                self.bounding_box_complete = False # For single quad definition completion
+                
+                self.mode=None # Tracks LiveViewLabel's current interaction mode (e.g., "quad", "rectangle", "auto_lane_quad", etc.)
+                
+                self.rectangle_start = None # Used for single analysis rect, auto-lane rect, multi-lane rect start point
+                self.rectangle_end = None   # Used for the corresponding end point
+                self.rectangle_points = []  # Stores [start, end] for single analysis rect after finalization
+                
+                self.drag_start_pos = None # Potentially for custom shape dragging if needed
+                self.draw_edges=True # For selection highlights
                 self.drawing_crop_rect = False
                 self.crop_rect_start_view = None
                 self.crop_rect_end_view = None
                 self.crop_rect_final_view = None
+
+                # Custom hooks for CombinedSDSApp
+                self._custom_left_click_handler_from_app = None
+                self._custom_mouseMoveEvent_from_app = None
+                self._custom_mouseReleaseEvent_from_app = None
+                
             def clear_crop_preview(self):
                 """Clears any existing crop rectangle preview."""
                 self.drawing_crop_rect = False
@@ -3710,52 +3724,33 @@ if __name__ == "__main__":
                 self.zoom_level = max(min_zoom, min(self.zoom_level, max_zoom))
             
                 # --- Zoom Towards Mouse Cursor ---
-                # If we are zooming, the point under the mouse cursor should ideally stay in the same place
-                # in the view. This requires adjusting the pan_offset.
-                
-                # Mouse position in widget coordinates
                 mouse_point_widget = event.pos() 
-            
-                # Point in "unzoomed label space" before this zoom operation
-                # This uses the OLD zoom level and OLD pan_offset
                 point_before_zoom_unzoomed_label = QPointF(
                     (mouse_point_widget.x() - self.pan_offset.x()) / old_zoom_level,
                     (mouse_point_widget.y() - self.pan_offset.y()) / old_zoom_level
                 )
-            
-                # After zoom, this same unzoomed_label_space point, if it were to stay under the cursor,
-                # would satisfy: mouse_point_widget.x() = new_pan_offset.x() + point_before_zoom_unzoomed_label.x() * new_zoom_level
-                # So, new_pan_offset.x() = mouse_point_widget.x() - point_before_zoom_unzoomed_label.x() * new_zoom_level
-                
                 new_pan_x = mouse_point_widget.x() - (point_before_zoom_unzoomed_label.x() * self.zoom_level)
                 new_pan_y = mouse_point_widget.y() - (point_before_zoom_unzoomed_label.y() * self.zoom_level)
                 self.pan_offset = QPointF(new_pan_x, new_pan_y)
             
-                # --- Reset pan if zoom is back to (or below) 1.0 ---
-                if self.zoom_level <= 1.0: # Use <= to catch cases where it might go slightly below due to float math
-                    self.zoom_level = 1.0 # Clamp to 1.0 exactly
-                    self.pan_offset = QPointF(0, 0) # Reset pan
+                if self.zoom_level <= 1.0001: # Use a small tolerance for float comparison
+                    self.zoom_level = 1.0
+                    self.pan_offset = QPointF(0, 0)
             
-                # --- Update Cursor and View ---
-                if not self.is_panning: # Don't change cursor if a pan operation is also in progress (unlikely with wheel)
-                    if self.zoom_level > 1.0:
-                        self.setCursor(Qt.ArrowCursor)
+                if not self.is_panning: # is_panning check is important here
+                    if self.zoom_level > 1.001: # Use a small tolerance for float comparison
+                        self.setCursor(Qt.OpenHandCursor)
                     else:
                         self.setCursor(Qt.ArrowCursor)
                 
-                if self.app_instance and hasattr(self.app_instance, 'update_live_view'):
-                    self.app_instance.update_live_view()
-                    QApplication.processEvents() # May still be needed for smooth visual update
-                else:
-                    self.update()
-            
+                if self.app_instance: self.app_instance.update_live_view()
+                else: self.update()
                 event.accept()
                 
             def mouseMoveEvent(self, event: 'QMouseEvent'):
                 current_mouse_pos_widget = event.pos() 
                 untransformed_label_pos = self.transform_point(current_mouse_pos_widget)
-
-                image_coords_actual = None # Will store actual QPointF if valid
+                image_coords_actual = None
                 is_image_coord_valid = False
 
                 if self.app_instance and self.app_instance.image and not self.app_instance.image.isNull():
@@ -3766,7 +3761,7 @@ if __name__ == "__main__":
 
                     if img_w_orig > 0 and img_h_orig > 0 and label_w_widget > 0 and label_h_widget > 0:
                         scale_factor_img_to_label = min(label_w_widget / img_w_orig, label_h_widget / img_h_orig)
-                        if scale_factor_img_to_label > 1e-9:
+                        if scale_factor_img_to_label > 1e-9: # Ensure scale_factor is not zero
                             displayed_img_w_in_label = img_w_orig * scale_factor_img_to_label
                             displayed_img_h_in_label = img_h_orig * scale_factor_img_to_label
                             offset_x_img_in_label = (label_w_widget - displayed_img_w_in_label) / 2.0
@@ -3785,21 +3780,14 @@ if __name__ == "__main__":
                                 image_coords_actual = QPointF(img_x, img_y)
                                 is_image_coord_valid = True
                 
-                # Emit signal with label_pos, image_coords_actual (or default QPointF), and validity flag
-                if is_image_coord_valid and image_coords_actual is not None:
-                    self.mouseMovedInLabel.emit(untransformed_label_pos, image_coords_actual, True)
-                else:
-                    self.mouseMovedInLabel.emit(untransformed_label_pos, QPointF(), False) # Emit default QPointF()
+                self.mouseMovedInLabel.emit(untransformed_label_pos, image_coords_actual if image_coords_actual else QPointF(), is_image_coord_valid)
 
-
-                # ... (rest of mouseMoveEvent logic as previously provided, it was correct) ...
                 if self.is_panning and (event.buttons() & Qt.RightButton):
                     if self.pan_start_view_coords:
                         delta = event.pos() - self.pan_start_view_coords
                         self.pan_offset = self.pan_offset_at_drag_start + delta
-                        if self.app_instance:
-                            self.app_instance.update_live_view()
-                            QApplication.processEvents() 
+                        if self.app_instance: self.app_instance.update_live_view()
+                        # QApplication.processEvents() # Usually not needed
                     event.accept()
                     return
             
@@ -3807,88 +3795,84 @@ if __name__ == "__main__":
                     self._custom_mouseMoveEvent_from_app(event)
                     if event.isAccepted():
                         return
+
                 if self.preview_marker_enabled: 
                     snapped_label_pos = untransformed_label_pos
-                    if self.app_instance and isinstance(self.app_instance, CombinedSDSApp):
+                    if self.app_instance:
                         snapped_label_pos = self.app_instance.snap_point_to_grid(untransformed_label_pos)
                     self.preview_marker_position = snapped_label_pos
                     self.update()
+                    event.accept()
+                    return
                 
-                elif self.mw_predict_preview_enabled: 
+                if self.mw_predict_preview_enabled: 
                     if self.app_instance and hasattr(self.app_instance, 'update_mw_predict_preview'):
-                        self.app_instance.update_mw_predict_preview(event) 
-                    else: 
+                         self.app_instance.update_mw_predict_preview(event)
+                    else:
                         snapped_label_pos = untransformed_label_pos
                         if self.app_instance: snapped_label_pos = self.app_instance.snap_point_to_grid(untransformed_label_pos)
                         self.mw_predict_preview_position = snapped_label_pos
                         self.update()
+                    event.accept()
+                    return
         
-                elif self.selected_point != -1 and self.measure_quantity_mode and self.mode=="quad":
+                if self.selected_point != -1 and self.measure_quantity_mode and self.mode=="quad":
                     snapped_mouse_label_space = untransformed_label_pos
-                    if self.app_instance and isinstance(self.app_instance, CombinedSDSApp):
+                    if self.app_instance:
                         snapped_mouse_label_space = self.app_instance.snap_point_to_grid(untransformed_label_pos)
                     self.quad_points[self.selected_point] = snapped_mouse_label_space
                     self.update()
+                    event.accept()
+                    return
                 
-                elif self.app_instance and self.app_instance.drawing_mode in ['line', 'rectangle'] and \
-                     self.app_instance.current_drawing_shape_preview:
-                     if hasattr(self.app_instance, 'update_shape_draw'): 
-                         self.app_instance.update_shape_draw(event)
-                
-                elif self.mode == "move" and self.app_instance and hasattr(self.app_instance, 'move_selection'): 
-                     self.app_instance.move_selection(event)
-                
-                if not event.isAccepted(): 
+                if not event.isAccepted():
                     super().mouseMoveEvent(event)
                 
-            def mousePressEvent(self, event: 'QMouseEvent'): # Add type hint
-                # --- PRIORITY 1: Right-Click Panning ---
-                if event.button() == Qt.RightButton and self.zoom_level > 1.0:
+            def mousePressEvent(self, event: 'QMouseEvent'):
+                if event.button() == Qt.RightButton and self.zoom_level > 1.001:
                     self.is_panning = True
                     self.pan_start_view_coords = event.pos()
                     self.pan_offset_at_drag_start = QPointF(self.pan_offset)
                     self.setCursor(Qt.ClosedHandCursor)
                     event.accept() 
-                    return #
-                if hasattr(self, '_custom_left_click_handler_from_app') and self._custom_left_click_handler_from_app:
-                    # This assumes CombinedSDSApp sets self.live_view_label._custom_left_click_handler_from_app
-                    # when it enables a specific mode (like add_band, start_rectangle etc.)
-                    self._custom_left_click_handler_from_app(event) # Call the app's designated handler
+                    return
+                
+                if event.button() != Qt.RightButton and hasattr(self, '_custom_left_click_handler_from_app') and self._custom_left_click_handler_from_app:
+                    self._custom_left_click_handler_from_app(event)
                     if event.isAccepted():
                         return
-                if self.preview_marker_enabled:
-                    # Use the stored app_instance to call the method
+                
+                if self.preview_marker_enabled and event.button() == Qt.LeftButton:
                     if self.app_instance and hasattr(self.app_instance, 'place_custom_marker'):
                         self.app_instance.place_custom_marker(event, self.preview_marker_text)
-                    else:
-                        print("ERROR: LiveViewLabel cannot call place_custom_marker. app_instance not set or method missing.")
-                    self.update()  # Clear the preview (or refresh)
+                    self.update()
+                    event.accept()
+                    return
         
-                elif self.measure_quantity_mode and self.mode=="quad":
-                    # parent_app = self.parent() # Old
+                if self.measure_quantity_mode and self.mode == "quad" and event.button() == Qt.LeftButton:
                     clicked_label_point_transformed = self.transform_point(event.pos())
                     snapped_click_point = clicked_label_point_transformed
-                    if self.app_instance and isinstance(self.app_instance, CombinedSDSApp): # Use app_instance
+                    if self.app_instance:
                         snapped_click_point = self.app_instance.snap_point_to_grid(clicked_label_point_transformed)
-        
+                    
+                    point_interacted_with = False
                     for i, p in enumerate(self.quad_points):
                         if (snapped_click_point - p).manhattanLength() < self.drag_threshold:
                             self.selected_point = i
-                            super().mousePressEvent(event) # Call super only if we don't handle it fully
-                            return # Return after handling
-        
-                    if len(self.quad_points) < 4:
+                            point_interacted_with = True
+                            break
+                    if not point_interacted_with and len(self.quad_points) < 4:
                         self.quad_points.append(snapped_click_point)
                         self.selected_point = len(self.quad_points) - 1
-        
-                    if len(self.quad_points) == 4 and self.zoom_level != 1.0 and not self.bounding_box_complete:
-                        self.bounding_box_complete = True
-                    self.update()
+                        point_interacted_with = True
                     
-                if not self.preview_marker_enabled and not (self.measure_quantity_mode and self.mode=="quad"):
-                    super().mousePressEvent(event)
-                else: # If not preview_marker_enabled and not (quad_mode...)
-                    super().mousePressEvent(event)
+                    if point_interacted_with:
+                        if len(self.quad_points) == 4 and not self.bounding_box_complete: # For single quad
+                             self.bounding_box_complete = True
+                        self.update()
+                        event.accept()
+                        return
+                
                 if not event.isAccepted():
                     super().mousePressEvent(event)
 
@@ -3897,20 +3881,24 @@ if __name__ == "__main__":
                     self.is_panning = False
                     self.pan_start_view_coords = None
                     self.pan_offset_at_drag_start = None
-                    if self.zoom_level > 1.0: self.setCursor(Qt.ArrowCursor)
+                    if self.zoom_level > 1.001: self.setCursor(Qt.OpenHandCursor)
                     else: self.setCursor(Qt.ArrowCursor)
                     event.accept()
                     return
             
-                # Handle left-button release for other modes
-                if hasattr(self, '_custom_mouseReleaseEvent_from_app') and self._custom_mouseReleaseEvent_from_app:
+                if event.button() != Qt.RightButton and hasattr(self, '_custom_mouseReleaseEvent_from_app') and self._custom_mouseReleaseEvent_from_app:
                     self._custom_mouseReleaseEvent_from_app(event)
                     if event.isAccepted():
                         return
-                if self.mode=="quad":
-                    self.selected_point = -1
+                
+                if self.mode == "quad" and event.button() == Qt.LeftButton: # For single quad definition
+                    self.selected_point = -1 # Deselect point after release
                     self.update()
-                super().mouseReleaseEvent(event)
+                    event.accept()
+                    return 
+                
+                if not event.isAccepted():
+                    super().mouseReleaseEvent(event)
 
             def transform_point(self, point):
                 """Transform a point from widget coordinates to image coordinates."""
@@ -3969,20 +3957,37 @@ if __name__ == "__main__":
             def paintEvent(self, event):
                 super().paintEvent(event)
                 painter = QPainter(self)
-                # ... (painter setup, zoom/pan transform as before) ...
-                painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True); painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.TextAntialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                
                 painter.save()
-                if self.zoom_level != 1.0: painter.translate(self.pan_offset); painter.scale(self.zoom_level, self.zoom_level)
+                if self.zoom_level != 1.0:
+                    painter.translate(self.pan_offset)
+                    painter.scale(self.zoom_level, self.zoom_level)
 
-                # ... (coordinate mapping helpers _image_to_label_space_valid, _app_image_coords_to_unzoomed_label_space as before) ...
-                _image_to_label_space_valid = False; _scale_factor_img_to_label = 1.0; _img_w_orig_from_app = 1.0; _img_h_orig_from_app = 1.0; _offset_x_img_in_label = 0.0; _offset_y_img_in_label = 0.0
+                # --- Coordinate mapping helpers (as before) ---
+                _image_to_label_space_valid = False
+                _scale_factor_img_to_label = 1.0
+                _img_w_orig_from_app = 1.0
+                _img_h_orig_from_app = 1.0
+                _offset_x_img_in_label = 0.0
+                _offset_y_img_in_label = 0.0
                 if self.app_instance and self.app_instance.image and not self.app_instance.image.isNull():
-                    current_app_image = self.app_instance.image; label_w_widget = float(self.width()); label_h_widget = float(self.height()); _img_w_orig_from_app = float(current_app_image.width()); _img_h_orig_from_app = float(current_app_image.height())
+                    current_app_image = self.app_instance.image
+                    label_w_widget = float(self.width())
+                    label_h_widget = float(self.height())
+                    _img_w_orig_from_app = float(current_app_image.width())
+                    _img_h_orig_from_app = float(current_app_image.height())
                     if _img_w_orig_from_app > 0 and _img_h_orig_from_app > 0 and label_w_widget > 0 and label_h_widget > 0:
                         _scale_factor_img_to_label = min(label_w_widget / _img_w_orig_from_app, label_h_widget / _img_h_orig_from_app)
-                        _displayed_img_w_in_label = _img_w_orig_from_app * _scale_factor_img_to_label; _displayed_img_h_in_label = _img_h_orig_from_app * _scale_factor_img_to_label
-                        _offset_x_img_in_label = (label_w_widget - _displayed_img_w_in_label) / 2.0; _offset_y_img_in_label = (label_h_widget - _displayed_img_h_in_label) / 2.0
-                        _image_to_label_space_valid = True
+                        if _scale_factor_img_to_label > 1e-9: # Ensure scale factor is not zero
+                            _displayed_img_w_in_label = _img_w_orig_from_app * _scale_factor_img_to_label
+                            _displayed_img_h_in_label = _img_h_orig_from_app * _scale_factor_img_to_label
+                            _offset_x_img_in_label = (label_w_widget - _displayed_img_w_in_label) / 2.0
+                            _offset_y_img_in_label = (label_h_widget - _displayed_img_h_in_label) / 2.0
+                            _image_to_label_space_valid = True
+                
                 def _app_image_coords_to_unzoomed_label_space(img_coords_tuple_or_qpointf):
                     if not _image_to_label_space_valid:
                         if isinstance(img_coords_tuple_or_qpointf, QPointF): return img_coords_tuple_or_qpointf
@@ -4006,7 +4011,7 @@ if __name__ == "__main__":
                                            self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and
                                            self.app_instance.moving_multi_lane_index == -3)
 
-                # ... (Draw standard markers, custom markers, custom shapes as before - NO CHANGE TO THESE) ...
+                # --- Draw standard markers, custom markers, custom shapes (as before) ---
                 if _image_to_label_space_valid and self.app_instance: # Standard Markers
                     std_marker_font = QFont(self.app_instance.font_family, self.app_instance.font_size); std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
                     painter.setFont(std_marker_font); painter.setPen(std_marker_color); font_metrics_std = QFontMetrics(std_marker_font)
@@ -4056,106 +4061,9 @@ if __name__ == "__main__":
                     painter.setOpacity(0.7); marker_preview_font = QFont(self.marker_font_type, self.marker_font_size); painter.setFont(marker_preview_font); painter.setPen(self.marker_color); font_metrics_preview = QFontMetrics(marker_preview_font)
                     preview_text_rect = font_metrics_preview.boundingRect(self.preview_marker_text); draw_x_preview = self.preview_marker_position.x() - (preview_text_rect.left() + preview_text_rect.width() / 2.0); draw_y_preview = self.preview_marker_position.y() - (preview_text_rect.top() + preview_text_rect.height() / 2.0)
                     painter.drawText(QPointF(draw_x_preview, draw_y_preview), self.preview_marker_text); painter.setOpacity(1.0)
+                    
 
-
-                # --- Draw SINGLE Analysis Quad/Rect ---
-                # self.mode on LiveViewLabel indicates if user is actively defining a single shape
-                # self.app_instance.current_selection_mode indicates if user is selecting/moving/resizing an existing shape
-
-                is_defining_single_quad_on_label = (self.mode == "quad") # Check LiveViewLabel's mode
-                is_defining_single_rect_on_label = (self.mode == "rectangle") # Check LiveViewLabel's mode
-
-                is_selected_single_quad_for_move = (self.app_instance and
-                                           self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and
-                                           self.app_instance.moving_multi_lane_index == -2)
-                is_selected_single_rect_for_move = (self.app_instance and
-                                           self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and
-                                           self.app_instance.moving_multi_lane_index == -3)
-
-                # Draw a NEW single quad being defined (red points, blue dotted lines)
-                if is_defining_single_quad_on_label and self.quad_points:
-                    preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
-                    painter.setPen(QPen(Qt.red, preview_pen_width * 1.5, Qt.SolidLine)) # Red points
-                    ellipse_radius_view = self.drag_threshold * 0.7
-                    for p_ls in self.quad_points:
-                        painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
-                    if len(self.quad_points) > 0 and len(self.quad_points) < 4 : # Draw lines between points
-                        painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
-                        painter.drawPolyline(QPolygonF(self.quad_points))
-                    elif len(self.quad_points) == 4: # Final preview line for new quad
-                        painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
-                        painter.drawPolygon(QPolygonF(self.quad_points))
-                # Draw a NEW single rect being defined (blue dotted lines)
-                elif is_defining_single_rect_on_label and self.bounding_box_preview:
-                    preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
-                    painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
-                    x1, y1, x2, y2 = self.bounding_box_preview
-                    rect_ls = QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized()
-                    painter.drawRect(rect_ls)
-                # Draw FINALIZED single quad (darkYellow or magenta if selected for move)
-                # Only if not currently defining a new one AND (no multi-lanes exist OR this one is selected for move)
-                elif self.quad_points and \
-                     not is_defining_single_quad_on_label and \
-                     (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_quad_for_move):
-                    pen_color = Qt.magenta if is_selected_single_quad_for_move else Qt.darkYellow
-                    line_style = Qt.SolidLine
-                    pen_width_sf = 2.0 if is_selected_single_quad_for_move else 1.0
-                    effective_pen_width_quad = max(0.5, pen_width_sf / self.zoom_level if self.zoom_level > 0 else pen_width_sf)
-                    quad_pen = QPen(pen_color, effective_pen_width_quad, line_style)
-                    painter.setPen(quad_pen)
-                    if is_selected_single_quad_for_move or \
-                       (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -2):
-                        # ellipse_radius_view = self.drag_threshold # OLD
-                        point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
-                        point_pen = QPen(point_pen_color, effective_pen_width_quad * 2) # Thicker for points
-                        painter.setPen(point_pen)
-                        for idx, p_label_space in enumerate(self.quad_points): # Iterate with index
-                            # Highlight the actively resized corner
-                            if self.app_instance.current_selection_mode == "resizing_corner" and \
-                               self.app_instance.moving_multi_lane_index == -2 and \
-                               self.app_instance.resizing_corner_index == idx:
-                                painter.setBrush(QBrush(Qt.red))
-                                painter.drawEllipse(p_label_space, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2) # Slightly larger if active
-                                painter.setBrush(Qt.NoBrush)
-                            else:
-                                painter.drawEllipse(p_label_space, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
-                        painter.setPen(quad_pen)
-                    if len(self.quad_points) == 4: painter.drawPolygon(QPolygonF(self.quad_points))
-                # Draw FINALIZED single rect (darkYellow or magenta if selected for move)
-                elif self.bounding_box_preview and \
-                     not is_defining_single_rect_on_label and \
-                     (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_rect_for_move): # is_selected_single_rect_for_move checks if current_selection_mode is for moving/resizing this
-                    pen_color = Qt.magenta if is_selected_single_rect_for_move else Qt.darkYellow
-                    line_style = Qt.SolidLine
-                    pen_width_sf = 2.0 if is_selected_single_rect_for_move else 1.0
-                    effective_pen_width_bbox = max(0.5, pen_width_sf / self.zoom_level if self.zoom_level > 0 else pen_width_sf)
-                    rect_pen = QPen(pen_color, effective_pen_width_bbox, line_style)
-                    painter.setPen(rect_pen)
-                    start_x, start_y, end_x, end_y = self.bounding_box_preview
-                    rect_label_space = QRectF(QPointF(start_x, start_y), QPointF(end_x, end_y)).normalized()
-                    painter.drawRect(rect_label_space)
-
-                    # Draw corner handles if selected for move/resize OR in select_for_move mode and this rect is the target
-                    if is_selected_single_rect_for_move or \
-                       (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -3):
-                        # ellipse_radius_view = self.drag_threshold # OLD
-                        point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
-                        point_pen = QPen(point_pen_color, effective_pen_width_bbox * 2)
-                        painter.setPen(point_pen)
-                        rect_corners = [rect_label_space.topLeft(), rect_label_space.topRight(), rect_label_space.bottomRight(), rect_label_space.bottomLeft()]
-                        for idx, corner_ls in enumerate(rect_corners):
-                             if self.app_instance.current_selection_mode == "resizing_corner" and \
-                                self.app_instance.moving_multi_lane_index == -3 and \
-                                self.app_instance.resizing_corner_index == idx:
-                                 painter.setBrush(QBrush(Qt.red))
-                                 painter.drawEllipse(corner_ls, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2)
-                                 painter.setBrush(Qt.NoBrush)
-                             else:
-                                painter.drawEllipse(corner_ls, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
-                        painter.setPen(rect_pen)
-                # --- END MODIFIED SINGLE Quad/Rect ---
-
-                # ... (Draw Crop Rect, Shape Preview, MW Preview, Placed MW Marker as before - NO CHANGE) ...
+                # --- Draw Crop Rect, Shape Preview, MW Preview, Placed MW Marker (as before) ---
                 preview_pen_crop = QPen(Qt.magenta); effective_pen_width_crop = max(0.5, 0.5 / self.zoom_level if self.zoom_level > 0 else 0.5); preview_pen_crop.setWidthF(effective_pen_width_crop)
                 if self.drawing_crop_rect and self.crop_rect_start_view and self.crop_rect_end_view: preview_pen_crop.setStyle(Qt.DashLine); painter.setPen(preview_pen_crop); rect_to_draw = QRectF(self.crop_rect_start_view, self.crop_rect_end_view).normalized(); painter.drawRect(rect_to_draw)
                 elif self.crop_rect_final_view: preview_pen_crop.setStyle(Qt.SolidLine); painter.setPen(preview_pen_crop); painter.drawRect(self.crop_rect_final_view)
@@ -4184,40 +4092,132 @@ if __name__ == "__main__":
                         painter.drawText(QPointF(draw_x_mw_ls, draw_y_mw_ls), text_mw)
                     except Exception as e: print(f"Error drawing placed MW prediction marker in paintEvent: {e}")
 
-                # --- Draw MULTIPLE LANE DEFINITIONS PREVIEWS (Current Lane Being Drawn) ---
-                is_drawing_new_multi_lane = (self.app_instance and
-                                             self.app_instance.multi_lane_mode_active and
-                                             self.app_instance.current_selection_mode not in ["dragging_selection", "resizing_corner"] and # Not moving/resizing an existing one
-                                             self.app_instance.moving_multi_lane_index < 0 and # Not focused on a single for move
-                                             not is_defining_single_quad_on_label and not is_defining_single_rect_on_label) # Not defining single at the same time
+                # --- Mode-Specific Previews and Finalized Shapes ---
+                preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
+                ellipse_radius_view = self.drag_threshold * 0.7
 
-                if is_drawing_new_multi_lane:
-                    current_lane_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
+                # 1. Preview for Auto-Lane Quadrilateral (mode == 'auto_lane_quad')
+                if self.mode == 'auto_lane_quad' and self.quad_points: # self.quad_points is used for this preview
+                    painter.setPen(QPen(QColor(0, 128, 128), preview_pen_width * 1.5, Qt.SolidLine)) # Teal for points
+                    for p_ls in self.quad_points:
+                        painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
+                    if 0 < len(self.quad_points) < 4:
+                        painter.setPen(QPen(QColor(70, 130, 180), preview_pen_width, Qt.DotLine)) # SteelBlue for lines
+                        painter.drawPolyline(QPolygonF(self.quad_points))
+                
+                # 2. Preview for Auto-Lane Rectangle (mode == 'auto_lane_rect')
+                elif self.mode == 'auto_lane_rect' and self.bounding_box_preview: # self.bounding_box_preview for this
+                    painter.setPen(QPen(QColor(70, 130, 180), preview_pen_width, Qt.DotLine)) # SteelBlue
+                    x1, y1, x2, y2 = self.bounding_box_preview
+                    painter.drawRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
+
+                # 3. Preview for Single Analysis Quadrilateral (mode == 'quad')
+                elif self.mode == "quad" and self.quad_points: # self.quad_points is used for this preview
+                    painter.setPen(QPen(Qt.red, preview_pen_width * 1.5, Qt.SolidLine))
+                    for p_ls in self.quad_points:
+                        painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
+                    if 0 < len(self.quad_points) < 4:
+                        painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
+                        painter.drawPolyline(QPolygonF(self.quad_points))
+                    elif len(self.quad_points) == 4: # Draw final polygon preview
+                        painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
+                        painter.drawPolygon(QPolygonF(self.quad_points))
+                
+                # 4. Preview for Single Analysis Rectangle (mode == 'rectangle')
+                elif self.mode == "rectangle" and self.bounding_box_preview: # self.bounding_box_preview for this
+                    painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
+                    x1, y1, x2, y2 = self.bounding_box_preview
+                    painter.drawRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
+                
+                # 5. Preview for a NEW Multi-Lane shape being defined
+                elif self.app_instance and self.app_instance.multi_lane_mode_active and \
+                     self.app_instance.current_selection_mode not in ["dragging_shape", "resizing_corner"] and \
+                     self.app_instance.moving_multi_lane_index < 0 and \
+                     self.mode not in ['auto_lane_quad', 'auto_lane_rect', 'quad', 'rectangle']: # Ensure not conflicting with other def modes
                     
-                    # === MODIFIED PART FOR CURRENT MULTI-LANE QUAD PREVIEW ===
                     if self.app_instance.multi_lane_definition_type == 'quad' and self.app_instance.current_multi_lane_points:
-                        # Use the application's buffer for the points of the quad currently being defined
-                        points_to_draw_current_multi_quad = self.app_instance.current_multi_lane_points
-                        
-                        painter.setPen(QPen(Qt.red, current_lane_pen_width * 1.5, Qt.SolidLine))
-                        ellipse_radius_view = self.drag_threshold * 0.7
-                        for p_ls in points_to_draw_current_multi_quad: # Use the correct point list
+                        points_to_draw = self.app_instance.current_multi_lane_points
+                        painter.setPen(QPen(Qt.magenta, preview_pen_width * 1.5, Qt.SolidLine)) # Magenta for multi-lane quad points
+                        for p_ls in points_to_draw:
                             painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
-                        
-                        if len(points_to_draw_current_multi_quad) > 0 and len(points_to_draw_current_multi_quad) < 4 :
-                            painter.setPen(QPen(Qt.blue, current_lane_pen_width, Qt.DotLine))
-                            painter.drawPolyline(QPolygonF(points_to_draw_current_multi_quad)) # Use the correct point list
-                        elif len(points_to_draw_current_multi_quad) == 4:
-                             painter.setPen(QPen(Qt.blue, current_lane_pen_width, Qt.DotLine))
-                             painter.drawPolygon(QPolygonF(points_to_draw_current_multi_quad)) # Use the correct point list
-                    # === END MODIFIED PART ===
-                    elif self.app_instance.multi_lane_definition_type == 'rectangle' and self.bounding_box_preview: # This part was okay
-                        painter.setPen(QPen(Qt.blue, current_lane_pen_width, Qt.DotLine))
+                        if 0 < len(points_to_draw) < 4:
+                            painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
+                            painter.drawPolyline(QPolygonF(points_to_draw))
+                        elif len(points_to_draw) == 4:
+                            painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
+                            painter.drawPolygon(QPolygonF(points_to_draw))
+                    elif self.app_instance.multi_lane_definition_type == 'rectangle' and self.bounding_box_preview:
+                        # self.bounding_box_preview is also used for multi-lane rectangle definition
+                        painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
                         x1, y1, x2, y2 = self.bounding_box_preview
-                        rect_ls = QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized(); painter.drawRect(rect_ls)
+                        painter.drawRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
 
-                # --- Draw Already Defined Multiple Lanes ---
+                # --- Draw Finalized Shapes (Single and Multi-lane) ---
+                # This logic tries to ensure that previews don't overlap with finalized displays
+                # by checking if a specific definition mode is active for that shape type.
+
+                # Finalized Single Quad (if not currently defining any quad type)
+                if self.quad_points and self.mode not in ["quad", "auto_lane_quad"] and \
+                   (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_quad_for_move):
+                    # ... (Existing logic for drawing finalized single quad with handles) ...
+                    pen_color = Qt.magenta if is_selected_single_quad_for_move else Qt.darkYellow
+                    line_style = Qt.SolidLine
+                    pen_width_sf = 2.0 if is_selected_single_quad_for_move else 1.0
+                    effective_pen_width_quad = max(0.5, pen_width_sf / self.zoom_level if self.zoom_level > 0 else pen_width_sf)
+                    quad_pen = QPen(pen_color, effective_pen_width_quad, line_style)
+                    painter.setPen(quad_pen)
+                    if is_selected_single_quad_for_move or \
+                       (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -2):
+                        point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
+                        point_pen = QPen(point_pen_color, effective_pen_width_quad * 2) 
+                        painter.setPen(point_pen)
+                        for idx, p_label_space in enumerate(self.quad_points): 
+                            if self.app_instance.current_selection_mode == "resizing_corner" and \
+                               self.app_instance.moving_multi_lane_index == -2 and \
+                               self.app_instance.resizing_corner_index == idx:
+                                painter.setBrush(QBrush(Qt.red))
+                                painter.drawEllipse(p_label_space, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2) 
+                                painter.setBrush(Qt.NoBrush)
+                            else:
+                                painter.drawEllipse(p_label_space, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
+                        painter.setPen(quad_pen)
+                    if len(self.quad_points) == 4: painter.drawPolygon(QPolygonF(self.quad_points))
+
+
+                # Finalized Single Rectangle (if not currently defining any rect type)
+                elif self.bounding_box_preview and self.mode not in ["rectangle", "auto_lane_rect"] and \
+                     (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_rect_for_move):
+                    # ... (Existing logic for drawing finalized single rectangle with handles) ...
+                    pen_color = Qt.magenta if is_selected_single_rect_for_move else Qt.darkYellow
+                    line_style = Qt.SolidLine
+                    pen_width_sf = 2.0 if is_selected_single_rect_for_move else 1.0
+                    effective_pen_width_bbox = max(0.5, pen_width_sf / self.zoom_level if self.zoom_level > 0 else pen_width_sf)
+                    rect_pen = QPen(pen_color, effective_pen_width_bbox, line_style)
+                    painter.setPen(rect_pen)
+                    start_x, start_y, end_x, end_y = self.bounding_box_preview
+                    rect_label_space = QRectF(QPointF(start_x, start_y), QPointF(end_x, end_y)).normalized()
+                    painter.drawRect(rect_label_space)
+
+                    if is_selected_single_rect_for_move or \
+                       (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -3):
+                        point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
+                        point_pen = QPen(point_pen_color, effective_pen_width_bbox * 2)
+                        painter.setPen(point_pen)
+                        rect_corners = [rect_label_space.topLeft(), rect_label_space.topRight(), rect_label_space.bottomRight(), rect_label_space.bottomLeft()]
+                        for idx, corner_ls in enumerate(rect_corners):
+                             if self.app_instance.current_selection_mode == "resizing_corner" and \
+                                self.app_instance.moving_multi_lane_index == -3 and \
+                                self.app_instance.resizing_corner_index == idx:
+                                 painter.setBrush(QBrush(Qt.red))
+                                 painter.drawEllipse(corner_ls, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2)
+                                 painter.setBrush(Qt.NoBrush)
+                             else:
+                                painter.drawEllipse(corner_ls, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
+                        painter.setPen(rect_pen)
+
+                # Draw Finalized Multiple Lanes (existing logic)
                 if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
+                    # ... (The logic for drawing finalized multi-lanes, including IDs and selection handles, was generally correct and can remain here) ...
                     lane_font_size = 10
                     lane_font = QFont("Arial", int(lane_font_size / self.zoom_level if self.zoom_level > 0 else lane_font_size)); lane_font.setBold(True)
                     for i, lane_def in enumerate(self.app_instance.multi_lane_definitions):
@@ -4236,45 +4236,57 @@ if __name__ == "__main__":
                             if is_selected_for_move_or_resize: current_lane_shape_points_label = quad_points_label_space
                             if len(quad_points_label_space) == 4: cx = sum(p.x() for p in quad_points_label_space) / 4.0; cy = sum(p.y() for p in quad_points_label_space) / 4.0; center_point = QPointF(cx, cy)
                         if is_selected_for_move_or_resize and current_lane_shape_points_label:
-                            ellipse_radius_view_multi = self.drag_threshold
                             point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
                             point_pen_multi = QPen(point_pen_color, pen_width_multilane * 1.5)
                             painter.setPen(point_pen_multi)
                             for idx, p_ls_multi in enumerate(current_lane_shape_points_label):
                                 if self.app_instance.current_selection_mode == "resizing_corner" and \
                                    self.app_instance.moving_multi_lane_index == i and \
-                                   self.app_instance.resizing_corner_index == idx: # i is index of multi-lane, idx is index of corner
+                                   self.app_instance.resizing_corner_index == idx: 
                                     painter.setBrush(QBrush(Qt.red))
                                     painter.drawEllipse(p_ls_multi, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2)
                                     painter.setBrush(Qt.NoBrush)
                                 else:
                                     painter.drawEllipse(p_ls_multi, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
                             painter.setPen(pen_defined_lane)
-                        if not center_point.isNull(): # Draw Lane ID
+                        if not center_point.isNull(): 
                             painter.setFont(lane_font); painter.setPen(Qt.black)
                             fm_lane = QFontMetrics(lane_font); text_rect_lane = fm_lane.boundingRect(lane_id_str)
                             draw_x_lane = center_point.x() - text_rect_lane.width() / 2.0 - text_rect_lane.left(); draw_y_lane = center_point.y() - text_rect_lane.height() / 2.0 - text_rect_lane.top()
                             bg_rect_lane = QRectF(draw_x_lane - 2, draw_y_lane - 2 + text_rect_lane.top(), text_rect_lane.width() + 4, text_rect_lane.height() + 4)
                             painter.save(); painter.setBrush(QColor(255, 255, 255, 220 if is_selected_for_move_or_resize else 180)); painter.setPen(Qt.NoPen); painter.drawRoundedRect(bg_rect_lane, 3, 3); painter.restore()
                             painter.setPen(Qt.red if is_selected_for_move_or_resize else Qt.black); painter.drawText(QPointF(draw_x_lane, draw_y_lane), lane_id_str)
-                # --- END Draw MULTIPLE LANE DEFINITIONS ---
 
-                # --- Draw Grid Lines ---
-                # ... (Grid drawing logic remains the same) ...
-                if self.app_instance and hasattr(self.app_instance, 'grid_size_input') and hasattr(self.app_instance, 'show_grid_checkbox_x') and hasattr(self.app_instance, 'show_grid_checkbox_y'):
+
+                # --- Draw Grid Lines (as before) ---
+                if self.app_instance and hasattr(self.app_instance, 'grid_size_input') and \
+                   hasattr(self.app_instance, 'show_grid_checkbox_x') and \
+                   hasattr(self.app_instance, 'show_grid_checkbox_y'):
                     grid_size_label_space = self.app_instance.grid_size_input.value()
                     if grid_size_label_space > 0:
-                        pen_grid_paint = QPen(Qt.red); pen_grid_paint.setStyle(Qt.DashLine); effective_pen_width_grid = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 1.0); pen_grid_paint.setWidthF(effective_pen_width_grid); painter.setPen(pen_grid_paint)
-                        label_width_unzoomed = self.width() / (self.zoom_level if self.zoom_level > 0 else 1.0); label_height_unzoomed = self.height() / (self.zoom_level if self.zoom_level > 0 else 1.0)
-                        view_origin_x_unzoomed = -self.pan_offset.x() / (self.zoom_level if self.zoom_level > 0 else 1.0); view_origin_y_unzoomed = -self.pan_offset.y() / (self.zoom_level if self.zoom_level > 0 else 1.0)
+                        pen_grid_paint = QPen(Qt.red)
+                        pen_grid_paint.setStyle(Qt.DashLine)
+                        effective_pen_width_grid = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 1.0)
+                        pen_grid_paint.setWidthF(effective_pen_width_grid)
+                        painter.setPen(pen_grid_paint)
+                        
+                        # Calculate visible area in unzoomed label coordinates
+                        label_width_unzoomed = self.width() / (self.zoom_level if self.zoom_level > 0 else 1.0)
+                        label_height_unzoomed = self.height() / (self.zoom_level if self.zoom_level > 0 else 1.0)
+                        view_origin_x_unzoomed = -self.pan_offset.x() / (self.zoom_level if self.zoom_level > 0 else 1.0)
+                        view_origin_y_unzoomed = -self.pan_offset.y() / (self.zoom_level if self.zoom_level > 0 else 1.0)
+
                         if self.app_instance.show_grid_checkbox_x.isChecked():
                             start_x_grid = (int(view_origin_x_unzoomed / grid_size_label_space) -1) * grid_size_label_space
                             for x_grid_ls in range(start_x_grid, int(view_origin_x_unzoomed + label_width_unzoomed + grid_size_label_space), grid_size_label_space):
-                                painter.drawLine(QPointF(x_grid_ls, view_origin_y_unzoomed), QPointF(x_grid_ls, view_origin_y_unzoomed + label_height_unzoomed))
+                                painter.drawLine(QPointF(x_grid_ls, view_origin_y_unzoomed), 
+                                                 QPointF(x_grid_ls, view_origin_y_unzoomed + label_height_unzoomed))
                         if self.app_instance.show_grid_checkbox_y.isChecked():
                             start_y_grid = (int(view_origin_y_unzoomed / grid_size_label_space)-1) * grid_size_label_space
                             for y_grid_ls in range(start_y_grid, int(view_origin_y_unzoomed + label_height_unzoomed + grid_size_label_space), grid_size_label_space):
-                                painter.drawLine(QPointF(view_origin_x_unzoomed, y_grid_ls), QPointF(view_origin_x_unzoomed + label_width_unzoomed, y_grid_ls))
+                                painter.drawLine(QPointF(view_origin_x_unzoomed, y_grid_ls), 
+                                                 QPointF(view_origin_x_unzoomed + label_width_unzoomed, y_grid_ls))
+                
                 painter.restore()
             
             def leaveEvent(self, event):
@@ -4283,22 +4295,23 @@ if __name__ == "__main__":
                 self.mouseMovedInLabel.emit(QPointF(-1,-1), QPointF(), False)
 
             def keyPressEvent(self, event):
-                if event.key() == Qt.Key_Escape:  
-                    parent_app = self.parent()
-                    if isinstance(parent_app, CombinedSDSApp) and parent_app.crop_rectangle_mode:
-                        parent_app.cancel_rectangle_crop_mode() # Call the app's cancel method
-                        return # Prevent further processing in this case
-                    if self.preview_marker_enabled:
-                        self.preview_marker_enabled = False  # Turn off the preview
-                        self.update()  # Clear the overlay                    
-                    self.measure_quantity_mode = False
-                    self.counter = 0
-                    self.bounding_box_complete = False
-                    self.quad_points = []
-                    self.mode=None
-                    self.clear_crop_preview()
-                    self.update()
-                super().keyPressEvent(event)
+                # This is LiveViewLabel's keyPressEvent.
+                # It should primarily handle focus-related keys if needed.
+                # Global shortcuts and mode cancellations are better handled in CombinedSDSApp.
+                if event.key() == Qt.Key_Escape:
+                    # If LiveViewLabel has a specific ESC action (like deselecting an internal point)
+                    if self.selected_point != -1 and self.mode == "quad": # Example: deselect quad point
+                        self.selected_point = -1
+                        self.update()
+                        event.accept()
+                        return
+                    # Propagate to parent (CombinedSDSApp) if not handled here
+                    if self.app_instance and hasattr(self.app_instance, 'keyPressEvent'):
+                        self.app_instance.keyPressEvent(event) # Let app handle global ESC
+                        if event.isAccepted():
+                            return
+                
+                super().keyPressEvent(event) # Default handling for other keys
 
         class CombinedSDSApp(QMainWindow):
             CONFIG_PRESET_FILE_NAME = "Imaging_assistant_preset_config.txt"
@@ -5647,20 +5660,12 @@ if __name__ == "__main__":
                 self.live_view_label.setMouseTracking(True) # Ensure tracking is on
 
                 if "Rectangle" in region_type_str:
-                    QMessageBox.information(self, "Define Lane Region",
-                                            "Please click and drag on the image preview\n"
-                                            "to define the rectangular lane region for automatic marker detection.\n"
-                                            "Press ESC to cancel.")
-                    self.live_view_label.mode = 'auto_lane_rect'
-                    self.live_view_label._custom_left_click_handler_from_app = self.start_rectangle # Re-use if logic is same
-                    self.live_view_label._custom_mouseMoveEvent_from_app = self.update_rectangle_preview # Re-use
+                    self.live_view_label.mode = 'auto_lane_rect' # For paintEvent
+                    self.live_view_label._custom_left_click_handler_from_app = self.start_rectangle 
+                    self.live_view_label._custom_mouseMoveEvent_from_app = self.update_rectangle_preview 
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_rectangle_for_auto_lane
                 elif "Quadrilateral" in region_type_str:
-                    QMessageBox.information(self, "Define Lane Region",
-                                            "Please click 4 corner points on the image preview\n"
-                                            "to define the quadrilateral lane region for automatic marker detection.\n"
-                                            "Press ESC to cancel.")
-                    self.live_view_label.mode = 'auto_lane_quad'
+                    self.live_view_label.mode = 'auto_lane_quad' # For paintEvent
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_auto_lane_quad_click
 
                 self.update_live_view()
@@ -6014,26 +6019,11 @@ if __name__ == "__main__":
                 self.update_live_view()
                 
             def zoom_in(self):
-                self.live_view_label.zoom_in() # LiveViewLabel handles its own update
-                # --- START: Update Pan Button State ---
-                enable_pan = self.live_view_label.zoom_level > 1.0
-                if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
-                if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
-                if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
-                if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                self.update_live_view()
-                # --- END: Update Pan Button State ---
+                self.live_view_label.zoom_in()
 
             def zoom_out(self):
-                self.live_view_label.zoom_out() # LiveViewLabel handles its own update
-                # --- START: Update Pan Button State ---
-                enable_pan = self.live_view_label.zoom_level > 1.0
-                if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
-                if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
-                if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
-                if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                self.update_live_view()
-                # --- END: Update Pan Button State ---
+                self.live_view_label.zoom_out()
+                
             
             def enable_standard_protein_mode(self):
                 """"Enable mode to define standard protein amounts for creating a standard curve."""
@@ -9144,12 +9134,13 @@ if __name__ == "__main__":
                 shape_button_layout.addStretch()
 
                 grid_layout = QHBoxLayout(); grid_layout.setContentsMargins(0,0,0,0); grid_layout.setSpacing(5)
-                self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X toggles X and Ctrl+Shift+G for both X and Y.")
+                self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X or CMD+Shift+X toggles X and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
-                self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y toggles Y and Ctrl+Shift+G for both X and Y.")
+                self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y or CMD+Shift+Y  toggles Y and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
                 self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
                 self.grid_size_input.valueChanged.connect(self.update_live_view)
+                self.grid_size_input.setToolTip("Can increase or decrease grid pixel size by CTRL+Shift+Up or CTRL+Shift+Down")
                 grid_layout.addWidget(self.show_grid_checkbox_x); grid_layout.addWidget(self.show_grid_checkbox_y); grid_layout.addWidget(self.grid_size_input)
                 grid_layout.addStretch()
 
