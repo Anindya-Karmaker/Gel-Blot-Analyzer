@@ -136,33 +136,46 @@ sys.excepthook = log_exception
 
 	
 if __name__ == "__main__":
+    app = None             # Initialize variable
     loading_dialog = None  # Initialize variable
     main_window = None     # Initialize variable
-    app = None             # Initialize variable
 
     try:
-        # --- Enable High DPI Scaling FIRST ---
-        try:
-            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-            QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-        except AttributeError:
-            print("Warning: Could not set High DPI attributes.")
-        except Exception as e:
-            print(f"Warning: Error setting High DPI attributes: {e}")
+        # --- Try to get an existing QApplication instance FIRST ---
+        # This helps in some environments or if the script is re-run partially
+        app = QApplication.instance()
+        if app is None:
+            # --- Create QApplication ONLY if one doesn't exist ---
+            # Enable High DPI Scaling FIRST if creating a new app
+            try:
+                # These attributes might only be settable *before* QApplication is instantiated
+                # or on the class itself. Check PySide6 docs for exact timing.
+                # For PySide6, it's often:
+                # QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+                # QApplication.setAttribute(Qt.AA_EnableHighDpiScaling) # PySide6 style
+                # QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)   # PySide6 style
+                # For now, keeping your original Qt5 style for direct porting,
+                # but be aware these might need adjustment for PySide6 optimal behavior.
+                QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+                QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+            except AttributeError:
+                print("Warning: Could not set High DPI attributes (AttributeError).")
+            except Exception as e_dpi: # Catch any other exception during DPI setting
+                print(f"Warning: Error setting High DPI attributes: {e_dpi}")
 
-        # --- Create QApplication ---
-        # Use sys.argv for command line arguments if needed, otherwise empty list
-        app = QApplication(sys.argv if len(sys.argv) > 0 else [])
+            app = QApplication(sys.argv if hasattr(sys, 'argv') and len(sys.argv) > 0 else [])
+        else:
+            print("INFO: Using existing QApplication instance.")
 
         # --- Create and Show Minimal Loading Screen IMMEDIATELY ---
         try:
             loading_dialog = MinimalLoadingDialog()
             loading_dialog.show()
-            app.processEvents() # Crucial: Make the GUI update and show the dialog
-        except Exception as e:
-            print(f"ERROR: Could not create/show minimal loading dialog: {e}")
+            if app: app.processEvents() # Crucial: Make the GUI update and show the dialog
+        except Exception as e_load_dialog:
+            print(f"ERROR: Could not create/show minimal loading dialog: {e_load_dialog}")
             # Proceed without loading screen if it fails, but log the error
-            loading_dialog = None # Ensure it's None if creation failed
+            loading_dialog = None #
 
         import sys
         import svgwrite
@@ -182,7 +195,7 @@ if __name__ == "__main__":
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard,
-            QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator # <-- QIntValidator ADDED HERE
+            QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator,QFocusEvent # <-- QIntValidator ADDED HERE
         )
         from PySide6.QtCore import (
             Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal
@@ -803,19 +816,20 @@ if __name__ == "__main__":
             def get_final_settings(self):
                 """Returns the final detection settings dictionary."""
                 return self._final_settings
-
             
+        
+        
         class ModifyMarkersDialog(QDialog):
-            shapes_adjusted_preview = Signal(list)
+            shapes_adjusted_preview = Signal(list) 
             global_markers_adjusted = Signal(list)
             def __init__(self, markers_list, shapes_list, parent=None): # shapes_list remains for future use
                 super().__init__(parent)
                 self.setWindowTitle("Modify Custom Markers and Shapes")
                 self.setMinimumSize(950, 650) # Increased height for new controls
-        
+
                 self._original_markers_data = [] # Store pristine original data for scaling
                 self.markers = [] # This will hold the currently modified data
-        
+
                 for marker_data in markers_list:
                     try:
                         marker_copy = list(marker_data) # x, y, text, qcolor, font_family, font_size, is_bold, is_italic
@@ -827,35 +841,35 @@ if __name__ == "__main__":
                             print(f"Warning: Skipping marker with invalid data length: {len(marker_copy)}")
                     except Exception as e:
                         print(f"Warning: Error processing marker data: {e}")
-        
+
                 # Shapes are not globally adjusted by these sliders for now, but keep for consistency
                 self.shapes = []
                 for shape_data in shapes_list:
                      if isinstance(shape_data, dict): self.shapes.append(dict(shape_data))
                      else: print(f"Warning: Skipping shape with invalid data type: {type(shape_data)}")
-        
+
                 self._block_signals = False
                 self._current_image_width = parent.image.width() if parent and parent.image and not parent.image.isNull() else 1
                 self._current_image_height = parent.image.height() if parent and parent.image and not parent.image.isNull() else 1
-        
-        
+
+
                 # --- Main Layout ---
                 layout = QVBoxLayout(self)
-        
+
                 # --- START: Global Adjustment Controls ---
                 global_adjust_group = QGroupBox("Global Adjustments for Markers")
                 global_adjust_layout = QGridLayout(global_adjust_group)
-        
+
                 # Define precision for percentage sliders (e.g., 100 means 2 decimal places for percent)
                 self.percent_precision_factor = 100.0 # For displaying XX.YY%
                 self.scale_precision_factor = 10.0    # For displaying XXX.Y% for scale sliders
-        
+
                 # Absolute X Shift Slider
                 global_adjust_layout.addWidget(QLabel("Shift X (% Img W):"), 0, 0)
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
                 # Range: -100.00% to +100.00% -> -10000 to +10000 if precision_factor is 100
-                self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), 
-                                                 int(100 * self.percent_precision_factor)) 
+                self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor),
+                                                 int(100 * self.percent_precision_factor))
                 self.abs_x_shift_slider.setValue(0)
                 self.abs_x_shift_slider.setToolTip("Shift all markers horizontally by a percentage of image width.")
                 self.abs_x_shift_label = QLabel("0.00%")
@@ -866,11 +880,11 @@ if __name__ == "__main__":
                 )
                 global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1)
                 global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
-        
+
                 # Absolute Y Shift Slider
                 global_adjust_layout.addWidget(QLabel("Shift Y (% Img H):"), 1, 0)
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
-                self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), 
+                self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor),
                                                  int(100 * self.percent_precision_factor))
                 self.abs_y_shift_slider.setValue(0)
                 self.abs_y_shift_slider.setToolTip("Shift all markers vertically by a percentage of image height.")
@@ -882,13 +896,13 @@ if __name__ == "__main__":
                 )
                 global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1)
                 global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
-        
+
                 # Relative X Scale Slider
                 global_adjust_layout.addWidget(QLabel("Scale X (%):"), 2, 0)
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
                 # Range: 10.0% to 300.0% -> 100 to 3000 if scale_precision_factor is 10
-                self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), 
-                                                 int(300 * self.scale_precision_factor)) 
+                self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor),
+                                                 int(300 * self.scale_precision_factor))
                 self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor)) # Default 100.0%
                 self.rel_x_scale_slider.setToolTip("Scale markers' X positions relative to their original layout.")
                 self.rel_x_scale_label = QLabel("100.0%")
@@ -899,11 +913,11 @@ if __name__ == "__main__":
                 )
                 global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1)
                 global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
-        
+
                 # Relative Y Scale Slider
                 global_adjust_layout.addWidget(QLabel("Scale Y (%):"), 3, 0)
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
-                self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), 
+                self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor),
                                                  int(300 * self.scale_precision_factor))
                 self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor)) # Default 100.0%
                 self.rel_y_scale_slider.setToolTip("Scale markers' Y positions relative to their original layout.")
@@ -915,12 +929,12 @@ if __name__ == "__main__":
                 )
                 global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1)
                 global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
-        
+
                 # Font Size Scale Slider
                 global_adjust_layout.addWidget(QLabel("Font Scale (%):"), 4, 0)
                 self.font_scale_slider = QSlider(Qt.Horizontal)
                 # Range 10.0% to 300.0% -> 100 to 3000 if scale_precision_factor is 10
-                self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), 
+                self.font_scale_slider.setRange(int(10 * self.scale_precision_factor),
                                                 int(300 * self.scale_precision_factor))
                 self.font_scale_slider.setValue(int(100 * self.scale_precision_factor)) # Default 100.0%
                 self.font_scale_slider.setToolTip("Scale font size of all markers.")
@@ -932,11 +946,11 @@ if __name__ == "__main__":
                 )
                 global_adjust_layout.addWidget(self.font_scale_slider, 4, 1)
                 global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
-                
+
                 global_adjust_layout.setColumnStretch(1, 1)
                 layout.addWidget(global_adjust_group)
                 # --- END: Global Adjustment Controls ---
-        
+
                 # --- Table Widget ---
                 self.table_widget = QTableWidget()
                 self.table_widget.setColumnCount(8)
@@ -947,10 +961,10 @@ if __name__ == "__main__":
                 self.table_widget.setSelectionMode(QAbstractItemView.SingleSelection)
                 self.table_widget.setEditTriggers(QAbstractItemView.AnyKeyPressed | QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
                 self.table_widget.setSortingEnabled(True) # Enable after initial population if needed
-        
+
                 self.table_widget.itemChanged.connect(self.handle_item_changed)
                 self.table_widget.cellDoubleClicked.connect(self.handle_cell_double_clicked)
-        
+
                 layout.addWidget(self.table_widget) # Table below global controls
                 self.populate_table() # Initial population
                 self.table_widget.resizeColumnsToContents()
@@ -963,52 +977,52 @@ if __name__ == "__main__":
                 self.table_widget.setColumnWidth(6, 80)
                 self.table_widget.setColumnWidth(7, 80)
                 self.table_widget.horizontalHeader().setStretchLastSection(False)
-        
+
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 button_box.accepted.connect(self.accept) # Default accept is fine now
                 button_box.rejected.connect(self.reject)
                 layout.addWidget(button_box)
                 self.setLayout(layout)
-        
+
             def _update_global_adjustments(self):
                 if self._block_signals or not self._original_markers_data:
                     return
-        
+
                 # Get values from all sliders and divide by precision factors
                 abs_x_shift_percent = self.abs_x_shift_slider.value() / self.percent_precision_factor
                 abs_y_shift_percent = self.abs_y_shift_slider.value() / self.percent_precision_factor
                 rel_x_scale_percent = self.rel_x_scale_slider.value() / self.scale_precision_factor
                 rel_y_scale_percent = self.rel_y_scale_slider.value() / self.scale_precision_factor
                 font_scale_percent = self.font_scale_slider.value() / self.scale_precision_factor # Using scale_precision_factor
-        
+
                 # Calculate pixel shifts for absolute translation
                 img_width = self._current_image_width if self._current_image_width > 0 else 1
                 img_height = self._current_image_height if self._current_image_height > 0 else 1
-                
+
                 abs_x_shift_pixels = (abs_x_shift_percent / 100.0) * img_width
                 abs_y_shift_pixels = (abs_y_shift_percent / 100.0) * img_height
-        
+
                 # Calculate scale factors (percentage / 100)
                 rel_x_scale_factor = rel_x_scale_percent / 100.0
                 rel_y_scale_factor = rel_y_scale_percent / 100.0
                 font_size_scale_factor = font_scale_percent / 100.0
-        
+
                 for i, original_marker_tuple in enumerate(self._original_markers_data):
                     if i >= len(self.markers):
                         continue
-        
+
                     orig_x, orig_y, text, qcolor, font_family, orig_font_size, is_bold, is_italic = original_marker_tuple
-        
+
                     scaled_x = orig_x * rel_x_scale_factor
                     scaled_y = orig_y * rel_y_scale_factor
                     final_x = scaled_x + abs_x_shift_pixels
                     final_y = scaled_y + abs_y_shift_pixels
                     final_font_size = max(1, int(round(orig_font_size * font_size_scale_factor)))
-        
+
                     self.markers[i][0] = final_x
                     self.markers[i][1] = final_y
                     self.markers[i][5] = final_font_size
-        
+
                 self.populate_table()
                 self.global_markers_adjusted.emit(list(self.markers))
         
@@ -1017,81 +1031,83 @@ if __name__ == "__main__":
                 self._block_signals = True
                 self.table_widget.setSortingEnabled(False) # Disable sorting during population
                 self.table_widget.setRowCount(0)
-                
+
                 total_items = len(self.markers) + len(self.shapes) # markers is now the working copy
                 self.table_widget.setRowCount(total_items)
-                
+
                 current_row_idx = 0
-        
+
                 # --- Populate Markers (using self.markers, which reflects global adjustments) ---
                 for marker_idx, marker_data_working in enumerate(self.markers):
-                    row_idx = current_row_idx
+                    row_idx = current_row_idx # Use this for current table row
+                    # marker_idx is the index into self.markers and self._original_markers_data
                     try:
                         # marker_data_working is already a list: [x, y, text, qcolor, font_family, font_size, is_bold, is_italic]
                         x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data_working
-                        
+
                         if not isinstance(qcolor, QColor): qcolor = QColor(qcolor)
                         if not qcolor.isValid(): raise ValueError("Invalid marker color")
-        
+
                         type_item = QTableWidgetItem("Marker")
                         # Store the index relative to the self.markers list (and _original_markers_data)
                         type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': marker_idx})
-        
+
                         text_item = QTableWidgetItem(str(text))
                         text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
-        
+
                         coord_str = f"{x:.1f},{y:.1f}" # Display the currently calculated coordinates
                         coord_item = QTableWidgetItem(coord_str)
                         coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
                         coord_item.setToolTip("Edit format: X,Y (e.g., 100.5,250.2)")
-        
+
                         style_item = QTableWidgetItem(f"{font_family} ({font_size}pt)") # Display current font size
                         style_item.setToolTip("Double-click to change font/size for this specific marker")
                         style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
-        
+
                         color_item = QTableWidgetItem(qcolor.name())
                         color_item.setBackground(QBrush(qcolor))
                         text_color = Qt.white if qcolor.lightness() < 128 else Qt.black
                         color_item.setForeground(QBrush(text_color))
                         color_item.setToolTip("Double-click to change color for this specific marker")
                         color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
-        
+
                         self.table_widget.setItem(row_idx, 0, type_item)
                         self.table_widget.setItem(row_idx, 1, text_item)
                         self.table_widget.setItem(row_idx, 2, coord_item)
                         self.table_widget.setItem(row_idx, 3, style_item)
                         self.table_widget.setItem(row_idx, 6, color_item)
-        
+
                         bold_checkbox = QCheckBox(); bold_checkbox.setChecked(bool(is_bold))
-                        bold_checkbox.stateChanged.connect(lambda state, r=row_idx: self.handle_marker_style_changed(state, r, "bold"))
+                        bold_checkbox.setProperty("original_marker_index", marker_idx) # Store original index
+                        bold_checkbox.setProperty("style_type_checkbox", "bold")      # Store style type
+                        bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox) # Connect to new handler
                         cell_widget_bold = QWidget(); layout_bold = QHBoxLayout(cell_widget_bold); layout_bold.addWidget(bold_checkbox); layout_bold.setAlignment(Qt.AlignCenter); layout_bold.setContentsMargins(0,0,0,0); cell_widget_bold.setLayout(layout_bold)
                         self.table_widget.setCellWidget(row_idx, 4, cell_widget_bold)
-        
+
                         italic_checkbox = QCheckBox(); italic_checkbox.setChecked(bool(is_italic))
-                        italic_checkbox.stateChanged.connect(lambda state, r=row_idx: self.handle_marker_style_changed(state, r, "italic"))
+                        italic_checkbox.setProperty("original_marker_index", marker_idx) # Store original index
+                        italic_checkbox.setProperty("style_type_checkbox", "italic")    # Store style type
+                        italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox) # Connect to new handler
                         cell_widget_italic = QWidget(); layout_italic = QHBoxLayout(cell_widget_italic); layout_italic.addWidget(italic_checkbox); layout_italic.setAlignment(Qt.AlignCenter); layout_italic.setContentsMargins(0,0,0,0); cell_widget_italic.setLayout(layout_italic)
                         self.table_widget.setCellWidget(row_idx, 5, cell_widget_italic)
-        
+
                         delete_button = QPushButton("Delete"); delete_button.setStyleSheet("QPushButton { padding: 2px 5px; }")
-                        # Connect delete to a lambda that uses the current row_idx,
-                        # the delete_item function will then map this row to original_index if needed.
                         delete_button.clicked.connect(lambda checked, r=row_idx: self.delete_item(r))
                         self.table_widget.setCellWidget(row_idx, 7, delete_button)
-        
+
                         current_row_idx += 1
                     except (ValueError, IndexError, TypeError) as e:
                         print(f"Error populating table for marker at original index {marker_idx}: {e}")
                         error_item = QTableWidgetItem("Marker Error")
-                        error_item.setData(Qt.UserRole, {'type': 'error', 'original_index': -1}) # Use original_index
+                        error_item.setData(Qt.UserRole, {'type': 'error', 'original_index': marker_idx}) # Use original_index
                         self.table_widget.setItem(row_idx, 0, error_item)
                         for col in range(1, self.table_widget.columnCount()):
                             placeholder = QTableWidgetItem("---"); placeholder.setFlags(placeholder.flags() & ~Qt.ItemIsEditable)
                             self.table_widget.setItem(row_idx, col, placeholder)
                         current_row_idx += 1
-                
+
                 # --- Populate Shapes (No global adjustments for shapes in this iteration) ---
                 for shape_idx, shape_data in enumerate(self.shapes):
-                    # ... (rest of shape population logic remains the same, using original_index for shapes) ...
                     row_idx = current_row_idx
                     try:
                         shape_type = shape_data.get('type', 'Unknown').capitalize()
@@ -1100,15 +1116,15 @@ if __name__ == "__main__":
                         qcolor = QColor(color_name);
                         if not qcolor.isValid(): raise ValueError(f"Invalid shape color: {color_name}")
                         if thickness < 1: raise ValueError("Thickness must be >= 1")
-        
+
                         type_item = QTableWidgetItem(shape_type)
                         # Store index relative to self.shapes list
                         type_item.setData(Qt.UserRole, {'type': 'shape', 'original_index': shape_idx})
-        
-        
-                        text_item = QTableWidgetItem("") 
+
+
+                        text_item = QTableWidgetItem("")
                         text_item.setFlags(text_item.flags() & ~Qt.ItemIsEditable)
-        
+
                         details_str = ""
                         tooltip_str = "Edit format: "
                         if shape_type == 'Line':
@@ -1116,56 +1132,122 @@ if __name__ == "__main__":
                             details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"
                             tooltip_str += "X1,Y1,X2,Y2"
                         elif shape_type == 'Rectangle':
-                            rect = shape_data.get('rect', (0,0,0,0)) 
+                            rect = shape_data.get('rect', (0,0,0,0))
                             details_str = f"{rect[0]:.1f},{rect[1]:.1f},{rect[2]:.1f},{rect[3]:.1f}"
                             tooltip_str += "X,Y,W,H"
                         else:
                             details_str = "N/A"
                             tooltip_str = "Cannot edit coordinates for this shape type."
-        
+
                         coord_item = QTableWidgetItem(details_str)
                         coord_item.setToolTip(tooltip_str)
                         if shape_type in ['Line', 'Rectangle']:
                             coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
                         else:
                             coord_item.setFlags(coord_item.flags() & ~Qt.ItemIsEditable)
-        
+
                         style_item = QTableWidgetItem(f"{thickness}px")
                         style_item.setToolTip("Double-click to change thickness")
                         style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
-        
+
                         color_item = QTableWidgetItem(qcolor.name())
                         color_item.setBackground(QBrush(qcolor)); text_color_shape = Qt.white if qcolor.lightness() < 128 else Qt.black
                         color_item.setForeground(QBrush(text_color_shape)); color_item.setToolTip("Double-click to change color")
                         color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
-        
+
                         self.table_widget.setItem(row_idx, 0, type_item)
-                        self.table_widget.setItem(row_idx, 1, text_item)    
-                        self.table_widget.setItem(row_idx, 2, coord_item)   
-                        self.table_widget.setItem(row_idx, 3, style_item)   
-                        self.table_widget.setItem(row_idx, 6, color_item)   
-        
+                        self.table_widget.setItem(row_idx, 1, text_item)
+                        self.table_widget.setItem(row_idx, 2, coord_item)
+                        self.table_widget.setItem(row_idx, 3, style_item)
+                        self.table_widget.setItem(row_idx, 6, color_item)
+
                         delete_button_shape = QPushButton("Delete"); delete_button_shape.setStyleSheet("QPushButton { padding: 2px 5px; }")
                         delete_button_shape.clicked.connect(lambda checked, r=row_idx: self.delete_item(r))
-                        self.table_widget.setCellWidget(row_idx, 7, delete_button_shape) 
-        
+                        self.table_widget.setCellWidget(row_idx, 7, delete_button_shape)
+
                         current_row_idx += 1
                     except (ValueError, IndexError, TypeError, KeyError) as e:
                         print(f"Error processing shape data at original index {shape_idx}: {e}")
                         error_item_shape = QTableWidgetItem("Shape Error")
-                        error_item_shape.setData(Qt.UserRole, {'type': 'error', 'original_index': -1})
+                        error_item_shape.setData(Qt.UserRole, {'type': 'error', 'original_index': shape_idx})
                         self.table_widget.setItem(row_idx, 0, error_item_shape)
                         for col in range(1, self.table_widget.columnCount()):
                             placeholder_shape = QTableWidgetItem("---"); placeholder_shape.setFlags(placeholder_shape.flags() & ~Qt.ItemIsEditable)
                             self.table_widget.setItem(row_idx, col, placeholder_shape)
                         current_row_idx += 1
-        
-        
+
+
                 if current_row_idx < total_items:
                     self.table_widget.setRowCount(current_row_idx)
-                
+
                 self.table_widget.setSortingEnabled(True) # Re-enable sorting
                 self._block_signals = False
+                
+            def handle_marker_style_changed_from_checkbox(self, state): # state is int (0 or 2)
+                if self._block_signals: return
+
+                sender_checkbox = self.sender()
+                if not isinstance(sender_checkbox, QCheckBox):
+                    print("Warning: Style change signal not from QCheckBox.")
+                    return
+
+                original_marker_index = sender_checkbox.property("original_marker_index")
+                style_type = sender_checkbox.property("style_type_checkbox")
+
+                if style_type is None or original_marker_index is None or \
+                   not (0 <= original_marker_index < len(self.markers)) or \
+                   not (0 <= original_marker_index < len(self._original_markers_data)): # Check both lists
+                    print(f"Warning: Could not get style_type or invalid index for checkbox change. Index: {original_marker_index}, Style: {style_type}")
+                    # Attempt to find the correct original_marker_index if property is stale (e.g. after sort without property update)
+                    # This is a fallback, ideally properties should always be correct.
+                    for r in range(self.table_widget.rowCount()):
+                        widget_bold = self.table_widget.cellWidget(r, 4)
+                        widget_italic = self.table_widget.cellWidget(r, 5)
+                        is_sender_bold = widget_bold and sender_checkbox is widget_bold.findChild(QCheckBox)
+                        is_sender_italic = widget_italic and sender_checkbox is widget_italic.findChild(QCheckBox)
+                        if is_sender_bold or is_sender_italic:
+                            type_item = self.table_widget.item(r, 0)
+                            if type_item and type_item.data(Qt.UserRole) and type_item.data(Qt.UserRole).get('type') == 'marker':
+                                original_marker_index = type_item.data(Qt.UserRole).get('original_index')
+                                style_type = "bold" if is_sender_bold else "italic"
+                                print(f"INFO: Re-derived original_marker_index: {original_marker_index}, style: {style_type} for row {r}")
+                                if not (0 <= original_marker_index < len(self.markers)) or \
+                                   not (0 <= original_marker_index < len(self._original_markers_data)):
+                                    print("Error: Re-derived index still invalid.")
+                                    return # Give up if re-derived is also bad
+                                break # Found the sender and its correct index
+                    else: # Loop completed without finding sender
+                        print("Error: Could not re-derive original_marker_index from table.")
+                        return
+
+
+                is_checked = (state == Qt.Checked) # Qt.Checked is 2, Qt.Unchecked is 0
+                try:
+                    idx_to_change = -1
+                    if style_type == "bold":
+                        idx_to_change = 6 # self.markers[...][6] is for bold
+                    elif style_type == "italic":
+                        idx_to_change = 7 # self.markers[...][7] is for italic
+
+                    if idx_to_change == -1:
+                        print(f"Error: Unknown style_type '{style_type}' for checkbox.")
+                        return
+
+                    # Update working copy
+                    self.markers[original_marker_index][idx_to_change] = is_checked
+
+                    # Update original data (this is crucial for global adjustments to work from the new base)
+                    # The 'original_marker_index' from property should be correct index for _original_markers_data
+                    # because it's set from marker_idx which is the true original index.
+                    temp_list = list(self._original_markers_data[original_marker_index]) # Corrected to use original_marker_index
+                    temp_list[idx_to_change] = is_checked
+                    self._original_markers_data[original_marker_index] = tuple(temp_list) # Corrected to use original_marker_index
+
+                    self.global_markers_adjusted.emit(list(self.markers))
+                except IndexError:
+                    print(f"Error: Index mismatch updating style for marker original index {original_marker_index}.")
+                except Exception as e:
+                    print(f"Unexpected error in handle_marker_style_changed_from_checkbox: {e}")
         
             def handle_item_changed(self, item):
                 """Update internal lists when an editable cell (Text/Label or Coords) changes.
@@ -1173,23 +1255,23 @@ if __name__ == "__main__":
                    and subsequent global slider adjustments will be based on this new 'current' state
                    as if it were the original for that specific item."""
                 if self._block_signals: return
-        
+
                 row = item.row()
                 col = item.column()
-        
+
                 type_item = self.table_widget.item(row, 0)
                 if not type_item: return
                 item_data = type_item.data(Qt.UserRole)
                 if not item_data or item_data.get('type') == 'error': return
-        
+
                 item_type = item_data['type']
                 original_item_index = item_data.get('original_index') # This is key, index into _original_markers_data or self.shapes
-                
+
                 new_value_str = item.text()
                 revert_needed = False
                 error_message = ""
                 revert_text = ""
-        
+
                 # --- Handle Marker Text Changes (Column 1) ---
                 if col == 1 and item_type == 'marker':
                     if not (0 <= original_item_index < len(self.markers)): return
@@ -1205,56 +1287,56 @@ if __name__ == "__main__":
                             self._original_markers_data[original_item_index] = tuple(temp_list)
                     except Exception as e:
                         revert_needed = True; revert_text = prev_text; error_message = f"Error updating text: {e}"
-        
+
                 # --- Handle Coordinate Changes (Column 2) ---
                 elif col == 2:
                     if item_type == 'marker':
                         if not (0 <= original_item_index < len(self.markers)): return
-                        
+
                         prev_x_display, prev_y_display = self.markers[original_item_index][0:2]
                         revert_text = f"{prev_x_display:.1f},{prev_y_display:.1f}"
-    
+
                         try:
                             parts = new_value_str.split(',')
                             if len(parts) != 2: raise ValueError("Expected X,Y format")
                             new_x_manual = float(parts[0].strip())
                             new_y_manual = float(parts[1].strip())
-    
+
                             # Update the working copy first (what's displayed)
                             self.markers[original_item_index][0] = new_x_manual
                             self.markers[original_item_index][1] = new_y_manual
-    
+
                             # Now, back-calculate the "true original" for _original_markers_data
                             # new_x_manual = (original_x * rel_x_scale_factor) + abs_x_shift_pixels
                             # So, original_x = (new_x_manual - abs_x_shift_pixels) / rel_x_scale_factor
                             if 0 <= original_item_index < len(self._original_markers_data):
                                 temp_list = list(self._original_markers_data[original_item_index])
-                                
+
                                 # Get current global slider values and adjust by precision
                                 abs_x_shift_percent_curr = self.abs_x_shift_slider.value() / self.percent_precision_factor
                                 abs_y_shift_percent_curr = self.abs_y_shift_slider.value() / self.percent_precision_factor
                                 rel_x_scale_percent_curr = self.rel_x_scale_slider.value() / self.scale_precision_factor
                                 rel_y_scale_percent_curr = self.rel_y_scale_slider.value() / self.scale_precision_factor
-    
+
                                 img_width_curr = self._current_image_width if self._current_image_width > 0 else 1
                                 img_height_curr = self._current_image_height if self._current_image_height > 0 else 1
-    
+
                                 abs_x_shift_pixels_curr = (abs_x_shift_percent_curr / 100.0) * img_width_curr
                                 abs_y_shift_pixels_curr = (abs_y_shift_percent_curr / 100.0) * img_height_curr
-                                
+
                                 rel_x_scale_factor_curr = rel_x_scale_percent_curr / 100.0
                                 rel_y_scale_factor_curr = rel_y_scale_percent_curr / 100.0
-                                
+
                                 base_x = (new_x_manual - abs_x_shift_pixels_curr) / rel_x_scale_factor_curr if rel_x_scale_factor_curr != 0 else (new_x_manual - abs_x_shift_pixels_curr) # Avoid division by zero, if scale is 0, offset is just from the shifted val
                                 base_y = (new_y_manual - abs_y_shift_pixels_curr) / rel_y_scale_factor_curr if rel_y_scale_factor_curr != 0 else (new_y_manual - abs_y_shift_pixels_curr)
-                                
+
                                 temp_list[0] = base_x
                                 temp_list[1] = base_y
                                 self._original_markers_data[original_item_index] = tuple(temp_list)
-                            
+
                         except (ValueError, IndexError) as e:
                             revert_needed = True; error_message = f"Could not parse marker coordinates:\n{e}\n\nExpected format: X,Y"
-                    
+
                     elif item_type == 'shape': # Shapes are not affected by global sliders, direct update
                         if not (0 <= original_item_index < len(self.shapes)): return
                         shape_data = self.shapes[original_item_index]
@@ -1285,85 +1367,53 @@ if __name__ == "__main__":
                             revert_needed = True
                             expected_format = "X1,Y1,X2,Y2" if shape_type_internal == 'line' else "X,Y,W,H"
                             error_message = (f"Could not parse shape coordinates:\n{e}\n\nExpected format for {shape_type_internal.capitalize()}: {expected_format}")
-        
-        
+
+
                 if revert_needed:
                     QMessageBox.warning(self, "Invalid Input", error_message)
                     self._block_signals = True
                     item.setText(revert_text)
                     self._block_signals = False
-                    
+
                 if not revert_needed: # Only emit if the change was valid
                     self.shapes_adjusted_preview.emit(list(self.shapes))
                     self.global_markers_adjusted.emit(list(self.markers))
         
-            def handle_marker_style_changed(self, state, row, style_type):
-                """Update the bold/italic flag for a marker. Updates both working and original copy."""
-                if self._block_signals: return
-                type_item = self.table_widget.item(row, 0)
-                if not type_item: return
-                item_data = type_item.data(Qt.UserRole)
-                if not item_data or item_data.get('type') != 'marker': return
-                
-                original_marker_index = item_data.get('original_index')
-                if not isinstance(original_marker_index, int) or not (0 <= original_marker_index < len(self.markers)):
-                    return
-        
-                is_checked = (state == Qt.Checked)
-                try:
-                    if style_type == "bold":
-                        self.markers[original_marker_index][6] = is_checked
-                        if 0 <= original_marker_index < len(self._original_markers_data):
-                            temp_list = list(self._original_markers_data[original_marker_index])
-                            temp_list[6] = is_checked
-                            self._original_markers_data[original_marker_index] = tuple(temp_list)
-                    elif style_type == "italic":
-                        self.markers[original_marker_index][7] = is_checked
-                        if 0 <= original_marker_index < len(self._original_markers_data):
-                            temp_list = list(self._original_markers_data[original_marker_index])
-                            temp_list[7] = is_checked
-                            self._original_markers_data[original_marker_index] = tuple(temp_list)
-                    self.global_markers_adjusted.emit(list(self.markers))
-                    self.shapes_adjusted_preview.emit(list(self.shapes))
-                    
-                except IndexError:
-                    print(f"Error: Index mismatch updating style for marker original index {original_marker_index}.")
-        
         
             def handle_cell_double_clicked(self, row, column):
                 if column in [1, 2]: return # Ignore Text/Coords columns for double-click non-edit actions
-        
+
                 type_item = self.table_widget.item(row, 0)
                 if not type_item: return
                 item_data = type_item.data(Qt.UserRole)
                 if not item_data or item_data.get('type') == 'error': return
-        
+
                 item_type = item_data['type']
-                original_item_index = item_data.get('original_index') # Index into self.markers / self._original_markers_data
-        
+                original_item_index = item_data.get('original_index')
+
                 # Color Change (Column 6)
                 if column == 6:
                     current_qcolor_to_edit = None
                     if item_type == 'marker':
                         if not (0 <= original_item_index < len(self.markers)): return
-                        current_qcolor_to_edit = self.markers[original_item_index][3] # Get from working copy
+                        current_qcolor_to_edit = self.markers[original_item_index][3]
                     elif item_type == 'shape':
                         if not (0 <= original_item_index < len(self.shapes)): return
                         current_qcolor_to_edit = QColor(self.shapes[original_item_index].get('color', '#000000'))
-                    
+
                     if current_qcolor_to_edit:
                         new_color = QColorDialog.getColor(current_qcolor_to_edit, self, f"Select {item_type.capitalize()} Color")
                         if new_color.isValid():
                             if item_type == 'marker':
                                 self.markers[original_item_index][3] = new_color
-                                if 0 <= original_item_index < len(self._original_markers_data): # Update original too
+                                if 0 <= original_item_index < len(self._original_markers_data):
                                     temp_list = list(self._original_markers_data[original_item_index])
                                     temp_list[3] = new_color
                                     self._original_markers_data[original_item_index] = tuple(temp_list)
                             elif item_type == 'shape':
                                 self.shapes[original_item_index]['color'] = new_color.name()
-                            
-                            self._block_signals = True # Update table display
+
+                            self._block_signals = True
                             color_item = self.table_widget.item(row, 6); color_item.setText(new_color.name())
                             color_item.setBackground(QBrush(new_color));
                             text_color = Qt.white if new_color.lightness() < 128 else Qt.black
@@ -1371,45 +1421,91 @@ if __name__ == "__main__":
                             self._block_signals = False
                             self.shapes_adjusted_preview.emit(list(self.shapes))
                             self.global_markers_adjusted.emit(list(self.markers))
-        
+
                 # Font/Size Change for Markers (Column 3)
                 elif column == 3 and item_type == 'marker':
-                    if not (0 <= original_item_index < len(self.markers)): return
-                    _, _, _, _, font_family, current_display_font_size, is_bold, is_italic = self.markers[original_item_index]
-                    initial_qfont = QFont(font_family, current_display_font_size); initial_qfont.setBold(is_bold); initial_qfont.setItalic(is_italic)
-                    
-                    selected_font, ok = QFontDialog.getFont(initial_qfont, self, "Select Marker Font")
-                    if ok:
-                        # Update working copy with the new font selected by the user
-                        self.markers[original_item_index][4] = selected_font.family()
-                        self.markers[original_item_index][5] = selected_font.pointSize() # This is the new displayed size
-                        self.markers[original_item_index][6] = selected_font.bold()
-                        self.markers[original_item_index][7] = selected_font.italic()
-    
-                        # Update the _original_markers_data to reflect this manual edit
-                        # The "original" font size should be the one that, when scaled by the global
-                        # font_scale_slider, results in selected_font.pointSize().
-                        current_font_scale_factor = self.font_scale_slider.value() / 100.0
-                        
+                    if not (0 <= original_item_index < len(self.markers)):
+                        print(f"Warning: Invalid original_item_index ({original_item_index}) for font change.")
+                        return
+
+                    marker_entry = self.markers[original_item_index]
+                    try:
+                        font_family_str = str(marker_entry[4])
+                        current_display_font_size_int = int(marker_entry[5])
+                        is_bold_bool = bool(marker_entry[6])
+                        is_italic_bool = bool(marker_entry[7])
+                    except (IndexError, ValueError, TypeError) as e:
+                        print(f"Error accessing marker font properties: {e}. Marker data: {marker_entry}")
+                        QMessageBox.warning(self, "Data Error", "Could not read font properties for this marker.")
+                        return
+
+                    initial_qfont = QFont(font_family_str, current_display_font_size_int)
+                    initial_qfont.setBold(is_bold_bool)
+                    initial_qfont.setItalic(is_italic_bool)
+
+                    returned_val1, returned_val2 = QFontDialog.getFont(initial_qfont, self, "Select Marker Font")
+                    selected_font_obj = None; ok_flag = False
+                    if isinstance(returned_val1, QFont) and isinstance(returned_val2, bool):
+                        selected_font_obj = returned_val1; ok_flag = returned_val2
+                    elif isinstance(returned_val1, bool) and isinstance(returned_val2, QFont):
+                        selected_font_obj = returned_val2; ok_flag = returned_val1
+                    else:
+                        print(f"ERROR: QFontDialog.getFont returned unexpected types...")
+                        QMessageBox.warning(self, "Font Selection Error", "Font dialog returned unexpected data.")
+                        return
+
+                    if ok_flag:
+                        if not isinstance(selected_font_obj, QFont) or not selected_font_obj.family():
+                            print(f"ERROR: Selected font object is invalid...")
+                            QMessageBox.warning(self, "Font Selection Error", "The selected font is invalid.")
+                            return
+
+                        self.markers[original_item_index][4] = selected_font_obj.family()
+                        self.markers[original_item_index][5] = selected_font_obj.pointSize()
+                        self.markers[original_item_index][6] = selected_font_obj.bold()
+                        self.markers[original_item_index][7] = selected_font_obj.italic()
+
+                        font_scale_slider_val = self.font_scale_slider.value()
+                        scale_precision = self.scale_precision_factor
+                        if scale_precision == 0: scale_precision = 1.0
+                        current_font_scale_factor = (font_scale_slider_val / scale_precision) / 100.0
+                        if current_font_scale_factor == 0: current_font_scale_factor = 1.0
+
                         if 0 <= original_item_index < len(self._original_markers_data):
                             temp_list = list(self._original_markers_data[original_item_index])
-                            temp_list[4] = selected_font.family()
-                            # Store the "unscaled" base font size
-                            base_font_size = int(round(selected_font.pointSize() / current_font_scale_factor)) if current_font_scale_factor > 0 else selected_font.pointSize()
-                            temp_list[5] = max(1, base_font_size) # Ensure original font size is at least 1
-                            temp_list[6] = selected_font.bold()
-                            temp_list[7] = selected_font.italic()
+                            temp_list[4] = selected_font_obj.family()
+                            base_font_size = int(round(float(selected_font_obj.pointSize()) / current_font_scale_factor))
+                            temp_list[5] = max(1, base_font_size)
+                            temp_list[6] = selected_font_obj.bold()
+                            temp_list[7] = selected_font_obj.italic()
                             self._original_markers_data[original_item_index] = tuple(temp_list)
-    
-                        # Update table display (which shows self.markers values)
+
                         self._block_signals = True
-                        self.table_widget.item(row, 3).setText(f"{selected_font.family()} ({selected_font.pointSize()}pt)")
-                        bold_widget = self.table_widget.cellWidget(row, 4); italic_widget = self.table_widget.cellWidget(row, 5)
-                        if bold_widget: bold_widget.findChild(QCheckBox).setChecked(selected_font.bold())
-                        if italic_widget: italic_widget.findChild(QCheckBox).setChecked(selected_font.italic())
-                        self._block_signals = False
+                        try:
+                            style_item = self.table_widget.item(row, 3)
+                            if style_item: style_item.setText(f"{selected_font_obj.family()} ({selected_font_obj.pointSize()}pt)")
+
+                            bold_widget = self.table_widget.cellWidget(row, 4)
+                            if bold_widget:
+                                cb_bold = bold_widget.findChild(QCheckBox)
+                                if cb_bold:
+                                    try: cb_bold.stateChanged.disconnect()
+                                    except (TypeError, RuntimeError): pass
+                                    cb_bold.setChecked(selected_font_obj.bold())
+                                    cb_bold.stateChanged.connect(self.handle_marker_style_changed_from_checkbox) # Connect to new handler
+
+                            italic_widget = self.table_widget.cellWidget(row, 5)
+                            if italic_widget:
+                                cb_italic = italic_widget.findChild(QCheckBox)
+                                if cb_italic:
+                                    try: cb_italic.stateChanged.disconnect()
+                                    except (TypeError, RuntimeError): pass
+                                    cb_italic.setChecked(selected_font_obj.italic())
+                                    cb_italic.stateChanged.connect(self.handle_marker_style_changed_from_checkbox) # Connect to new handler
+                        finally:
+                            self._block_signals = False
                         self.global_markers_adjusted.emit(list(self.markers))
-        
+
                 # Thickness Change for Shapes (Column 3)
                 elif column == 3 and item_type == 'shape':
                      if not (0 <= original_item_index < len(self.shapes)): return
@@ -1428,87 +1524,90 @@ if __name__ == "__main__":
                 if not type_item: return
                 item_data = type_item.data(Qt.UserRole)
                 if not item_data or item_data.get('type') == 'error': return
-                
+
                 item_type = item_data['type']
-                # original_index refers to the index in self.markers or self.shapes
-                # (and correspondingly self._original_markers_data)
-                original_index_in_list = item_data['original_index'] 
-                
+                original_index_in_list_of_deleted_item = item_data['original_index']
+
                 sort_col = self.table_widget.horizontalHeader().sortIndicatorSection()
                 sort_order = self.table_widget.horizontalHeader().sortIndicatorOrder()
                 self.table_widget.setSortingEnabled(False)
-        
+
                 item_deleted_from_list = False
                 if item_type == 'marker':
-                    if 0 <= original_index_in_list < len(self.markers):
-                        del self.markers[original_index_in_list]
-                        # Also delete from _original_markers_data to keep them in sync
-                        if 0 <= original_index_in_list < len(self._original_markers_data):
-                            del self._original_markers_data[original_index_in_list]
+                    if 0 <= original_index_in_list_of_deleted_item < len(self.markers):
+                        del self.markers[original_index_in_list_of_deleted_item]
+                        if 0 <= original_index_in_list_of_deleted_item < len(self._original_markers_data):
+                            del self._original_markers_data[original_index_in_list_of_deleted_item]
                         item_deleted_from_list = True
-                    else: print(f"Warning: Stale original index {original_index_in_list} for marker deletion.")
                 elif item_type == 'shape':
-                    if 0 <= original_index_in_list < len(self.shapes):
-                        del self.shapes[original_index_in_list]
+                    if 0 <= original_index_in_list_of_deleted_item < len(self.shapes):
+                        del self.shapes[original_index_in_list_of_deleted_item]
                         item_deleted_from_list = True
-                    else: print(f"Warning: Stale original index {original_index_in_list} for shape deletion.")
-        
+
                 if item_deleted_from_list:
                     self.table_widget.removeRow(row_to_delete)
-                    # --- Re-index UserRole data ('original_index') and reconnect signals ---
+                    # --- Re-index UserRole data AND Checkbox Properties ---
                     for current_row_in_table in range(self.table_widget.rowCount()):
                         current_type_item = self.table_widget.item(current_row_in_table, 0)
                         if not current_type_item: continue
                         current_item_data = current_type_item.data(Qt.UserRole)
                         if not current_item_data or current_item_data.get('type') == 'error': continue
-                        
-                        current_item_type = current_item_data['type']
-                        current_original_idx_stored = current_item_data['original_index']
-                        
+
+                        current_item_type_iter = current_item_data['type']
+                        current_original_idx_stored_iter = current_item_data['original_index']
                         new_original_idx_to_store = -1
-                        if current_item_type == item_type: # If it's the same type as the one deleted
-                            if current_original_idx_stored > original_index_in_list:
-                                new_original_idx_to_store = current_original_idx_stored - 1
+
+                        if current_item_type_iter == item_type:
+                            if current_original_idx_stored_iter > original_index_in_list_of_deleted_item:
+                                new_original_idx_to_store = current_original_idx_stored_iter - 1
                             else:
-                                new_original_idx_to_store = current_original_idx_stored
-                        else: # Different type, index is unaffected by this deletion
-                            new_original_idx_to_store = current_original_idx_stored
-                        
-                        current_type_item.setData(Qt.UserRole, {'type': current_item_type, 'original_index': new_original_idx_to_store})
-        
-                        # Reconnect signals for the widgets in the current row
+                                new_original_idx_to_store = current_original_idx_stored_iter
+                        else:
+                            new_original_idx_to_store = current_original_idx_stored_iter
+
+                        current_type_item.setData(Qt.UserRole, {'type': current_item_type_iter, 'original_index': new_original_idx_to_store})
+
+                        # Reconnect delete button signal
                         delete_button_widget = self.table_widget.cellWidget(current_row_in_table, 7)
                         if isinstance(delete_button_widget, QPushButton):
                             try: delete_button_widget.clicked.disconnect()
-                            except TypeError: pass
+                            except (TypeError, RuntimeError): pass
                             delete_button_widget.clicked.connect(lambda checked, r=current_row_in_table: self.delete_item(r))
-        
-                        if current_item_type == 'marker':
+
+                        # For markers, update checkbox properties and reconnect signals
+                        if current_item_type_iter == 'marker':
                             bold_cell_widget = self.table_widget.cellWidget(current_row_in_table, 4)
                             if bold_cell_widget:
                                 bold_checkbox = bold_cell_widget.findChild(QCheckBox)
                                 if bold_checkbox:
+                                    bold_checkbox.setProperty("original_marker_index", new_original_idx_to_store) # Update property
                                     try: bold_checkbox.stateChanged.disconnect()
-                                    except TypeError: pass
-                                    bold_checkbox.stateChanged.connect(lambda state, r=current_row_in_table: self.handle_marker_style_changed(state, r, "bold"))
+                                    except (TypeError, RuntimeError): pass
+                                    bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
+
                             italic_cell_widget = self.table_widget.cellWidget(current_row_in_table, 5)
                             if italic_cell_widget:
                                 italic_checkbox = italic_cell_widget.findChild(QCheckBox)
                                 if italic_checkbox:
+                                    italic_checkbox.setProperty("original_marker_index", new_original_idx_to_store) # Update property
                                     try: italic_checkbox.stateChanged.disconnect()
-                                    except TypeError: pass
-                                    italic_checkbox.stateChanged.connect(lambda state, r=current_row_in_table: self.handle_marker_style_changed(state, r, "italic"))
+                                    except (TypeError, RuntimeError): pass
+                                    italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
                     # --- End Re-indexing/Reconnecting ---
                 else: print(f"Warning: Could not delete item from internal list for row {row_to_delete}.")
-        
+
                 self.table_widget.setSortingEnabled(True)
                 if sort_col >= 0: self.table_widget.sortByColumn(sort_col, sort_order)
-        
+                
+                # Emit signals after deletion to update preview
+                self.global_markers_adjusted.emit(list(self.markers))
+                self.shapes_adjusted_preview.emit(list(self.shapes))
+
+
             def get_modified_markers_and_shapes(self):
                 """Returns the modified lists of markers (already reflecting global adjustments) and shapes."""
-                # self.markers already contains the final state after global adjustments and individual edits
-                final_markers = [tuple(m) for m in self.markers] # Convert back to list of tuples
-                return final_markers, self.shapes # self.shapes is not globally adjusted by these sliders
+                final_markers = [tuple(m) for m in self.markers]
+                return final_markers, self.shapes
 
         class TableWindow(QDialog):
             HISTORY_FILE_NAME = "analysis_history.json"
@@ -1521,7 +1620,7 @@ if __name__ == "__main__":
                 self.setWindowTitle("Analysis Results and History")
                 # Increased width to accommodate band numbers next to lane + font slider
                 self.setGeometry(100, 100, 1050, 800) 
-
+                self.temp_clipboard_file_path = None
                 self.parent_app = parent_app_instance
                 self.current_results_data = {} 
                 self.is_current_data_multi_lane = isinstance(current_peak_areas_data, dict)
@@ -5767,9 +5866,7 @@ if __name__ == "__main__":
                 self.live_view_label.mode = None
                 self.live_view_label.quad_points = [] # Clear points from label
                 self.live_view_label.setCursor(Qt.ArrowCursor)
-                self.live_view_label.mousePressEvent = None # Important to reset
-                self.live_view_label.mouseMoveEvent = None
-                self.live_view_label.mouseReleaseEvent = None
+                self._reset_live_view_label_custom_handlers() # Important to reset
                 self.update_live_view()
 
 
@@ -6061,9 +6158,9 @@ if __name__ == "__main__":
                 self.live_view_label.setMouseTracking(True)  # Ensure mouse events are enabled
                 self.setMouseTracking(True)  # Ensure parent also tracks mouse
                 # Assign mouse event handlers for bounding box creation
-                self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
-                self.live_view_label.mouseReleaseEvent = lambda event: self.end_standard_bounding_box(event)
-                self.live_view_label.setCursor(Qt.CrossCursor)
+                self._reset_live_view_label_custom_handlers() # Good practice to reset first
+                self.live_view_label._custom_left_click_handler_from_app = lambda event: self.start_bounding_box(event)
+                self.live_view_label._custom_mouseReleaseEvent_from_app = lambda event: self.end_standard_bounding_box(event)
             
             def enable_measure_protein_mode(self):
                 """Enable mode to measure protein quantity using the standard curve."""
@@ -6074,9 +6171,9 @@ if __name__ == "__main__":
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 self.live_view_label.setMouseTracking(True)  # Ensure mouse events are enabled
                 self.setMouseTracking(True)  # Ensure parent also tracks mouse
-                self.live_view_label.mousePressEvent = lambda event: self.start_bounding_box(event)
-                self.live_view_label.mouseReleaseEvent = lambda event: self.end_measure_bounding_box(event)
-                self.live_view_label.setCursor(Qt.CrossCursor)
+                self._reset_live_view_label_custom_handlers() # Good practice
+                self.live_view_label._custom_left_click_handler_from_app = lambda event: self.start_bounding_box(event)
+                self.live_view_label._custom_mouseReleaseEvent_from_app = lambda event: self.end_measure_bounding_box(event)
 
             def call_live_view(self):
                 self.update_live_view()      
@@ -6664,9 +6761,7 @@ if __name__ == "__main__":
                 self.live_view_label.rectangle_start = None
                 self.live_view_label.rectangle_end = None
                 self.live_view_label.selected_point = -1
-                self.live_view_label.mousePressEvent = None
-                self.live_view_label.mouseMoveEvent = None
-                self.live_view_label.mouseReleaseEvent = None
+                self._reset_live_view_label_custom_handlers()
                 self.live_view_label.mode = None
                 self.live_view_label.setCursor(Qt.ArrowCursor)
                 self.update_live_view()
@@ -6815,9 +6910,7 @@ if __name__ == "__main__":
                 
                 self.live_view_label.mode = None
                 self.live_view_label.setCursor(Qt.ArrowCursor)
-                self.live_view_label.mousePressEvent = None
-                self.live_view_label.mouseMoveEvent = None
-                self.live_view_label.mouseReleaseEvent = None
+                self._reset_live_view_label_custom_handlers()
                 
                 # === ADDED/UNCOMMENTED: Explicitly clear LiveViewLabel's preview buffers ===
                 self.live_view_label.quad_points = [] 
@@ -7130,9 +7223,9 @@ if __name__ == "__main__":
                     self.current_selection_mode = "select_for_move"
                     self.live_view_label.mode = "select_for_move"
                     
-                    self.live_view_label.mouseMoveEvent = None
-                    self.live_view_label.mouseReleaseEvent = None
-                    self.live_view_label.mousePressEvent = self.handle_area_selection_click
+                    self.live_view_label._custom_mouseMoveEvent_from_app = None
+                    self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                    self.live_view_label._custom_left_click_handler_from_app = self.handle_area_selection_click
                     
                     self.update_live_view()
             
@@ -7192,6 +7285,7 @@ if __name__ == "__main__":
             def enable_quad_mode(self):
                 """Enable mode to define a single quadrilateral area, clearing multi-lane definitions."""
                 # --- NEW: Clear multi-lane definitions if they exist ---
+                self.live_view_label.setCursor(Qt.CrossCursor)
                 if self.multi_lane_definitions:
                     print("INFO: Clearing existing multi-lane definitions to define a single quadrilateral.")
                     self.multi_lane_definitions.clear()
@@ -7210,7 +7304,6 @@ if __name__ == "__main__":
                 self.live_view_label.bounding_box_complete = False
                 self.live_view_label.measure_quantity_mode = True # App flag
                 self.live_view_label.mode = "quad" # For LiveViewLabel's paintEvent
-                self.live_view_label.setCursor(Qt.CrossCursor)
                 self._reset_live_view_label_custom_handlers() # Clear previous custom handlers
                 
                 # Clearing single-lane results as well, as we are defining a new single area
@@ -7230,6 +7323,7 @@ if __name__ == "__main__":
             def enable_rectangle_mode(self):
                 """Enable mode to define a single rectangle area, clearing multi-lane definitions."""
                 # --- NEW: Clear multi-lane definitions if they exist ---
+                self.live_view_label.setCursor(Qt.CrossCursor)
                 if self.multi_lane_definitions:
                     print("INFO: Clearing existing multi-lane definitions to define a single rectangle.")
                     self.multi_lane_definitions.clear()
@@ -9686,7 +9780,8 @@ if __name__ == "__main__":
                 self.live_view_label.update()
                 
                 self.marker_mode = "custom"  # Indicate custom marker mode
-                self.live_view_label.mousePressEvent = lambda event: self.place_custom_marker(event, custom_text)
+                self.live_view_label._custom_left_click_handler_from_app = lambda event: self.place_custom_marker(event, custom_text)
+                # self.live_view_label.mousePressEvent = lambda event: self.place_custom_marker(event, custom_text)
                 
             def remove_custom_marker_mode(self):
                 if hasattr(self, "custom_markers") and isinstance(self.custom_markers, list) and self.custom_markers:
@@ -10708,228 +10803,196 @@ if __name__ == "__main__":
                     self.save_state() # Save initial loaded state
             
             def apply_config(self, config_data):
-                self.left_padding_input.setText(config_data["adding_white_space"]["left"])
-                self.right_padding_input.setText(config_data["adding_white_space"]["right"])
-                self.top_padding_input.setText(config_data["adding_white_space"]["top"])
+                # --- 1. Load data from config_data into self attributes ---
+
+                # Padding text inputs
+                adding_white_space_data = config_data.get("adding_white_space", {})
+                self.left_padding_input.setText(str(adding_white_space_data.get("left", "0")))
+                self.right_padding_input.setText(str(adding_white_space_data.get("right", "0")))
+                self.top_padding_input.setText(str(adding_white_space_data.get("top", "0")))
+                self.bottom_padding_input.setText(str(adding_white_space_data.get("bottom", "0")))
+                try:
+                    self.transparency = int(adding_white_space_data.get("transparency", 1))
+                except (ValueError, TypeError):
+                    self.transparency = 1
+
+                # Standard marker positions
+                marker_positions_data = config_data.get("marker_positions", {})
+                self.left_markers = [(float(pos), str(label)) for pos, label in marker_positions_data.get("left", [])]
+                self.right_markers = [(float(pos), str(label)) for pos, label in marker_positions_data.get("right", [])]
+                self.top_markers = [(float(pos), str(label)) for pos, label in marker_positions_data.get("top", [])]
+
+                # Top labels (internal list)
+                marker_labels_data = config_data.get("marker_labels", {})
+                self.top_label = [str(label).strip() for label in marker_labels_data.get("top", []) if str(label).strip()]
+
+                # L/R marker values (internal list) - Determine if they are "custom" from this image config
+                custom_lr_marker_values_from_config = []
+                config_suggests_custom_lr_for_combobox = False
+                lr_source_key = None
+                # Check "left" first, then "right" as the source for L/R values in an image-specific config
+                if "left" in marker_labels_data and isinstance(marker_labels_data["left"], list):
+                    lr_source_key = "left"
+                elif "right" in marker_labels_data and isinstance(marker_labels_data["right"], list):
+                    lr_source_key = "right"
                 
-                try:
-                    self.transparency=int(config_data["adding_white_space"]["transparency"])
-                except:
-                    pass
+                if lr_source_key:
+                    raw_values = marker_labels_data[lr_source_key]
+                    for v_str in raw_values:
+                        s_val = str(v_str).strip()
+                        if not s_val: continue # Skip empty strings
+                        try: custom_lr_marker_values_from_config.append(int(s_val))
+                        except ValueError:
+                            try: custom_lr_marker_values_from_config.append(float(s_val))
+                            except ValueError: custom_lr_marker_values_from_config.append(s_val) # Keep as string if not number
+                    if custom_lr_marker_values_from_config:
+                         config_suggests_custom_lr_for_combobox = True
                 
-                    
-                try:
-                    self.bottom_padding_input.setText(config_data["adding_white_space"]["bottom"])
-                except:
-                    pass
-                
-            
-                try:
-                    self.left_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["left"]]
-                    self.right_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["right"]]
-                    self.top_markers = [(float(pos), str(label)) for pos, label in config_data["marker_positions"]["top"]]
-                except (KeyError, ValueError) as e:
-                    # QMessageBox.warning(self, "Error", f"Invalid marker data in config: {e}")
-                    pass
-                try:
-                    self.top_label = [str(label) for label in config_data["marker_labels"]["top"]]
-                    self.top_marker_input.setText(", ".join(self.top_label))
-                except KeyError as e:
-                    # QMessageBox.warning(self, "Error", f"Invalid marker labels in config: {e}")
-                    pass
-            
-                self.font_family = config_data["font_options"]["font_family"]
-                self.font_size = config_data["font_options"]["font_size"]
-                self.font_rotation = config_data["font_options"]["font_rotation"]
-                self.font_color = QColor(config_data["font_options"]["font_color"])
-            
-                try:
-                    top_padding_val = int(config_data["marker_padding"]["top"])
-                    left_padding_val = int(config_data["marker_padding"]["left"])
-                    right_padding_val = int(config_data["marker_padding"]["right"])
-                except (KeyError, ValueError, TypeError) as e:
-                    print(f"Warning: Invalid 'marker_padding' data in config: {e}. Using defaults.")
-                    top_padding_val, left_padding_val, right_padding_val = 0, 0, 0
+                if config_suggests_custom_lr_for_combobox:
+                    self.marker_values = custom_lr_marker_values_from_config # Set internal list
+                else:
+                    # If no L/R values from this specific image config,
+                    # self.marker_values will be populated by on_combobox_changed based on the selected preset.
+                    self.marker_values = []
 
-                # Load added shifts (internal variables used for rendering)
-                try:
-                    self.left_marker_shift_added = int(config_data["added_shift"]["left"])
-                    self.right_marker_shift_added = int(config_data["added_shift"]["right"])
-                    self.top_marker_shift_added = int(config_data["added_shift"]["top"])
-                    # Validation: Ensure loaded shift matches padding value if both exist and are valid
-                    if self.left_marker_shift_added != left_padding_val or \
-                       self.right_marker_shift_added != right_padding_val or \
-                       self.top_marker_shift_added != top_padding_val:
-                         print("Warning: Config 'added_shift' differs from 'marker_padding'. Prioritizing 'added_shift'.")
-                         # Optionally update padding_val to match shift for consistency if desired:
-                         # left_padding_val = self.left_marker_shift_added
-                         # right_padding_val = self.right_marker_shift_added
-                         # top_padding_val = self.top_marker_shift_added
 
-                except KeyError:
-                    # If added_shift is missing (older config?), use marker_padding as the source
-                    print("Info: 'added_shift' not found in config, using 'marker_padding'.")
-                    self.left_marker_shift_added = left_padding_val
-                    self.right_marker_shift_added = right_padding_val
-                    self.top_marker_shift_added = top_padding_val
-                except (ValueError, TypeError) as e:
-                     # Handle potential conversion errors if data is invalid
-                     print(f"Warning: Invalid 'added_shift' data in config: {e}. Resetting shifts.")
-                     self.left_marker_shift_added, left_padding_val = 0, 0
-                     self.right_marker_shift_added, right_padding_val = 0, 0
-                     self.top_marker_shift_added, top_padding_val = 0, 0
+                # Font options for standard markers
+                font_options_data = config_data.get("font_options", {})
+                self.font_family = font_options_data.get("font_family", "Arial")
+                self.font_size = int(font_options_data.get("font_size", 12))
+                self.font_rotation = int(font_options_data.get("font_rotation", -45))
+                font_color_str = font_options_data.get("font_color", "#000000")
+                self.font_color = QColor(font_color_str)
+                if not self.font_color.isValid(): self.font_color = QColor(0,0,0) # Fallback
 
-                # Load slider ranges (set range BEFORE value for Qt)
-                try:
-                    lr_min, lr_max = map(int, config_data["slider_ranges"]["left"])
-                    self.left_padding_slider.setRange(lr_min, lr_max)
-                    self.left_slider_range = [lr_min, lr_max] # Store internally
 
-                    rr_min, rr_max = map(int, config_data["slider_ranges"]["right"])
-                    self.right_padding_slider.setRange(rr_min, rr_max)
-                    self.right_slider_range = [rr_min, rr_max] # Store internally
+                # --- Marker Shifts and Slider Value Logic ---
+                marker_padding_data = config_data.get("marker_padding", {})
+                added_shift_data = config_data.get("added_shift", {})
 
-                    tr_min, tr_max = map(int, config_data["slider_ranges"]["top"])
-                    self.top_padding_slider.setRange(tr_min, tr_max)
-                    self.top_slider_range = [tr_min, tr_max] # Store internally
+                # 1. Determine the values from "marker_padding" (these will directly set the sliders)
+                try: padding_val_left = int(marker_padding_data.get("left", 0))
+                except (ValueError, TypeError): padding_val_left = 0
+                try: padding_val_right = int(marker_padding_data.get("right", 0))
+                except (ValueError, TypeError): padding_val_right = 0
+                try: padding_val_top = int(marker_padding_data.get("top", 0))
+                except (ValueError, TypeError): padding_val_top = 0
 
-                except (KeyError, ValueError, TypeError) as e:
-                    print(f"Warning: Slider ranges missing or invalid in config: {e}. Ranges will be updated.")
-                    # Don't set default ranges here, let _update_marker_slider_ranges handle it later
-                    pass
+                # 2. Load "added_shift" values from config. These are the true internal state.
+                #    If "added_shift" is missing, fall back to "marker_padding" values for the internal state.
+                self.left_marker_shift_added = int(added_shift_data.get("left", padding_val_left))
+                self.right_marker_shift_added = int(added_shift_data.get("right", padding_val_right))
+                self.top_marker_shift_added = int(added_shift_data.get("top", padding_val_top))
 
-                # Now set the slider values using the determined padding_val
-                # Qt might clamp these values if they are outside the range just set.
-                self.top_padding_slider.setValue(top_padding_val)
-                self.left_padding_slider.setValue(left_padding_val)
-                self.right_padding_slider.setValue(right_padding_val)
+                # 3. Load and set slider RANGES.
+                slider_ranges_data = config_data.get("slider_ranges", {})
+                lr_range_conf = slider_ranges_data.get("left", [])
+                rr_range_conf = slider_ranges_data.get("right", [])
+                tr_range_conf = slider_ranges_data.get("top", [])
+                default_min_range, default_max_range_w, default_max_range_h = -1000, 2000, 2000 # Adjusted defaults
 
-                # --- CRITICAL RE-SYNC ---
-                # After setting slider values (which might have been clamped by setRange),
-                # ensure the internal _shift_added variables MATCH the final slider values.
-                # This makes the internal state consistent with the UI state *after* loading.
-                self.left_marker_shift_added = self.left_padding_slider.value()
-                self.right_marker_shift_added = self.right_padding_slider.value()
-                self.top_marker_shift_added = self.top_padding_slider.value()
-                
-                try:
+                if hasattr(self, 'left_padding_slider'):
                     try:
-                        x = list(map(int, config_data["marker_labels"]["left"]))
-                        self.marker_values_textbox.setText(str(x))
-                    except:
-                        x = list(map(int, config_data["marker_labels"]["right"]))
-                        self.marker_values_textbox.setText(str(x))
-                    if self.marker_values_textbox.text!="":
-                        self.combo_box.setCurrentText("Custom")
-                        self.marker_values_textbox.setEnabled(True)                
+                        lr_min, lr_max = (int(lr_range_conf[0]), int(lr_range_conf[1])) if len(lr_range_conf) == 2 else (default_min_range, default_max_range_w)
+                        self.left_padding_slider.setRange(lr_min, lr_max); self.left_slider_range = [lr_min, lr_max]
+                    except (IndexError, TypeError, ValueError): self.left_padding_slider.setRange(default_min_range, default_max_range_w)
+                if hasattr(self, 'right_padding_slider'):
+                    try:
+                        rr_min, rr_max = (int(rr_range_conf[0]), int(rr_range_conf[1])) if len(rr_range_conf) == 2 else (default_min_range, default_max_range_w)
+                        self.right_padding_slider.setRange(rr_min, rr_max); self.right_slider_range = [rr_min, rr_max]
+                    except (IndexError, TypeError, ValueError): self.right_padding_slider.setRange(default_min_range, default_max_range_w)
+                if hasattr(self, 'top_padding_slider'):
+                    try:
+                        tr_min, tr_max = (int(tr_range_conf[0]), int(tr_range_conf[1])) if len(tr_range_conf) == 2 else (default_min_range, default_max_range_h)
+                        self.top_padding_slider.setRange(tr_min, tr_max); self.top_slider_range = [tr_min, tr_max]
+                    except (IndexError, TypeError, ValueError): self.top_padding_slider.setRange(default_min_range, default_max_range_h)
+
+                # 4. Set slider VALUES using self.xxx_marker_shift_added (which now holds the true state)
+                #    Signals are blocked. Qt will clamp these if they are outside the range just set.
+                if hasattr(self, 'left_padding_slider'):
+                    self.left_padding_slider.blockSignals(True); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.blockSignals(False)
+                if hasattr(self, 'right_padding_slider'):
+                    self.right_padding_slider.blockSignals(True); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.blockSignals(False)
+                if hasattr(self, 'top_padding_slider'):
+                    self.top_padding_slider.blockSignals(True); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.blockSignals(False)
+
+                # 5. CRITICAL RE-SYNC: Ensure internal `_marker_shift_added` variables
+                #    MATCH the SLIDER'S ACTUAL VALUE after potential clamping by setValue.
+                if hasattr(self, 'left_padding_slider'): self.left_marker_shift_added = self.left_padding_slider.value()
+                if hasattr(self, 'right_padding_slider'): self.right_marker_shift_added = self.right_padding_slider.value()
+                if hasattr(self, 'top_padding_slider'): self.top_marker_shift_added = self.top_padding_slider.value()
+                # --- End Marker Shifts and Slider Logic ---
+
+
+                # --- ComboBox and UI Update for L/R values and Top Labels ---
+                if hasattr(self, 'combo_box'):
+                    self.combo_box.blockSignals(True)
+                    if config_suggests_custom_lr_for_combobox: # Implies self.marker_values is set from image config
+                        custom_idx = self.combo_box.findText("Custom")
+                        if custom_idx != -1: self.combo_box.setCurrentIndex(custom_idx)
                     else:
-                        self.combo_box.setCurrentText("Precision Plus All Blue/Unstained")
-                        self.marker_values_textbox.setEnabled(False)
-                        
-                except:
-                    pass
-            
-                try:
-                    loaded_custom_markers = []
-                    for marker_dict in config_data.get("custom_markers", []):
-                        try:
-                            x = float(marker_dict["x"])
-                            y = float(marker_dict["y"])
-                            text = str(marker_dict["text"])
-                            color = QColor(marker_dict["color"])
-                            if not color.isValid(): color = QColor(0,0,0) # Fallback if invalid string
-                            loaded_custom_markers.append((
-                                float(marker_dict["x"]), float(marker_dict["y"]), str(marker_dict["text"]),
-                                color, # Store the QColor object
-                                str(marker_dict["font"]), int(marker_dict["font_size"]),
-                                bool(marker_dict.get("bold", False)), bool(marker_dict.get("italic", False))
-                            ))
-                        except (KeyError, ValueError, TypeError) as e:
-                            print(f"Warning: Skipping invalid custom marker in config: {marker_dict}, Error: {e}")
-                    self.custom_markers = [list(m) for m in loaded_custom_markers] 
-                        
-                        
-                        
-                except:
-                    pass
-                
-                try:
-                    loaded_custom_shapes = []
-                    for shape_dict in config_data.get("custom_shapes", []):
-                        try:
-                            shape_type = shape_dict.get('type')
-                            color_str = shape_dict.get('color')
-                            thickness = int(shape_dict.get('thickness'))
-            
-                            # Validate basic fields
-                            if shape_type not in ['line', 'rectangle'] or not color_str or thickness < 1:
-                                raise ValueError("Missing or invalid basic shape data")
-            
-                            # Validate and convert coordinate data
-                            parsed_shape = {'type': shape_type, 'color': color_str, 'thickness': thickness}
-                            if shape_type == 'line':
-                                start = tuple(map(float, shape_dict.get('start')))
-                                end = tuple(map(float, shape_dict.get('end')))
-                                if len(start) != 2 or len(end) != 2: raise ValueError("Invalid line coordinates")
-                                parsed_shape['start'] = start
-                                parsed_shape['end'] = end
-                            elif shape_type == 'rectangle':
-                                rect = tuple(map(float, shape_dict.get('rect'))) # x,y,w,h
-                                if len(rect) != 4 or rect[2] < 0 or rect[3] < 0: raise ValueError("Invalid rectangle coordinates/size")
-                                parsed_shape['rect'] = rect
-                            else:
-                                continue # Skip unknown types
-            
-                            loaded_custom_shapes.append(parsed_shape) # Add the validated shape dict
-            
-                        except (KeyError, ValueError, TypeError, AttributeError) as e:
-                             print(f"Warning: Skipping invalid custom shape in config: {shape_dict}, Error: {e}")
-                    self.custom_shapes = loaded_custom_shapes # Assign the loaded list
-                except:
-                    pass
-                
-                custom_markers_data_from_image_config = config_data.get("custom_markers", [])
+                        # If no L/R in image config, try to load saved preset name from config_data itself.
+                        # This 'selected_preset_name' would have been saved if the image was last saved with a specific preset selected.
+                        selected_preset_name_from_config = config_data.get("selected_preset_name", None)
+                        if selected_preset_name_from_config and self.combo_box.findText(selected_preset_name_from_config) != -1:
+                            self.combo_box.setCurrentText(selected_preset_name_from_config)
+                        else: # Fallback to a default preset if nothing specific is found.
+                            default_biorad = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
+                            idx_biorad = self.combo_box.findText(default_biorad)
+                            if idx_biorad != -1: self.combo_box.setCurrentIndex(idx_biorad)
+                            elif self.combo_box.count() > 0: # If BioRad not found, select first available or "Custom"
+                                custom_idx_fallback = self.combo_box.findText("Custom")
+                                if custom_idx_fallback == 0 and self.combo_box.count() > 1: self.combo_box.setCurrentIndex(1)
+                                elif custom_idx_fallback != -1: self.combo_box.setCurrentIndex(custom_idx_fallback)
+                                else: self.combo_box.setCurrentIndex(0)
+                    self.combo_box.blockSignals(False)
+                    self.on_combobox_changed() # Updates text boxes based on current combobox selection and internal lists
+
+                # Load custom markers and shapes
+                custom_markers_data_from_image_config = config_data.get("custom_markers_config", config_data.get("custom_markers", [])) # Check both keys
                 self.custom_markers = [list(m) for m in self._deserialize_custom_markers(custom_markers_data_from_image_config)]
-                self.custom_shapes = list(config_data.get("custom_shapes", []))
-                # Set slider ranges from config_data
-                try:
-                    self.left_padding_slider.setRange(
-                        int(config_data["slider_ranges"]["left"][0]), int(config_data["slider_ranges"]["left"][1])
-                    )
-                    self.right_padding_slider.setRange(
-                        int(config_data["slider_ranges"]["right"][0]), int(config_data["slider_ranges"]["right"][1])
-                    )
-                    self.top_padding_slider.setRange(
-                        int(config_data["slider_ranges"]["top"][0]), int(config_data["slider_ranges"]["top"][1])
-                    )
-                except KeyError:
-                    # Handle missing or incomplete slider_ranges data
-                    # print("Error: Slider ranges not found in config_data.")
-                    pass
                 
-                try:
-                    self.left_marker_shift_added=int(config_data["added_shift"]["left"])
-                    self.right_marker_shift_added=int(config_data["added_shift"]["right"])
-                    self.top_marker_shift_added=int(config_data["added_shift"]["top"])
-                    
-                except KeyError:
-                    # Handle missing or incomplete slider_ranges data
-                    # print("Error: Added Shift not found in config_data.");
-                    pass
-                    
-                # Apply font settings
+                self.custom_shapes = []
+                loaded_shapes_from_config = config_data.get("custom_shapes_config", config_data.get("custom_shapes", [])) # Check both keys
+                if isinstance(loaded_shapes_from_config, list):
+                    for shape_item in loaded_shapes_from_config:
+                        if isinstance(shape_item, dict):
+                            self.custom_shapes.append(dict(shape_item))
 
+                # Update standard font UI elements
+                if hasattr(self, 'font_combo_box'):
+                    self.font_combo_box.blockSignals(True); self.font_combo_box.setCurrentFont(QFont(self.font_family)); self.font_combo_box.blockSignals(False)
+                if hasattr(self, 'font_size_spinner'):
+                    self.font_size_spinner.blockSignals(True); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.blockSignals(False)
+                if hasattr(self, 'font_rotation_input'):
+                    self.font_rotation_input.blockSignals(True); self.font_rotation_input.setValue(self.font_rotation); self.font_rotation_input.blockSignals(False)
+                if hasattr(self, 'font_color_button'):
+                    self._update_color_button_style(self.font_color_button, self.font_color)
                 
-                #DO NOT KNOW WHY THIS WORKS BUT DIRECT VARIABLE ASSIGNING DOES NOT WORK
+                # Apply UI state for custom marker creation tools (if saved in config, e.g. from a full preset)
+                ui_custom_settings = config_data.get("ui_custom_marker_settings", {})
                 
-                font_size_new=self.font_size
-                font_rotation_new=self.font_rotation
-                
-                self.font_combo_box.setCurrentFont(QFont(self.font_family))
-                self.font_size_spinner.setValue(font_size_new)
-                self.font_rotation_input.setValue(font_rotation_new)
+                custom_marker_color_str = ui_custom_settings.get("color", self.custom_marker_color.name() if hasattr(self, 'custom_marker_color') else "#000000")
+                temp_custom_color = QColor(custom_marker_color_str)
+                self.custom_marker_color = temp_custom_color if temp_custom_color.isValid() else QColor(0,0,0)
 
-                self.update_live_view()
+                if hasattr(self, 'custom_font_type_dropdown'):
+                    default_custom_family = self.custom_font_type_dropdown.currentFont().family() if self.custom_font_type_dropdown.count() > 0 else "Arial"
+                    custom_font_family_str = ui_custom_settings.get("font_family", default_custom_family)
+                    self.custom_font_type_dropdown.blockSignals(True)
+                    self.custom_font_type_dropdown.setCurrentFont(QFont(custom_font_family_str))
+                    self.custom_font_type_dropdown.blockSignals(False)
+                    self.update_marker_text_font(self.custom_font_type_dropdown.currentFont())
+
+                if hasattr(self, 'custom_font_size_spinbox'):
+                    default_custom_size = self.custom_font_size_spinbox.value() if hasattr(self, 'custom_font_size_spinbox') else 12
+                    custom_font_size_val = int(ui_custom_settings.get("font_size", default_custom_size))
+                    self.custom_font_size_spinbox.blockSignals(True)
+                    self.custom_font_size_spinbox.setValue(custom_font_size_val)
+                    self.custom_font_size_spinbox.blockSignals(False)
+
+                if hasattr(self, 'custom_marker_color_button'):
+                    self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
                 
             def get_current_config(self):
                 """Gathers the current application state into a dictionary for saving."""
@@ -12529,6 +12592,7 @@ if __name__ == "__main__":
                     QMessageBox.warning(self, "Warning", "No image to copy.")
                     return
 
+                # --- Perform all rendering to high_res_canvas_mod first ---
                 render_scale = 3
                 try:
                     view_width = self.live_view_label.width(); view_height = self.live_view_label.height()
@@ -12548,67 +12612,60 @@ if __name__ == "__main__":
                     return
                 render_canvas_for_clip.fill(Qt.transparent)
 
-                scaled_image_for_clip = None # Initialize
+                scaled_image_for_clip = None
                 if self.image and not self.image.isNull():
                     try:
-                        scaled_image_for_clip = self.image.scaled( # This is self.image scaled to fit render_canvas_for_clip
+                        scaled_image_for_clip = self.image.scaled(
                             high_res_canvas_width, high_res_canvas_height,
                             Qt.KeepAspectRatio, Qt.SmoothTransformation
                         )
                         if scaled_image_for_clip.isNull():
                             raise ValueError("Scaling image for clipboard failed.")
                         
+                        # Call the existing render_image_on_canvas to draw the base image content
                         self.render_image_on_canvas(
                             render_canvas_for_clip, scaled_image_for_clip,
                             x_start=0, y_start=0, 
                             render_scale=render_scale,
-                            draw_guides=False
+                            draw_guides=False # No guides for clipboard
                         )
                     except Exception as e:
                         QMessageBox.critical(self, "Copy Error", f"Failed to render base image for clipboard: {e}")
-                        self.cleanup_temp_clipboard_file() 
-                        return
+                        return # Critical error, can't proceed
                 else:
                     QMessageBox.warning(self, "Copy Error", "No valid current image to render for copying.")
                     return
                 
-                # Ensure scaled_image_for_clip is valid before proceeding
                 if not scaled_image_for_clip or scaled_image_for_clip.isNull():
-                    QMessageBox.critical(self, "Copy Error", "Base image for clipboard is invalid after scaling/rendering attempt.")
-                    return
+                     QMessageBox.critical(self, "Copy Error", "Base image for clipboard is invalid after scaling attempt.")
+                     return
 
-
+                # --- Draw vector annotations onto render_canvas_for_clip ---
                 painter_clip = QPainter(render_canvas_for_clip)
                 if not painter_clip.isActive():
                     QMessageBox.critical(self, "Copy Error", "Failed to create painter for clipboard image.")
-                    self.cleanup_temp_clipboard_file()
                     return
                 
                 painter_clip.setRenderHint(QPainter.Antialiasing, True)
                 painter_clip.setRenderHint(QPainter.TextAntialiasing, True)
 
-                # --- Define Local Coordinate Mapping Helper for Clipboard Canvas ---
-                # This maps coordinates from self.image (native) to render_canvas_for_clip
                 img_w_current = self.image.width() if self.image.width() > 0 else 1
                 img_h_current = self.image.height() if self.image.height() > 0 else 1
                 
-                # scaled_image_for_clip is self.image scaled and centered on render_canvas_for_clip
                 canvas_center_x_offset_clip = (render_canvas_for_clip.width() - scaled_image_for_clip.width()) // 2
                 canvas_center_y_offset_clip = (render_canvas_for_clip.height() - scaled_image_for_clip.height()) // 2
-
-                # Scale factor from self.image coordinates to coordinates on scaled_image_for_clip
                 scale_factor_x_img_to_scaled_clip = scaled_image_for_clip.width() / img_w_current
                 scale_factor_y_img_to_scaled_clip = scaled_image_for_clip.height() / img_h_current
 
-                def map_img_coords_to_clipboard_canvas(img_x, img_y): # Renamed for clarity within this function
+                def map_img_coords_to_clipboard_canvas(img_x, img_y):
                     scaled_img_x_on_canvas = img_x * scale_factor_x_img_to_scaled_clip
                     scaled_img_y_on_canvas = img_y * scale_factor_y_img_to_scaled_clip
-                    # Add the centering offset of scaled_image_for_clip on render_canvas_for_clip
                     final_canvas_x = canvas_center_x_offset_clip + scaled_img_x_on_canvas
                     final_canvas_y = canvas_center_y_offset_clip + scaled_img_y_on_canvas
                     return QPointF(final_canvas_x, final_canvas_y)
-                # --- End Local Coordinate Mapping Helper ---
 
+                # ... (Your existing code for drawing L/R/Top markers, Custom Markers, Custom Shapes) ...
+                # Ensure all drawing operations use `painter_clip` and `map_img_coords_to_clipboard_canvas`
 
                 # A. Draw Standard L/R/Top Markers
                 std_font_size_on_canvas_clip = int(self.font_size * render_scale)
@@ -12619,21 +12676,15 @@ if __name__ == "__main__":
                 text_height_std_clip_canvas = font_metrics_std_clip.height()
                 y_offset_text_baseline_std_canvas_clip = text_height_std_clip_canvas * 0.3
 
-                # Left Markers
-                # self.left_marker_shift_added is in NATIVE IMAGE PIXELS
                 left_marker_offset_x_on_canvas_clip = self.left_marker_shift_added * scale_factor_x_img_to_scaled_clip
                 for y_pos_img, marker_text_val in self.left_markers:
-                    # map_img_coords_to_clipboard_canvas gives the point on the canvas corresponding to (0, y_pos_img)
-                    # The X part of its return isn't used for Y-anchor, only Y.
                     anchor_on_canvas = map_img_coords_to_clipboard_canvas(0, y_pos_img) 
                     text_to_draw = f"{marker_text_val} ⎯"
                     text_width_canvas = font_metrics_std_clip.horizontalAdvance(text_to_draw)
-                    # Draw relative to the centered image's left edge + scaled offset
                     draw_x_c = canvas_center_x_offset_clip + left_marker_offset_x_on_canvas_clip - text_width_canvas
                     draw_y_c = anchor_on_canvas.y() + y_offset_text_baseline_std_canvas_clip
                     painter_clip.drawText(QPointF(draw_x_c, draw_y_c), text_to_draw)
                 
-                # Right Markers
                 right_marker_offset_x_on_canvas_clip = self.right_marker_shift_added * scale_factor_x_img_to_scaled_clip
                 for y_pos_img, marker_text_val in self.right_markers:
                     anchor_on_canvas = map_img_coords_to_clipboard_canvas(0, y_pos_img)
@@ -12642,10 +12693,8 @@ if __name__ == "__main__":
                     draw_y_c = anchor_on_canvas.y() + y_offset_text_baseline_std_canvas_clip
                     painter_clip.drawText(QPointF(draw_x_c, draw_y_c), text_to_draw)
 
-                # Top Markers
                 top_marker_offset_y_on_canvas_clip = self.top_marker_shift_added * scale_factor_y_img_to_scaled_clip
-                rotation_angle = self.font_rotation # Use self.font_rotation
-
+                rotation_angle = self.font_rotation 
                 for x_pos_img, marker_text_val in self.top_markers:
                     anchor_on_canvas = map_img_coords_to_clipboard_canvas(x_pos_img, 0) 
                     text_to_draw = str(marker_text_val)
@@ -12662,7 +12711,7 @@ if __name__ == "__main__":
                     try:
                         x_pos_img, y_pos_img, marker_text_str, qcolor_obj, \
                         font_family_str, font_size_int, is_bold, is_italic = marker_data_list
-                        anchor_on_canvas = map_img_coords_to_clipboard_canvas(x_pos_img, y_pos_img) # Use the local helper
+                        anchor_on_canvas = map_img_coords_to_clipboard_canvas(x_pos_img, y_pos_img)
                         custom_font_size_on_canvas_clip = int(font_size_int * render_scale)
                         custom_font_clip = QFont(font_family_str, custom_font_size_on_canvas_clip)
                         custom_font_clip.setBold(is_bold)
@@ -12685,7 +12734,6 @@ if __name__ == "__main__":
                         shape_type = shape_data.get('type')
                         color = QColor(shape_data.get('color', '#000000'))
                         base_thickness_img_pixels = float(shape_data.get('thickness', 1.0))
-                        # Scale thickness from image pixels to pixels on scaled_image_for_clip
                         thickness_on_canvas_clip = max(1.0, base_thickness_img_pixels * scale_factor_x_img_to_scaled_clip) 
                         pen = QPen(color)
                         pen.setWidthF(thickness_on_canvas_clip)
@@ -12694,84 +12742,103 @@ if __name__ == "__main__":
                             start_img_coords = shape_data.get('start')
                             end_img_coords = shape_data.get('end')
                             if start_img_coords and end_img_coords:
-                                start_canvas = map_img_coords_to_clipboard_canvas(start_img_coords[0], start_img_coords[1]) # Use local helper
-                                end_canvas = map_img_coords_to_clipboard_canvas(end_img_coords[0], end_img_coords[1])       # Use local helper
+                                start_canvas = map_img_coords_to_clipboard_canvas(start_img_coords[0], start_img_coords[1])
+                                end_canvas = map_img_coords_to_clipboard_canvas(end_img_coords[0], end_img_coords[1])
                                 painter_clip.drawLine(start_canvas, end_canvas)
                         elif shape_type == 'rectangle':
                             rect_img_coords = shape_data.get('rect')
                             if rect_img_coords:
                                 x_img, y_img, w_img, h_img = rect_img_coords
-                                top_left_canvas = map_img_coords_to_clipboard_canvas(x_img, y_img) # Use local helper
+                                top_left_canvas = map_img_coords_to_clipboard_canvas(x_img, y_img)
                                 w_on_canvas = w_img * scale_factor_x_img_to_scaled_clip
                                 h_on_canvas = h_img * scale_factor_y_img_to_scaled_clip
                                 painter_clip.drawRect(QRectF(top_left_canvas, QSizeF(w_on_canvas, h_on_canvas)))
                     except Exception as e_cs_clip:
                          print(f"Error drawing custom shape for clipboard: {shape_data}, {e_cs_clip}")
-                
-                painter_clip.end() 
+
+                painter_clip.end()
                 # --- End drawing vector annotations ---
 
+                # Prepare final image for clipboard (handle alpha for certain formats)
                 final_canvas_for_clipboard_data = render_canvas_for_clip
+                # If the target application might not handle alpha well from QImage directly,
+                # or if QImage's ARGB32_Premultiplied isn't ideal, convert to ARGB32 (straight alpha).
                 if render_canvas_for_clip.hasAlphaChannel():
                     straight_alpha_canvas_clip = render_canvas_for_clip.convertToFormat(QImage.Format_ARGB32)
                     if not straight_alpha_canvas_clip.isNull():
                         final_canvas_for_clipboard_data = straight_alpha_canvas_clip
-                
-                try:
-                    self.cleanup_temp_clipboard_file() 
-                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode='wb') as temp_file:
-                        self.temp_clipboard_file_path = temp_file.name
-                        png_save_buffer = QBuffer()
-                        png_save_buffer.open(QBuffer.WriteOnly)
-                        if not final_canvas_for_clipboard_data.save(png_save_buffer, "PNG"):
-                             raise IOError("Failed to save final canvas to PNG buffer for clipboard.")
-                        temp_file.write(png_save_buffer.data())
-                        png_save_buffer.close()
-                    if not os.path.exists(self.temp_clipboard_file_path):
-                        raise IOError("Temporary file for clipboard not created.")
-                except Exception as e:
-                    QMessageBox.critical(self, "Copy Error", f"Failed to create/save temporary file for clipboard: {e}")
-                    self.temp_clipboard_file_path = None
-                    return
-                
-                clipboard_app = QApplication.clipboard() # Use different variable name for clarity
-                mime_data = QMimeData()
-                try:
-                    file_url = QUrl.fromLocalFile(self.temp_clipboard_file_path)
-                    if file_url.isValid() and file_url.isLocalFile():
-                        mime_data.setUrls([file_url])
                     else:
-                        print("Warning: Could not create valid file URL for clipboard.")
-                except Exception as e_url:
-                     print(f"Warning: Error creating QUrl for clipboard: {e_url}")
+                        print("Warning: Conversion to ARGB32 (straight alpha) for clipboard failed. Using premultiplied.")
 
-                mime_data.setImageData(final_canvas_for_clipboard_data)
+
+                # --- Create and populate QMimeData ---
+                mime_data = QMimeData()
                 
+                # Option 1: Provide the image data directly
+                mime_data.setImageData(final_canvas_for_clipboard_data)
+
+                # Option 2: Provide image/png data directly (often preferred by other apps)
                 png_buffer_direct = QBuffer()
                 png_buffer_direct.open(QBuffer.WriteOnly)
                 if final_canvas_for_clipboard_data.save(png_buffer_direct, "PNG"):
-                    mime_data.setData("image/png", png_buffer_direct.data())
+                    mime_data.setData("image/png", png_buffer_direct.buffer()) # Use .buffer() for QByteArray
                 png_buffer_direct.close()
 
-                clipboard_app.setMimeData(mime_data)
-                
+                # Option 3: Provide a file URL (especially for macOS and some cross-platform apps)
+                # Clean up any previous temporary file *before* creating a new one
+                self.cleanup_temp_clipboard_file() 
+                temp_file_path_for_clipboard = None
+                try:
+                    # Use a context manager for the temporary file to ensure it's closed
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                        temp_file_path_for_clipboard = temp_file.name
+                        # Save the final canvas to this temporary file
+                        if not final_canvas_for_clipboard_data.save(temp_file_path_for_clipboard, "PNG"):
+                            raise IOError("Failed to save final canvas to temporary file for clipboard.")
+                    
+                    # Now temp_file is closed, but exists because delete=False
+                    if os.path.exists(temp_file_path_for_clipboard):
+                        file_url = QUrl.fromLocalFile(temp_file_path_for_clipboard)
+                        if file_url.isValid() and file_url.isLocalFile():
+                            mime_data.setUrls([file_url])
+                            self.temp_clipboard_file_path = temp_file_path_for_clipboard # Store path for later cleanup
+                        else:
+                            print("Warning: Could not create valid file URL for clipboard from temp file.")
+                            os.remove(temp_file_path_for_clipboard) # Clean up if URL failed
+                    else:
+                         print("Warning: Temporary file for clipboard was not created or accessible.")
+
+                except Exception as e:
+                    QMessageBox.warning(self, "Copy Error", f"Failed to use temporary file for clipboard: {e}")
+                    if temp_file_path_for_clipboard and os.path.exists(temp_file_path_for_clipboard):
+                        try: os.remove(temp_file_path_for_clipboard)
+                        except OSError: pass
+                    self.temp_clipboard_file_path = None
+
+
+                # Set the QMimeData to the clipboard
+                QApplication.clipboard().setMimeData(mime_data)
+                QMessageBox.information(self, "Copied", "Rendered image copied to clipboard.")
+
+
             def cleanup_temp_clipboard_file(self):
                 """Deletes the temporary clipboard file if it exists."""
                 path_to_delete = getattr(self, 'temp_clipboard_file_path', None)
                 if path_to_delete:
-                    # print(f"Attempting to clean up temp file on exit: {path_to_delete}") # Debug
-                    # No need to clear self.temp_clipboard_file_path immediately here,
-                    # as the object is likely being destroyed soon anyway.
+                    # print(f"INFO: Attempting to clean up temp file: {path_to_delete}")
                     if os.path.exists(path_to_delete):
                         try:
                             os.remove(path_to_delete)
-                            # print(f"Cleaned up temp file: {path_to_delete}") # Debug
-                        # Don't retry with QTimer here, the app is quitting.
+                            # print(f"INFO: Cleaned up temp file: {path_to_delete}")
+                        except PermissionError: # Specifically catch permission errors
+                            # This can happen if another app still has the file locked.
+                            # Schedule for later deletion if possible, or just log it.
+                            print(f"WARNING: PermissionError deleting {path_to_delete}. Will try again if app quits cleanly.")
+                            # For a GUI app, trying again on quit is the best we can do.
+                            # If this is called ON quit, then there's not much more to do.
                         except OSError as e:
-                            # Log it, but can't do much else at this point.
-                            print(f"Warning: Could not delete temp clipboard file {path_to_delete} on exit: {e}")
-                # Clear the attribute *after* attempting deletion (optional on exit)
-                self.temp_clipboard_file_path = None
+                            print(f"WARNING: Could not delete temp clipboard file {path_to_delete}: {e}")
+                    self.temp_clipboard_file_path = None # Clear the path regardless of success
                 
                 
             def clear_predict_molecular_weight(self):
@@ -13047,7 +13114,7 @@ if __name__ == "__main__":
                     regression_model_name=selected_model_text
                 )
 
-                self.live_view_label.mousePressEvent = None
+                self._reset_live_view_label_custom_handlers()
                 self.live_view_label.setCursor(Qt.ArrowCursor)
                 self.run_predict_MW = True
 
@@ -13270,59 +13337,113 @@ if __name__ == "__main__":
                 self.update_live_view()
                 self._update_status_bar()
 
+        if app: # Ensure app exists before trying to set style
+            app.setStyle("Fusion")
+            # ... (your stylesheet) ...
+
         main_window = CombinedSDSApp()
 
         # --- Close Loading Screen and Show Main Window ---
         if loading_dialog:
             loading_dialog.close()
+            loading_dialog.deleteLater() # YOU ALREADY HAVE THIS, WHICH IS GOOD!
+            loading_dialog = None      # <<--- ADD THIS LINE HERE
 
         main_window.show()
 
         # Connect cleanup
-        if main_window:
+        if main_window and app: # Check both exist
             app.aboutToQuit.connect(main_window.cleanup_temp_clipboard_file)
 
         # --- Start Main Event Loop ---
-        exit_code = app.exec()
-        sys.exit(exit_code)
+        if app:
+            exit_code = app.exec()
+            sys.exit(exit_code)
+        else:
+            print("FATAL ERROR: QApplication could not be initialized.")
+            sys.exit(1)
 
-    except ImportError as e:
-        # Handle missing libraries critically
-        print(f"FATAL ERROR: Missing required library: {e}")
+    except ImportError as e_imp:
+        print(f"FATAL ERROR: Missing required library: {e_imp}")
         traceback.print_exc()
-        if loading_dialog: loading_dialog.close() # Ensure loading screen is closed
-        # Show error message using basic QMessageBox (app might not be fully functional)
-        try:
-            error_app = QApplication.instance() # Get existing app instance if possible
-            if not error_app: error_app = QApplication([]) # Create minimal app for msgbox
-            QMessageBox.critical(None, "Import Error", f"A required library is missing: {e}\nPlease install it and restart the application.")
-        except Exception as msg_err:
-            print(f"Could not display import error message box: {msg_err}")
-        sys.exit(1) # Exit with error code
+        if loading_dialog:
+            loading_dialog.close()
+            loading_dialog.deleteLater() # Good
+            loading_dialog = None
 
-    except Exception as e:
-        # Catch any other exception during startup
-        print(f"FATAL ERROR during application startup: {e}")
+        # Use existing app instance for QMessageBox if possible, or create one carefully
+        error_app_instance = QApplication.instance()
+        temp_app_created = False
+        if not error_app_instance:
+            try:
+                error_app_instance = QApplication([])
+                temp_app_created = True
+            except RuntimeError: # Catch "already exists" if some other part created it
+                error_app_instance = QApplication.instance() # Try to grab it again
+
+        if error_app_instance:
+            QMessageBox.critical(None, "Import Error", f"A required library is missing: {e_imp}\nPlease install it and restart the application.")
+            if temp_app_created:
+                # If we created a temporary app just for the message box,
+                # we don't call exec on it.
+                pass
+        else:
+            print("Could not display import error message box: No QApplication.")
+        sys.exit(1)
+
+    except Exception as e_startup:
+        print(f"FATAL ERROR during application startup: {e_startup}")
         traceback.print_exc()
-        if loading_dialog: loading_dialog.close() # Ensure loading screen is closed
-        # Try to log using your defined function
-        try:
-            # Make sure log_exception is defined globally or imported
-            log_exception(type(e), e, e.__traceback__)
-        except NameError:
-             print("Logging function 'log_exception' not found.")
-        except Exception as log_err:
-            print(f"Failed to log startup exception: {log_err}")
-        # Show critical error message box
-        try:
-            error_app = QApplication.instance()
-            if not error_app: error_app = QApplication([])
-            QMessageBox.critical(None, "Application Startup Error", f"An unexpected error occurred during startup:\n{e}\n\nCheck error_log.txt for details.")
-        except Exception as msg_err:
-            print(f"Could not display startup error message box: {msg_err}")
-        sys.exit(1) # Exit with error code
+        if loading_dialog:
+            loading_dialog.close()
+            loading_dialog.deleteLater() # Good
+            loading_dialog = None
+
+        # Log exception using your global handler if sys.excepthook is set
+        if sys.excepthook is not sys.__excepthook__: # Check if it's your custom hook
+            try:
+                sys.excepthook(type(e_startup), e_startup, e_startup.__traceback__)
+            except Exception as log_hook_err:
+                print(f"ERROR calling custom excepthook: {log_hook_err}")
+        else: # Fallback to direct logging if hook wasn't set or failed
+            try:
+                logging.error("Uncaught startup exception", exc_info=(type(e_startup), e_startup, e_startup.__traceback__))
+            except Exception as log_err:
+                print(f"Failed to log startup exception directly: {log_err}")
+
+        # Show critical error message box using existing app or a temporary one
+        error_app_instance = QApplication.instance()
+        temp_app_created = False
+        if not error_app_instance:
+            try:
+                error_app_instance = QApplication([])
+                temp_app_created = True
+            except RuntimeError:
+                error_app_instance = QApplication.instance()
+
+        if error_app_instance:
+            QMessageBox.critical(None, "Application Startup Error", f"An unexpected error occurred during startup:\n{e_startup}\n\nCheck error_log.txt for details.")
+            if temp_app_created:
+                pass
+        else:
+            print("Could not display startup error message box: No QApplication.")
+        sys.exit(1)
 
     finally:
-        # Ensure the loading dialog is closed in case of unhandled exit paths
-        if loading_dialog and loading_dialog.isVisible():
-            loading_dialog.close()
+        # Ensure the loading dialog is closed and cleaned up
+        if loading_dialog is not None: # Check if the Python variable still holds an object
+            try:
+                if loading_dialog.isVisible():
+                    loading_dialog.close()
+                # Regardless of visibility, if it's not None, schedule for deletion
+                # to handle cases where it might exist but wasn't properly closed.
+                loading_dialog.deleteLater()
+            except RuntimeError:
+                # This catches the "Internal C++ object already deleted" specifically
+                # print("INFO: loading_dialog was already deleted (RuntimeError in finally).")
+                pass # Object is already gone, nothing more to do with it
+            except Exception as e_finally_close:
+                # Catch any other unexpected error during cleanup
+                print(f"ERROR in finally block trying to clean up loading_dialog: {e_finally_close}")
+            finally:
+                loading_dialog = None # Ensure the Python variable is cleared
