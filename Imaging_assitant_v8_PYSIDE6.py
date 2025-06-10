@@ -820,744 +820,399 @@ if __name__ == "__main__":
         
         
         class ModifyMarkersDialog(QDialog):
-            shapes_adjusted_preview = Signal(list) 
+            """
+            A dialog for modifying custom markers and shapes with global adjustments and
+            individual item editing. This implementation uses a robust "repopulate-on-change"
+            pattern to keep the UI view consistent with the data model, even after sorting.
+            """
+            shapes_adjusted_preview = Signal(list)
             global_markers_adjusted = Signal(list)
-            def __init__(self, markers_list, shapes_list, parent=None): # shapes_list remains for future use
+        
+            def __init__(self, markers_list, shapes_list, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Modify Custom Markers and Shapes")
-                self.setMinimumSize(950, 650) # Increased height for new controls
-
-                self._original_markers_data = [] # Store pristine original data for scaling
-                self.markers = [] # This will hold the currently modified data
-
-                for marker_data in markers_list:
-                    try:
-                        marker_copy = list(marker_data) # x, y, text, qcolor, font_family, font_size, is_bold, is_italic
-                        if len(marker_copy) == 6: marker_copy.extend([False, False]) # Old format
-                        if len(marker_copy) == 8:
-                            self._original_markers_data.append(tuple(marker_copy)) # Store original as tuple
-                            self.markers.append(list(marker_copy)) # Working copy
-                        else:
-                            print(f"Warning: Skipping marker with invalid data length: {len(marker_copy)}")
-                    except Exception as e:
-                        print(f"Warning: Error processing marker data: {e}")
-
-                # Shapes are not globally adjusted by these sliders for now, but keep for consistency
-                self.shapes = []
-                for shape_data in shapes_list:
-                     if isinstance(shape_data, dict): self.shapes.append(dict(shape_data))
-                     else: print(f"Warning: Skipping shape with invalid data type: {type(shape_data)}")
-
+                self.setMinimumSize(950, 650)
+        
+                # The data model: two lists for markers to handle scaling correctly, one for shapes.
+                self._original_markers_data = [tuple(m) for m in markers_list] # Pristine backup for scaling
+                self.markers = [list(m) for m in markers_list]                 # Working copy for display
+                self.shapes = [dict(s) for s in shapes_list]                   # Working copy
+        
                 self._block_signals = False
                 self._current_image_width = parent.image.width() if parent and parent.image and not parent.image.isNull() else 1
                 self._current_image_height = parent.image.height() if parent and parent.image and not parent.image.isNull() else 1
-
-
-                # --- Main Layout ---
+        
+                self._setup_ui()
+                self.populate_table()
+        
+            def _setup_ui(self):
+                """Creates and arranges all UI elements for the dialog."""
                 layout = QVBoxLayout(self)
-
-                # --- START: Global Adjustment Controls ---
+        
+                # --- Global Adjustment Controls ---
                 global_adjust_group = QGroupBox("Global Adjustments for Markers")
                 global_adjust_layout = QGridLayout(global_adjust_group)
-
-                # Define precision for percentage sliders (e.g., 100 means 2 decimal places for percent)
-                self.percent_precision_factor = 100.0 # For displaying XX.YY%
-                self.scale_precision_factor = 10.0    # For displaying XXX.Y% for scale sliders
-
-                # Absolute X Shift Slider
+                self.percent_precision_factor = 100.0
+                self.scale_precision_factor = 10.0
+        
+                # Sliders for global adjustments (Shift, Scale, Font Scale)
+                # Each slider's valueChanged signal triggers _update_global_adjustments
+                # A second connection updates the percentage label for immediate feedback.
+                # ... (Slider creation logic is unchanged and correct) ...
+                # Absolute X Shift
                 global_adjust_layout.addWidget(QLabel("Shift X (% Img W):"), 0, 0)
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
-                # Range: -100.00% to +100.00% -> -10000 to +10000 if precision_factor is 100
-                self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor),
-                                                 int(100 * self.percent_precision_factor))
+                self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor))
                 self.abs_x_shift_slider.setValue(0)
-                self.abs_x_shift_slider.setToolTip("Shift all markers horizontally by a percentage of image width.")
-                self.abs_x_shift_label = QLabel("0.00%")
-                self.abs_x_shift_label.setFixedSize(80, 20)
                 self.abs_x_shift_slider.valueChanged.connect(self._update_global_adjustments)
-                self.abs_x_shift_slider.valueChanged.connect(
-                    lambda val, lbl=self.abs_x_shift_label: lbl.setText(f"{val / self.percent_precision_factor:.2f}%")
-                )
-                global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1)
-                global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
-
-                # Absolute Y Shift Slider
+                self.abs_x_shift_label = QLabel("0.00%"); self.abs_x_shift_label.setFixedSize(80, 20)
+                self.abs_x_shift_slider.valueChanged.connect(lambda val: self.abs_x_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
+                global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1); global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
+                # Absolute Y Shift
                 global_adjust_layout.addWidget(QLabel("Shift Y (% Img H):"), 1, 0)
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
-                self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor),
-                                                 int(100 * self.percent_precision_factor))
+                self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor))
                 self.abs_y_shift_slider.setValue(0)
-                self.abs_y_shift_slider.setToolTip("Shift all markers vertically by a percentage of image height.")
-                self.abs_y_shift_label = QLabel("0.00%")
-                self.abs_y_shift_label.setFixedSize(80, 20)
                 self.abs_y_shift_slider.valueChanged.connect(self._update_global_adjustments)
-                self.abs_y_shift_slider.valueChanged.connect(
-                    lambda val, lbl=self.abs_y_shift_label: lbl.setText(f"{val / self.percent_precision_factor:.2f}%")
-                )
-                global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1)
-                global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
-
-                # Relative X Scale Slider
+                self.abs_y_shift_label = QLabel("0.00%"); self.abs_y_shift_label.setFixedSize(80, 20)
+                self.abs_y_shift_slider.valueChanged.connect(lambda val: self.abs_y_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
+                global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1); global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
+                # Relative X Scale
                 global_adjust_layout.addWidget(QLabel("Scale X (%):"), 2, 0)
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
-                # Range: 10.0% to 300.0% -> 100 to 3000 if scale_precision_factor is 10
-                self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor),
-                                                 int(300 * self.scale_precision_factor))
-                self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor)) # Default 100.0%
-                self.rel_x_scale_slider.setToolTip("Scale markers' X positions relative to their original layout.")
-                self.rel_x_scale_label = QLabel("100.0%")
-                self.rel_x_scale_label.setFixedSize(80, 20)
+                self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor))
+                self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_x_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.rel_x_scale_slider.valueChanged.connect(
-                    lambda val, lbl=self.rel_x_scale_label: lbl.setText(f"{val / self.scale_precision_factor:.1f}%")
-                )
-                global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1)
-                global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
-
-                # Relative Y Scale Slider
+                self.rel_x_scale_label = QLabel("100.0%"); self.rel_x_scale_label.setFixedSize(80, 20)
+                self.rel_x_scale_slider.valueChanged.connect(lambda val: self.rel_x_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
+                global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1); global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
+                # Relative Y Scale
                 global_adjust_layout.addWidget(QLabel("Scale Y (%):"), 3, 0)
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
-                self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor),
-                                                 int(300 * self.scale_precision_factor))
-                self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor)) # Default 100.0%
-                self.rel_y_scale_slider.setToolTip("Scale markers' Y positions relative to their original layout.")
-                self.rel_y_scale_label = QLabel("100.0%")
-                self.rel_y_scale_label.setFixedSize(80, 20)
+                self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor))
+                self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_y_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.rel_y_scale_slider.valueChanged.connect(
-                    lambda val, lbl=self.rel_y_scale_label: lbl.setText(f"{val / self.scale_precision_factor:.1f}%")
-                )
-                global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1)
-                global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
-
-                # Font Size Scale Slider
+                self.rel_y_scale_label = QLabel("100.0%"); self.rel_y_scale_label.setFixedSize(80, 20)
+                self.rel_y_scale_slider.valueChanged.connect(lambda val: self.rel_y_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
+                global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1); global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
+                # Font Scale
                 global_adjust_layout.addWidget(QLabel("Font Scale (%):"), 4, 0)
                 self.font_scale_slider = QSlider(Qt.Horizontal)
-                # Range 10.0% to 300.0% -> 100 to 3000 if scale_precision_factor is 10
-                self.font_scale_slider.setRange(int(10 * self.scale_precision_factor),
-                                                int(300 * self.scale_precision_factor))
-                self.font_scale_slider.setValue(int(100 * self.scale_precision_factor)) # Default 100.0%
-                self.font_scale_slider.setToolTip("Scale font size of all markers.")
-                self.font_scale_label = QLabel("100.0%")
-                self.font_scale_label.setFixedSize(80, 20)
+                self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor))
+                self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.font_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.font_scale_slider.valueChanged.connect(
-                    lambda val, lbl=self.font_scale_label: lbl.setText(f"{val / self.scale_precision_factor:.1f}%")
-                )
-                global_adjust_layout.addWidget(self.font_scale_slider, 4, 1)
-                global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
-
+                self.font_scale_label = QLabel("100.0%"); self.font_scale_label.setFixedSize(80, 20)
+                self.font_scale_slider.valueChanged.connect(lambda val: self.font_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
+                global_adjust_layout.addWidget(self.font_scale_slider, 4, 1); global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
+        
                 global_adjust_layout.setColumnStretch(1, 1)
                 layout.addWidget(global_adjust_group)
-                # --- END: Global Adjustment Controls ---
-
+        
                 # --- Table Widget ---
                 self.table_widget = QTableWidget()
                 self.table_widget.setColumnCount(8)
-                self.table_widget.setHorizontalHeaderLabels([
-                    "Type", "Text/Label", "Coordinates", "Style", "Bold", "Italic", "Color", "Actions"
-                ])
+                self.table_widget.setHorizontalHeaderLabels(["Type", "Text/Label", "Coordinates", "Style", "Bold", "Italic", "Color", "Actions"])
                 self.table_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
                 self.table_widget.setSelectionMode(QAbstractItemView.SingleSelection)
                 self.table_widget.setEditTriggers(QAbstractItemView.AnyKeyPressed | QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
-                self.table_widget.setSortingEnabled(True) # Enable after initial population if needed
-
+                self.table_widget.setSortingEnabled(True)
                 self.table_widget.itemChanged.connect(self.handle_item_changed)
                 self.table_widget.cellDoubleClicked.connect(self.handle_cell_double_clicked)
-
-                layout.addWidget(self.table_widget) # Table below global controls
-                self.populate_table() # Initial population
+                layout.addWidget(self.table_widget)
                 self.table_widget.resizeColumnsToContents()
-                self.table_widget.setColumnWidth(0, 70)
-                self.table_widget.setColumnWidth(1, 180)
-                self.table_widget.setColumnWidth(2, 180)
-                self.table_widget.setColumnWidth(3, 150)
-                self.table_widget.setColumnWidth(4, 40)
-                self.table_widget.setColumnWidth(5, 40)
-                self.table_widget.setColumnWidth(6, 80)
-                self.table_widget.setColumnWidth(7, 80)
-                self.table_widget.horizontalHeader().setStretchLastSection(False)
-
+                self.table_widget.horizontalHeader().setStretchLastSection(True)
+        
+                # --- Dialog Buttons ---
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                button_box.accepted.connect(self.accept) # Default accept is fine now
+                button_box.accepted.connect(self.accept)
                 button_box.rejected.connect(self.reject)
                 layout.addWidget(button_box)
                 self.setLayout(layout)
-
+        
             def _update_global_adjustments(self):
-                if self._block_signals or not self._original_markers_data:
-                    return
-
-                # Get values from all sliders and divide by precision factors
+                """Recalculates all marker positions and font sizes based on sliders."""
+                if self._block_signals: return
+        
+                # Get values from all sliders
                 abs_x_shift_percent = self.abs_x_shift_slider.value() / self.percent_precision_factor
                 abs_y_shift_percent = self.abs_y_shift_slider.value() / self.percent_precision_factor
-                rel_x_scale_percent = self.rel_x_scale_slider.value() / self.scale_precision_factor
-                rel_y_scale_percent = self.rel_y_scale_slider.value() / self.scale_precision_factor
-                font_scale_percent = self.font_scale_slider.value() / self.scale_precision_factor # Using scale_precision_factor
-
-                # Calculate pixel shifts for absolute translation
-                img_width = self._current_image_width if self._current_image_width > 0 else 1
-                img_height = self._current_image_height if self._current_image_height > 0 else 1
-
-                abs_x_shift_pixels = (abs_x_shift_percent / 100.0) * img_width
-                abs_y_shift_pixels = (abs_y_shift_percent / 100.0) * img_height
-
-                # Calculate scale factors (percentage / 100)
-                rel_x_scale_factor = rel_x_scale_percent / 100.0
-                rel_y_scale_factor = rel_y_scale_percent / 100.0
-                font_size_scale_factor = font_scale_percent / 100.0
-
+                rel_x_scale_factor = self.rel_x_scale_slider.value() / self.scale_precision_factor / 100.0
+                rel_y_scale_factor = self.rel_y_scale_slider.value() / self.scale_precision_factor / 100.0
+                font_size_scale_factor = self.font_scale_slider.value() / self.scale_precision_factor / 100.0
+        
+                abs_x_shift_pixels = (abs_x_shift_percent / 100.0) * self._current_image_width
+                abs_y_shift_pixels = (abs_y_shift_percent / 100.0) * self._current_image_height
+        
+                # Rebuild the working `self.markers` list from the pristine `_original_markers_data`
                 for i, original_marker_tuple in enumerate(self._original_markers_data):
-                    if i >= len(self.markers):
-                        continue
-
                     orig_x, orig_y, text, qcolor, font_family, orig_font_size, is_bold, is_italic = original_marker_tuple
-
-                    scaled_x = orig_x * rel_x_scale_factor
-                    scaled_y = orig_y * rel_y_scale_factor
-                    final_x = scaled_x + abs_x_shift_pixels
-                    final_y = scaled_y + abs_y_shift_pixels
+                    
+                    final_x = (orig_x * rel_x_scale_factor) + abs_x_shift_pixels
+                    final_y = (orig_y * rel_y_scale_factor) + abs_y_shift_pixels
                     final_font_size = max(1, int(round(orig_font_size * font_size_scale_factor)))
-
-                    self.markers[i][0] = final_x
-                    self.markers[i][1] = final_y
-                    self.markers[i][5] = final_font_size
-
+                    
+                    # Rebuild the entire marker entry to ensure all properties are preserved
+                    self.markers[i] = [final_x, final_y, text, qcolor, font_family, final_font_size, is_bold, is_italic]
+        
                 self.populate_table()
                 self.global_markers_adjusted.emit(list(self.markers))
         
-        
             def populate_table(self):
+                """Rebuilds the entire table from the current state of the data model."""
                 self._block_signals = True
                 self.table_widget.setSortingEnabled(False)
-                self.table_widget.setRowCount(0)
-
-                total_items = len(self.markers) + len(self.shapes)
-                self.table_widget.setRowCount(total_items)
-
-                current_row_idx = 0
+                self.table_widget.clearContents()
+                self.table_widget.setRowCount(len(self.markers) + len(self.shapes))
 
                 # --- Populate Markers ---
-                for marker_idx, marker_data_working in enumerate(self.markers):
-                    row_idx = current_row_idx
-                    try:
-                        # ... (All item creation logic is identical to your code) ...
-                        x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data_working
-                        if not isinstance(qcolor, QColor): qcolor = QColor(qcolor)
-                        if not qcolor.isValid(): raise ValueError("Invalid marker color")
-                        type_item = QTableWidgetItem("Marker")
-                        type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': marker_idx})
-                        text_item = QTableWidgetItem(str(text))
-                        text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
-                        coord_str = f"{x:.1f},{y:.1f}"
-                        coord_item = QTableWidgetItem(coord_str)
-                        coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
-                        coord_item.setToolTip("Edit format: X,Y (e.g., 100.5,250.2)")
-                        style_item = QTableWidgetItem(f"{font_family} ({font_size}pt)")
-                        style_item.setToolTip("Double-click to change font/size for this specific marker")
-                        style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
-                        color_item = QTableWidgetItem(qcolor.name())
-                        color_item.setBackground(QBrush(qcolor))
-                        text_color = Qt.white if qcolor.lightness() < 128 else Qt.black
-                        color_item.setForeground(QBrush(text_color))
-                        color_item.setToolTip("Double-click to change color for this specific marker")
-                        color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
-                        self.table_widget.setItem(row_idx, 0, type_item)
-                        self.table_widget.setItem(row_idx, 1, text_item)
-                        self.table_widget.setItem(row_idx, 2, coord_item)
-                        self.table_widget.setItem(row_idx, 3, style_item)
-                        self.table_widget.setItem(row_idx, 6, color_item)
-                        bold_checkbox = QCheckBox(); bold_checkbox.setChecked(bool(is_bold))
-                        bold_checkbox.setProperty("original_marker_index", marker_idx)
-                        bold_checkbox.setProperty("style_type_checkbox", "bold")
-                        bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
-                        cell_widget_bold = QWidget(); layout_bold = QHBoxLayout(cell_widget_bold); layout_bold.addWidget(bold_checkbox); layout_bold.setAlignment(Qt.AlignCenter); layout_bold.setContentsMargins(0,0,0,0); cell_widget_bold.setLayout(layout_bold)
-                        self.table_widget.setCellWidget(row_idx, 4, cell_widget_bold)
-                        italic_checkbox = QCheckBox(); italic_checkbox.setChecked(bool(is_italic))
-                        italic_checkbox.setProperty("original_marker_index", marker_idx)
-                        italic_checkbox.setProperty("style_type_checkbox", "italic")
-                        italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
-                        cell_widget_italic = QWidget(); layout_italic = QHBoxLayout(cell_widget_italic); layout_italic.addWidget(italic_checkbox); layout_italic.setAlignment(Qt.AlignCenter); layout_italic.setContentsMargins(0,0,0,0); cell_widget_italic.setLayout(layout_italic)
-                        self.table_widget.setCellWidget(row_idx, 5, cell_widget_italic)
-                        
-                        delete_button = QPushButton("Delete")
-                        delete_button.setStyleSheet("QPushButton { padding: 2px 5px; }")
-                        # Connect directly to the handler that finds the sender
-                        delete_button.clicked.connect(self.delete_item)
-                        self.table_widget.setCellWidget(row_idx, 7, delete_button)
+                for i, marker_data in enumerate(self.markers):
+                    x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data
+                    
+                    item_font = QFont(font_family, font_size)
+                    item_font.setBold(is_bold)
+                    item_font.setItalic(is_italic)
 
-                        current_row_idx += 1
-                    except (ValueError, IndexError, TypeError) as e:
-                        # ... (error handling logic remains the same) ...
-                        print(f"Error populating table for marker at original index {marker_idx}: {e}")
-                        error_item = QTableWidgetItem("Marker Error")
-                        error_item.setData(Qt.UserRole, {'type': 'error', 'original_index': marker_idx})
-                        self.table_widget.setItem(row_idx, 0, error_item)
-                        for col in range(1, self.table_widget.columnCount()):
-                            placeholder = QTableWidgetItem("---"); placeholder.setFlags(placeholder.flags() & ~Qt.ItemIsEditable)
-                            self.table_widget.setItem(row_idx, col, placeholder)
-                        current_row_idx += 1
+                    type_item = QTableWidgetItem("Marker"); type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': i})
+                    text_item = QTableWidgetItem(text); text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+                    coord_item = QTableWidgetItem(f"{x:.1f},{y:.1f}"); coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
+                    style_item = QTableWidgetItem(f"{font_family} ({font_size}pt)"); style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
+                    
+                    items_to_set = [type_item, text_item, coord_item, style_item]
+                    for col, item in enumerate(items_to_set):
+                        item.setFont(item_font)
+                        self.table_widget.setItem(i, col, item)
+                    
+                    # --- Checkboxes ---
+                    bold_checkbox = QCheckBox()
+                    # THE FIX: Set the checked state BEFORE connecting the signal
+                    bold_checkbox.setChecked(is_bold)
+                    bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
+                    # --- END FIX ---
+                    cell_widget_bold = QWidget(); layout_bold = QHBoxLayout(cell_widget_bold); layout_bold.addWidget(bold_checkbox); layout_bold.setAlignment(Qt.AlignCenter); layout_bold.setContentsMargins(0,0,0,0)
+                    self.table_widget.setCellWidget(i, 4, cell_widget_bold)
+
+                    italic_checkbox = QCheckBox()
+                    # THE FIX: Set the checked state BEFORE connecting the signal
+                    italic_checkbox.setChecked(is_italic)
+                    italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
+                    # --- END FIX ---
+                    cell_widget_italic = QWidget(); layout_italic = QHBoxLayout(cell_widget_italic); layout_italic.addWidget(italic_checkbox); layout_italic.setAlignment(Qt.AlignCenter); layout_italic.setContentsMargins(0,0,0,0)
+                    self.table_widget.setCellWidget(i, 5, cell_widget_italic)
+
+                    # Color cell
+                    color_item = QTableWidgetItem(qcolor.name()); color_item.setBackground(QBrush(qcolor))
+                    color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
+                    color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
+                    color_item.setFont(item_font)
+                    self.table_widget.setItem(i, 6, color_item)
+                    
+                    # Delete button
+                    delete_button = QPushButton("Delete"); delete_button.clicked.connect(self.delete_item)
+                    self.table_widget.setCellWidget(i, 7, delete_button)
 
                 # --- Populate Shapes ---
-                for shape_idx, shape_data in enumerate(self.shapes):
-                    row_idx = current_row_idx
-                    try:
-                        # ... (All item creation logic is identical to your code) ...
-                        shape_type = shape_data.get('type', 'Unknown').capitalize()
-                        color_name = shape_data.get('color', '#000000')
-                        thickness = int(shape_data.get('thickness', 1))
-                        qcolor = QColor(color_name);
-                        if not qcolor.isValid(): raise ValueError(f"Invalid shape color: {color_name}")
-                        if thickness < 1: raise ValueError("Thickness must be >= 1")
-                        type_item = QTableWidgetItem(shape_type)
-                        type_item.setData(Qt.UserRole, {'type': 'shape', 'original_index': shape_idx})
-                        text_item = QTableWidgetItem("")
-                        text_item.setFlags(text_item.flags() & ~Qt.ItemIsEditable)
-                        details_str = ""
-                        tooltip_str = "Edit format: "
-                        if shape_type == 'Line':
-                            start = shape_data.get('start', (0,0)); end = shape_data.get('end', (0,0))
-                            details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"
-                            tooltip_str += "X1,Y1,X2,Y2"
-                        elif shape_type == 'Rectangle':
-                            rect = shape_data.get('rect', (0,0,0,0))
-                            details_str = f"{rect[0]:.1f},{rect[1]:.1f},{rect[2]:.1f},{rect[3]:.1f}"
-                            tooltip_str += "X,Y,W,H"
-                        else:
-                            details_str = "N/A"
-                            tooltip_str = "Cannot edit coordinates for this shape type."
-                        coord_item = QTableWidgetItem(details_str)
-                        coord_item.setToolTip(tooltip_str)
-                        if shape_type in ['Line', 'Rectangle']:
-                            coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
-                        else:
-                            coord_item.setFlags(coord_item.flags() & ~Qt.ItemIsEditable)
-                        style_item = QTableWidgetItem(f"{thickness}px")
-                        style_item.setToolTip("Double-click to change thickness")
-                        style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
-                        color_item = QTableWidgetItem(qcolor.name())
-                        color_item.setBackground(QBrush(qcolor)); text_color_shape = Qt.white if qcolor.lightness() < 128 else Qt.black
-                        color_item.setForeground(QBrush(text_color_shape)); color_item.setToolTip("Double-click to change color")
-                        color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
-                        self.table_widget.setItem(row_idx, 0, type_item)
-                        self.table_widget.setItem(row_idx, 1, text_item)
-                        self.table_widget.setItem(row_idx, 2, coord_item)
-                        self.table_widget.setItem(row_idx, 3, style_item)
-                        self.table_widget.setItem(row_idx, 6, color_item)
+                marker_count = len(self.markers)
+                for i, shape_data in enumerate(self.shapes):
+                    row_idx = marker_count + i
+                    shape_type = shape_data.get('type', 'Unknown').capitalize()
+                    type_item = QTableWidgetItem(shape_type); type_item.setData(Qt.UserRole, {'type': 'shape', 'original_index': i})
+                    text_item = QTableWidgetItem(""); text_item.setFlags(text_item.flags() & ~Qt.ItemIsEditable)
+                    details_str, tooltip_str = "", ""
+                    if shape_type == 'Line':
+                        start, end = shape_data.get('start', (0,0)), shape_data.get('end', (0,0))
+                        details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"
+                        tooltip_str = "Edit format: X1,Y1,X2,Y2"
+                    elif shape_type == 'Rectangle':
+                        x, y, w, h = shape_data.get('rect', (0,0,0,0))
+                        details_str = f"{x:.1f},{y:.1f},{w:.1f},{h:.1f}"
+                        tooltip_str = "Edit format: X,Y,Width,Height"
+                    coord_item = QTableWidgetItem(details_str); coord_item.setToolTip(tooltip_str)
+                    if shape_type in ['Line', 'Rectangle']: coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
+                    thickness = int(shape_data.get('thickness', 1))
+                    style_item = QTableWidgetItem(f"{thickness}px"); style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
+                    qcolor = QColor(shape_data.get('color', '#000000'))
+                    color_item = QTableWidgetItem(qcolor.name()); color_item.setBackground(QBrush(qcolor))
+                    color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
+                    color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
+                    self.table_widget.setItem(row_idx, 0, type_item)
+                    self.table_widget.setItem(row_idx, 1, text_item)
+                    self.table_widget.setItem(row_idx, 2, coord_item)
+                    self.table_widget.setItem(row_idx, 3, style_item)
+                    self.table_widget.setItem(row_idx, 6, color_item)
+                    delete_button = QPushButton("Delete"); delete_button.clicked.connect(self.delete_item)
+                    self.table_widget.setCellWidget(row_idx, 7, delete_button)
 
-                        delete_button_shape = QPushButton("Delete")
-                        delete_button_shape.setStyleSheet("QPushButton { padding: 2px 5px; }")
-                        delete_button_shape.clicked.connect(self.delete_item)
-                        self.table_widget.setCellWidget(row_idx, 7, delete_button_shape)
-                        current_row_idx += 1
-                    except (ValueError, IndexError, TypeError, KeyError) as e:
-                        # ... (error handling logic remains the same) ...
-                        print(f"Error processing shape data at original index {shape_idx}: {e}")
-                        error_item_shape = QTableWidgetItem("Shape Error")
-                        error_item_shape.setData(Qt.UserRole, {'type': 'error', 'original_index': shape_idx})
-                        self.table_widget.setItem(row_idx, 0, error_item_shape)
-                        for col in range(1, self.table_widget.columnCount()):
-                            placeholder_shape = QTableWidgetItem("---"); placeholder_shape.setFlags(placeholder_shape.flags() & ~Qt.ItemIsEditable)
-                            self.table_widget.setItem(row_idx, col, placeholder_shape)
-                        current_row_idx += 1
-
-                if current_row_idx < total_items:
-                    self.table_widget.setRowCount(current_row_idx)
-
+                self.table_widget.resizeColumnsToContents()
                 self.table_widget.setSortingEnabled(True)
                 self._block_signals = False
-                
-            def handle_marker_style_changed_from_checkbox(self, state): # state is int (0 or 2)
+        
+            def handle_marker_style_changed_from_checkbox(self, state):
+                """Updates the data model when a checkbox is clicked, then repopulates the table."""
                 if self._block_signals: return
-
+        
                 sender_checkbox = self.sender()
-                if not isinstance(sender_checkbox, QCheckBox):
-                    print("Warning: Style change signal not from QCheckBox.")
-                    return
-
-                original_marker_index = sender_checkbox.property("original_marker_index")
-                style_type = sender_checkbox.property("style_type_checkbox")
-
-                if style_type is None or original_marker_index is None or \
-                   not (0 <= original_marker_index < len(self.markers)) or \
-                   not (0 <= original_marker_index < len(self._original_markers_data)): # Check both lists
-                    print(f"Warning: Could not get style_type or invalid index for checkbox change. Index: {original_marker_index}, Style: {style_type}")
-                    # Attempt to find the correct original_marker_index if property is stale (e.g. after sort without property update)
-                    # This is a fallback, ideally properties should always be correct.
-                    for r in range(self.table_widget.rowCount()):
-                        widget_bold = self.table_widget.cellWidget(r, 4)
-                        widget_italic = self.table_widget.cellWidget(r, 5)
-                        is_sender_bold = widget_bold and sender_checkbox is widget_bold.findChild(QCheckBox)
-                        is_sender_italic = widget_italic and sender_checkbox is widget_italic.findChild(QCheckBox)
-                        if is_sender_bold or is_sender_italic:
-                            type_item = self.table_widget.item(r, 0)
-                            if type_item and type_item.data(Qt.UserRole) and type_item.data(Qt.UserRole).get('type') == 'marker':
-                                original_marker_index = type_item.data(Qt.UserRole).get('original_index')
-                                style_type = "bold" if is_sender_bold else "italic"
-                                print(f"INFO: Re-derived original_marker_index: {original_marker_index}, style: {style_type} for row {r}")
-                                if not (0 <= original_marker_index < len(self.markers)) or \
-                                   not (0 <= original_marker_index < len(self._original_markers_data)):
-                                    print("Error: Re-derived index still invalid.")
-                                    return # Give up if re-derived is also bad
-                                break # Found the sender and its correct index
-                    else: # Loop completed without finding sender
-                        print("Error: Could not re-derive original_marker_index from table.")
+                if not isinstance(sender_checkbox, QCheckBox): return
+        
+                # Find the row of the clicked checkbox
+                for row in range(self.table_widget.rowCount()):
+                    is_bold_checkbox = self.table_widget.cellWidget(row, 4) and sender_checkbox is self.table_widget.cellWidget(row, 4).findChild(QCheckBox)
+                    is_italic_checkbox = self.table_widget.cellWidget(row, 5) and sender_checkbox is self.table_widget.cellWidget(row, 5).findChild(QCheckBox)
+        
+                    if is_bold_checkbox or is_italic_checkbox:
+                        type_item = self.table_widget.item(row, 0)
+                        if not type_item: return
+        
+                        item_data = type_item.data(Qt.UserRole)
+                        if not item_data or item_data.get('type') != 'marker': return
+        
+                        original_marker_index = item_data.get('original_index')
+                        if original_marker_index is None: return
+        
+                        # Update the data model
+                        is_checked = (state == Qt.Checked)
+                        idx_to_change = 6 if is_bold_checkbox else 7
+                        self.markers[original_marker_index][idx_to_change] = is_checked
+                        
+                        temp_list = list(self._original_markers_data[original_marker_index])
+                        temp_list[idx_to_change] = is_checked
+                        self._original_markers_data[original_marker_index] = tuple(temp_list)
+        
+                        # Repopulate the table to reflect the change visually
+                        self.populate_table()
+                        self.global_markers_adjusted.emit(list(self.markers))
                         return
-
-
-                is_checked = (state == Qt.Checked) # Qt.Checked is 2, Qt.Unchecked is 0
-                try:
-                    idx_to_change = -1
-                    if style_type == "bold":
-                        idx_to_change = 6 # self.markers[...][6] is for bold
-                    elif style_type == "italic":
-                        idx_to_change = 7 # self.markers[...][7] is for italic
-
-                    if idx_to_change == -1:
-                        print(f"Error: Unknown style_type '{style_type}' for checkbox.")
-                        return
-
-                    # Update working copy
-                    self.markers[original_marker_index][idx_to_change] = is_checked
-
-                    # Update original data (this is crucial for global adjustments to work from the new base)
-                    # The 'original_marker_index' from property should be correct index for _original_markers_data
-                    # because it's set from marker_idx which is the true original index.
-                    temp_list = list(self._original_markers_data[original_marker_index]) # Corrected to use original_marker_index
-                    temp_list[idx_to_change] = is_checked
-                    self._original_markers_data[original_marker_index] = tuple(temp_list) # Corrected to use original_marker_index
-
-                    self.global_markers_adjusted.emit(list(self.markers))
-                except IndexError:
-                    print(f"Error: Index mismatch updating style for marker original index {original_marker_index}.")
-                except Exception as e:
-                    print(f"Unexpected error in handle_marker_style_changed_from_checkbox: {e}")
         
             def handle_item_changed(self, item):
-                """Update internal lists when an editable cell (Text/Label or Coords) changes.
-                   If coordinates are edited manually, this will update the 'current' state,
-                   and subsequent global slider adjustments will be based on this new 'current' state
-                   as if it were the original for that specific item."""
+                """Updates the data model when an editable cell's text is changed."""
                 if self._block_signals: return
-
-                row = item.row()
-                col = item.column()
-
-                type_item = self.table_widget.item(row, 0)
-                if not type_item: return
-                item_data = type_item.data(Qt.UserRole)
-                if not item_data or item_data.get('type') == 'error': return
-
-                item_type = item_data['type']
-                original_item_index = item_data.get('original_index') # This is key, index into _original_markers_data or self.shapes
-
-                new_value_str = item.text()
-                revert_needed = False
-                error_message = ""
-                revert_text = ""
-
-                # --- Handle Marker Text Changes (Column 1) ---
-                if col == 1 and item_type == 'marker':
-                    if not (0 <= original_item_index < len(self.markers)): return
-                    prev_text = self.markers[original_item_index][2]
-                    try:
-                        new_text = new_value_str.strip()
-                        self.markers[original_item_index][2] = new_text
-                        # Also update the corresponding _original_markers_data to reflect this manual edit
-                        # This makes the manual edit the new "base" for future global scaling for THIS item
-                        if 0 <= original_item_index < len(self._original_markers_data):
-                            temp_list = list(self._original_markers_data[original_item_index])
-                            temp_list[2] = new_text
-                            self._original_markers_data[original_item_index] = tuple(temp_list)
-                    except Exception as e:
-                        revert_needed = True; revert_text = prev_text; error_message = f"Error updating text: {e}"
-
-                # --- Handle Coordinate Changes (Column 2) ---
-                elif col == 2:
-                    if item_type == 'marker':
-                        if not (0 <= original_item_index < len(self.markers)): return
-
-                        prev_x_display, prev_y_display = self.markers[original_item_index][0:2]
-                        revert_text = f"{prev_x_display:.1f},{prev_y_display:.1f}"
-
-                        try:
-                            parts = new_value_str.split(',')
-                            if len(parts) != 2: raise ValueError("Expected X,Y format")
-                            new_x_manual = float(parts[0].strip())
-                            new_y_manual = float(parts[1].strip())
-
-                            # Update the working copy first (what's displayed)
-                            self.markers[original_item_index][0] = new_x_manual
-                            self.markers[original_item_index][1] = new_y_manual
-
-                            # Now, back-calculate the "true original" for _original_markers_data
-                            # new_x_manual = (original_x * rel_x_scale_factor) + abs_x_shift_pixels
-                            # So, original_x = (new_x_manual - abs_x_shift_pixels) / rel_x_scale_factor
-                            if 0 <= original_item_index < len(self._original_markers_data):
-                                temp_list = list(self._original_markers_data[original_item_index])
-
-                                # Get current global slider values and adjust by precision
-                                abs_x_shift_percent_curr = self.abs_x_shift_slider.value() / self.percent_precision_factor
-                                abs_y_shift_percent_curr = self.abs_y_shift_slider.value() / self.percent_precision_factor
-                                rel_x_scale_percent_curr = self.rel_x_scale_slider.value() / self.scale_precision_factor
-                                rel_y_scale_percent_curr = self.rel_y_scale_slider.value() / self.scale_precision_factor
-
-                                img_width_curr = self._current_image_width if self._current_image_width > 0 else 1
-                                img_height_curr = self._current_image_height if self._current_image_height > 0 else 1
-
-                                abs_x_shift_pixels_curr = (abs_x_shift_percent_curr / 100.0) * img_width_curr
-                                abs_y_shift_pixels_curr = (abs_y_shift_percent_curr / 100.0) * img_height_curr
-
-                                rel_x_scale_factor_curr = rel_x_scale_percent_curr / 100.0
-                                rel_y_scale_factor_curr = rel_y_scale_percent_curr / 100.0
-
-                                base_x = (new_x_manual - abs_x_shift_pixels_curr) / rel_x_scale_factor_curr if rel_x_scale_factor_curr != 0 else (new_x_manual - abs_x_shift_pixels_curr) # Avoid division by zero, if scale is 0, offset is just from the shifted val
-                                base_y = (new_y_manual - abs_y_shift_pixels_curr) / rel_y_scale_factor_curr if rel_y_scale_factor_curr != 0 else (new_y_manual - abs_y_shift_pixels_curr)
-
-                                temp_list[0] = base_x
-                                temp_list[1] = base_y
-                                self._original_markers_data[original_item_index] = tuple(temp_list)
-
-                        except (ValueError, IndexError) as e:
-                            revert_needed = True; error_message = f"Could not parse marker coordinates:\n{e}\n\nExpected format: X,Y"
-
-                    elif item_type == 'shape': # Shapes are not affected by global sliders, direct update
-                        if not (0 <= original_item_index < len(self.shapes)): return
-                        shape_data = self.shapes[original_item_index]
-                        shape_type_internal = shape_data.get('type')
-                        # (Shape coordinate update logic remains the same as your existing code)
-                        if shape_type_internal == 'line':
-                            start = shape_data.get('start', (0,0)); end = shape_data.get('end', (0,0))
-                            revert_text = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"
-                        elif shape_type_internal == 'rectangle':
-                            rect = shape_data.get('rect', (0,0,0,0))
-                            revert_text = f"{rect[0]:.1f},{rect[1]:.1f},{rect[2]:.1f},{rect[3]:.1f}"
-                        else: revert_text = "N/A"
-                        try:
-                            coords_str = new_value_str.split(',')
-                            coords_float = [float(c.strip()) for c in coords_str]
-                            coords_updated = False
-                            if shape_type_internal == 'line' and len(coords_float) == 4:
-                                x1, y1, x2, y2 = coords_float
-                                shape_data['start'] = (x1, y1); shape_data['end'] = (x2, y2)
-                                coords_updated = True
-                            elif shape_type_internal == 'rectangle' and len(coords_float) == 4:
-                                x, y, w, h = coords_float
-                                if w >= 0 and h >= 0: shape_data['rect'] = (x, y, w, h); coords_updated = True
-                                else: raise ValueError("Rectangle width/height must be non-negative.")
-                            else: raise ValueError(f"Incorrect number of coordinates for {shape_type_internal.capitalize()} (expected 4).")
-                            if not coords_updated: raise ValueError("Coordinate update failed.")
-                        except (ValueError, IndexError) as e:
-                            revert_needed = True
-                            expected_format = "X1,Y1,X2,Y2" if shape_type_internal == 'line' else "X,Y,W,H"
-                            error_message = (f"Could not parse shape coordinates:\n{e}\n\nExpected format for {shape_type_internal.capitalize()}: {expected_format}")
-
-
-                if revert_needed:
-                    QMessageBox.warning(self, "Invalid Input", error_message)
-                    self._block_signals = True
-                    item.setText(revert_text)
-                    self._block_signals = False
-
-                if not revert_needed: # Only emit if the change was valid
-                    self.shapes_adjusted_preview.emit(list(self.shapes))
-                    self.global_markers_adjusted.emit(list(self.markers))
         
+                row, col = item.row(), item.column()
+                item_data = self.table_widget.item(row, 0).data(Qt.UserRole)
+                if not item_data or item_data['type'] == 'error': return
+                
+                item_type, original_index = item_data['type'], item_data['original_index']
+                new_value = item.text()
+                
+                # ... (Marker text/coord update logic is unchanged and correct) ...
+                if item_type == 'marker':
+                    if col == 1: # Text/Label
+                        self.markers[original_index][2] = new_value
+                        temp_list = list(self._original_markers_data[original_index]); temp_list[2] = new_value; self._original_markers_data[original_index] = tuple(temp_list)
+                    elif col == 2: # Coordinates
+                        try:
+                            x_str, y_str = new_value.split(',')
+                            new_x, new_y = float(x_str), float(y_str)
+                            
+                            self.markers[original_index][0] = new_x
+                            self.markers[original_index][1] = new_y
+                            
+                            # Back-calculate to update the pristine data for global sliders
+                            abs_x_shift = (self.abs_x_shift_slider.value() / self.percent_precision_factor / 100.0) * self._current_image_width
+                            abs_y_shift = (self.abs_y_shift_slider.value() / self.percent_precision_factor / 100.0) * self._current_image_height
+                            rel_x_scale = self.rel_x_scale_slider.value() / self.scale_precision_factor / 100.0
+                            rel_y_scale = self.rel_y_scale_slider.value() / self.scale_precision_factor / 100.0
+                            
+                            base_x = (new_x - abs_x_shift) / rel_x_scale if rel_x_scale != 0 else new_x
+                            base_y = (new_y - abs_y_shift) / rel_y_scale if rel_y_scale != 0 else new_y
+        
+                            temp_list = list(self._original_markers_data[original_index])
+                            temp_list[0], temp_list[1] = base_x, base_y
+                            self._original_markers_data[original_index] = tuple(temp_list)
+        
+                        except ValueError:
+                            # Revert on error
+                            self._block_signals = True
+                            prev_x, prev_y = self.markers[original_index][0:2]
+                            item.setText(f"{prev_x:.1f},{prev_y:.1f}")
+                            self._block_signals = False
+                            QMessageBox.warning(self, "Invalid Input", "Coordinates must be in 'X,Y' format (e.g., '100.5,250.2').")
+                
+                # --- NEW: Handle editable shape coordinates ---
+                elif item_type == 'shape' and col == 2:
+                    shape_data = self.shapes[original_index]
+                    shape_type_internal = shape_data.get('type')
+                    try:
+                        coords = [float(c.strip()) for c in new_value.split(',')]
+                        if shape_type_internal == 'line' and len(coords) == 4:
+                            shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
+                        elif shape_type_internal == 'rectangle' and len(coords) == 4:
+                            if coords[2] < 0 or coords[3] < 0: raise ValueError("Width/Height must be non-negative.")
+                            shape_data['rect'] = (coords[0], coords[1], coords[2], coords[3])
+                        else: raise ValueError("Incorrect number of coordinates.")
+                    except ValueError as e:
+                        self._block_signals = True
+                        self.populate_table() # Revert by repopulating
+                        self._block_signals = False
+                        QMessageBox.warning(self, "Invalid Input", f"Could not parse shape coordinates.\nError: {e}")
+        
+                self.shapes_adjusted_preview.emit(list(self.shapes))
+                self.global_markers_adjusted.emit(list(self.markers))
         
             def handle_cell_double_clicked(self, row, column):
-                if column in [1, 2]: return # Ignore Text/Coords columns for double-click non-edit actions
-
-                type_item = self.table_widget.item(row, 0)
-                if not type_item: return
-                item_data = type_item.data(Qt.UserRole)
-                if not item_data or item_data.get('type') == 'error': return
-
-                item_type = item_data['type']
-                original_item_index = item_data.get('original_index')
-
-                # Color Change (Column 6)
-                if column == 6:
-                    current_qcolor_to_edit = None
-                    if item_type == 'marker':
-                        if not (0 <= original_item_index < len(self.markers)): return
-                        current_qcolor_to_edit = self.markers[original_item_index][3]
-                    elif item_type == 'shape':
-                        if not (0 <= original_item_index < len(self.shapes)): return
-                        current_qcolor_to_edit = QColor(self.shapes[original_item_index].get('color', '#000000'))
-
-                    if current_qcolor_to_edit:
-                        new_color = QColorDialog.getColor(current_qcolor_to_edit, self, f"Select {item_type.capitalize()} Color")
-                        if new_color.isValid():
-                            if item_type == 'marker':
-                                self.markers[original_item_index][3] = new_color
-                                if 0 <= original_item_index < len(self._original_markers_data):
-                                    temp_list = list(self._original_markers_data[original_item_index])
-                                    temp_list[3] = new_color
-                                    self._original_markers_data[original_item_index] = tuple(temp_list)
-                            elif item_type == 'shape':
-                                self.shapes[original_item_index]['color'] = new_color.name()
-
-                            self._block_signals = True
-                            color_item = self.table_widget.item(row, 6); color_item.setText(new_color.name())
-                            color_item.setBackground(QBrush(new_color));
-                            text_color = Qt.white if new_color.lightness() < 128 else Qt.black
-                            color_item.setForeground(QBrush(text_color))
-                            self._block_signals = False
-                            self.shapes_adjusted_preview.emit(list(self.shapes))
-                            self.global_markers_adjusted.emit(list(self.markers))
-
-                # Font/Size Change for Markers (Column 3)
-                elif column == 3 and item_type == 'marker':
-                    if not (0 <= original_item_index < len(self.markers)):
-                        print(f"Warning: Invalid original_item_index ({original_item_index}) for font change.")
-                        return
-
-                    marker_entry = self.markers[original_item_index]
-                    try:
-                        font_family_str = str(marker_entry[4])
-                        current_display_font_size_int = int(marker_entry[5])
-                        is_bold_bool = bool(marker_entry[6])
-                        is_italic_bool = bool(marker_entry[7])
-                    except (IndexError, ValueError, TypeError) as e:
-                        print(f"Error accessing marker font properties: {e}. Marker data: {marker_entry}")
-                        QMessageBox.warning(self, "Data Error", "Could not read font properties for this marker.")
-                        return
-
-                    initial_qfont = QFont(font_family_str, current_display_font_size_int)
-                    initial_qfont.setBold(is_bold_bool)
-                    initial_qfont.setItalic(is_italic_bool)
-
-                    returned_val1, returned_val2 = QFontDialog.getFont(initial_qfont, self, "Select Marker Font")
-                    selected_font_obj = None; ok_flag = False
-                    if isinstance(returned_val1, QFont) and isinstance(returned_val2, bool):
-                        selected_font_obj = returned_val1; ok_flag = returned_val2
-                    elif isinstance(returned_val1, bool) and isinstance(returned_val2, QFont):
-                        selected_font_obj = returned_val2; ok_flag = returned_val1
-                    else:
-                        print(f"ERROR: QFontDialog.getFont returned unexpected types...")
-                        QMessageBox.warning(self, "Font Selection Error", "Font dialog returned unexpected data.")
-                        return
-
-                    if ok_flag:
-                        if not isinstance(selected_font_obj, QFont) or not selected_font_obj.family():
-                            print(f"ERROR: Selected font object is invalid...")
-                            QMessageBox.warning(self, "Font Selection Error", "The selected font is invalid.")
-                            return
-
-                        self.markers[original_item_index][4] = selected_font_obj.family()
-                        self.markers[original_item_index][5] = selected_font_obj.pointSize()
-                        self.markers[original_item_index][6] = selected_font_obj.bold()
-                        self.markers[original_item_index][7] = selected_font_obj.italic()
-
-                        font_scale_slider_val = self.font_scale_slider.value()
-                        scale_precision = self.scale_precision_factor
-                        if scale_precision == 0: scale_precision = 1.0
-                        current_font_scale_factor = (font_scale_slider_val / scale_precision) / 100.0
-                        if current_font_scale_factor == 0: current_font_scale_factor = 1.0
-
-                        if 0 <= original_item_index < len(self._original_markers_data):
-                            temp_list = list(self._original_markers_data[original_item_index])
-                            temp_list[4] = selected_font_obj.family()
-                            base_font_size = int(round(float(selected_font_obj.pointSize()) / current_font_scale_factor))
-                            temp_list[5] = max(1, base_font_size)
-                            temp_list[6] = selected_font_obj.bold()
-                            temp_list[7] = selected_font_obj.italic()
-                            self._original_markers_data[original_item_index] = tuple(temp_list)
-
-                        self._block_signals = True
-                        try:
-                            style_item = self.table_widget.item(row, 3)
-                            if style_item: style_item.setText(f"{selected_font_obj.family()} ({selected_font_obj.pointSize()}pt)")
-
-                            bold_widget = self.table_widget.cellWidget(row, 4)
-                            if bold_widget:
-                                cb_bold = bold_widget.findChild(QCheckBox)
-                                if cb_bold:
-                                    try: cb_bold.stateChanged.disconnect()
-                                    except (TypeError, RuntimeError): pass
-                                    cb_bold.setChecked(selected_font_obj.bold())
-                                    cb_bold.stateChanged.connect(self.handle_marker_style_changed_from_checkbox) # Connect to new handler
-
-                            italic_widget = self.table_widget.cellWidget(row, 5)
-                            if italic_widget:
-                                cb_italic = italic_widget.findChild(QCheckBox)
-                                if cb_italic:
-                                    try: cb_italic.stateChanged.disconnect()
-                                    except (TypeError, RuntimeError): pass
-                                    cb_italic.setChecked(selected_font_obj.italic())
-                                    cb_italic.stateChanged.connect(self.handle_marker_style_changed_from_checkbox) # Connect to new handler
-                        finally:
-                            self._block_signals = False
-                        self.global_markers_adjusted.emit(list(self.markers))
-
-                # Thickness Change for Shapes (Column 3)
-                elif column == 3 and item_type == 'shape':
-                     if not (0 <= original_item_index < len(self.shapes)): return
-                     current_thickness = self.shapes[original_item_index].get('thickness', 1)
-                     new_thickness, ok = QInputDialog.getInt(self, "Set Thickness", "Enter line/border thickness (pixels):", current_thickness, 1, 100, 1)
-                     if ok:
-                         self.shapes[original_item_index]['thickness'] = new_thickness
-                         self._block_signals = True
-                         self.table_widget.item(row, 3).setText(f"{new_thickness}px")
-                         self._block_signals = False
-                         self.shapes_adjusted_preview.emit(list(self.shapes))
+                """Handles dialogs for non-text edits (color, font, thickness)."""
+                if column in [1, 2]: return # Let itemChanged handle these
+        
+                item_data = self.table_widget.item(row, 0).data(Qt.UserRole)
+                if not item_data or item_data['type'] == 'error': return
+                item_type, original_index = item_data['type'], item_data['original_index']
+        
+                if column == 6: # Color
+                    current_color = QColor(self.markers[original_index][3] if item_type == 'marker' else self.shapes[original_index]['color'])
+                    new_color = QColorDialog.getColor(current_color, self, "Select Color")
+                    if new_color.isValid():
+                        if item_type == 'marker':
+                            self.markers[original_index][3] = new_color
+                            temp_list = list(self._original_markers_data[original_index]); temp_list[3] = new_color; self._original_markers_data[original_index] = tuple(temp_list)
+                        else: self.shapes[original_index]['color'] = new_color.name()
+                        self.populate_table()
+        
+                elif column == 3 and item_type == 'marker': # Marker Font
+                    _x, _y, _text, _qcolor, family, size, bold, italic = self.markers[original_index]
+                    current_font = QFont(family, size); current_font.setBold(bold); current_font.setItalic(italic)
+                    ok, new_font = QFontDialog.getFont(current_font, self)
+                    if ok:
+                        self.markers[original_index][4:8] = [new_font.family(), new_font.pointSize(), new_font.bold(), new_font.italic()]
+                        temp_list = list(self._original_markers_data[original_index]); temp_list[4:8] = self.markers[original_index][4:8]; self._original_markers_data[original_index] = tuple(temp_list)
+                        self.populate_table()
+        
+                elif column == 3 and item_type == 'shape': # Shape Thickness
+                    current_thickness = self.shapes[original_index].get('thickness', 1)
+                    new_thickness, ok = QInputDialog.getInt(self, "Set Thickness", "Enter thickness (pixels):", current_thickness, 1, 100)
+                    if ok:
+                        self.shapes[original_index]['thickness'] = new_thickness
+                        self.populate_table()
+                
+                self.shapes_adjusted_preview.emit(list(self.shapes))
+                self.global_markers_adjusted.emit(list(self.markers))
         
             def delete_item(self):
-                """
-                Finds which button was clicked, determines its current visual row,
-                deletes the corresponding item from the data model, and repopulates the table.
-                This correctly handles sorted tables.
-                """
+                """Deletes an item from the data model and repopulates the table."""
                 clicked_button = self.sender()
-                if not clicked_button:
-                    return
-
-                # Find the current visual row of the button that was clicked
-                for current_row in range(self.table_widget.rowCount()):
-                    if self.table_widget.cellWidget(current_row, 7) is clicked_button:
-                        type_item = self.table_widget.item(current_row, 0)
-                        if not type_item: return
-
-                        item_data = type_item.data(Qt.UserRole)
-                        if not item_data or item_data.get('type') == 'error': return
-
-                        item_type = item_data['type']
-                        # This index is the item's *original* index in the data model list.
-                        # This is correct because we've identified the right item visually.
-                        index_to_delete_from_list = item_data.get('original_index')
-
-                        self._block_signals = True
-                        try:
-                            if item_type == 'marker':
-                                if index_to_delete_from_list is not None and 0 <= index_to_delete_from_list < len(self.markers):
-                                    del self.markers[index_to_delete_from_list]
-                                    if 0 <= index_to_delete_from_list < len(self._original_markers_data):
-                                        del self._original_markers_data[index_to_delete_from_list]
-                                else: return
-
-                            elif item_type == 'shape':
-                                if index_to_delete_from_list is not None and 0 <= index_to_delete_from_list < len(self.shapes):
-                                    del self.shapes[index_to_delete_from_list]
-                                else: return
-                            
-                            # THE FIX: Repopulate the entire table. This is the most robust way
-                            # to handle the view after the data model has changed. It ensures
-                            # all indices, connections, and data are correct.
-                            self.populate_table()
-
-                        finally:
-                            self._block_signals = False
-
-                        # Emit signals to update the main window's preview
+                if not clicked_button: return
+        
+                # Find the visual row of the button that was clicked
+                for row in range(self.table_widget.rowCount()):
+                    if self.table_widget.cellWidget(row, 7) is clicked_button:
+                        item_data = self.table_widget.item(row, 0).data(Qt.UserRole)
+                        if not item_data: return
+                        
+                        item_type, original_index = item_data['type'], item_data['original_index']
+                        
+                        if item_type == 'marker' and 0 <= original_index < len(self.markers):
+                            del self.markers[original_index]
+                            del self._original_markers_data[original_index]
+                        elif item_type == 'shape' and 0 <= original_index < len(self.shapes):
+                            del self.shapes[original_index]
+        
+                        # Repopulate the table to reflect the deletion
+                        self.populate_table()
                         self.global_markers_adjusted.emit(list(self.markers))
                         self.shapes_adjusted_preview.emit(list(self.shapes))
-                        return # Exit the loop once the button is found and processed
-
-
+                        return
+        
             def get_modified_markers_and_shapes(self):
-                """Returns the modified lists of markers (already reflecting global adjustments) and shapes."""
-                final_markers = [tuple(m) for m in self.markers]
-                return final_markers, self.shapes
+                """Returns the final state of the data model."""
+                return [tuple(m) for m in self.markers], self.shapes
 
         class TableWindow(QDialog):
             HISTORY_FILE_NAME = "analysis_history.json"
@@ -3516,6 +3171,34 @@ if __name__ == "__main__":
                 # --- Mode-Specific Previews and Finalized Shapes ---
                 preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
                 ellipse_radius_view = self.drag_threshold * 0.7
+                
+                if self.app_instance and self.app_instance.moving_custom_item_info:
+                    info = self.app_instance.moving_custom_item_info
+                    is_resizing = self.app_instance.current_selection_mode == "resizing_custom_item"
+                    selection_pen = QPen(Qt.magenta, max(0.5, 2.0 / self.zoom_level), Qt.DotLine)
+                    handle_pen = QPen(Qt.red, max(0.5, 2.0 / self.zoom_level))
+                    handle_brush = QBrush(Qt.red)
+                    handle_radius = self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level
+
+                    if info['type'] == 'marker':
+                        bbox_ls = self.app_instance._get_marker_bounding_box_in_label_space(info['index'])
+                        if bbox_ls:
+                            painter.setPen(selection_pen)
+                            painter.drawRect(bbox_ls)
+                    elif info['type'] == 'shape':
+                        body_ls, handles_ls = self.app_instance._get_shape_bounding_box_and_handles_in_label_space(info['index'])
+                        if body_ls and handles_ls:
+                            painter.setPen(selection_pen)
+                            painter.drawRect(body_ls.adjusted(-2,-2,2,2)) # Draw bounding box around shape
+                            
+                            painter.setPen(handle_pen)
+                            painter.setBrush(handle_brush)
+                            for idx, handle_pt in enumerate(handles_ls):
+                                if is_resizing and idx == self.app_instance.resizing_corner_index:
+                                    painter.drawEllipse(handle_pt, handle_radius * 1.2, handle_radius * 1.2)
+                                else:
+                                    painter.drawEllipse(handle_pt, handle_radius, handle_radius)
+                            painter.setBrush(Qt.NoBrush)
 
                 # 1. Preview for Auto-Lane Quadrilateral (mode == 'auto_lane_quad')
                 if self.mode == 'auto_lane_quad' and self.quad_points: # self.quad_points is used for this preview
@@ -3776,7 +3459,8 @@ if __name__ == "__main__":
                 self.latest_multi_lane_calculated_quantities = {} # Key: lane_id (int), Value: list of quantities
                 self.multi_lane_processing_finished = False # Flag
                 self.moving_multi_lane_index = -1 
-                self.current_selection_mode = None # None, "select_for_move", "dragging_shape", "resizing_corner"
+                self.moving_custom_item_info = None # Will be {'type': 'marker'/'shape', 'index': int}
+                self.current_selection_mode = None # None, "select_for_move", "dragging_shape", "resizing_corner", "select_custom_item", ...
                 self.resizing_corner_index = -1 # Index of the corner (0-3) being resized
                 
 
@@ -4070,6 +3754,51 @@ if __name__ == "__main__":
                 else:
                     # Default if no valid position data (e.g., mouse exited label)
                     self.mouse_coord_label.setText("X: --, Y: --")
+                    
+            def _find_image_content_borders(self):
+                """
+                Scans the current self.image to find the left and right borders of the
+                non-padding content. Assumes padding is transparent.
+                Returns a tuple (left_border_x, right_border_x), or (None, None) on failure.
+                """
+                if not self.image or self.image.isNull():
+                    return None, None
+
+                # Use a copy to avoid modifying the original
+                qimg_to_scan = self.image.copy()
+                # Ensure the image has an alpha channel for reliable detection
+                if not qimg_to_scan.hasAlphaChannel():
+                    qimg_to_scan = qimg_to_scan.convertToFormat(QImage.Format_ARGB32)
+
+                np_img = self.qimage_to_numpy(qimg_to_scan)
+                if np_img is None or np_img.ndim < 3 or np_img.shape[2] < 4:
+                    print("Warning: Could not get image with alpha channel for border detection.")
+                    return None, None
+
+                height, width, _ = np_img.shape
+                # The alpha channel is the 4th channel (index 3)
+                alpha_channel = np_img[:, :, 3]
+
+                # Scan from left to right to find the first non-transparent column
+                left_border_x = None
+                for x in range(width):
+                    # np.any is fast for checking if any value in the column is non-zero
+                    if np.any(alpha_channel[:, x] > 0):
+                        left_border_x = x
+                        break
+
+                # Scan from right to left to find the first non-transparent column
+                right_border_x = None
+                for x in range(width - 1, -1, -1):
+                    if np.any(alpha_channel[:, x] > 0):
+                        right_border_x = x
+                        break
+                
+                if left_border_x is None or right_border_x is None:
+                    # This case happens if the image is fully transparent
+                    return 0, width-1 # Fallback to image edges
+
+                return left_border_x, right_border_x
                     
             def _reset_live_view_label_custom_handlers(self):
                 """Helper to reset all custom mouse interaction hooks on LiveViewLabel."""
@@ -5327,19 +5056,17 @@ if __name__ == "__main__":
                 
                 inv_perspective_matrix = None
                 src_points_for_transform_np = None
-                # dst_points_for_transform_np = None # Not needed here, only for creating the matrix
 
                 if is_from_quad_warp:
                     if len(original_region_definition) != 4:
                         print("Error: Quadrilateral definition requires 4 points for inverse mapping in auto lane.")
                         return
                     src_points_for_transform_list = []
-                    for p in original_region_definition: # original_region_definition is list of QPointF in IMAGE space
+                    for p in original_region_definition:
                         try: src_points_for_transform_list.append([float(p.x()), float(p.y())])
-                        except AttributeError: src_points_for_transform_list.append([float(p[0]), float(p[1])]) # If it was a tuple
+                        except AttributeError: src_points_for_transform_list.append([float(p[0]), float(p[1])])
                     src_points_for_transform_np = np.array(src_points_for_transform_list, dtype=np.float32)
                     
-                    # Destination points are in the DIALOG's (warped rectangle) image space
                     dst_points_for_dialog_transform_np = np.array([
                         [0.0, 0.0],
                         [float(dialog_image_width) - 1.0, 0.0],
@@ -5347,84 +5074,61 @@ if __name__ == "__main__":
                         [0.0, float(dialog_image_height) - 1.0]
                     ], dtype=np.float32)
                     try:
-                        # We need to map from dialog space (dst) back to original image space (src)
                         inv_perspective_matrix = cv2.getPerspectiveTransform(dst_points_for_dialog_transform_np, src_points_for_transform_np)
                     except Exception as e:
                         print(f"Error calculating inverse perspective matrix for auto lane: {e}")
                         return
 
-                sum_x_coords_img_space = 0.0
-                count_x_coords = 0
-
-                for i, peak_y_dialog in enumerate(sorted_peaks_dialog): # peak_y_dialog is already float
+                for i, peak_y_dialog in enumerate(sorted_peaks_dialog):
                     label = str(current_marker_values_for_labels[i]) if i < len(current_marker_values_for_labels) else ""
                     y_final_img_calc = 0.0
-                    x_final_img_for_marker_calc = 0.0 # This X is for the alignment line
-
-                    if not is_from_quad_warp: # Rectangle case
-                        # original_region_definition is (rect_x_img, rect_y_img, rect_w_img, rect_h_img) in NATIVE IMAGE space
+                    
+                    if not is_from_quad_warp:
                         rect_x_img, rect_y_img, rect_w_img, rect_h_img = map(float, original_region_definition)
-                        
-                        # peak_y_dialog is a Y-coordinate within the rectangular dialog_image_pil (height: dialog_image_height)
-                        # We need to map this Y back to the original image's Y scale within the defined rectangle
                         t = peak_y_dialog / (float(dialog_image_height) - 1.0) if dialog_image_height > 1 else 0.5
-                        t = max(0.0, min(1.0, t)) # Clamp t to [0,1]
+                        t = max(0.0, min(1.0, t))
                         y_final_img_calc = rect_y_img + t * rect_h_img
-
-                        if side == 'left':
-                            # For left markers, the alignment line is typically at the left edge of the rectangle
-                            x_final_img_for_marker_calc = rect_x_img 
-                        else: # side == 'right'
-                            # For right markers, the alignment line is at the right edge of the rectangle
-                            x_final_img_for_marker_calc = rect_x_img + rect_w_img
-                    else: # Quadrilateral warp case
+                    else:
                         if inv_perspective_matrix is None: continue
-                        
-                        # Determine an X-coordinate in the *dialog's (warped)* space to represent the lane edge.
-                        # E.g., 5% from left/right edge of the dialog image.
-                        x_in_dialog_space = 0.0
-                        if side == 'left':
-                            x_in_dialog_space = float(dialog_image_width) * 0.05 
-                        elif side == 'right':
-                            x_in_dialog_space = float(dialog_image_width) * 0.95 
-                        
+                        x_in_dialog_space = float(dialog_image_width) * 0.05 if side == 'left' else float(dialog_image_width) * 0.95
                         point_in_dialog_np = np.array([[[x_in_dialog_space, peak_y_dialog]]], dtype=np.float32)
                         try:
                             original_image_point_np = cv2.perspectiveTransform(point_in_dialog_np, inv_perspective_matrix)
-                            x_final_img_for_marker_calc = float(original_image_point_np[0,0,0])
                             y_final_img_calc = float(original_image_point_np[0,0,1])
                         except Exception as e_transform:
-                            print(f"Error transforming point back for auto lane: {e_transform}")
-                            # Fallback if transform fails (less accurate)
-                            t = peak_y_dialog / (float(dialog_image_height) - 1.0) if dialog_image_height > 1 else 0.5
-                            t = max(0.0, min(1.0, t))
-                            p0_img = QPointF(src_points_for_transform_np[0,0], src_points_for_transform_np[0,1])
-                            p1_img = QPointF(src_points_for_transform_np[1,0], src_points_for_transform_np[1,1])
-                            p2_img = QPointF(src_points_for_transform_np[2,0], src_points_for_transform_np[2,1])
-                            p3_img = QPointF(src_points_for_transform_np[3,0], src_points_for_transform_np[3,1])
-                            if side == 'left': # Interpolate along the left edge of the original quad
-                                y_final_img_calc = float(p0_img.y() * (1 - t) + p3_img.y() * t)
-                                x_final_img_for_marker_calc = float(p0_img.x() * (1 - t) + p3_img.x() * t)
-                            else: # Interpolate along the right edge of the original quad
-                                y_final_img_calc = float(p1_img.y() * (1 - t) + p2_img.y() * t)
-                                x_final_img_for_marker_calc = float(p1_img.x() * (1 - t) + p2_img.x() * t)
+                            print(f"Error transforming point back for auto lane: {e_transform}"); continue
                     
                     final_y_to_store = float(y_final_img_calc)
                     target_marker_list.append((final_y_to_store, label))
-                    
-                    sum_x_coords_img_space += float(x_final_img_for_marker_calc)
-                    count_x_coords += 1
-
-                # Calculate the average X position for the alignment line in native image space
-                target_x_in_image_space_for_slider = 0.0
-                if count_x_coords > 0:
-                    target_x_in_image_space_for_slider = sum_x_coords_img_space / count_x_coords
                 
-                # --- Set the appropriate offset slider ---
-                # This target_x is in NATIVE IMAGE PIXELS
-                slider_target_value_native_pixels = int(round(target_x_in_image_space_for_slider))
+                # --- MODIFICATION START (with pixel-perfect refinement) ---
+                # Override X position logic to use detected content borders instead of region geometry.
+                left_border, right_border = self._find_image_content_borders()
+                
+                target_x_in_image_space_for_slider = 0.0
 
-                self._update_marker_slider_ranges() # Ensure slider ranges are current
+                if side == 'left':
+                    if left_border is not None:
+                        # For the left marker, the text "value ⎯" is drawn to the left of the anchor.
+                        # Setting the anchor exactly at the border ensures the line sits right on it.
+                        target_x_in_image_space_for_slider = left_border
+                        print(f"INFO: Auto lane marker X position set to detected left content border: {left_border}")
+                    else:
+                        print("WARNING: Could not detect image content border. Falling back to edge.")
+                        target_x_in_image_space_for_slider = 0 
+                elif side == 'right':
+                    if right_border is not None:
+                        # For the right marker, the text "⎯ value" is drawn starting at the anchor.
+                        # Setting the anchor to the border + 1 ensures the line starts just outside the content.
+                        target_x_in_image_space_for_slider = right_border + 1
+                        print(f"INFO: Auto lane marker X position set to detected right content border + 1: {right_border + 1}")
+                    else:
+                        print("WARNING: Could not detect image content border. Falling back to edge.")
+                        target_x_in_image_space_for_slider = self.image.width() - 1 if self.image else 0
+                # --- MODIFICATION END ---
+                
+                slider_target_value_native_pixels = int(round(target_x_in_image_space_for_slider))
+                self._update_marker_slider_ranges()
 
                 if side == 'left':
                     if hasattr(self, 'left_padding_slider'):
@@ -5433,7 +5137,7 @@ if __name__ == "__main__":
                             max(self.left_slider_range[0], min(slider_target_value_native_pixels, self.left_slider_range[1]))
                         )
                         self.left_padding_slider.blockSignals(False)
-                        self.left_marker_shift_added = self.left_padding_slider.value() # Sync internal var
+                        self.left_marker_shift_added = self.left_padding_slider.value()
                 elif side == 'right':
                      if hasattr(self, 'right_padding_slider'):
                          self.right_padding_slider.blockSignals(True)
@@ -5441,7 +5145,7 @@ if __name__ == "__main__":
                              max(self.right_slider_range[0], min(slider_target_value_native_pixels, self.right_slider_range[1]))
                          )
                          self.right_padding_slider.blockSignals(False)
-                         self.right_marker_shift_added = self.right_padding_slider.value() # Sync internal var
+                         self.right_marker_shift_added = self.right_padding_slider.value()
 
                 self.is_modified = True
                 self.update_live_view()
@@ -8527,9 +8231,19 @@ if __name__ == "__main__":
                 custom_manage_layout = QHBoxLayout(); custom_manage_layout.setContentsMargins(0,0,0,0); custom_manage_layout.setSpacing(4)
                 self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
                 self.reset_custom_marker_button = QPushButton("Reset All"); self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
-                self.modify_custom_marker_button = QPushButton("Modify All..."); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes")
+                
+                # --- NEW BUTTON ---
+                self.move_resize_button = QPushButton("Move/Resize")
+                self.move_resize_button.setToolTip("Toggle mode to move/resize custom markers and shapes on the image.")
+                self.move_resize_button.setCheckable(True)
+                self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
+                # --- END NEW BUTTON ---
+
+                self.modify_custom_marker_button = QPushButton("Modify All..."); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes in a table")
                 self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
-                custom_manage_layout.addWidget(self.remove_custom_marker_button); custom_manage_layout.addWidget(self.reset_custom_marker_button); custom_manage_layout.addWidget(self.modify_custom_marker_button)
+                custom_manage_layout.addWidget(self.remove_custom_marker_button); custom_manage_layout.addWidget(self.reset_custom_marker_button)
+                custom_manage_layout.addWidget(self.move_resize_button) # Add button to layout
+                custom_manage_layout.addWidget(self.modify_custom_marker_button)
 
                 custom_layout.addWidget(self.custom_marker_button, 0, 0)
                 custom_layout.addWidget(self.custom_marker_text_entry, 0, 1)
@@ -8921,8 +8635,10 @@ if __name__ == "__main__":
                 if event.key() == Qt.Key_Escape:
                     a_mode_was_cancelled_or_view_reset = False # Flag if any action taken by Esc
 
-                    # 1. Attempt to Cancel Specific Active Modes
-                    if self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"]:
+                    if self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
+                        self.cancel_custom_item_interaction_mode()
+                        a_mode_was_cancelled_or_view_reset = True
+                    elif self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"]:
                         # If actively dragging/resizing, revert to "select_for_move"
                         # or fully cancel the selection mode.
                         if self.current_selection_mode in ["dragging_shape", "resizing_corner"]:
@@ -9054,6 +8770,235 @@ if __name__ == "__main__":
 
                 # If not Escape and not a panning arrow key (while zoomed), pass to super
                 super().keyPressEvent(event)
+                
+            def toggle_custom_item_interaction_mode(self, checked):
+                if checked:
+                    # Cancel any other conflicting modes
+                    self.cancel_drawing_mode()
+                    self.cancel_rectangle_crop_mode()
+                    self.cancel_selection_or_move_mode() # Cancel analysis area selection
+                    if hasattr(self, 'marker_mode'): self.marker_mode = None
+
+                    self.current_selection_mode = "select_custom_item"
+                    self.live_view_label.mode = "select_custom_item"
+                    self.moving_custom_item_info = None
+                    self.resizing_corner_index = -1
+
+                    self._reset_live_view_label_custom_handlers()
+                    self.live_view_label._custom_left_click_handler_from_app = self.handle_custom_item_selection_click
+
+                    QMessageBox.information(self, "Move/Resize Custom Items",
+                                            "Click on a marker or shape to select it.\n"
+                                            "Drag its body to move, or a corner handle to resize (shapes only).\n"
+                                            "Press ESC or un-check the button to exit this mode.")
+                    self.update_live_view()
+                else:
+                    self.cancel_custom_item_interaction_mode()
+
+            def cancel_custom_item_interaction_mode(self):
+                if self.current_selection_mode not in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
+                    return
+
+                self.current_selection_mode = None
+                self.live_view_label.mode = None
+                self.moving_custom_item_info = None
+                self.resizing_corner_index = -1
+                self.shape_points_at_drag_start_label = []
+
+                self._reset_live_view_label_custom_handlers()
+
+                if hasattr(self, 'move_resize_button') and self.move_resize_button.isChecked():
+                    self.move_resize_button.setChecked(False)
+
+                self.update_live_view()
+
+            def handle_custom_item_selection_click(self, event):
+                if self.current_selection_mode != "select_custom_item" or event.button() != Qt.LeftButton:
+                    return
+
+                clicked_point_ls = self.live_view_label.transform_point(event.position())
+                click_radius_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 1.5
+                item_selected = False
+
+                # Iterate in reverse to select topmost items first
+                # Check shape handles first (higher priority than body)
+                for i in range(len(self.custom_shapes) - 1, -1, -1):
+                    _body, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                    if handles_ls:
+                        for corner_idx, handle_pt in enumerate(handles_ls):
+                            if (clicked_point_ls - handle_pt).manhattanLength() < click_radius_threshold:
+                                self.moving_custom_item_info = {'type': 'shape', 'index': i}
+                                self.resizing_corner_index = corner_idx
+                                self.shape_points_at_drag_start_label = handles_ls
+                                item_selected = True
+                                break
+                    if item_selected: break
+
+                # Check shape bodies if no handle was clicked
+                if not item_selected:
+                    for i in range(len(self.custom_shapes) - 1, -1, -1):
+                        body_ls, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                        if body_ls and body_ls.contains(clicked_point_ls):
+                            self.moving_custom_item_info = {'type': 'shape', 'index': i}
+                            self.resizing_corner_index = -1 # Body move
+                            self.shape_points_at_drag_start_label = handles_ls # Store corners for move calculation
+                            item_selected = True
+                            break
+
+                # Check marker bodies if no shape was clicked
+                if not item_selected:
+                    for i in range(len(self.custom_markers) - 1, -1, -1):
+                        bbox_ls = self._get_marker_bounding_box_in_label_space(i)
+                        if bbox_ls and bbox_ls.contains(clicked_point_ls):
+                            self.moving_custom_item_info = {'type': 'marker', 'index': i}
+                            self.resizing_corner_index = -1 # Markers can't be resized this way
+                            self.shape_points_at_drag_start_label = [bbox_ls.center()]
+                            item_selected = True
+                            break
+
+                if item_selected:
+                    self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
+                    if self.resizing_corner_index != -1:
+                        self.current_selection_mode = "resizing_custom_item"
+                        self.live_view_label.mode = "resizing_custom_item"
+                    else:
+                        self.current_selection_mode = "dragging_custom_item"
+                        self.live_view_label.mode = "dragging_custom_item"
+
+                    self.live_view_label.setCursor(Qt.CrossCursor)
+                    self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_custom_item_drag
+                    self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_custom_item_drag_release
+                else:
+                    self.moving_custom_item_info = None
+                    self.resizing_corner_index = -1
+
+                self.update_live_view()
+
+            def handle_custom_item_drag(self, event):
+                if not self.moving_custom_item_info or not (event.buttons() & Qt.LeftButton):
+                    return
+
+                current_mouse_pos_ls = self.live_view_label.transform_point(event.position())
+                info = self.moving_custom_item_info
+
+                # Coordinate transformation helper
+                label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                img_w = float(self.image.width()); img_h = float(self.image.height())
+                if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0): return
+                scale = min(label_w / img_w, label_h / img_h)
+                offset_x = (label_w - img_w * scale) / 2.0; offset_y = (label_h - img_h * scale) / 2.0
+                def label_to_image(p_ls):
+                    if scale == 0: return QPointF(0,0)
+                    return QPointF((p_ls.x() - offset_x) / scale, (p_ls.y() - offset_y) / scale)
+
+                # --- DRAG LOGIC ---
+                if self.current_selection_mode == "dragging_custom_item":
+                    raw_delta_ls = current_mouse_pos_ls - self.initial_mouse_pos_for_shape_drag_label
+                    snapped_new_ref_point_ls = self.snap_point_to_grid(self.shape_points_at_drag_start_label[0] + raw_delta_ls)
+                    effective_delta_ls = snapped_new_ref_point_ls - self.shape_points_at_drag_start_label[0]
+
+                    if info['type'] == 'marker':
+                        new_center_ls = self.shape_points_at_drag_start_label[0] + effective_delta_ls
+                        new_center_img = label_to_image(new_center_ls)
+                        self.custom_markers[info['index']][0] = new_center_img.x()
+                        self.custom_markers[info['index']][1] = new_center_img.y()
+                    elif info['type'] == 'shape':
+                        new_points_ls = [p + effective_delta_ls for p in self.shape_points_at_drag_start_label]
+                        new_points_img = [label_to_image(p) for p in new_points_ls]
+                        shape_data = self.custom_shapes[info['index']]
+                        if shape_data['type'] == 'rectangle':
+                            xs = [p.x() for p in new_points_img]; ys = [p.y() for p in new_points_img]
+                            shape_data['rect'] = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+                        elif shape_data['type'] == 'line':
+                            shape_data['start'] = (new_points_img[0].x(), new_points_img[0].y())
+                            shape_data['end'] = (new_points_img[1].x(), new_points_img[1].y())
+
+                # --- RESIZE LOGIC ---
+                elif self.current_selection_mode == "resizing_custom_item":
+                    snapped_mouse_ls = self.snap_point_to_grid(current_mouse_pos_ls)
+                    shape_data = self.custom_shapes[info['index']]
+                    if shape_data['type'] == 'rectangle':
+                        fixed_corner_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 2) % 4]
+                        p1_img = label_to_image(fixed_corner_ls); p2_img = label_to_image(snapped_mouse_ls)
+                        xs = sorted([p1_img.x(), p2_img.x()]); ys = sorted([p1_img.y(), p2_img.y()])
+                        shape_data['rect'] = (xs[0], ys[0], xs[1] - xs[0], ys[1] - ys[0])
+                    elif shape_data['type'] == 'line':
+                        other_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
+                        p1_img = label_to_image(other_endpoint_ls); p2_img = label_to_image(snapped_mouse_ls)
+                        if self.resizing_corner_index == 0:
+                            shape_data['start'], shape_data['end'] = (p2_img.x(), p2_img.y()), (p1_img.x(), p1_img.y())
+                        else:
+                            shape_data['start'], shape_data['end'] = (p1_img.x(), p1_img.y()), (p2_img.x(), p2_img.y())
+                
+                self.update_live_view()
+
+            def handle_custom_item_drag_release(self, event):
+                if self.current_selection_mode in ["dragging_custom_item", "resizing_custom_item"] and event.button() == Qt.LeftButton:
+                    self.save_state()
+                    self.is_modified = True
+                    self.shape_points_at_drag_start_label = []
+                    self.initial_mouse_pos_for_shape_drag_label = QPointF()
+                    self.resizing_corner_index = -1
+                    self.current_selection_mode = "select_custom_item"
+                    self.live_view_label.mode = "select_custom_item"
+                    self.live_view_label._custom_mouseMoveEvent_from_app = None
+                    self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                    self.update_live_view()
+            
+            def _get_marker_bounding_box_in_label_space(self, marker_index):
+                if not (self.image and not self.image.isNull()): return None
+                try:
+                    marker_data = self.custom_markers[marker_index]
+                    x_img, y_img, text, _color, font_family, font_size, is_bold, is_italic = marker_data
+                    label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                    img_w = float(self.image.width()); img_h = float(self.image.height())
+                    if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0): return None
+                    scale = min(label_w / img_w, label_h / img_h)
+                    offset_x = (label_w - img_w * scale) / 2.0; offset_y = (label_h - img_h * scale) / 2.0
+                    anchor_x_ls = x_img * scale + offset_x; anchor_y_ls = y_img * scale + offset_y
+                    
+                    font = QFont(font_family, int(font_size)); font.setBold(is_bold); font.setItalic(is_italic)
+                    fm = QFontMetrics(font)
+                    # Add a small padding to the bounding box to make it easier to click
+                    padding = 4
+                    text_rect = fm.boundingRect(text).adjusted(-padding, -padding, padding, padding)
+                    
+                    return QRectF(
+                        anchor_x_ls - text_rect.width() / 2.0,
+                        anchor_y_ls - text_rect.height() / 2.0,
+                        text_rect.width(),
+                        text_rect.height()
+                    )
+                except (IndexError, Exception):
+                    return None
+
+            def _get_shape_bounding_box_and_handles_in_label_space(self, shape_index):
+                if not (self.image and not self.image.isNull()): return None, None
+                try:
+                    shape_data = self.custom_shapes[shape_index]
+                    label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                    img_w = float(self.image.width()); img_h = float(self.image.height())
+                    if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0): return None, None
+                    scale = min(label_w / img_w, label_h / img_h)
+                    offset_x = (label_w - img_w * scale) / 2.0; offset_y = (label_h - img_h * scale) / 2.0
+
+                    def img_to_label(p): return QPointF(p[0] * scale + offset_x, p[1] * scale + offset_y)
+                        
+                    shape_type = shape_data.get('type')
+                    body = None; handles = []
+                    if shape_type == 'rectangle':
+                        x, y, w, h = shape_data['rect']
+                        p1 = img_to_label((x, y)); p2 = img_to_label((x + w, y + h))
+                        body = QRectF(p1, p2).normalized()
+                        handles = [body.topLeft(), body.topRight(), body.bottomRight(), body.bottomLeft()]
+                    elif shape_type == 'line':
+                        p1 = img_to_label(shape_data['start']); p2 = img_to_label(shape_data['end'])
+                        # The "body" for clicking a line needs tolerance
+                        body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5) 
+                        handles = [p1, p2]
+                    return body, handles
+                except (IndexError, KeyError, Exception):
+                    return None, None
             
             def update_marker_text_font(self, font: QFont):
                 """
@@ -9269,42 +9214,49 @@ if __name__ == "__main__":
             def duplicate_marker(self, marker_type):
                 self.save_state() # Save state before making changes
 
+                # --- NEW: Detect the actual content borders ---
+                left_border, right_border = self._find_image_content_borders()
+
+                if left_border is None or right_border is None:
+                    QMessageBox.warning(self, "Border Detection Failed", 
+                                        "Could not detect image content borders. Please ensure image has padding or clear boundaries.")
+                    # Revert state if we can't proceed
+                    if self.undo_stack: self.undo_stack.pop()
+                    return
+
                 if marker_type == 'left' and self.right_markers:
                     # Copy Right Markers TO Left
                     self.left_markers = self.right_markers.copy()
-                    # Copy Right Offset value TO Left Offset variable
-                    self.left_marker_shift_added = self.right_marker_shift_added
+                    
+                    # --- FIX: Set offset to the detected LEFT border ---
+                    self.left_marker_shift_added = left_border
 
-                    # Update Left Slider position to match the copied offset
+                    # Update Left Slider position to match the detected border
                     if hasattr(self, 'left_padding_slider'):
                         min_val, max_val = self.left_padding_slider.minimum(), self.left_padding_slider.maximum()
-                        # Clamp the value to the slider's current range
                         clamped_value = max(min_val, min(self.left_marker_shift_added, max_val))
-                        # Update slider visually, preventing signal emission temporarily
                         self.left_padding_slider.blockSignals(True)
                         self.left_padding_slider.setValue(clamped_value)
                         self.left_padding_slider.blockSignals(False)
-                        # Ensure the internal variable matches the potentially clamped value
-                        self.left_marker_shift_added = clamped_value
+                        # Re-sync internal variable with the actual slider value after potential clamping
+                        self.left_marker_shift_added = self.left_padding_slider.value()
 
                 elif marker_type == 'right' and self.left_markers:
                     # Copy Left Markers TO Right
                     self.right_markers = self.left_markers.copy()
-                    # Copy Left Offset value TO Right Offset variable
-                    self.right_marker_shift_added = self.left_marker_shift_added
 
-                    # Update Right Slider position to match the copied offset
+                    # --- FIX: Set offset to the detected RIGHT border ---
+                    self.right_marker_shift_added = right_border
+
+                    # Update Right Slider position to match the detected border
                     if hasattr(self, 'right_padding_slider'):
                         min_val, max_val = self.right_padding_slider.minimum(), self.right_padding_slider.maximum()
-                        # Clamp the value to the slider's current range
                         clamped_value = max(min_val, min(self.right_marker_shift_added, max_val))
-                        # Update slider visually, preventing signal emission temporarily
                         self.right_padding_slider.blockSignals(True)
                         self.right_padding_slider.setValue(clamped_value)
                         self.right_padding_slider.blockSignals(False)
-                        # Ensure the internal variable matches the potentially clamped value
-                        self.right_marker_shift_added = clamped_value
-
+                        # Re-sync internal variable
+                        self.right_marker_shift_added = self.right_padding_slider.value()
 
                 # Call update live view after duplicating markers and updating offsets/sliders
                 self.update_live_view()
@@ -10570,44 +10522,59 @@ if __name__ == "__main__":
 
                 try:
                     # --- 1. Adjust element coordinates and _marker_shift_added values ---
-                    # This updates them based on padding_left and padding_top.
                     self.adjust_elements_for_padding(padding_left, padding_top)
 
-                    # --- 2. Pad the image ---
-                    # (Existing NumPy/OpenCV padding logic is good)
-                    source_has_alpha = self.image.hasAlphaChannel()
+                    # --- 2. Pad the image using NumPy for a pixel-perfect copy ---
+                    # >>> MODIFICATION START: Replaced QPainter with NumPy <<<
+                    
+                    # Convert the source image to a NumPy array
                     np_img = self.qimage_to_numpy(self.image)
-                    if np_img is None: raise ValueError("NumPy conversion failed.")
-                    numpy_indicates_alpha = (np_img.ndim == 3 and np_img.shape[2] == 4)
-                    has_alpha = source_has_alpha or numpy_indicates_alpha
-                    fill_value = None
-                    if has_alpha: fill_value = (0, 0, 0, 0) 
-                    elif np_img.ndim == 3: fill_value = (255, 255, 255) 
-                    elif np_img.ndim == 2: fill_value = 65535 if np_img.dtype == np.uint16 else 255
-                    else: raise ValueError(f"Unsupported image dimensions for padding: {np_img.ndim}")
-                    padded_np = cv2.copyMakeBorder(np_img, padding_top, padding_bottom,
-                                                   padding_left, padding_right,
-                                                   cv2.BORDER_CONSTANT, value=fill_value)
+                    if np_img is None:
+                        raise ValueError("Failed to convert source image to NumPy array for padding.")
+
+                    original_height, original_width = np_img.shape[:2]
+                    new_width = original_width + padding_left + padding_right
+                    new_height = original_height + padding_top + padding_bottom
+                    
+                    # Determine the fill value for "white" based on the image's data type
+                    # and the correct shape for the new canvas.
+                    if np_img.ndim == 2: # Grayscale
+                        fill_value = 65535 if np_img.dtype == np.uint16 else 255
+                        padded_shape = (new_height, new_width)
+                    elif np_img.ndim == 3: # Color
+                        channels = np_img.shape[2]
+                        fill_value = [255] * channels # e.g., (255, 255, 255) or (255, 255, 255, 255)
+                        padded_shape = (new_height, new_width, channels)
+                    else:
+                        raise ValueError(f"Unsupported image dimension for padding: {np_img.ndim}")
+
+                    # Create a new, larger NumPy array filled with the white value
+                    padded_np = np.full(padded_shape, fill_value, dtype=np_img.dtype)
+                    
+                    # Copy the original image data into the correct slice of the new array.
+                    # This is a direct data copy, no interpolation or anti-aliasing will occur.
+                    padded_np[padding_top:padding_top + original_height, padding_left:padding_left + original_width] = np_img
+
+                    # Convert the padded NumPy array back to a QImage
                     padded_image = self.numpy_to_qimage(padded_np)
                     if padded_image.isNull():
-                         raise ValueError("Conversion back to QImage failed after padding.")
+                        raise ValueError("Conversion back to QImage failed after padding with NumPy.")
+                    # >>> MODIFICATION END <<<
+
 
                     # --- 3. Update main image and backups ---
-                    self.image = padded_image # self.image is now the padded image
+                    self.image = padded_image
                     self.image_padded = True 
                     self.is_modified = True
                     self.image_contrasted = self.image.copy()
                     self.image_before_contrast = self.image.copy()
-                    # self.image_before_padding is implicitly handled by save_state before this operation
 
                     # --- 4. Update UI ---
                     self._update_preview_label_size() 
                     self._update_status_bar()         
                     
-                    # Update slider RANGES based on new image dimensions.
                     self._update_marker_slider_ranges() 
                     
-                    # Set slider values to the _marker_shift_added values (which were updated by adjust_elements_for_padding).
                     sliders_to_set = [
                         (getattr(self, 'left_padding_slider', None), self.left_marker_shift_added),
                         (getattr(self, 'right_padding_slider', None), self.right_marker_shift_added),
@@ -10616,9 +10583,8 @@ if __name__ == "__main__":
                     for slider, value_to_set in sliders_to_set:
                         if slider:
                             slider.blockSignals(True)
-                            slider.setValue(value_to_set) # Will be clamped by new range if needed
+                            slider.setValue(value_to_set)
                             slider.blockSignals(False)
-                            # Re-sync internal var with actual slider value
                             if slider == self.left_padding_slider: self.left_marker_shift_added = slider.value()
                             elif slider == self.right_padding_slider: self.right_marker_shift_added = slider.value()
                             elif slider == self.top_padding_slider: self.top_marker_shift_added = slider.value()
