@@ -964,53 +964,60 @@ if __name__ == "__main__":
                 self.table_widget.clearContents()
                 self.table_widget.setRowCount(len(self.markers) + len(self.shapes))
 
+                # --- Define a standard font for the table display ---
+                standard_table_font = QFont("Segoe UI", 12) # A good, readable default
+
                 # --- Populate Markers ---
                 for i, marker_data in enumerate(self.markers):
                     x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data
                     
-                    item_font = QFont(font_family, font_size)
-                    item_font.setBold(is_bold)
-                    item_font.setItalic(is_italic)
-
-                    type_item = QTableWidgetItem("Marker"); type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': i})
-                    text_item = QTableWidgetItem(text); text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
-                    coord_item = QTableWidgetItem(f"{x:.1f},{y:.1f}"); coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
-                    style_item = QTableWidgetItem(f"{font_family} ({font_size}pt)"); style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
+                    # --- Create Table Items ---
+                    type_item = QTableWidgetItem("Marker")
+                    type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': i})
                     
+                    text_item = QTableWidgetItem(text)
+                    text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+                    
+                    coord_item = QTableWidgetItem(f"{x:.1f},{y:.1f}")
+                    coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
+                    
+                    # Display the marker's actual style as text, but don't apply it to the cell
+                    style_item = QTableWidgetItem(f"{font_family} ({font_size}pt)")
+                    style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
+                    
+                    # --- Apply the standard font to all items ---
                     items_to_set = [type_item, text_item, coord_item, style_item]
                     for col, item in enumerate(items_to_set):
-                        item.setFont(item_font)
+                        item.setFont(standard_table_font) # Use the standard font
                         self.table_widget.setItem(i, col, item)
                     
                     # --- Checkboxes ---
                     bold_checkbox = QCheckBox()
-                    # THE FIX: Set the checked state BEFORE connecting the signal
                     bold_checkbox.setChecked(is_bold)
                     bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
-                    # --- END FIX ---
                     cell_widget_bold = QWidget(); layout_bold = QHBoxLayout(cell_widget_bold); layout_bold.addWidget(bold_checkbox); layout_bold.setAlignment(Qt.AlignCenter); layout_bold.setContentsMargins(0,0,0,0)
                     self.table_widget.setCellWidget(i, 4, cell_widget_bold)
 
                     italic_checkbox = QCheckBox()
-                    # THE FIX: Set the checked state BEFORE connecting the signal
                     italic_checkbox.setChecked(is_italic)
                     italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
-                    # --- END FIX ---
                     cell_widget_italic = QWidget(); layout_italic = QHBoxLayout(cell_widget_italic); layout_italic.addWidget(italic_checkbox); layout_italic.setAlignment(Qt.AlignCenter); layout_italic.setContentsMargins(0,0,0,0)
                     self.table_widget.setCellWidget(i, 5, cell_widget_italic)
 
-                    # Color cell
-                    color_item = QTableWidgetItem(qcolor.name()); color_item.setBackground(QBrush(qcolor))
+                    # --- Color cell ---
+                    color_item = QTableWidgetItem(qcolor.name())
+                    color_item.setBackground(QBrush(qcolor))
                     color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
                     color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
-                    color_item.setFont(item_font)
+                    color_item.setFont(standard_table_font) # Use the standard font here too
                     self.table_widget.setItem(i, 6, color_item)
                     
-                    # Delete button
-                    delete_button = QPushButton("Delete"); delete_button.clicked.connect(self.delete_item)
+                    # --- Delete button ---
+                    delete_button = QPushButton("Delete")
+                    delete_button.clicked.connect(self.delete_item)
                     self.table_widget.setCellWidget(i, 7, delete_button)
 
-                # --- Populate Shapes ---
+                # --- Populate Shapes (This part remains unchanged as it doesn't use variable fonts) ---
                 marker_count = len(self.markers)
                 for i, shape_data in enumerate(self.shapes):
                     row_idx = marker_count + i
@@ -1034,11 +1041,18 @@ if __name__ == "__main__":
                     color_item = QTableWidgetItem(qcolor.name()); color_item.setBackground(QBrush(qcolor))
                     color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
                     color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
+                    
+                    # Apply standard font to shape rows as well for consistency
+                    shape_items_to_set = [type_item, text_item, coord_item, style_item, color_item]
+                    for item in shape_items_to_set:
+                        if item: item.setFont(standard_table_font)
+
                     self.table_widget.setItem(row_idx, 0, type_item)
                     self.table_widget.setItem(row_idx, 1, text_item)
                     self.table_widget.setItem(row_idx, 2, coord_item)
                     self.table_widget.setItem(row_idx, 3, style_item)
                     self.table_widget.setItem(row_idx, 6, color_item)
+                    
                     delete_button = QPushButton("Delete"); delete_button.clicked.connect(self.delete_item)
                     self.table_widget.setCellWidget(row_idx, 7, delete_button)
 
@@ -2168,7 +2182,6 @@ if __name__ == "__main__":
                 self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = current_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.02)
-                # Renamed for clarity: this is now for broadening, not the primary definition.
                 self.peak_broadening_pixels = current_settings.get('valley_offset_pixels', 0) 
                 self.band_estimation_method = current_settings.get('band_estimation_method', "Mean")
                 self.area_subtraction_method = current_settings.get('area_subtraction_method', "Rolling Ball")
@@ -2182,7 +2195,6 @@ if __name__ == "__main__":
 
                 self.add_peak_mode_active = False; self.selected_peak_index_for_delete = -1
 
-                # --- For FAST direct manipulation on ax_image using BLITTING ---
                 self.background_blit = None
                 self.dragging_handle_info = None
                 self.interactive_artists = []
@@ -2193,6 +2205,7 @@ if __name__ == "__main__":
                 self._setup_ui(persist_checked)
                 self.regenerate_profile_and_detect()
 
+            # ... (_setup_ui, on_draw, on_canvas_press, on_canvas_motion, on_canvas_release, handle_profile_plot_click methods are unchanged) ...
             def _setup_ui(self, persist_checked_initial):
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
@@ -2215,93 +2228,58 @@ if __name__ == "__main__":
                 controls_main_hbox = QHBoxLayout()
                 left_controls_vbox = QVBoxLayout()
                 global_settings_group = QGroupBox("Global Settings & Area Method")
-                # ... (Global settings layout remains the same)
                 global_settings_layout = QGridLayout(global_settings_group); global_settings_layout.addWidget(QLabel("Band Profile:"), 0, 0); self.band_estimation_combobox = QComboBox(); self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"]); self.band_estimation_combobox.setCurrentText(self.band_estimation_method); self.band_estimation_combobox.currentIndexChanged.connect(self.regenerate_profile_and_detect); global_settings_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2); global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0); self.method_combobox = QComboBox(); self.method_combobox.addItems(["Valley-to-Valley", "Rolling Ball", "Straight Line"]); self.method_combobox.setCurrentText(self.area_subtraction_method); self.method_combobox.currentIndexChanged.connect(self.update_plot); global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2); self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})"); self.rolling_ball_slider = QSlider(Qt.Horizontal); self.rolling_ball_slider.setRange(1, 500); self.rolling_ball_slider.setValue(int(self.rolling_ball_radius)); self.rolling_ball_slider.setEnabled(self.area_subtraction_method == "Rolling Ball"); self.rolling_ball_slider.valueChanged.connect(self.update_plot); self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})")); self.method_combobox.currentIndexChanged.connect(lambda: self.rolling_ball_slider.setEnabled(self.method_combobox.currentText() == "Rolling Ball")); global_settings_layout.addWidget(self.rolling_ball_label, 2, 0); global_settings_layout.addWidget(self.rolling_ball_slider, 2, 1, 1, 2); left_controls_vbox.addWidget(global_settings_group)
                 
                 peak_detect_group = QGroupBox("Peak Detection & Manipulation")
                 peak_detect_layout = QGridLayout(peak_detect_group)
-                # ... (Peak detection sliders remain the same)
                 peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(self.detect_peaks); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
 
-                # --- RENAMED: Valley Offset is now Peak Broadening ---
                 self.broadening_label = QLabel(f"Peak Broadening ({'+' if self.peak_broadening_pixels>=0 else ''}{self.peak_broadening_pixels} px)")
                 self.broadening_slider = QSlider(Qt.Horizontal)
                 self.broadening_slider.setRange(-50, 50)
                 self.broadening_slider.setValue(self.peak_broadening_pixels)
-                # Only update the label on valueChanged for responsiveness
                 self.broadening_slider.valueChanged.connect(lambda value, lbl=self.broadening_label: lbl.setText(f"Peak Broadening ({'+' if value>=0 else ''}{value} px)"))
-                # Connect the expensive update to sliderReleased for performance
                 self.broadening_slider.sliderReleased.connect(self.apply_peak_broadening_on_release)
                 peak_detect_layout.addWidget(self.broadening_label, 6, 0)
                 peak_detect_layout.addWidget(self.broadening_slider, 6, 1, 1, 2)
                 
-                # ... (Rest of UI setup: buttons, etc. remains the same) ...
                 self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 7, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 7, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 7, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
                 if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
                 peak_detect_layout.addWidget(self.copy_regions_button, 8,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 8,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
 
-            # --- NEW BLITTING AND EVENT HANDLERS ---
-            def on_draw(self, event):
-                """Callback for draw events. Used to capture a clean background for blitting."""
-                self.background_blit = self.canvas.copy_from_bbox(self.fig.bbox)
-
+            def on_draw(self, event): self.background_blit = self.canvas.copy_from_bbox(self.fig.bbox)
             def on_canvas_press(self, event):
                 if event.inaxes != self.ax_image or event.button != 1:
-                    # Handle clicks on the top (profile) plot separately
-                    if event.inaxes == self.ax:
-                        self.handle_profile_plot_click(event)
+                    if event.inaxes == self.ax: self.handle_profile_plot_click(event)
                     return
-
-                # Check if an interactive handle on the image strip was clicked
                 for i, (peak_idx, handle_type, artist) in enumerate(self.interactive_artists):
                     contains, _ = artist.contains(event)
                     if contains:
                         self.dragging_handle_info = {'peak_index': peak_idx, 'type': handle_type, 'artist': artist}
                         self.selected_peak_for_ui_focus = peak_idx
-                        # Make only the dragged artist animated for blitting
                         for a in self.interactive_artists: a[2].set_animated(False)
                         artist.set_animated(True)
-                        self.canvas.draw() # Redraw to capture background without this artist
+                        self.canvas.draw()
                         return
-
                 self.dragging_handle_info = None
-
             def on_canvas_motion(self, event):
-                if not self.dragging_handle_info or event.inaxes != self.ax_image:
-                    return
-
-                # Restore the clean background
+                if not self.dragging_handle_info or event.inaxes != self.ax_image: return
                 self.canvas.restore_region(self.background_blit)
-
-                peak_idx = self.dragging_handle_info['peak_index']
-                handle_type = self.dragging_handle_info['type']
                 artist = self.dragging_handle_info['artist']
                 new_x = int(round(event.xdata)) if event.xdata is not None else 0
-
-                # Update the position of the artist being dragged
                 artist.set_xdata([new_x, new_x])
-                
-                # Redraw just the moving artist on top of the restored background
                 self.ax_image.draw_artist(artist)
                 self.canvas.blit(self.ax_image.bbox)
-
             def on_canvas_release(self, event):
-                if not self.dragging_handle_info:
-                    return
-
-                # Turn off animation for the released artist
+                if not self.dragging_handle_info: return
                 artist = self.dragging_handle_info['artist']
                 artist.set_animated(False)
-                self.background_blit = None # Invalidate background
-
-                # Update the data model with the new position
+                self.background_blit = None
                 peak_idx = self.dragging_handle_info['peak_index']
                 handle_type = self.dragging_handle_info['type']
                 new_x = int(round(event.xdata)) if event.xdata is not None else 0
-                
                 profile_len = len(self.profile_original_inverted) if self.profile_original_inverted is not None else 0
                 new_x = max(0, min(new_x, profile_len - 1))
-
                 current_start, current_end = self.peak_regions[peak_idx]
                 if handle_type == 'start_line':
                     new_start = min(new_x, current_end - 1 if current_end > 0 else 0)
@@ -2309,37 +2287,24 @@ if __name__ == "__main__":
                 elif handle_type == 'end_line':
                     new_end = max(new_x, current_start + 1 if current_start < profile_len - 1 else profile_len - 1)
                     self.peak_regions[peak_idx] = (current_start, new_end)
-                
                 self.dragging_handle_info = None
-                
-                # Now perform the full, potentially slow, update.
                 self.update_plot()
                 self.canvas.draw_idle()
-
             def handle_profile_plot_click(self, event):
-                """Handles clicks on the top (profile) plot for various modes."""
-                # This logic remains as before, as it just sets state for the next full redraw.
                 if self.add_peak_mode_active:
                      if event.button == 1 and event.xdata is not None:
                         clicked_x = int(round(event.xdata))
-                        if self.profile_original_inverted is not None and 0 <= clicked_x < len(self.profile_original_inverted):
-                            self.add_manual_peak(clicked_x)
+                        if self.profile_original_inverted is not None and 0 <= clicked_x < len(self.profile_original_inverted): self.add_manual_peak(clicked_x)
                 elif self.manual_select_mode_active:
                     if event.button == 1 and event.xdata is not None and self.peaks.any():
-                        clicked_x = int(round(event.xdata))
-                        distances = np.abs(self.peaks - clicked_x)
-                        closest_peak_idx = np.argmin(distances)
+                        clicked_x = int(round(event.xdata)); distances = np.abs(self.peaks - clicked_x); closest_peak_idx = np.argmin(distances)
                         click_tolerance = self.peak_distance / 2.0 if self.peak_distance > 0 else 10.0
-                        if distances[closest_peak_idx] <= click_tolerance:
-                            self.selected_peak_for_ui_focus = closest_peak_idx
-                            self.update_plot() # Highlight handles on ax_image
-                        else:
-                            self.selected_peak_for_ui_focus = -1; self.update_plot()
-                else: # Default: select for deletion
+                        if distances[closest_peak_idx] <= click_tolerance: self.selected_peak_for_ui_focus = closest_peak_idx
+                        else: self.selected_peak_for_ui_focus = -1
+                        self.update_plot()
+                else:
                     if event.button == 1 and event.xdata is not None and self.peaks.any():
-                        clicked_x = int(round(event.xdata))
-                        distances = np.abs(self.peaks - clicked_x)
-                        closest_peak_idx = np.argmin(distances)
+                        clicked_x = int(round(event.xdata)); distances = np.abs(self.peaks - clicked_x); closest_peak_idx = np.argmin(distances)
                         click_tolerance_delete = max(5, self.peak_distance / 4.0)
                         if distances[closest_peak_idx] <= click_tolerance_delete:
                             self.selected_peak_index_for_delete = self.peaks[closest_peak_idx]
@@ -2348,139 +2313,111 @@ if __name__ == "__main__":
                             self.selected_peak_index_for_delete = -1
                             self.delete_selected_peak_button.setEnabled(False)
                         self.update_plot()
-            
-            # --- NEW: Handler for slider RELEASE ---
+
+            def _find_intersection_boundaries(self, profile, baseline, peak_x, search_start, search_end):
+                """
+                Finds the x-indices where the profile intersects the baseline,
+                searching outwards from the peak center within a given region.
+                Returns integer indices for integration.
+                """
+                # Ensure the difference array is valid
+                diff = profile - baseline
+                if not np.any(diff): # If profile is identical to baseline
+                    return search_start, search_end
+                
+                # Find all points where the profile is above the baseline
+                above_indices = np.where(diff > 0)[0]
+                if len(above_indices) == 0:
+                    return peak_x, peak_x # Peak is not above baseline, return single point
+
+                # Find where the sign of the difference changes (i.e., intersections)
+                sign_changes = np.where(np.diff(np.sign(diff)))[0]
+
+                # Find the intersection to the left of the peak
+                left_intersections = sign_changes[sign_changes < peak_x]
+                start_calc = np.max(left_intersections) + 1 if left_intersections.size > 0 else np.min(above_indices)
+                
+                # Find the intersection to the right of the peak
+                right_intersections = sign_changes[sign_changes > peak_x]
+                end_calc = np.min(right_intersections) if right_intersections.size > 0 else np.max(above_indices)
+
+                # Clamp to the user-defined search region
+                start_calc = max(search_start, start_calc)
+                end_calc = min(search_end, end_calc)
+                
+                if start_calc >= end_calc: # Safety check
+                    return search_start, search_end
+                    
+                return int(start_calc), int(end_calc)
+
+            # ... (the rest of the methods: apply_peak_broadening, get_final_peak_info, etc., are unchanged) ...
             def apply_peak_broadening(self, broadening_value):
-                """
-                Modifies the peak regions by applying a symmetrical broadening/narrowing offset.
-                This function is called by the slider and after initial region definition.
-                """
                 self.peak_broadening_pixels = broadening_value
                 self.peak_regions = [] 
                 profile_len = len(self.profile_original_inverted) if self.profile_original_inverted is not None else 0
-                if profile_len == 0:
-                    self.update_plot(); return
-
+                if profile_len == 0: self.update_plot(); return
                 for i in range(len(self.initial_valley_regions)):
                     initial_start, initial_end = self.initial_valley_regions[i]
-                    # Apply the broadening value as an offset
                     new_start = initial_start - self.peak_broadening_pixels
                     new_end = initial_end + self.peak_broadening_pixels
-                    
-                    # Clamp values to be within the profile bounds
                     new_start_clamped = max(0, new_start)
                     new_end_clamped = min(profile_len - 1, new_end)
-                    
-                    # Ensure start is always less than end
                     if new_start_clamped > new_end_clamped:
                         mid_valley = (initial_start + initial_end) // 2
-                        new_start_clamped = mid_valley
-                        new_end_clamped = mid_valley
-                    
+                        new_start_clamped, new_end_clamped = mid_valley, mid_valley
                     self.peak_regions.append((new_start_clamped, new_end_clamped))
-                
-                # A full plot update is needed after changing regions
                 self.update_plot()
-
-            def apply_peak_broadening_on_release(self):
-                """Handler for the sliderReleased signal to trigger the update."""
-                self.apply_peak_broadening(self.broadening_slider.value())
-            
-            # The rest of your methods like regenerate_profile_and_detect, detect_peaks,
-            # update_plot, etc., remain the same. The key is that they are now called
-            # less frequently, only when major parameter changes occur.
-            
-            # ... (paste all your other methods from PeakAreaDialog here without changes,
-            # including accept_and_close, get_final_peak_info, etc.) ...
-            def get_final_peak_info(self): # NEW or REPLACES get_final_peak_area
-                """
-                Returns a list of dictionaries, where each dictionary contains:
-                'area': The calculated area of the peak.
-                'y_coord_in_lane_image': The original x-coordinate of the peak 
-                                         in the horizontal profile (which corresponds to the 
-                                         y-coordinate in the vertical lane image strip).
-                'original_peak_index': The actual index of the peak in self.peaks
-                """
+            def apply_peak_broadening_on_release(self): self.apply_peak_broadening(self.broadening_slider.value())
+            def get_final_peak_info(self):
                 peak_info_list = []
-                num_valid_peaks = len(self.peak_regions) # Number of defined regions
-                
+                num_valid_peaks = len(self.peak_regions)
                 current_area_list = []
                 if self.method == "Rolling Ball": current_area_list = self.peak_areas_rolling_ball
                 elif self.method == "Straight Line": current_area_list = self.peak_areas_straight_line
                 elif self.method == "Valley-to-Valley": current_area_list = self.peak_areas_valley
-                
                 num_peaks_to_process = min(num_valid_peaks, len(self.peaks), len(current_area_list))
-
                 for i in range(num_peaks_to_process):
                     try:
                         original_peak_x_in_profile = int(self.peaks[i])
-                        
-                        peak_info_list.append({
-                            'area': current_area_list[i],
-                            'y_coord_in_lane_image': original_peak_x_in_profile,
-                            'original_peak_index': original_peak_x_in_profile
-                        })
-                    except IndexError:
-                        peak_info_list.append({
-                            'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1
-                        })
+                        peak_info_list.append({'area': current_area_list[i],'y_coord_in_lane_image': original_peak_x_in_profile,'original_peak_index': original_peak_x_in_profile})
+                    except IndexError: peak_info_list.append({'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1})
                 return peak_info_list
-
             def toggle_manual_select_mode(self, checked):
                 self.manual_select_mode_active = checked
                 if checked:
                     if self.add_peak_mode_active: self.add_peak_manually_button.setChecked(False); self.toggle_add_peak_mode(False) 
                     QMessageBox.information(self, "Identify Peak", "Click a peak in the profile plot to focus its handles.")
-                else:
-                    self.selected_peak_for_ui_focus = -1; self.update_plot()
-
+                else: self.selected_peak_for_ui_focus = -1; self.update_plot()
             def toggle_add_peak_mode(self, checked):
                 self.add_peak_mode_active = checked
                 if checked:
                     if self.manual_select_mode_active: self.identify_peak_button.setChecked(False); self.toggle_manual_select_mode(False)
                     self.selected_peak_index_for_delete = -1; self.delete_selected_peak_button.setEnabled(False)
                     self.update_plot(); QMessageBox.information(self, "Add Peak", "Click on the profile plot to add a peak.")
-
             def add_manual_peak(self, x_coord):
                 if self.profile_original_inverted is None or x_coord in self.peaks: return
                 self.peaks = np.array(sorted(self.peaks.tolist() + [x_coord]))
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self._redefine_all_valley_regions()
-
             def _redefine_all_valley_regions(self):
-                """
-                THE FIX: This function now properly finds the natural valley boundaries for each peak.
-                It then calls apply_peak_broadening to apply the slider's modification.
-                """
                 self.initial_valley_regions = []
                 profile_to_analyze = self.profile_original_inverted
                 if profile_to_analyze is None or len(profile_to_analyze) <= 1 or len(self.peaks) == 0:
-                    self.peak_regions = []
-                    self.update_plot()
-                    return
-
-                # Define search boundaries between peaks
+                    self.peak_regions = []; self.update_plot(); return
                 midpoints = (self.peaks[:-1] + self.peaks[1:]) // 2 if len(self.peaks) > 1 else []
                 search_boundaries_left = np.concatenate(([0], midpoints))
                 search_boundaries_right = np.concatenate((midpoints, [len(profile_to_analyze) - 1]))
-
-                # Find the natural "valley-to-valley" region for each peak
                 for i, peak_idx in enumerate(self.peaks):
-                    left_bound = int(search_boundaries_left[i])
-                    right_bound = int(search_boundaries_right[i])
+                    left_bound = int(search_boundaries_left[i]); right_bound = int(search_boundaries_right[i])
                     start, end = self._find_outward_troughs(profile_to_analyze, peak_idx, left_bound, right_bound)
                     self.initial_valley_regions.append((start, end))
-                
-                # Now, apply the current broadening slider value to these initial regions
                 self.apply_peak_broadening(self.broadening_slider.value())
-
             def delete_selected_peak_action(self):
                 if self.selected_peak_index_for_delete == -1 or self.selected_peak_index_for_delete not in self.peaks: return
                 self.peaks = np.array([p for p in self.peaks if p != self.selected_peak_index_for_delete])
                 self.selected_peak_index_for_delete = -1; self.delete_selected_peak_button.setEnabled(False)
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self._redefine_all_valley_regions()
-
             def copy_peak_regions_to_app(self):
                 if not self.parent_app: return
                 if not self.peak_regions: QMessageBox.information(self, "No Regions", "No peak regions to copy."); return
@@ -2489,120 +2426,69 @@ if __name__ == "__main__":
                 self.parent_app.copied_peak_regions_data["peaks"] = self.peaks.tolist()
                 QMessageBox.information(self, "Regions Copied", f"{len(self.peak_regions)} regions copied.")
                 if hasattr(self, 'paste_regions_button'): self.paste_regions_button.setEnabled(True)
-
             def paste_peak_regions_from_app(self):
-                # This method's logic is complex and remains unchanged. It doesn't affect performance.
-                if not self.parent_app or not self.parent_app.copied_peak_regions_data.get("regions"):
-                    QMessageBox.information(self, "No Regions to Paste", "No peak regions have been copied yet.")
-                    return
-                if self.profile_original_inverted is None or len(self.profile_original_inverted) == 0:
-                    QMessageBox.warning(self, "Error", "Current profile not available for pasting regions.")
-                    return
-
-                copied_data = self.parent_app.copied_peak_regions_data
-                regions_to_paste = copied_data["regions"]
-                original_profile_len = copied_data["profile_length"]
-                copied_peaks_indices = np.array(copied_data.get("peaks", []))
-
-                current_profile_len = len(self.profile_original_inverted)
-                
-                self.peak_regions = []
-                
+                if not self.parent_app or not self.parent_app.copied_peak_regions_data.get("regions"): QMessageBox.information(self, "No Regions to Paste", "No peak regions have been copied yet."); return
+                if self.profile_original_inverted is None or len(self.profile_original_inverted) == 0: QMessageBox.warning(self, "Error", "Current profile not available for pasting regions."); return
+                copied_data = self.parent_app.copied_peak_regions_data; regions_to_paste = copied_data["regions"]; original_profile_len = copied_data["profile_length"]; copied_peaks_indices = np.array(copied_data.get("peaks", []))
+                current_profile_len = len(self.profile_original_inverted); self.peak_regions = []
                 scale_factor = 1.0
-                if original_profile_len > 0 and current_profile_len > 0 and original_profile_len != current_profile_len:
-                    scale_factor = float(current_profile_len) / original_profile_len
-
+                if original_profile_len > 0 and current_profile_len > 0 and original_profile_len != current_profile_len: scale_factor = float(current_profile_len) / original_profile_len
                 temp_derived_peaks = []
-                if len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste):
-                    scaled_peaks = (copied_peaks_indices * scale_factor).round().astype(int)
-                    self.peaks = np.clip(scaled_peaks, 0, current_profile_len - 1)
-                
+                if len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste): self.peaks = np.clip((copied_peaks_indices * scale_factor).round().astype(int), 0, current_profile_len - 1)
                 for i, (start_orig, end_orig) in enumerate(regions_to_paste):
-                    start_scaled = int(round(start_orig * scale_factor))
-                    end_scaled = int(round(end_orig * scale_factor))
-                    start_clamped = max(0, min(start_scaled, current_profile_len - 1))
-                    end_clamped = max(0, min(end_scaled, current_profile_len - 1))
-                    if start_clamped >= end_clamped:
-                         mid = (start_clamped + end_clamped) // 2
-                         start_clamped, end_clamped = max(0, mid-1), min(current_profile_len-1, mid+1)
+                    start_scaled = int(round(start_orig * scale_factor)); end_scaled = int(round(end_orig * scale_factor))
+                    start_clamped = max(0, min(start_scaled, current_profile_len - 1)); end_clamped = max(0, min(end_scaled, current_profile_len - 1))
+                    if start_clamped >= end_clamped: mid = (start_clamped + end_clamped) // 2; start_clamped, end_clamped = max(0, mid-1), min(current_profile_len-1, mid+1)
                     self.peak_regions.append((start_clamped, end_clamped))
-                    if not (len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste)):
-                        temp_derived_peaks.append((start_clamped + end_clamped) // 2)
-
-                if temp_derived_peaks:
-                    self.peaks = np.array(sorted(temp_derived_peaks))
-
+                    if not (len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste)): temp_derived_peaks.append((start_clamped + end_clamped) // 2)
+                if temp_derived_peaks: self.peaks = np.array(sorted(temp_derived_peaks))
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
-                self.update_plot()
-                QMessageBox.information(self, "Regions Pasted", f"{len(self.peak_regions)} regions applied.")
-
+                self.update_plot(); QMessageBox.information(self, "Regions Pasted", f"{len(self.peak_regions)} regions applied.")
             def accept_and_close(self): self._final_settings = {'rolling_ball_radius': self.rolling_ball_slider.value(), 'denoise_sigma': self.denoise_sigma_slider.value() / 10.0, 'peak_height_factor': self.peak_height_slider.value() / 100.0, 'peak_distance': self.peak_distance_slider.value(), 'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0, 'valley_offset_pixels': self.broadening_slider.value(), 'band_estimation_method': self.band_estimation_combobox.currentText(), 'area_subtraction_method': self.method_combobox.currentText(), 'smoothing_sigma': self.smoothing_slider.value() / 10.0}; self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked(); self.accept()
-                
             def get_current_settings(self): return self._final_settings
             def should_persist_settings(self): return self._persist_enabled_on_exit
             def get_final_peak_area(self): return [info['area'] for info in self.get_final_peak_info()]
-            
             def regenerate_profile_and_detect(self):
-                # This method's logic is fine and remains unchanged.
                 if gaussian_filter1d is None or cv2 is None or ImageOps is None: return
                 self.band_estimation_method = self.band_estimation_combobox.currentText(); self.area_subtraction_method = self.method_combobox.currentText()
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0; self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
-                
                 base_img = self.original_pil_cropped_data.copy()
                 if self.denoise_sigma > 0.01:
                     try: base_img = Image.fromarray(cv2.GaussianBlur(np.array(base_img), (0,0), self.denoise_sigma).astype(np.array(base_img).dtype), mode=base_img.mode)
                     except: pass
                 if base_img.mode.startswith('I') or base_img.mode == 'F': self.enhanced_cropped_image_for_display = Image.fromarray((np.clip((np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) / (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9), 0.0, 1.0) * 255).astype(np.uint8), mode='L')
                 else: self.enhanced_cropped_image_for_display = ImageOps.autocontrast(base_img.convert('L'))
-
                 if self.band_estimation_method == "Mean": profile_temp = np.mean(self.intensity_array_original_range, axis=1)
                 else: profile_temp = np.percentile(self.intensity_array_original_range, int(self.band_estimation_method.split(":")[1].replace('%', '')), axis=1)
-                
                 profile_inv_raw = self.original_max_value - profile_temp.astype(np.float64); profile_inv_raw -= np.min(profile_inv_raw)
                 profile_to_process = profile_inv_raw.copy()
                 if self.denoise_sigma > 0.01: profile_to_process = gaussian_filter1d(profile_to_process, sigma=self.denoise_sigma)
                 self.profile_original_inverted = profile_to_process
                 if self.smoothing_sigma > 0.1: self.profile_original_inverted = gaussian_filter1d(self.profile_original_inverted, sigma=self.smoothing_sigma)
-                
                 prof_min, prof_max = np.min(self.profile_original_inverted), np.max(self.profile_original_inverted)
                 if prof_max > prof_min + 1e-6: self.profile = (self.profile_original_inverted - prof_min) / (prof_max - prof_min) * 255.0
                 else: self.profile = np.zeros_like(self.profile_original_inverted)
                 self.detect_peaks()
-
             def _find_outward_troughs(self, profile, peak_idx, left_bound, right_bound):
                 profile_len = len(profile)
                 if not (0 <= left_bound <= peak_idx <= right_bound < profile_len):
                     w = max(1, self.peak_distance // 8 if hasattr(self, 'peak_distance') else 2)
                     return max(0, peak_idx - w), min(profile_len - 1, peak_idx + w)
-
-                # Search left for a valley
                 valley_left_idx = peak_idx
                 for idx in range(peak_idx - 1, left_bound - 1, -1):
-                    if profile[idx] > profile[idx + 1]: # If profile starts rising again
-                        valley_left_idx = idx + 1
-                        break
-                    valley_left_idx = idx # Keep updating until it rises
-                else: # Loop finished without finding a rise
-                    valley_left_idx = left_bound
-
-                # Search right for a valley
+                    if profile[idx] > profile[idx + 1]: valley_left_idx = idx + 1; break
+                    valley_left_idx = idx
+                else: valley_left_idx = left_bound
                 valley_right_idx = peak_idx
                 for idx in range(peak_idx + 1, right_bound + 1):
-                    if profile[idx] > profile[idx - 1]: # If profile starts rising again
-                        valley_right_idx = idx - 1
-                        break
+                    if profile[idx] > profile[idx - 1]: valley_right_idx = idx - 1; break
                     valley_right_idx = idx
-                else: # Loop finished without finding a rise
-                    valley_right_idx = right_bound
-
-                if valley_left_idx >= valley_right_idx: # Safety check
+                else: valley_right_idx = right_bound
+                if valley_left_idx >= valley_right_idx:
                      w = max(1, self.peak_distance // 8 if hasattr(self, 'peak_distance') else 2)
                      return max(0, peak_idx - w), min(profile_len - 1, peak_idx + w)
-                
                 return valley_left_idx, valley_right_idx
-
             def detect_peaks(self):
-                # This method's logic is fine and remains unchanged.
                 if self.profile is None or len(self.profile) == 0: self.peaks, self.initial_valley_regions = np.array([]), []; self.update_plot(); return
                 self.peak_height_factor = self.peak_height_slider.value()/100.0; self.peak_distance = self.peak_distance_slider.value(); self.peak_prominence_factor = self.peak_prominence_slider.value()/100.0
                 profile_range = np.ptp(self.profile); min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
@@ -2611,82 +2497,135 @@ if __name__ == "__main__":
                 except Exception: self.peaks = np.array([])
                 if hasattr(self, 'peak_number_input') and not self.peak_number_input.hasFocus(): self.peak_number_input.setText(str(len(self.peaks)))
                 self._redefine_all_valley_regions()
-
             def manual_peak_number_update(self):
-                # This method's logic is fine and remains unchanged.
                 if self.profile_original_inverted is None: return
                 try:
                     num_peaks = int(self.peak_number_input.text())
                     if num_peaks == len(self.peaks): return
                     if num_peaks < len(self.peaks): self.peaks = self.peaks[:num_peaks]
                     else:
-                        # Simple logic to add placeholder peaks
                         num_to_add = num_peaks - len(self.peaks)
                         new_peaks = np.linspace(0, len(self.profile)-1, num_peaks + 2)[1:-1].astype(int)
                         self.peaks = np.sort(np.unique(np.concatenate((self.peaks, new_peaks))))[:num_peaks]
                     self._redefine_all_valley_regions()
                 except ValueError: self.peak_number_input.setText(str(len(self.peaks)))
-
-            def update_plot(self):
-                # This full-redraw function is now only called for major changes, not every slider tick.
-                # Its internal logic is fine and remains unchanged.
-                # ... (paste your existing update_plot method here) ...
-                if self.canvas is None: return
-                profile_to_plot_and_calc = self.profile_original_inverted
-                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
-                     self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax); self.ax_image.set_xlabel("Pixel Index"); self.ax.tick_params(axis='x', labelbottom=False); self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', transform=self.ax_image.transAxes); self.canvas.draw_idle(); return
-                self.method = self.method_combobox.currentText(); self.rolling_ball_radius = self.rolling_ball_slider.value()
-                if rolling_ball:
-                    try: profile_float = profile_to_plot_and_calc.astype(np.float64); safe_radius = max(1, min(self.rolling_ball_radius, len(profile_float) // 2 - 1)); self.background = self._custom_rolling_ball(profile_float, safe_radius) if len(profile_float) > 1 else profile_float.copy(); self.background = np.maximum(self.background, 0)
-                    except: self.background = np.zeros_like(profile_to_plot_and_calc)
-                else: self.background = np.zeros_like(profile_to_plot_and_calc)
-                self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
-                self.interactive_artists.clear()
-                plot_label_with_denoise = f"Profile (Denoise σ={self.denoise_sigma:.1f}, Smooth σ={self.smoothing_sigma:.1f})"; self.ax.plot(profile_to_plot_and_calc, label=plot_label_with_denoise, color="black", lw=1.2)
-                if len(self.peaks) > 0:
-                     valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
-                     if len(valid_peaks_indices) > 0:
-                         peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks_indices]; self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color="red", marker='x', s=50, label="Peaks", zorder=5) 
-                         if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
-                             focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]; self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor='orange', markerfacecolor='none', label='Focused', zorder=6)
-                         if self.selected_peak_index_for_delete != -1: self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor='blue', markerfacecolor='none', label='Selected for Delete', zorder=7)
-                self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
-                profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0; max_y_for_plot_limit = np.max(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 1
-                for i in range(len(self.peak_regions)):
-                    start, end = int(self.peak_regions[i][0]), int(self.peak_regions[i][1]);
-                    if start >= end: self.peak_areas_rolling_ball.append(0.0); self.peak_areas_straight_line.append(0.0); self.peak_areas_valley.append(0.0); continue
-                    x_region = np.arange(start, end + 1); profile_region = profile_to_plot_and_calc[start:end+1]
-                    area_rb = max(0, np.trapz(profile_region - self.background[start:end+1], x=x_region)) if len(x_region)>1 else 0.0; self.peak_areas_rolling_ball.append(area_rb)
-                    y_baseline_sl = np.interp([start, end], [start, end], [profile_to_plot_and_calc[start], profile_to_plot_and_calc[end]]); y_interp_sl = np.interp(x_region, [start, end], y_baseline_sl); area_sl = max(0, np.trapz(profile_region - y_interp_sl, x=x_region)) if len(x_region)>1 else 0.0; self.peak_areas_straight_line.append(area_sl)
-                    y_baseline_vv = [profile_to_plot_and_calc[start], profile_to_plot_and_calc[end]]; y_interp_vv = np.interp(x_region, [start, end], y_baseline_vv); area_vv = max(0, np.trapz(profile_region - y_interp_vv, x=x_region)) if len(x_region)>1 else 0.0; self.peak_areas_valley.append(area_vv)
-                    current_area_text, fill_color, bg_label, baseline_to_plot = (area_rb, "yellow", "Rolling Ball BG", self.background) if self.method == "Rolling Ball" else (area_sl, "cyan", "SL BG", y_interp_sl) if self.method == "Straight Line" else (area_vv, "lightblue", "Valley BG", y_interp_vv)
-                    if self.method == "Rolling Ball" and i == 0: self.ax.plot(np.arange(len(self.background)), self.background, color="green", ls="--", lw=1, label=bg_label)
-                    elif self.method != "Rolling Ball": self.ax.plot([start, end], y_baseline_sl if self.method=="Straight Line" else y_baseline_vv, color="purple" if self.method=="Straight Line" else "orange", ls="--", lw=1, label=bg_label if i == 0 else "")
-                    self.ax.fill_between(x_region, baseline_to_plot[start:end+1] if self.method == "Rolling Ball" else baseline_to_plot, profile_region, where=profile_region >= (baseline_to_plot[start:end+1] if self.method == "Rolling Ball" else baseline_to_plot), color=fill_color, alpha=0.4, interpolate=True)
-                    text_x_pos = (start + end) / 2.0; text_y_pos = np.max(profile_region) + profile_range_plot * 0.03; self.ax.text(text_x_pos, text_y_pos, f"{current_area_text:.0f}", ha="center", va="bottom", fontsize=7, color='black', bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7)); max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
-                self.ax.set_ylabel("Intensity"); self.ax.legend(fontsize='small', loc='upper right'); self.ax.set_title(f"Profile & Peak Regions"); self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
-                if len(profile_to_plot_and_calc) > 1: self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1); self.ax.set_ylim(bottom=min(0, np.min(profile_to_plot_and_calc)), top=max_y_for_plot_limit * 1.05)
-                if np.max(profile_to_plot_and_calc) > 10000: self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
-                self.ax_image.clear() 
-                if hasattr(self, 'enhanced_cropped_image_for_display') and self.enhanced_cropped_image_for_display:
-                     rotated_pil_image_display = self.enhanced_cropped_image_for_display.rotate(90, expand=True); self.ax_image.imshow(np.array(rotated_pil_image_display), cmap='gray', aspect='auto', extent=[0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil_image_display.height]); self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize='small'); self.ax_image.set_xlabel("Pixel Index", fontsize='small')
-                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
-                        line_color, zorder_val, lw = ('orange', 11, 2.0) if peak_idx == self.selected_peak_for_ui_focus else ('blue', 10, 1.5)
-                        start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
-                        end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
-                self.fig.tight_layout(pad=0.5); self.canvas.draw_idle(); plt.close(self.fig)
-
             def _custom_rolling_ball(self, profile, radius):
-                # This method is fine and remains unchanged.
                 if grey_opening is None or profile is None or profile.ndim != 1 or profile.size == 0 or radius <= 0: return np.zeros_like(profile) if profile is not None else np.array([])
                 structure_size = int(max(1, 2 * radius + 1));
                 if structure_size > profile.shape[0]: structure_size = profile.shape[0]
                 try: return grey_opening(profile, size=structure_size, mode='reflect')
                 except Exception: return np.zeros_like(profile)
-            
-                
-            
 
+
+            def update_plot(self):
+                if self.canvas is None: return
+                profile_to_plot_and_calc = self.profile_original_inverted
+                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
+                     self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax); self.ax_image.set_xlabel("Pixel Index"); self.ax.tick_params(axis='x', labelbottom=False); self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', transform=self.ax_image.transAxes); self.canvas.draw_idle(); return
+                
+                self.method = self.method_combobox.currentText()
+                self.rolling_ball_radius = self.rolling_ball_slider.value()
+                
+                # Calculate Rolling Ball baseline once if needed
+                if rolling_ball:
+                    try:
+                        profile_float = profile_to_plot_and_calc.astype(np.float64)
+                        safe_radius = max(1, min(self.rolling_ball_radius, len(profile_float) // 2 - 1))
+                        self.background = self._custom_rolling_ball(profile_float, safe_radius) if len(profile_float) > 1 else profile_float.copy()
+                        self.background = np.maximum(self.background, 0)
+                    except:
+                        self.background = np.zeros_like(profile_to_plot_and_calc)
+                else:
+                    self.background = np.zeros_like(profile_to_plot_and_calc)
+
+                self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
+                self.interactive_artists.clear()
+                
+                plot_label_with_denoise = f"Profile (Denoise σ={self.denoise_sigma:.1f}, Smooth σ={self.smoothing_sigma:.1f})"
+                self.ax.plot(profile_to_plot_and_calc, label=plot_label_with_denoise, color="black", lw=1.2)
+                
+                if len(self.peaks) > 0:
+                     valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
+                     if len(valid_peaks_indices) > 0:
+                         peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks_indices]
+                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color="red", marker='x', s=50, label="Peaks", zorder=5) 
+                         if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
+                             focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]
+                             self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor='orange', markerfacecolor='none', label='Focused', zorder=6)
+                         if self.selected_peak_index_for_delete != -1:
+                             self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor='blue', markerfacecolor='none', label='Selected for Delete', zorder=7)
+                
+                self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
+                
+                profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0
+                max_y_for_plot_limit = np.max(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 1
+
+                for i in range(len(self.peak_regions)):
+                    start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
+                    if start_handle >= end_handle or i >= len(self.peaks): continue
+                    peak_x = self.peaks[i]
+                    
+                    # --- Determine Baseline for ALL THREE METHODS ---
+                    baseline_rb = self.background
+                    
+                    y_baseline_sl_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
+                    baseline_sl = np.interp(np.arange(len(profile_to_plot_and_calc)), [start_handle, end_handle], y_baseline_sl_points)
+                    
+                    # --- CORRECTED Valley-to-Valley Logic ---
+                    y_baseline_vv_level = max(profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle])
+                    baseline_vv = np.full_like(profile_to_plot_and_calc, y_baseline_vv_level)
+                    
+                    # --- Determine Integration Boundaries based on Intersections ---
+                    start_calc_rb, end_calc_rb = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_rb, peak_x, start_handle, end_handle)
+                    start_calc_sl, end_calc_sl = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_sl, peak_x, start_handle, end_handle)
+                    start_calc_vv, end_calc_vv = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_vv, peak_x, start_handle, end_handle)
+
+                    # --- Calculate Area for ALL THREE METHODS ---
+                    area_rb = np.trapz(profile_to_plot_and_calc[start_calc_rb:end_calc_rb+1] - baseline_rb[start_calc_rb:end_calc_rb+1]) if start_calc_rb < end_calc_rb else 0.0
+                    self.peak_areas_rolling_ball.append(max(0, area_rb))
+                    
+                    area_sl = np.trapz(profile_to_plot_and_calc[start_calc_sl:end_calc_sl+1] - baseline_sl[start_calc_sl:end_calc_sl+1]) if start_calc_sl < end_calc_sl else 0.0
+                    self.peak_areas_straight_line.append(max(0, area_sl))
+                    
+                    area_vv = np.trapz(profile_to_plot_and_calc[start_calc_vv:end_calc_vv+1] - baseline_vv[start_calc_vv:end_calc_vv+1]) if start_calc_vv < end_calc_vv else 0.0
+                    self.peak_areas_valley.append(max(0, area_vv))
+
+                    # --- Plotting based on selected method ---
+                    if self.method == "Rolling Ball":
+                        x_region = np.arange(start_calc_rb, end_calc_rb + 1)
+                        self.ax.fill_between(x_region, baseline_rb[x_region], profile_to_plot_and_calc[x_region], color="yellow", alpha=0.4, interpolate=True)
+                        if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color="green", ls="--", lw=1, label="Rolling Ball BG")
+                        area_text = area_rb
+                    elif self.method == "Straight Line":
+                        x_region = np.arange(start_calc_sl, end_calc_sl + 1)
+                        self.ax.fill_between(x_region, baseline_sl[x_region], profile_to_plot_and_calc[x_region], color="cyan", alpha=0.4, interpolate=True)
+                        self.ax.plot([start_handle, end_handle], y_baseline_sl_points, color="purple", ls="--", lw=1, label="SL BG" if i == 0 else "")
+                        area_text = area_sl
+                    elif self.method == "Valley-to-Valley":
+                        x_region = np.arange(start_calc_vv, end_calc_vv + 1)
+                        self.ax.fill_between(x_region, baseline_vv[x_region], profile_to_plot_and_calc[x_region], color="lightblue", alpha=0.4, interpolate=True)
+                        self.ax.plot([start_handle, end_handle], [y_baseline_vv_level, y_baseline_vv_level], color="orange", ls="--", lw=1, label="Valley BG" if i == 0 else "")
+                        area_text = area_vv
+
+                    text_x_pos = peak_x; text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
+                    self.ax.text(text_x_pos, text_y_pos, f"{area_text:.0f}", ha="center", va="bottom", fontsize=7, color='black', bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7))
+                    max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
+
+                self.ax.set_ylabel("Intensity"); self.ax.legend(fontsize='small', loc='upper right'); self.ax.set_title(f"Profile & Peak Regions"); self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+                if len(profile_to_plot_and_calc) > 1: self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1); self.ax.set_ylim(bottom=min(0, np.min(profile_to_plot_and_calc)), top=max_y_for_plot_limit * 1.05)
+                if np.max(profile_to_plot_and_calc) > 10000: self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+                
+                self.ax_image.clear() 
+                if hasattr(self, 'enhanced_cropped_image_for_display') and self.enhanced_cropped_image_for_display:
+                     rotated_pil_image_display = self.enhanced_cropped_image_for_display.rotate(90, expand=True)
+                     self.ax_image.imshow(np.array(rotated_pil_image_display), cmap='gray', aspect='auto', extent=[0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil_image_display.height]); self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize='small'); self.ax_image.set_xlabel("Pixel Index", fontsize='small')
+                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
+                        line_color, zorder_val, lw = ('orange', 11, 2.0) if peak_idx == self.selected_peak_for_ui_focus else ('blue', 10, 1.5)
+                        start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
+                        end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
+                
+                self.fig.tight_layout(pad=0.5); self.canvas.draw_idle(); plt.close(self.fig)
+            
 
         class LiveViewLabel(QLabel):
             mouseMovedInLabel = Signal(QPointF, QPointF, bool)
@@ -3033,16 +2972,16 @@ if __name__ == "__main__":
             def paintEvent(self, event):
                 super().paintEvent(event)
                 painter = QPainter(self)
-                painter.setRenderHint(QPainter.Antialiasing, True)
+                # painter.setRenderHint(QPainter.Antialiasing, True)
                 painter.setRenderHint(QPainter.TextAntialiasing, True)
-                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                # painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
                 
                 painter.save()
                 if self.zoom_level != 1.0:
                     painter.translate(self.pan_offset)
                     painter.scale(self.zoom_level, self.zoom_level)
 
-                # --- Coordinate mapping helpers (as before) ---
+                # --- Coordinate mapping helpers ---
                 _image_to_label_space_valid = False
                 _scale_factor_img_to_label = 1.0
                 _img_w_orig_from_app = 1.0
@@ -3075,11 +3014,6 @@ if __name__ == "__main__":
                 is_defining_single_quad_on_label = (self.mode == "quad") 
                 is_defining_single_rect_on_label = (self.mode == "rectangle")
 
-                is_drawing_new_multi_lane = (self.app_instance and
-                                             self.app_instance.multi_lane_mode_active and
-                                             self.app_instance.current_selection_mode not in ["dragging_selection", "resizing_corner"] and
-                                             self.app_instance.moving_multi_lane_index < 0 and
-                                             not is_defining_single_quad_on_label and not is_defining_single_rect_on_label)
                 is_selected_single_quad_for_move = (self.app_instance and
                                            self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and
                                            self.app_instance.moving_multi_lane_index == -2)
@@ -3137,7 +3071,31 @@ if __name__ == "__main__":
                     painter.setOpacity(0.7); marker_preview_font = QFont(self.marker_font_type, self.marker_font_size); painter.setFont(marker_preview_font); painter.setPen(self.marker_color); font_metrics_preview = QFontMetrics(marker_preview_font)
                     preview_text_rect = font_metrics_preview.boundingRect(self.preview_marker_text); draw_x_preview = self.preview_marker_position.x() - (preview_text_rect.left() + preview_text_rect.width() / 2.0); draw_y_preview = self.preview_marker_position.y() - (preview_text_rect.top() + preview_text_rect.height() / 2.0)
                     painter.drawText(QPointF(draw_x_preview, draw_y_preview), self.preview_marker_text); painter.setOpacity(1.0)
-                    
+                if self.app_instance and hasattr(self, 'moving_custom_item_info') and self.app_instance.moving_custom_item_info:
+                    info = self.app_instance.moving_custom_item_info
+                    is_resizing = self.app_instance.current_selection_mode == "resizing_custom_item"
+                    selection_pen = QPen(Qt.magenta, max(0.5, 2.0 / self.zoom_level), Qt.DotLine)
+                    handle_pen = QPen(Qt.red, max(0.5, 2.0 / self.zoom_level))
+                    handle_brush = QBrush(Qt.red)
+                    handle_radius = self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level if self.zoom_level > 0 else self.CORNER_HANDLE_BASE_RADIUS
+                    if info['type'] == 'marker':
+                        bbox_ls = self.app_instance._get_marker_bounding_box_in_label_space(info['index'])
+                        if bbox_ls:
+                            painter.setPen(selection_pen)
+                            painter.drawRect(bbox_ls)
+                    elif info['type'] == 'shape':
+                        body_ls, handles_ls = self.app_instance._get_shape_bounding_box_and_handles_in_label_space(info['index'])
+                        if body_ls and handles_ls:
+                            painter.setPen(selection_pen)
+                            painter.drawRect(body_ls.adjusted(-2,-2,2,2)) # Draw bounding box around shape
+                            painter.setPen(handle_pen)
+                            painter.setBrush(handle_brush)
+                            for idx, handle_pt in enumerate(handles_ls):
+                                if is_resizing and idx == self.app_instance.resizing_corner_index:
+                                    painter.drawEllipse(handle_pt, handle_radius * 1.2, handle_radius * 1.2)
+                                else:
+                                    painter.drawEllipse(handle_pt, handle_radius, handle_radius)
+                            painter.setBrush(Qt.NoBrush)
 
                 # --- Draw Crop Rect, Shape Preview, MW Preview, Placed MW Marker (as before) ---
                 preview_pen_crop = QPen(Qt.magenta); effective_pen_width_crop = max(0.5, 0.5 / self.zoom_level if self.zoom_level > 0 else 0.5); preview_pen_crop.setWidthF(effective_pen_width_crop)
@@ -3168,67 +3126,42 @@ if __name__ == "__main__":
                         painter.drawText(QPointF(draw_x_mw_ls, draw_y_mw_ls), text_mw)
                     except Exception as e: print(f"Error drawing placed MW prediction marker in paintEvent: {e}")
 
+                # --- >>> MODIFICATION IS HERE <<< ---
                 # --- Mode-Specific Previews and Finalized Shapes ---
-                preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
-                ellipse_radius_view = self.drag_threshold * 0.7
                 
-                if self.app_instance and self.app_instance.moving_custom_item_info:
-                    info = self.app_instance.moving_custom_item_info
-                    is_resizing = self.app_instance.current_selection_mode == "resizing_custom_item"
-                    selection_pen = QPen(Qt.magenta, max(0.5, 2.0 / self.zoom_level), Qt.DotLine)
-                    handle_pen = QPen(Qt.red, max(0.5, 2.0 / self.zoom_level))
-                    handle_brush = QBrush(Qt.red)
-                    handle_radius = self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level
-
-                    if info['type'] == 'marker':
-                        bbox_ls = self.app_instance._get_marker_bounding_box_in_label_space(info['index'])
-                        if bbox_ls:
-                            painter.setPen(selection_pen)
-                            painter.drawRect(bbox_ls)
-                    elif info['type'] == 'shape':
-                        body_ls, handles_ls = self.app_instance._get_shape_bounding_box_and_handles_in_label_space(info['index'])
-                        if body_ls and handles_ls:
-                            painter.setPen(selection_pen)
-                            painter.drawRect(body_ls.adjusted(-2,-2,2,2)) # Draw bounding box around shape
-                            
-                            painter.setPen(handle_pen)
-                            painter.setBrush(handle_brush)
-                            for idx, handle_pt in enumerate(handles_ls):
-                                if is_resizing and idx == self.app_instance.resizing_corner_index:
-                                    painter.drawEllipse(handle_pt, handle_radius * 1.2, handle_radius * 1.2)
-                                else:
-                                    painter.drawEllipse(handle_pt, handle_radius, handle_radius)
-                            painter.setBrush(Qt.NoBrush)
+                # Calculate pen width and handle radius based on zoom level.
+                preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
+                handle_radius_view = self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level if self.zoom_level > 0 else self.CORNER_HANDLE_BASE_RADIUS
 
                 # 1. Preview for Auto-Lane Quadrilateral (mode == 'auto_lane_quad')
-                if self.mode == 'auto_lane_quad' and self.quad_points: # self.quad_points is used for this preview
+                if self.mode == 'auto_lane_quad' and self.quad_points:
                     painter.setPen(QPen(QColor(0, 128, 128), preview_pen_width * 1.5, Qt.SolidLine)) # Teal for points
                     for p_ls in self.quad_points:
-                        painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
+                        painter.drawEllipse(p_ls, handle_radius_view, handle_radius_view)
                     if 0 < len(self.quad_points) < 4:
                         painter.setPen(QPen(QColor(70, 130, 180), preview_pen_width, Qt.DotLine)) # SteelBlue for lines
                         painter.drawPolyline(QPolygonF(self.quad_points))
                 
                 # 2. Preview for Auto-Lane Rectangle (mode == 'auto_lane_rect')
-                elif self.mode == 'auto_lane_rect' and self.bounding_box_preview: # self.bounding_box_preview for this
-                    painter.setPen(QPen(QColor(70, 130, 180), preview_pen_width, Qt.DotLine)) # SteelBlue
+                elif self.mode == 'auto_lane_rect' and self.bounding_box_preview:
+                    painter.setPen(QPen(QColor(70, 130, 180), preview_pen_width, Qt.DotLine))
                     x1, y1, x2, y2 = self.bounding_box_preview
                     painter.drawRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
 
                 # 3. Preview for Single Analysis Quadrilateral (mode == 'quad')
-                elif self.mode == "quad" and self.quad_points: # self.quad_points is used for this preview
+                elif self.mode == "quad" and self.quad_points:
                     painter.setPen(QPen(Qt.red, preview_pen_width * 1.5, Qt.SolidLine))
                     for p_ls in self.quad_points:
-                        painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
+                        painter.drawEllipse(p_ls, handle_radius_view, handle_radius_view)
                     if 0 < len(self.quad_points) < 4:
                         painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
                         painter.drawPolyline(QPolygonF(self.quad_points))
-                    elif len(self.quad_points) == 4: # Draw final polygon preview
+                    elif len(self.quad_points) == 4:
                         painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
                         painter.drawPolygon(QPolygonF(self.quad_points))
                 
                 # 4. Preview for Single Analysis Rectangle (mode == 'rectangle')
-                elif self.mode == "rectangle" and self.bounding_box_preview: # self.bounding_box_preview for this
+                elif self.mode == "rectangle" and self.bounding_box_preview:
                     painter.setPen(QPen(Qt.blue, preview_pen_width, Qt.DotLine))
                     x1, y1, x2, y2 = self.bounding_box_preview
                     painter.drawRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
@@ -3237,13 +3170,13 @@ if __name__ == "__main__":
                 elif self.app_instance and self.app_instance.multi_lane_mode_active and \
                      self.app_instance.current_selection_mode not in ["dragging_shape", "resizing_corner"] and \
                      self.app_instance.moving_multi_lane_index < 0 and \
-                     self.mode not in ['auto_lane_quad', 'auto_lane_rect', 'quad', 'rectangle']: # Ensure not conflicting with other def modes
+                     self.mode not in ['auto_lane_quad', 'auto_lane_rect', 'quad', 'rectangle']:
                     
                     if self.app_instance.multi_lane_definition_type == 'quad' and self.app_instance.current_multi_lane_points:
                         points_to_draw = self.app_instance.current_multi_lane_points
-                        painter.setPen(QPen(Qt.magenta, preview_pen_width * 1.5, Qt.SolidLine)) # Magenta for multi-lane quad points
+                        painter.setPen(QPen(Qt.magenta, preview_pen_width * 1.5, Qt.SolidLine))
                         for p_ls in points_to_draw:
-                            painter.drawEllipse(p_ls, ellipse_radius_view, ellipse_radius_view)
+                            painter.drawEllipse(p_ls, handle_radius_view, handle_radius_view)
                         if 0 < len(points_to_draw) < 4:
                             painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
                             painter.drawPolyline(QPolygonF(points_to_draw))
@@ -3251,86 +3184,66 @@ if __name__ == "__main__":
                             painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
                             painter.drawPolygon(QPolygonF(points_to_draw))
                     elif self.app_instance.multi_lane_definition_type == 'rectangle' and self.bounding_box_preview:
-                        # self.bounding_box_preview is also used for multi-lane rectangle definition
                         painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
                         x1, y1, x2, y2 = self.bounding_box_preview
                         painter.drawRect(QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized())
 
                 # --- Draw Finalized Shapes (Single and Multi-lane) ---
-                # This logic tries to ensure that previews don't overlap with finalized displays
-                # by checking if a specific definition mode is active for that shape type.
-
-                # Finalized Single Quad (if not currently defining any quad type)
                 if self.quad_points and self.mode not in ["quad", "auto_lane_quad"] and \
                    (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_quad_for_move):
-                    # ... (Existing logic for drawing finalized single quad with handles) ...
                     pen_color = Qt.magenta if is_selected_single_quad_for_move else Qt.darkYellow
-                    line_style = Qt.SolidLine
                     pen_width_sf = 2.0 if is_selected_single_quad_for_move else 1.0
-                    effective_pen_width_quad = max(0.5, pen_width_sf / self.zoom_level if self.zoom_level > 0 else pen_width_sf)
-                    quad_pen = QPen(pen_color, effective_pen_width_quad, line_style)
+                    effective_pen_width_quad = max(0.5, pen_width_sf / self.zoom_level)
+                    quad_pen = QPen(pen_color, effective_pen_width_quad, Qt.SolidLine)
                     painter.setPen(quad_pen)
                     if is_selected_single_quad_for_move or \
                        (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -2):
                         point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
-                        point_pen = QPen(point_pen_color, effective_pen_width_quad * 2) 
-                        painter.setPen(point_pen)
+                        painter.setPen(QPen(point_pen_color, effective_pen_width_quad * 2))
                         for idx, p_label_space in enumerate(self.quad_points): 
                             if self.app_instance.current_selection_mode == "resizing_corner" and \
-                               self.app_instance.moving_multi_lane_index == -2 and \
-                               self.app_instance.resizing_corner_index == idx:
+                               self.app_instance.moving_multi_lane_index == -2 and self.app_instance.resizing_corner_index == idx:
                                 painter.setBrush(QBrush(Qt.red))
-                                painter.drawEllipse(p_label_space, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2) 
+                                painter.drawEllipse(p_label_space, handle_radius_view * 1.2, handle_radius_view * 1.2) 
                                 painter.setBrush(Qt.NoBrush)
                             else:
-                                painter.drawEllipse(p_label_space, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
+                                painter.drawEllipse(p_label_space, handle_radius_view, handle_radius_view)
                         painter.setPen(quad_pen)
                     if len(self.quad_points) == 4: painter.drawPolygon(QPolygonF(self.quad_points))
 
-
-                # Finalized Single Rectangle (if not currently defining any rect type)
                 elif self.bounding_box_preview and self.mode not in ["rectangle", "auto_lane_rect"] and \
                      (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_rect_for_move):
-                    # ... (Existing logic for drawing finalized single rectangle with handles) ...
                     pen_color = Qt.magenta if is_selected_single_rect_for_move else Qt.darkYellow
-                    line_style = Qt.SolidLine
                     pen_width_sf = 2.0 if is_selected_single_rect_for_move else 1.0
-                    effective_pen_width_bbox = max(0.5, pen_width_sf / self.zoom_level if self.zoom_level > 0 else pen_width_sf)
-                    rect_pen = QPen(pen_color, effective_pen_width_bbox, line_style)
+                    effective_pen_width_bbox = max(0.5, pen_width_sf / self.zoom_level)
+                    rect_pen = QPen(pen_color, effective_pen_width_bbox, Qt.SolidLine)
                     painter.setPen(rect_pen)
                     start_x, start_y, end_x, end_y = self.bounding_box_preview
                     rect_label_space = QRectF(QPointF(start_x, start_y), QPointF(end_x, end_y)).normalized()
                     painter.drawRect(rect_label_space)
-
                     if is_selected_single_rect_for_move or \
                        (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -3):
                         point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
-                        point_pen = QPen(point_pen_color, effective_pen_width_bbox * 2)
-                        painter.setPen(point_pen)
+                        painter.setPen(QPen(point_pen_color, effective_pen_width_bbox * 2))
                         rect_corners = [rect_label_space.topLeft(), rect_label_space.topRight(), rect_label_space.bottomRight(), rect_label_space.bottomLeft()]
                         for idx, corner_ls in enumerate(rect_corners):
                              if self.app_instance.current_selection_mode == "resizing_corner" and \
-                                self.app_instance.moving_multi_lane_index == -3 and \
-                                self.app_instance.resizing_corner_index == idx:
+                                self.app_instance.moving_multi_lane_index == -3 and self.app_instance.resizing_corner_index == idx:
                                  painter.setBrush(QBrush(Qt.red))
-                                 painter.drawEllipse(corner_ls, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2)
+                                 painter.drawEllipse(corner_ls, handle_radius_view * 1.2, handle_radius_view * 1.2)
                                  painter.setBrush(Qt.NoBrush)
                              else:
-                                painter.drawEllipse(corner_ls, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
+                                painter.drawEllipse(corner_ls, handle_radius_view, handle_radius_view)
                         painter.setPen(rect_pen)
 
-                # Draw Finalized Multiple Lanes (existing logic)
                 if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
-                    # ... (The logic for drawing finalized multi-lanes, including IDs and selection handles, was generally correct and can remain here) ...
                     lane_font_size = 10
                     lane_font = QFont("Arial", int(lane_font_size / self.zoom_level if self.zoom_level > 0 else lane_font_size)); lane_font.setBold(True)
                     for i, lane_def in enumerate(self.app_instance.multi_lane_definitions):
                         lane_id_str = str(lane_def['id']); center_point = QPointF()
                         is_selected_for_move_or_resize = (self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.app_instance.moving_multi_lane_index == i)
-                        default_pen_color = Qt.darkYellow
-                        pen_width_multilane = max(0.5, (2.0 if is_selected_for_move_or_resize else 1.0) / self.zoom_level if self.zoom_level > 0 else 1.0)
-                        pen_style_multilane = Qt.SolidLine
-                        pen_defined_lane = QPen(Qt.magenta if is_selected_for_move_or_resize else default_pen_color, pen_width_multilane); pen_defined_lane.setStyle(pen_style_multilane); painter.setPen(pen_defined_lane)
+                        pen_width_multilane = max(0.5, (2.0 if is_selected_for_move_or_resize else 1.0) / self.zoom_level)
+                        pen_defined_lane = QPen(Qt.magenta if is_selected_for_move_or_resize else Qt.darkYellow, pen_width_multilane, Qt.SolidLine); painter.setPen(pen_defined_lane)
                         current_lane_shape_points_label = []
                         if lane_def['type'] == 'rectangle':
                             rect_label_space = lane_def['points_label'][0]; painter.drawRect(rect_label_space); center_point = rect_label_space.center()
@@ -3341,17 +3254,15 @@ if __name__ == "__main__":
                             if len(quad_points_label_space) == 4: cx = sum(p.x() for p in quad_points_label_space) / 4.0; cy = sum(p.y() for p in quad_points_label_space) / 4.0; center_point = QPointF(cx, cy)
                         if is_selected_for_move_or_resize and current_lane_shape_points_label:
                             point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
-                            point_pen_multi = QPen(point_pen_color, pen_width_multilane * 1.5)
-                            painter.setPen(point_pen_multi)
+                            painter.setPen(QPen(point_pen_color, pen_width_multilane * 1.5))
                             for idx, p_ls_multi in enumerate(current_lane_shape_points_label):
                                 if self.app_instance.current_selection_mode == "resizing_corner" and \
-                                   self.app_instance.moving_multi_lane_index == i and \
-                                   self.app_instance.resizing_corner_index == idx: 
+                                   self.app_instance.moving_multi_lane_index == i and self.app_instance.resizing_corner_index == idx: 
                                     painter.setBrush(QBrush(Qt.red))
-                                    painter.drawEllipse(p_ls_multi, self.CORNER_HANDLE_BASE_RADIUS * 1.2, self.CORNER_HANDLE_BASE_RADIUS * 1.2)
+                                    painter.drawEllipse(p_ls_multi, handle_radius_view * 1.2, handle_radius_view * 1.2)
                                     painter.setBrush(Qt.NoBrush)
                                 else:
-                                    painter.drawEllipse(p_ls_multi, self.CORNER_HANDLE_BASE_RADIUS, self.CORNER_HANDLE_BASE_RADIUS)
+                                    painter.drawEllipse(p_ls_multi, handle_radius_view, handle_radius_view)
                             painter.setPen(pen_defined_lane)
                         if not center_point.isNull(): 
                             painter.setFont(lane_font); painter.setPen(Qt.black)
@@ -3361,11 +3272,9 @@ if __name__ == "__main__":
                             painter.save(); painter.setBrush(QColor(255, 255, 255, 220 if is_selected_for_move_or_resize else 180)); painter.setPen(Qt.NoPen); painter.drawRoundedRect(bg_rect_lane, 3, 3); painter.restore()
                             painter.setPen(Qt.red if is_selected_for_move_or_resize else Qt.black); painter.drawText(QPointF(draw_x_lane, draw_y_lane), lane_id_str)
 
-
                 # --- Draw Grid Lines (as before) ---
                 if self.app_instance and hasattr(self.app_instance, 'grid_size_input') and \
-                   hasattr(self.app_instance, 'show_grid_checkbox_x') and \
-                   hasattr(self.app_instance, 'show_grid_checkbox_y'):
+                   hasattr(self.app_instance, 'show_grid_checkbox_x') and hasattr(self.app_instance, 'show_grid_checkbox_y'):
                     grid_size_label_space = self.app_instance.grid_size_input.value()
                     if grid_size_label_space > 0:
                         pen_grid_paint = QPen(Qt.red)
@@ -3373,23 +3282,18 @@ if __name__ == "__main__":
                         effective_pen_width_grid = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 1.0)
                         pen_grid_paint.setWidthF(effective_pen_width_grid)
                         painter.setPen(pen_grid_paint)
-                        
-                        # Calculate visible area in unzoomed label coordinates
                         label_width_unzoomed = self.width() / (self.zoom_level if self.zoom_level > 0 else 1.0)
                         label_height_unzoomed = self.height() / (self.zoom_level if self.zoom_level > 0 else 1.0)
                         view_origin_x_unzoomed = -self.pan_offset.x() / (self.zoom_level if self.zoom_level > 0 else 1.0)
                         view_origin_y_unzoomed = -self.pan_offset.y() / (self.zoom_level if self.zoom_level > 0 else 1.0)
-
                         if self.app_instance.show_grid_checkbox_x.isChecked():
                             start_x_grid = (int(view_origin_x_unzoomed / grid_size_label_space) -1) * grid_size_label_space
                             for x_grid_ls in range(start_x_grid, int(view_origin_x_unzoomed + label_width_unzoomed + grid_size_label_space), grid_size_label_space):
-                                painter.drawLine(QPointF(x_grid_ls, view_origin_y_unzoomed), 
-                                                 QPointF(x_grid_ls, view_origin_y_unzoomed + label_height_unzoomed))
+                                painter.drawLine(QPointF(x_grid_ls, view_origin_y_unzoomed), QPointF(x_grid_ls, view_origin_y_unzoomed + label_height_unzoomed))
                         if self.app_instance.show_grid_checkbox_y.isChecked():
                             start_y_grid = (int(view_origin_y_unzoomed / grid_size_label_space)-1) * grid_size_label_space
                             for y_grid_ls in range(start_y_grid, int(view_origin_y_unzoomed + label_height_unzoomed + grid_size_label_space), grid_size_label_space):
-                                painter.drawLine(QPointF(view_origin_x_unzoomed, y_grid_ls), 
-                                                 QPointF(view_origin_x_unzoomed + label_width_unzoomed, y_grid_ls))
+                                painter.drawLine(QPointF(view_origin_x_unzoomed, y_grid_ls), QPointF(view_origin_x_unzoomed + label_width_unzoomed, y_grid_ls))
                 
                 painter.restore()
             
@@ -5999,7 +5903,6 @@ if __name__ == "__main__":
                                 self.resizing_corner_index = corner_idx
                                 self.shape_points_at_drag_start_label = [QPointF(p) for p in current_lane_corners_label]
                                 selected_shape_for_interaction = True
-                                print(f"DEBUG: Corner {corner_idx} of multi-lane index {i} selected for RESIZE.")
                                 break
                         if selected_shape_for_interaction: break
                 
@@ -6011,7 +5914,6 @@ if __name__ == "__main__":
                             self.resizing_corner_index = corner_idx
                             self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]
                             selected_shape_for_interaction = True
-                            print(f"DEBUG: Corner {corner_idx} of single quad selected for RESIZE.")
                             break
                 
                 # Check Single Rectangle Corners (if nothing else selected)
@@ -6025,7 +5927,6 @@ if __name__ == "__main__":
                             self.resizing_corner_index = corner_idx
                             self.shape_points_at_drag_start_label = [QPointF(p) for p in single_rect_corners]
                             selected_shape_for_interaction = True
-                            print(f"DEBUG: Corner {corner_idx} of single rect selected for RESIZE.")
                             break
 
                 # --- Stage 2: If no corner was clicked, check for Whole Shape Click to Initiate MOVE ---
@@ -6048,7 +5949,6 @@ if __name__ == "__main__":
                                 self.moving_multi_lane_index = i
                                 self.shape_points_at_drag_start_label = [QPointF(p) for p in current_lane_points_for_body_check]
                                 selected_shape_for_interaction = True
-                                print(f"DEBUG: Body of multi-lane index {i} selected for MOVE.")
                                 break
                     
                     # Check Single Quad Body
@@ -6058,7 +5958,6 @@ if __name__ == "__main__":
                             self.moving_multi_lane_index = -2
                             self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]
                             selected_shape_for_interaction = True
-                            print("DEBUG: Body of single quad selected for MOVE.")
                     
                     # Check Single Rectangle Body
                     if not selected_shape_for_interaction and self.live_view_label.bounding_box_preview:
@@ -6068,7 +5967,6 @@ if __name__ == "__main__":
                             self.moving_multi_lane_index = -3
                             self.shape_points_at_drag_start_label = [rect_single.topLeft(), rect_single.topRight(), rect_single.bottomRight(), rect_single.bottomLeft()]
                             selected_shape_for_interaction = True
-                            print("DEBUG: Body of single rect selected for MOVE.")
 
                 # --- Setup for Dragging/Resizing if a shape was selected ---
                 if selected_shape_for_interaction:
@@ -8044,101 +7942,67 @@ if __name__ == "__main__":
 
                 # --- Top Row: Presets and Top Labels ---
                 top_row_layout = QHBoxLayout()
-
-                # Group Box for Presets (Left/Right Markers)
                 presets_group = QGroupBox("Left/Right Marker Presets")
                 presets_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 presets_layout = QGridLayout(presets_group)
-                presets_layout.setSpacing(5) 
-
+                presets_layout.setSpacing(5)
                 presets_layout.addWidget(QLabel("Preset:"), 0, 0)
                 self.combo_box = QComboBox(self)
-                
-                # --- MODIFIED SECTION for ComboBox Population ---
-                # self.presets_data should be populated by self.load_config() before this method is called
                 if hasattr(self, 'presets_data') and self.presets_data:
-                    sorted_preset_names = sorted(self.presets_data.keys())
-                    self.combo_box.addItems(sorted_preset_names)
-                else:
-                    # Fallback if presets_data is empty or not found (should ideally not happen if load_config is robust)
-                    print("Warning: self.presets_data not populated or empty when creating markers tab.")
-                self.combo_box.addItem("Custom") # "Custom" is always an option
-                
-                # Attempt to set a sensible default after items are added.
-                # Default selection logic moved to load_config's UI update section for robustness.
-                # Here, we just ensure on_combobox_changed is connected.
-                # --- END MODIFIED SECTION ---
-
+                    self.combo_box.addItems(sorted(self.presets_data.keys()))
+                self.combo_box.addItem("Custom")
                 self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
                 presets_layout.addWidget(self.combo_box, 0, 1)
-
                 self.marker_values_textbox = QLineEdit(self)
                 self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-sep)")
-                self.marker_values_textbox.setEnabled(False) # Initial state, on_combobox_changed will manage
+                self.marker_values_textbox.setEnabled(False)
                 presets_layout.addWidget(self.marker_values_textbox, 1, 0, 1, 2)
-
                 self.rename_input = QLineEdit(self)
                 self.rename_input.setPlaceholderText("New name for Custom preset")
-                self.rename_input.setEnabled(False) # Initial state
+                self.rename_input.setEnabled(False)
                 presets_layout.addWidget(self.rename_input, 2, 0, 1, 2)
-
                 preset_buttons_layout = QHBoxLayout()
                 preset_buttons_layout.setContentsMargins(0, 0, 0, 0)
                 self.save_button = QPushButton("Save Preset", self)
                 self.save_button.setToolTip("Saves the current L/R, Top, Custom Markers/Shapes to the selected/new preset name.")
-                self.save_button.clicked.connect(self.save_config) # save_config is the preset saver now
+                self.save_button.clicked.connect(self.save_config)
                 self.remove_config_button = QPushButton("Remove Preset", self)
                 self.remove_config_button.clicked.connect(self.remove_config)
                 preset_buttons_layout.addWidget(self.save_button)
                 preset_buttons_layout.addWidget(self.remove_config_button)
                 preset_buttons_layout.addStretch()
                 presets_layout.addLayout(preset_buttons_layout, 3, 0, 1, 2)
-
                 presets_layout.setColumnStretch(1, 1)
                 top_row_layout.addWidget(presets_group, 1)
 
-                # Group Box for Top Labels
                 top_labels_group = QGroupBox("Top Marker Labels")
                 top_labels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 top_labels_layout = QVBoxLayout(top_labels_group)
-
                 self.top_marker_input = QTextEdit(self)
-                # self.top_label should be initialized or loaded by load_config -> on_combobox_changed
                 current_top_label_text = ", ".join(map(str, getattr(self, 'top_label', [])))
                 self.top_marker_input.setText(current_top_label_text)
                 self.top_marker_input.setMinimumHeight(40)
                 self.top_marker_input.setMaximumHeight(100)
                 self.top_marker_input.setPlaceholderText("Top labels (comma-separated)")
                 top_labels_layout.addWidget(self.top_marker_input)
-
                 self.update_top_labels_button = QPushButton("Update All L/R/Top Labels")
                 self.update_top_labels_button.setToolTip("Apply values from text boxes to current markers on the image.")
                 self.update_top_labels_button.clicked.connect(self.update_all_labels)
                 top_labels_layout.addWidget(self.update_top_labels_button)
-
                 top_row_layout.addWidget(top_labels_group, 1)
                 main_layout.addLayout(top_row_layout)
 
                 # --- Middle Section: Marker Placement and Offsets ---
-                # (Rest of this section remains the same: placement_group, sliders, etc.)
-                # ...
                 placement_group = QGroupBox("Marker Placement and Offsets")
                 placement_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 placement_layout = QGridLayout(placement_group)
-                placement_layout.setColumnStretch(0, 0) 
-                placement_layout.setColumnStretch(1, 0) 
-                placement_layout.setColumnStretch(2, 0) 
-                placement_layout.setColumnStretch(3, 0) 
-                placement_layout.setColumnStretch(4, 1) 
-                placement_layout.setColumnStretch(5, 0) 
-
+                placement_layout.setColumnStretch(4, 1)
                 if not hasattr(self, 'left_slider_range'): self.left_slider_range = [-100, 1000]
                 if not hasattr(self, 'right_slider_range'): self.right_slider_range = [-100, 1000]
                 if not hasattr(self, 'top_slider_range'): self.top_slider_range = [-100, 1000]
                 if not hasattr(self, 'left_marker_shift_added'): self.left_marker_shift_added = 0
                 if not hasattr(self, 'right_marker_shift_added'): self.right_marker_shift_added = 0
                 if not hasattr(self, 'top_marker_shift_added'): self.top_marker_shift_added = 0
-
                 left_marker_button = QPushButton("Place Left"); left_marker_button.setToolTip("Ctrl+Shift+L")
                 left_marker_button.clicked.connect(self.enable_left_marker_mode)
                 remove_left_button = QPushButton("Remove Last")
@@ -8158,7 +8022,6 @@ if __name__ == "__main__":
                 placement_layout.addWidget(QLabel("Offset Left:"), 0, 3, Qt.AlignRight | Qt.AlignVCenter)
                 placement_layout.addWidget(self.left_padding_slider, 0, 4)
                 placement_layout.addWidget(duplicate_left_button, 0, 5)
-
                 right_marker_button = QPushButton("Place Right"); right_marker_button.setToolTip("Ctrl+Shift+R")
                 right_marker_button.clicked.connect(self.enable_right_marker_mode)
                 remove_right_button = QPushButton("Remove Last")
@@ -8178,7 +8041,6 @@ if __name__ == "__main__":
                 placement_layout.addWidget(QLabel("Offset Right:"), 1, 3, Qt.AlignRight | Qt.AlignVCenter)
                 placement_layout.addWidget(self.right_padding_slider, 1, 4)
                 placement_layout.addWidget(duplicate_right_button, 1, 5)
-
                 top_marker_button = QPushButton("Place Top"); top_marker_button.setToolTip("Ctrl+Shift+T")
                 top_marker_button.clicked.connect(self.enable_top_marker_mode)
                 remove_top_button = QPushButton("Remove Last")
@@ -8194,89 +8056,72 @@ if __name__ == "__main__":
                 placement_layout.addWidget(reset_top_button, 2, 2)
                 placement_layout.addWidget(QLabel("Offset Top:"), 2, 3, Qt.AlignRight | Qt.AlignVCenter)
                 placement_layout.addWidget(self.top_padding_slider, 2, 4)
-                
                 main_layout.addWidget(placement_group)
 
 
-                # --- Bottom Section: Custom Markers / Shapes / Grid ---
-                # (Rest of this section remains the same: custom_group, etc.)
-                # ...
+                # --- Bottom Section: Custom Markers / Shapes / Grid (COMPACT 2-ROW LAYOUT) ---
                 custom_group = QGroupBox("Custom Markers, Shapes, and Grid")
                 custom_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                custom_layout = QGridLayout(custom_group)
-                custom_layout.setColumnStretch(1, 1) 
-                custom_layout.setColumnStretch(4, 1) 
+                custom_layout = QVBoxLayout(custom_group)
+                custom_layout.setSpacing(6)
+
+                # --- Row 1: Placement and Styling ---
+                row1_layout = QHBoxLayout()
+                row1_layout.setSpacing(6)
 
                 self.custom_marker_button = QPushButton("Place Custom", self)
                 self.custom_marker_button.setToolTip("Click to activate, then click on image to place text/arrow")
                 self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
-                self.custom_marker_text_entry = QLineEdit(self)
-                self.custom_marker_text_entry.setPlaceholderText("Custom text or use arrows →")
 
-                marker_buttons_layout = QHBoxLayout()
-                marker_buttons_layout.setContentsMargins(0, 0, 0, 0); marker_buttons_layout.setSpacing(2)
+                self.custom_marker_text_entry = QLineEdit(self)
+                self.custom_marker_text_entry.setPlaceholderText("Custom text...")
+
+                arrow_buttons_layout = QHBoxLayout()
+                arrow_buttons_layout.setContentsMargins(0, 0, 0, 0); arrow_buttons_layout.setSpacing(2)
                 arrow_size = 25
                 self.custom_marker_button_left_arrow = QPushButton("←"); self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left")
                 self.custom_marker_button_right_arrow = QPushButton("→"); self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right")
                 self.custom_marker_button_top_arrow = QPushButton("↑"); self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up")
                 self.custom_marker_button_bottom_arrow = QPushButton("↓"); self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down")
-                marker_buttons_layout.addWidget(self.custom_marker_button_left_arrow); marker_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
-                marker_buttons_layout.addWidget(self.custom_marker_button_top_arrow); marker_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
-                marker_buttons_layout.addStretch()
+                arrow_buttons_layout.addWidget(self.custom_marker_button_left_arrow); arrow_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
+                arrow_buttons_layout.addWidget(self.custom_marker_button_top_arrow); arrow_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
                 self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
                 self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
                 self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
                 self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
-
-                custom_manage_layout = QHBoxLayout(); custom_manage_layout.setContentsMargins(0,0,0,0); custom_manage_layout.setSpacing(4)
-                self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
-                self.reset_custom_marker_button = QPushButton("Reset All"); self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
                 
-                # --- NEW BUTTON ---
-                self.move_resize_button = QPushButton("Move/Resize")
-                self.move_resize_button.setToolTip("Toggle mode to move/resize custom markers and shapes on the image.")
-                self.move_resize_button.setCheckable(True)
-                self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
-                # --- END NEW BUTTON ---
-
-                self.modify_custom_marker_button = QPushButton("Modify All..."); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes in a table")
-                self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
-                custom_manage_layout.addWidget(self.remove_custom_marker_button); custom_manage_layout.addWidget(self.reset_custom_marker_button)
-                custom_manage_layout.addWidget(self.move_resize_button) # Add button to layout
-                custom_manage_layout.addWidget(self.modify_custom_marker_button)
-
-                custom_layout.addWidget(self.custom_marker_button, 0, 0)
-                custom_layout.addWidget(self.custom_marker_text_entry, 0, 1)
-                custom_layout.addLayout(marker_buttons_layout, 0, 2)
-                custom_layout.addLayout(custom_manage_layout, 0, 3, 1, 3)
-
-                custom_style_layout = QHBoxLayout(); custom_style_layout.setContentsMargins(0,0,0,0); custom_style_layout.setSpacing(5)
-                self.custom_font_type_label = QLabel("Font:")
                 self.custom_font_type_dropdown = QFontComboBox()
-                initial_font = QFont("Arial"); self.custom_font_type_dropdown.setCurrentFont(initial_font)
+                self.custom_font_type_dropdown.setCurrentFont(QFont("Arial"))
                 self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
-                self.custom_font_size_label = QLabel("Size:")
+                
                 self.custom_font_size_spinbox = QSpinBox()
-                self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12)
+                self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12); self.custom_font_size_spinbox.setPrefix("Size: ")
+
                 self.custom_marker_color_button = QPushButton("Color")
                 self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
                 if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
                 self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                custom_style_layout.addWidget(self.custom_font_type_label); custom_style_layout.addWidget(self.custom_font_type_dropdown)
-                custom_style_layout.addWidget(self.custom_font_size_label); custom_style_layout.addWidget(self.custom_font_size_spinbox)
-                custom_style_layout.addWidget(self.custom_marker_color_button)
-                custom_style_layout.addStretch()
+                
+                row1_layout.addWidget(self.custom_marker_button)
+                row1_layout.addWidget(self.custom_marker_text_entry)
+                row1_layout.addLayout(arrow_buttons_layout)
+                row1_layout.addWidget(self.custom_font_type_dropdown, 1) # Give font dropdown stretch factor
+                row1_layout.addWidget(self.custom_font_size_spinbox)
+                row1_layout.addWidget(self.custom_marker_color_button)
+                custom_layout.addLayout(row1_layout)
 
-                shape_button_layout = QHBoxLayout(); shape_button_layout.setContentsMargins(0,0,0,0); shape_button_layout.setSpacing(2)
+                # --- Row 2: Management and Tools ---
+                row2_layout = QHBoxLayout()
+                row2_layout.setSpacing(6)
+
+                self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
+                self.reset_custom_marker_button = QPushButton("Reset All"); self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
+                
                 shape_size = 25
                 self.draw_line_button = QPushButton("L"); self.draw_line_button.setToolTip("Draw Line"); self.draw_line_button.setFixedSize(shape_size, shape_size); self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
                 self.draw_rect_button = QPushButton("R"); self.draw_rect_button.setToolTip("Draw Rectangle"); self.draw_rect_button.setFixedSize(shape_size, shape_size); self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
                 self.remove_shape_button = QPushButton("X"); self.remove_shape_button.setToolTip("Remove Last Shape"); self.remove_shape_button.setFixedSize(shape_size, shape_size); self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
-                shape_button_layout.addWidget(QLabel("Shapes:"))
-                shape_button_layout.addWidget(self.draw_line_button); shape_button_layout.addWidget(self.draw_rect_button); shape_button_layout.addWidget(self.remove_shape_button)
-                shape_button_layout.addStretch()
-
-                grid_layout = QHBoxLayout(); grid_layout.setContentsMargins(0,0,0,0); grid_layout.setSpacing(5)
+                
                 self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X or CMD+Shift+X toggles X and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
                 self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y or CMD+Shift+Y  toggles Y and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
@@ -8284,12 +8129,24 @@ if __name__ == "__main__":
                 self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
                 self.grid_size_input.valueChanged.connect(self.update_live_view)
                 self.grid_size_input.setToolTip("Can increase or decrease grid pixel size by CTRL+Shift+Up or CTRL+Shift+Down")
-                grid_layout.addWidget(self.show_grid_checkbox_x); grid_layout.addWidget(self.show_grid_checkbox_y); grid_layout.addWidget(self.grid_size_input)
-                grid_layout.addStretch()
 
-                custom_layout.addLayout(custom_style_layout, 1, 0, 1, 2)
-                custom_layout.addLayout(shape_button_layout, 1, 2, 1, 2)
-                custom_layout.addLayout(grid_layout, 1, 4, 1, 2)
+                self.move_resize_button = QPushButton("Move/Resize"); self.move_resize_button.setToolTip("Toggle mode to move/resize custom markers and shapes on the image."); self.move_resize_button.setCheckable(True); self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
+                self.modify_custom_marker_button = QPushButton("Modify All"); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes"); self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
+
+                row2_layout.addWidget(self.remove_custom_marker_button)
+                row2_layout.addWidget(self.reset_custom_marker_button)
+                row2_layout.addSpacing(10)
+                row2_layout.addWidget(QLabel("Shapes:"))
+                row2_layout.addWidget(self.draw_line_button); row2_layout.addWidget(self.draw_rect_button); row2_layout.addWidget(self.remove_shape_button)
+                row2_layout.addSpacing(10)
+                row2_layout.addWidget(self.show_grid_checkbox_x)
+                row2_layout.addWidget(self.show_grid_checkbox_y)
+                row2_layout.addWidget(self.grid_size_input)
+                row2_layout.addStretch(1) # Main stretch to push final buttons to the right
+                row2_layout.addWidget(self.move_resize_button)
+                row2_layout.addWidget(self.modify_custom_marker_button)
+                
+                custom_layout.addLayout(row2_layout)
 
                 main_layout.addWidget(custom_group)
                 main_layout.addStretch()
@@ -8669,7 +8526,7 @@ if __name__ == "__main__":
                                         self.live_view_label.quad_points = []
                                         original_points_restored = True
                                 if original_points_restored:
-                                    print("Debug: Drag reverted by Escape.")
+                                    pass
                             # Transition back to selection mode or cancel fully
                             self.current_selection_mode = "select_for_move"
                             self.live_view_label.mode = "select_for_move"
@@ -11074,7 +10931,6 @@ if __name__ == "__main__":
                 angle = float(self.orientation_slider.value() / 20.0) # Use float division
 
                 if abs(angle) < 0.01: # Threshold to avoid unnecessary processing for tiny angles
-                    # print("Debug: Rotation angle negligible, skipping.") # Optional debug
                     # Reset slider if needed, but don't modify image
                     self.orientation_slider.setValue(0)
                     return
