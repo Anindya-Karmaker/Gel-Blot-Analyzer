@@ -3,16 +3,17 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python=3.9  # Specify the Python version
-  - pyqt=5.15  # PyQt5 for the GUI
-  - numpy  # For numerical operations
-  - scipy  # For scientific computing
-  - matplotlib  # For plotting
-  - scikit-image  # For image processing
-  - openpyxl  # For Excel file handling
-  - pillow  # For image manipulation
-  - opencv  # Added OpenCV (provides cv2)
-  - pyinstaller # For compiling the software, otherwise can skip
-  - pip  # For installing additional Python packages
+  - python=3.9       # Specify the Python version
+  - pyside6          # Replaced PyQt5 with PySide6 for the GUI
+  - numpy            # For numerical operations
+  - scipy            # For scientific computing
+  - matplotlib       # For plotting
+  - scikit-image     # For image processing
+  - openpyxl         # For Excel file handling
+  - pillow           # For image manipulation
+  - pyinstaller      # For compiling the software, otherwise can skip
+  - pip              # For installing additional Python packages
   - pip:
-    - svgwrite  # For SVG file handling (if not available via Conda)
+    - svgwrite       # For SVG file handling (if not available via Conda)
+    - opencv-python  # For core OpenCV functionality
+    - opencv-contrib-python # For extra OpenCV modules
