@@ -40,7 +40,7 @@ class MinimalLoadingDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0) # No extra margins in layout
 
         self.label = QLabel("Loading Software,\nPlease Wait...") # Updated text
-        font = QFont("Segoe UI", 11) # Use a common system font
+        font = QFont("Arial", 11) # Use a common system font
         font.setBold(True)
         self.label.setFont(font)
         self.label.setAlignment(Qt.AlignCenter)
@@ -965,7 +965,7 @@ if __name__ == "__main__":
                 self.table_widget.setRowCount(len(self.markers) + len(self.shapes))
 
                 # --- Define a standard font for the table display ---
-                standard_table_font = QFont("Segoe UI", 12) # A good, readable default
+                standard_table_font = QFont("Arial", 12) # A good, readable default
 
                 # --- Populate Markers ---
                 for i, marker_data in enumerate(self.markers):
@@ -4504,7 +4504,6 @@ if __name__ == "__main__":
                 try:
                     img_array = self.qimage_to_numpy(image) # Should return uint16 if input is Format_Grayscale16
                     if img_array is None: raise ValueError("NumPy Conversion returned None")
-                    print(f"quad_to_rect: Input image dtype = {img_array.dtype}, shape = {img_array.shape}") # Debug
                 except Exception as e:
                     QMessageBox.warning(self, "Warp Error", f"Failed to convert image to NumPy: {e}")
                     return None
@@ -4575,7 +4574,6 @@ if __name__ == "__main__":
                                                        flags=cv2.INTER_LINEAR, # Linear interpolation is usually good
                                                        borderMode=cv2.BORDER_CONSTANT,
                                                        borderValue=border_val) # Fill borders appropriately
-                    print(f"quad_to_rect: Warped array dtype = {warped_array.dtype}, shape = {warped_array.shape}") # Debug
                 except Exception as e:
                      QMessageBox.warning(self, "Warp Error", f"OpenCV perspective warp failed: {e}")
                      traceback.print_exc() # Print full traceback for debugging
@@ -4586,7 +4584,6 @@ if __name__ == "__main__":
                 try:
                     warped_qimage = self.numpy_to_qimage(warped_array) # Handles uint8/uint16/color
                     if warped_qimage.isNull(): raise ValueError("numpy_to_qimage conversion failed.")
-                    print(f"quad_to_rect: Returned QImage format = {warped_qimage.format()}") # Debug
                     return warped_qimage
                 except Exception as e:
                     QMessageBox.warning(self, "Warp Error", f"Failed to convert warped array back to QImage: {e}")
