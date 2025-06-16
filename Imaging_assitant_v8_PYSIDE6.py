@@ -282,7 +282,7 @@ if __name__ == "__main__":
                 else:
                     self.setWindowTitle("Tune Automatic Peak Detection")
 
-                self.setGeometry(150, 150, 800, 700) # Adjusted height
+                self.setGeometry(50, 50, 800, 700) # Adjusted height
                 self.pil_image_for_display = pil_image_data
                 self.selected_peak_index = -1 # Stores the X-coordinate of the peak selected for deletion
                 self.deleted_peak_indices = set()
@@ -329,7 +329,7 @@ if __name__ == "__main__":
 
                 # --- Settings and State ---
                 # Use settings passed from the main app (likely self.peak_dialog_settings)
-                self.smoothing_sigma = initial_settings.get('smoothing_sigma', 2.0)
+                self.smoothing_sigma = initial_settings.get('smoothing_sigma', 0.0)
                 self.peak_height_factor = initial_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = initial_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', 0.00)
@@ -1238,7 +1238,7 @@ if __name__ == "__main__":
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
                 # Increased width to accommodate band numbers next to lane + font slider
-                self.setGeometry(100, 100, 1050, 800) 
+                self.setGeometry(50, 50, 600, 600) 
                 self.temp_clipboard_file_path = None
                 self.parent_app = parent_app_instance
                 self.current_results_data = {} 
@@ -2145,7 +2145,7 @@ if __name__ == "__main__":
                 super().__init__(parent)
                 self.parent_app = parent
                 self.setWindowTitle("Adjust Peak Regions and Calculate Areas")
-                self.setGeometry(100, 100, 1000, 750)
+                self.setGeometry(50, 50, 900, 700)
 
                 if not isinstance(cropped_data, Image.Image):
                      raise TypeError("Input 'cropped_data' must be a PIL Image object")
@@ -2178,7 +2178,7 @@ if __name__ == "__main__":
 
                 self.profile_original_inverted = None; self.profile = None; self.background = None
                 self.rolling_ball_radius = current_settings.get('rolling_ball_radius', 50)
-                self.smoothing_sigma = current_settings.get('smoothing_sigma', 2.0)
+                self.smoothing_sigma = current_settings.get('smoothing_sigma', 0.0)
                 self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = current_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.00)
@@ -3548,7 +3548,7 @@ if __name__ == "__main__":
                     'valley_offset_pixels': 0,  # Added to persist settings
                     'band_estimation_method': "Mean",
                     'area_subtraction_method': "Rolling Ball",
-                    'smoothing_sigma': 2.0, # Added to persist settings
+                    'smoothing_sigma': 0.0, # Added to persist settings
                 }
                 
                 self.persist_peak_settings_enabled = True # State of the checkbox
@@ -11364,25 +11364,37 @@ if __name__ == "__main__":
                      QMessageBox.warning(self, "Error", "No image data to save.")
                      return False
 
-                # (File dialog logic remains the same...)
-                options = QFileDialog.Options()
+                # --- 1. Generate a clean suggested name for the dialog ---
                 suggested_name = os.path.splitext(os.path.basename(self.image_path))[0] if self.image_path else "untitled_image"
-                base_name_clean = suggested_name.replace("_original", "").replace("_modified", "")
+                # This part correctly cleans the suggestion
+                base_name_clean_for_dialog = suggested_name.replace("_original", "").replace("_modified", "")
                 save_dir = os.path.dirname(self.image_path) if self.image_path else ""
+                
+                # --- 2. Open the file dialog ---
+                options = QFileDialog.Options()
                 base_save_path, selected_filter = QFileDialog.getSaveFileName(
-                    self, "Save Image Base Name", os.path.join(save_dir, base_name_clean),
+                    self, "Save Image Base Name", os.path.join(save_dir, base_name_clean_for_dialog),
                     "PNG Files (*.png);;TIFF Files (*.tif *.tiff);;JPEG Files (*.jpg *.jpeg);;BMP Files (*.bmp);;All Files (*)",
                     options=options
                 )
                 if not base_save_path: return False
-                base_name_nosuffix = os.path.splitext(base_save_path)[0]
+
+                # --- 3. THE FIX: Clean the filename the user ACTUALLY selected ---
+                # First, get the base name without the extension from the user's choice
+                user_selected_base_name = os.path.splitext(base_save_path)[0]
+                # NOW, apply the same cleaning logic to whatever the user selected
+                final_clean_base = user_selected_base_name.replace("_original", "").replace("_modified", "")
+                
+                # Determine the correct suffix from the user's filter choice
                 suffix = os.path.splitext(base_save_path)[1].lower() or ".png"
                 if "tif" in selected_filter.lower(): suffix = ".tif"
                 elif "jpg" in selected_filter.lower(): suffix = ".jpg"
                 elif "bmp" in selected_filter.lower(): suffix = ".bmp"
-                original_save_path = f"{base_name_nosuffix}_original{suffix}"
-                modified_save_path = f"{base_name_nosuffix}_modified{suffix}"
-                config_save_path = f"{base_name_nosuffix}_config.txt"
+
+                # --- 4. Construct final paths using the truly clean base name ---
+                original_save_path = f"{final_clean_base}_original{suffix}"
+                modified_save_path = f"{final_clean_base}_modified{suffix}"
+                config_save_path = f"{final_clean_base}_config.txt"
 
                 # --- Save _original image (current state of self.image) ---
                 if self.image and not self.image.isNull():
@@ -11403,22 +11415,18 @@ if __name__ == "__main__":
                 
                 painter = QPainter(modified_canvas)
                 
-                # ** THE FIX for SHARPNESS **
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
                 painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), self.image, QRectF(self.image.rect()))
 
-                # ** THE FIX for TEXT SCALING and SHARPNESS (Part 2) **
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
                 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
                 
-                # --- Draw annotations (logic is identical to the corrected copy_to_clipboard) ---
                 def map_img_coords_to_canvas(img_x, img_y):
                     return QPointF(img_x * render_scale, img_y * render_scale)
 
-                # A. Standard L/R/Top Markers
                 std_font = QFont(self.font_family, int(self.font_size * font_scale_factor))
                 painter.setFont(std_font); painter.setPen(self.font_color)
                 fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
@@ -11432,7 +11440,6 @@ if __name__ == "__main__":
                     painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
                     painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
                     painter.drawText(QPointF(0, 0), str(text)); painter.restore()
-                # B. Custom Markers & C. Custom Shapes
                 for marker_data in getattr(self, "custom_markers", []):
                     try:
                         x, y, text, color, font, size, is_bold, is_italic = marker_data
@@ -11455,14 +11462,13 @@ if __name__ == "__main__":
                 
                 painter.end()
 
-                # Save the final modified canvas
-                save_format = suffix.replace(".", "").upper()
-                if save_format == "TIF": save_format = "TIFF"
-                if not modified_canvas.save(modified_save_path, format=save_format if save_format else None, quality=-1):
+                save_format_mod = suffix.replace(".", "").upper()
+                if save_format_mod == "TIF": save_format_mod = "TIFF"
+                if not modified_canvas.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=-1):
                     QMessageBox.warning(self, "Error", f"Failed to save modified image.")
                     return False
                 
-                # --- Save Config File (Unchanged) ---
+                # --- Save Config File ---
                 config_data = self.get_current_config()
                 try:
                     with open(config_save_path, "w", encoding='utf-8') as config_file:
@@ -11473,7 +11479,7 @@ if __name__ == "__main__":
 
                 self.is_modified = False
                 QMessageBox.information(self, "Saved", f"Files saved successfully to '{os.path.dirname(base_save_path)}'")
-                self.setWindowTitle(f"{self.window_title}::{base_name_clean}")
+                self.setWindowTitle(f"{self.window_title}::{final_clean_base}")
                 return True
                     
             def save_image_svg(self):
@@ -11683,7 +11689,10 @@ if __name__ == "__main__":
                     QMessageBox.warning(self, "Warning", "No image to copy.")
                     return
 
-                # --- 1. Setup High-Resolution Canvas Based on Native Image Size ---
+                # Clean up any previous temp file from this session
+                self.cleanup_temp_clipboard_file()
+
+                # --- Render high-resolution canvas (logic remains the same) ---
                 render_scale = 3
                 native_width = self.image.width()
                 native_height = self.image.height()
@@ -11691,38 +11700,20 @@ if __name__ == "__main__":
 
                 canvas_width = native_width * render_scale
                 canvas_height = native_height * render_scale
-
                 render_canvas = QImage(canvas_width, canvas_height, QImage.Format_ARGB32_Premultiplied)
                 render_canvas.fill(Qt.transparent)
                 
                 painter = QPainter(render_canvas)
                 if not painter.isActive(): return
-
-                # --- 2. THE FIX for SHARPNESS: Draw the base image without smooth scaling ---
-                painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
-                # Use QRectF for precision
-                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), self.image, QRectF(self.image.rect()))
-
-                # --- 3. THE FIX for TEXT SCALING: Calculate the correct font scale factor ---
-                # This factor compensates for the image being scaled down in the live view.
-                label_width = float(self.live_view_label.width())
-                label_height = float(self.live_view_label.height())
-                scale_native_to_view = 1.0
-                if label_width > 0 and label_height > 0:
-                    scale_native_to_view = min(label_width / native_width, label_height / native_height)
                 
-                # Prevent division by zero if scale is tiny
+                # --- Drawing logic for sharp image and annotations ---
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), self.image, QRectF(self.image.rect()))
+                label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
+                scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
-
-                # --- 4. Re-enable anti-aliasing for drawing smooth vector annotations ---
-                painter.setRenderHint(QPainter.Antialiasing, True)
-                painter.setRenderHint(QPainter.TextAntialiasing, True)
-
-                # --- 5. Draw all annotations using the new font_scale_factor ---
-                def map_img_coords_to_canvas(img_x, img_y):
-                    return QPointF(img_x * render_scale, img_y * render_scale)
-
-                # A. Standard L/R/Top Markers
+                painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
+                def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
                 std_font = QFont(self.font_family, int(self.font_size * font_scale_factor))
                 painter.setFont(std_font); painter.setPen(self.font_color)
                 fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
@@ -11736,8 +11727,6 @@ if __name__ == "__main__":
                     painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
                     painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
                     painter.drawText(QPointF(0, 0), str(text)); painter.restore()
-
-                # B. Custom Markers
                 for marker_data in getattr(self, "custom_markers", []):
                     try:
                         x, y, text, color, font, size, is_bold, is_italic = marker_data
@@ -11747,48 +11736,49 @@ if __name__ == "__main__":
                         draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
                         painter.drawText(draw_pos, text)
                     except Exception: pass
-
-                # C. Custom Shapes
                 for shape_data in getattr(self, "custom_shapes", []):
                     try:
                         shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
                         pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
-                        if shape_type == 'line':
-                            painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
+                        if shape_type == 'line': painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
                         elif shape_type == 'rectangle':
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
                     except Exception: pass
-                
                 painter.end()
-                
-                # --- 6. Set clipboard data ---
-                self.cleanup_temp_clipboard_file()
-                mime_data = QMimeData()
-                mime_data.setImageData(render_canvas)
-                # (Optional: Add other formats like PNG buffer or file URL as before)
-                QApplication.clipboard().setMimeData(mime_data)
-                QMessageBox.information(self, "Copied", "High-resolution rendered image copied to clipboard.")
+
+                # --- Save to temp file and put URL on clipboard for transparency ---
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                        temp_file_path = temp_file.name
+                    
+                    self.temp_clipboard_file_path = temp_file_path
+
+                    if not render_canvas.save(temp_file_path, "PNG"):
+                        raise IOError(f"Failed to save temporary file to {temp_file_path}")
+
+                    mime_data = QMimeData()
+                    mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                    mime_data.setImageData(render_canvas) # Fallback for some apps
+                    
+                    QApplication.clipboard().setMimeData(mime_data)
+                    QMessageBox.information(self, "Copied", "High-resolution image with transparency copied to clipboard.")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard via temporary file:\n{e}")
+                    self.cleanup_temp_clipboard_file()
 
 
             def cleanup_temp_clipboard_file(self):
                 """Deletes the temporary clipboard file if it exists."""
                 path_to_delete = getattr(self, 'temp_clipboard_file_path', None)
                 if path_to_delete:
-                    # print(f"INFO: Attempting to clean up temp file: {path_to_delete}")
                     if os.path.exists(path_to_delete):
                         try:
                             os.remove(path_to_delete)
-                            # print(f"INFO: Cleaned up temp file: {path_to_delete}")
-                        except PermissionError: # Specifically catch permission errors
-                            # This can happen if another app still has the file locked.
-                            # Schedule for later deletion if possible, or just log it.
-                            print(f"WARNING: PermissionError deleting {path_to_delete}. Will try again if app quits cleanly.")
-                            # For a GUI app, trying again on quit is the best we can do.
-                            # If this is called ON quit, then there's not much more to do.
                         except OSError as e:
                             print(f"WARNING: Could not delete temp clipboard file {path_to_delete}: {e}")
-                    self.temp_clipboard_file_path = None # Clear the path regardless of success
+                    self.temp_clipboard_file_path = None
                 
                 
             def clear_predict_molecular_weight(self):
