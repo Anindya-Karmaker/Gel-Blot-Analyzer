@@ -1,19 +1,41 @@
-name: imaging_assistant_env  # Name of the Conda environment
+# Conda environment configuration for Gel Blot Analyzer
+#
+# To create this environment, run:
+# > conda env create -f environment.yml
+#
+# To activate this environment, run:
+# > conda activate gel_analyzer_env
+#
+name: gel_analyzer_env  # Updated environment name
+
 channels:
   - defaults
   - conda-forge
+
 dependencies:
-  - python=3.9       # Specify the Python version
-  - pyside6          # Replaced PyQt5 with PySide6 for the GUI
-  - numpy            # For numerical operations
-  - scipy            # For scientific computing
-  - matplotlib       # For plotting
-  - scikit-image     # For image processing
-  - openpyxl         # For Excel file handling
-  - pillow           # For image manipulation
-  - pyinstaller      # For compiling the software, otherwise can skip
-  - pip              # For installing additional Python packages
+  # --- Core ---
+  - python=3.9         # Specify a stable Python version
+
+  # --- GUI Framework ---
+  - pyside6            # The core library for the application's user interface
+
+  # --- Scientific & Data Handling (from Conda) ---
+  - numpy              # Fundamental package for numerical operations
+  - scipy              # For scientific algorithms (signal processing, interpolation)
+  - scikit-image       # For advanced image processing algorithms (e.g., rolling ball)
+  - pillow             # For core image file I/O and manipulation
+  - openpyxl           # For reading and writing Excel (.xlsx) files
+
+  # --- Plotting ---
+  - matplotlib         # For generating all scientific plots and graphs
+
+  # --- Application Bundling (Optional) ---
+  - pyinstaller        # For compiling the script into a standalone application
+
+  # --- Additional packages installed via pip ---
+  # to ensure maximum compatibility and prevent unexpected breakages.
+  - pip
   - pip:
-    - svgwrite       # For SVG file handling (if not available via Conda)
-    - opencv-python  # For core OpenCV functionality
-    - opencv-contrib-python # For extra OpenCV modules
+    - svgwrite       # For exporting images to the scalable SVG format
+    - opencv-python  # For core computer vision functionality (used for transforms)
+    - opencv-contrib-python # For core computer vision functionality (used for transforms)
