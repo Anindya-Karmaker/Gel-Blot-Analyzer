@@ -1,102 +1,159 @@
-# Gel Blot Analyzer (Previously Imaging Assistant)
-This software simplifies the process of editing SDS-PAGE, Western Blot (WB), and other gel images for scientific research and publications, making it effortless to add important details like labels, headings, molecular weight markers, and more. With an intuitive interface, you can customize your images precisely the way you want. Save your work with all annotations intact, so you can revisit and refine your images anytime. Plus, take advantage of powerful densitometric analysis tools built right in-giving you accurate, reliable quantification with just a few clicks. Whether you're preparing figures for publication or analyzing experimental results, this tool streamlines your workflow and helps you present your data clearly and professionally.
+# Gel Blot Analyzer
 
-Features:
-* Works with most image format (TIFF,PNG,BMP,JPG) from any device or even camera
-* Fully integrated Image Cropping, Alignment and Skew Correction toolkit builtin
-* Adjust Low/High Image Contrast and Gamma (For visualizing proteins with faint bands)
-* Easily place left/right or top/bottom markers fast with auto detection and marker placement.
-* Save your images with transparent labels for those beautiful posters that you will make with this tool!
-* Save your Gel Marker Preset as Custom: Includes left/right/top/bottom marker values
-* Powerful Undo/Redo process operation
-* Option to add custom markers with custom font type, size and color on the image with default top/bottom/left/right arrows builtin and can add more using Webdings font
-* Inbuilt Snapping tool to help set markers at the center
-* Option to load image from clipboard and save to clipboard for faster operation
-* Powerful Keyboard Shortcuts and Tooltips for faster and easier accesibility
-* Can perform detailed densitometric analysis including band analysis and band quantification with custom quadrilateral or rectangular selection window
-* Different modes and types of background subtraction and peak detection are included
-* Powerful Exception Logger builtin to diagnose program crashes or other issues.
-  
-Example output from the software:
-<img width="902" alt="image" src="https://github.com/user-attachments/assets/639edac5-089e-4219-a3f5-6d7a06ad1932" />
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/639edac5-089e-4219-a3f5-6d7a06ad1932" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
+</p>
 
-*Auto Lane Detection
-<img width="1112" alt="image" src="https://github.com/user-attachments/assets/392e9592-639f-4517-b35a-41f947034d6e" />
+**Gel Blot Analyzer** is a comprehensive desktop application designed to streamline the annotation, analysis, and presentation of gel electrophoresis images. Built for researchers, students, and scientists, this tool simplifies the often tedious process of preparing gel images (SDS-PAGE, Western Blots, DNA gels, etc.) for lab notebooks, presentations, and publications.
 
-*Predict Molecular Weight
-<img width="900" alt="image" src="https://github.com/user-attachments/assets/e5add862-6615-4db6-b62b-aaf5859c5917" />
+From precise labeling and molecular weight prediction to powerful densitometric analysis, Gel Blot Analyzer combines essential imaging tools into a single, intuitive workflow.
 
-*Powerful Densitometric Analyis for predicting protein quantity and purity
-<img width="904" alt="image" src="https://github.com/user-attachments/assets/5157eead-bf64-4302-ba37-c979716825f6" />
+---
 
-*Fully transparent background with alpha-channel for different applications (Making posters)
-<img width="541" alt="image" src="https://github.com/user-attachments/assets/bb55025e-43ba-496f-a22c-477bf3a59973" />
+## Key Features
+
+| Feature                  | Description                                                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Broad Format Support** | Works with most common image formats (TIFF, PNG, BMP, JPG) from any imaging device.                                                       |
+| **Image Transformation** | Integrated toolkit for cropping, rotation, alignment, and perspective (skew) correction.                                                  |
+| **Advanced Adjustments** | Fine-tune image levels (black/white points) and gamma to visualize faint bands without altering raw data for analysis.                      |
+| **Effortless Annotation**| Place standard (L/R/Top) or fully custom markers. Draw lines, arrows, and shapes with custom fonts, colors, and sizes.                     |
+| **Densitometry Suite**   | Perform quantitative analysis by defining lanes with rectangular or quadrilateral selections to handle skewed gels.                       |
+| **Peak Analysis**        | Features multiple background subtraction methods (Rolling Ball, Valley-to-Valley) and tunable peak detection for accurate band quantification. |
+| **MW Prediction**        | Predict the molecular weight of unknown bands using a standard curve generated from your markers with multiple regression models.         |
+| **Presets & Workflow**   | Save your favorite molecular weight marker layouts as presets. Undo/Redo support for a non-destructive workflow.                          |
+| **Professional Output**  | Export your final annotated image with a transparent background, perfect for posters and publications.                                    |
+| **Robust & Stable**      | Includes a built-in exception logger to help diagnose any issues and ensure a stable user experience.                                       |
 
 
+## Gallery
 
+<p align="center">
+  <em>Automatic lane and band detection for densitometry.</em><br>
+  <img src="https://github.com/user-attachments/assets/392e9592-639f-4517-b35a-41f947034d6e" width="700" alt="Auto Lane Detection">
+</p>
+<p align="center">
+  <em>Predicting the molecular weight of an unknown band using a standard curve.</em><br>
+  <img src="https://github.com/user-attachments/assets/e5add862-6615-4db6-b62b-aaf5859c5917" width="700" alt="Molecular Weight Prediction">
+</p>
+<p align="center">
+  <em>Densitometric analysis plot for quantifying protein bands.</em><br>
+  <img src="https://github.com/user-attachments/assets/5157eead-bf64-4302-ba37-c979716825f6" width="700" alt="Densitometry Plot">
+</p>
 
-To run using Anaconda without compatiblity issues:
+---
 
-1.Create a new Conda environment:
-  Open a terminal or Anaconda Prompt and navigate to the directory where the environment.yml file is located. Then run the following command:
-  
-  >conda env create -f environment.yml
+## Installation and Usage
 
-  This will create a new Conda environment named imaging_assistant_env with all the required libraries.
+### Option 1: Download the Pre-built Application (Recommended)
 
-2.Activate the environment:
-  After the environment is created, activate it using the following command:  
-  
-  >conda activate imaging_assistant_env
+The easiest way to get started is to download the latest pre-built application for your operating system.
 
-3.Run the program:
-  Once the environment is activated, you can run your Python program using:
-  >cd [Directory, e.g: C:\Users\X\Downloads\Imaging-Assistant-main\Imaging-Assistant-main\]
-  >python Imaging_assistant_V6.py
+1.  Go to the **[Releases](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases)** page of this repository.
+2.  Download the appropriate file:
+    *   **For macOS:** Download the `.dmg` file or the `.app.zip` file.
+    *   **For Windows:** Download the `.zip` file for the application.
+3.  Unzip the file and run the application. No installation is needed.
 
-To run the program in Python or Other Distribution(can have compatibility issues with python >3.9.13):
+### Option 2: Run from Source (For Developers)
 
-  1. Run the command:
-     
-     pip install -r C:\Imaging-Assistant-main_3\Imaging-Assistant-main\requirements.txt
+If you are a developer and want to run the script directly, you can use Conda for a stable environment.
 
-     python C:\Imaging-Assistant-main_3\Imaging-Assistant-main\Imaging_assistant_V3.py
+#### Using Anaconda (Recommended for Stability)
 
-To compile the code into an application:
-  1. You need to install pyinstaller: pip install pyinstaller
-  2. Extract the files into your folder of choice and modify this command(FOR SOME REASON IN SOME ANACONDA VERSION OPENPYXL IS NOT PACKAGED INTO THE FINAL SOFTWARE):
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer.git
+    cd Gel-Blot-Analyzer
+    ```
 
-    pyinstaller --noconfirm --onefile --windowed --hidden-import openpyxl.cell._writer --icon=icon.ico --name=Imaging_assistant_v7 Imaging_assitant_V7.py
+2.  **Create a New Conda Environment:**
+    This command uses the provided file to create a new environment named `gel_analyzer_env` with all the correct library versions.
+    ```bash
+    conda env create -f environment.yml
+    ```
 
-  3. Modify the directory. Here the directory is the same as Anaconda_prompt (Change as needed)
-    
-  4. Run the command to get an executable so you can run the software on any PC without needing to install Python or Ananconda Distribution on other computer. (OR USE THE RELEASED VERSION)
+3.  **Activate the Environment:**
+    ```bash
+    conda activate gel_analyzer_env
+    ```
 
-If you get issues during compiling exe, execute these commands:
-1. pip uninstall pyinstaller
-2. pip install --upgrade pyinstaller
-3. pyinstaller --noconfirm --onefile --windowed --hidden-import openpyxl.cell._writer --icon=icon.ico --name=Imaging_assistant_V6 Imaging_assistant_V6.py
+4.  **Run the Program:**
+    ```bash
+    python Gel_blot_analyzer_v1.0.py
+    ```
 
+#### Using `pip`
 
-Would really appreciate if you cite this tool so that other people (Students) can use it without having to spend 4 months on developing something like this:
+You can also use `pip` with the provided `requirements.txt` file, although dependency conflicts can be more common.
 
-APA Style (7th Edition):
-Karmaker, A. (2024). _Imaging Assistant V6_ [Computer software]. https://github.com/Anindya-Karmaker/Imaging-Assistant
+1.  **Clone the Repository and navigate into it.**
 
-MLA Style (9th Edition):
-Karmaker, Anindya. _Imaging Assistant V6_, 2024. GitHub, https://github.com/Anindya-Karmaker/Imaging-Assistant.
+2.  **Create and activate a virtual environment (Recommended):**
+    ```bash
+    python -m venv venv
+    # On Windows
+    .\venv\Scripts\activate
+    # On macOS/Linux
+    source venv/bin/activate
+    ```
 
-Chicago Style (Notes and Bibliography - Bibliography Entry):
-Karmaker, Anindya. _Imaging Assistant V6_. 2024. https://github.com/Anindya-Karmaker/Imaging-Assistant.
+3.  **Install requirements:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-Chicago Style (Author-Date - Reference List Entry):
-Karmaker, Anindya. 2024. _Imaging Assistant V6_. https://github.com/Anindya-Karmaker/Imaging-Assistant.
+4.  **Run the program:**
+    ```bash
+    python Gel_blot_analyzer_v1.0.py
+    ```
 
-BIB Format:
-@misc{Karmaker_ImagingAssistantV6_2024_misc,
-  author = {Karmaker, Anindya},
-  title = {{Imaging Assistant V6}},
-  year = {2024}, % Adjust year if a specific release date for V6 is known
-  howpublished = {\url{https://github.com/Anindya-Karmaker/Imaging-Assistant}},
-  note = {Version 6.0. Software} 
+---
+
+## Building the Application from Source
+
+If you wish to compile the application yourself, you will need `pyinstaller`.
+
+1.  **Activate your Python environment** (either Conda or venv) where you have installed the dependencies.
+
+2.  **Install PyInstaller:**
+    ```bash
+    pip install pyinstaller
+    ```
+
+3.  **Run the Build Command:**
+    This project includes pre-configured `.spec` files for both macOS and Windows. Using these is the most reliable way to build.
+
+    *   **On macOS:**
+        ```bash
+        pyinstaller Gel_Blot_Analyzer.spec
+        ```
+
+    *   **On Windows:**
+        ```bash
+        pyinstaller Gel_Blot_Analyzer_Windows.spec
+        ```
+
+4.  The final, self-contained application will be located in the `dist` folder.
+
+---
+
+## Citation
+
+If you use Gel Blot Analyzer in your research, presentations, or publications, please cite it. Your citation helps other researchers and students discover this tool.
+
+#### APA Style (7th Edition)
+Karmaker, A. (2024). _Gel Blot Analyzer_ (Version 1.0) [Computer software]. https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer
+
+#### MLA Style (9th Edition)
+Karmaker, Anindya. _Gel Blot Analyzer_, Version 1.0, 2024. GitHub, https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer.
+
+#### BibTeX Format
+```bibtex
+@misc{Karmaker_GelBlotAnalyzer_2024,
+  author       = {Karmaker, Anindya},
+  title        = {{Gel Blot Analyzer}},
+  year         = {2024},
+  howpublished = {\url{https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer}},
+  note         = {Version 1.0}
 }
