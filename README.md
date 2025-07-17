@@ -1,4 +1,4 @@
-# Imaging-Assistant
+# Gel Blot Analyzer
 This software simplifies the process of editing SDS-PAGE, Western Blot (WB), and other gel images for scientific research and publications, making it effortless to add important details like labels, headings, molecular weight markers, and more. With an intuitive interface, you can customize your images precisely the way you want. Save your work with all annotations intact, so you can revisit and refine your images anytime. Plus, take advantage of powerful densitometric analysis tools built right in-giving you accurate, reliable quantification with just a few clicks. Whether you're preparing figures for publication or analyzing experimental results, this tool streamlines your workflow and helps you present your data clearly and professionally.
 
 Features:
