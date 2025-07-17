@@ -126,12 +126,12 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 
     *   **On macOS:**
         ```bash
-        pyinstaller Gel_Blot_Analyzer.spec
+        pyinstaller build_macos.spec
         ```
 
     *   **On Windows:**
         ```bash
-        pyinstaller Gel_Blot_Analyzer_Windows.spec
+        pyinstaller build_windows.spec
         ```
 
 4.  The final, self-contained application will be located in the `dist` folder.
