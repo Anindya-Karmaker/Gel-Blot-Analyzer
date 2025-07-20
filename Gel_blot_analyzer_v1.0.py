@@ -5330,17 +5330,22 @@ if __name__ == "__main__":
                             if peak_info_result and len(peak_info_result) > 0:
                                 areas_for_standard = [info['area'] for info in peak_info_result]
                                 total_area = sum(areas_for_standard)
-                                self.quantities_peak_area_dict[quantity_value] = round(total_area, 3)
-                                self.standard_protein_areas_text.setText(str(list(self.quantities_peak_area_dict.values())))
-                                self.standard_protein_values.setText(str(list(self.quantities_peak_area_dict.keys())))
+                                self.quantities_peak_area_dict[quantity_value] = total_area
+                                
+                                # FIX: Format numbers for clean display
+                                formatted_quantities = [f"{qty:.2f}" for qty in self.quantities_peak_area_dict.keys()]
+                                formatted_areas = [f"{area:.3f}" for area in self.quantities_peak_area_dict.values()]
+                                self.standard_protein_values.setText(", ".join(formatted_quantities))
+                                self.standard_protein_areas_text.setText(", ".join(formatted_areas))
+
                                 print(f"Standard Added: Qty={quantity_value}, Area={total_area:.3f}")
                                 self.latest_peak_areas = [round(a, 3) for a in areas_for_standard]
                                 self.latest_peak_details = peak_info_result # Store full details
                             else:
                                  print("Peak area calculation cancelled or failed for standard.")
-                        except (ValueError, IndexError) as e: # ... (error handling)
+                        except (ValueError, IndexError) as e:
                             QMessageBox.warning(self, "Input Error", f"Please enter a valid number for quantity. Error: {e}")
-                        except Exception as e: # ...
+                        except Exception as e:
                              QMessageBox.critical(self, "Analysis Error", f"An error occurred during standard analysis: {e}")
                     else:
                         print("Standard quantity input cancelled.")
@@ -5359,8 +5364,12 @@ if __name__ == "__main__":
                             )
                             print(f"Sample Analysis: Calculated Quantities = {self.latest_calculated_quantities}")
                         else: self.latest_calculated_quantities = []
-                        try: self.target_protein_areas_text.setText(str(self.latest_peak_areas))
-                        except Exception as e: print(f"Error displaying sample areas: {e}"); self.target_protein_areas_text.setText("Error")
+                        try: 
+                            # FIX: Format numbers for clean display
+                            formatted_areas = [f"{area:.3f}" for area in self.latest_peak_areas]
+                            self.target_protein_areas_text.setText(", ".join(formatted_areas))
+                        except Exception as e: 
+                            print(f"Error displaying sample areas: {e}"); self.target_protein_areas_text.setText("Error")
                     else:
                          print("Peak area calculation cancelled or failed for sample.")
                          self.target_protein_areas_text.setText("N/A")
@@ -5810,14 +5819,21 @@ if __name__ == "__main__":
                 std_info_layout = QGridLayout()
                 std_info_layout.addWidget(QLabel("Std. Quantities:"), 0, 0)
                 self.standard_protein_values = QLineEdit()
-                self.standard_protein_values.setPlaceholderText("Known quantities (auto-populated)")
-                self.standard_protein_values.setReadOnly(True)
+                self.standard_protein_values.setPlaceholderText("Known quantities (comma-separated)")
+                # FIX: Removed setReadOnly(True) to make it editable
                 std_info_layout.addWidget(self.standard_protein_values, 0, 1)
                 std_info_layout.addWidget(QLabel("Std. Areas:"), 1, 0)
                 self.standard_protein_areas_text = QLineEdit()
-                self.standard_protein_areas_text.setPlaceholderText("Calculated total areas (auto-populated)")
-                self.standard_protein_areas_text.setReadOnly(True)
+                self.standard_protein_areas_text.setPlaceholderText("Calculated total areas (comma-separated)")
+                # FIX: Removed setReadOnly(True) to make it editable
                 std_info_layout.addWidget(self.standard_protein_areas_text, 1, 1)
+
+                # FIX: Add a button to apply manual edits
+                self.update_standards_button = QPushButton("Update Standards from Text")
+                self.update_standards_button.setToolTip("Apply any manual changes made to the Quantities and Areas fields.")
+                self.update_standards_button.clicked.connect(self.update_standards_from_text_fields)
+                std_info_layout.addWidget(self.update_standards_button, 2, 0, 1, 2) # Span across both columns
+
                 quant_layout.addLayout(std_info_layout)
                 quant_layout.addWidget(self.create_separator())
                 sample_proc_layout = QHBoxLayout()
@@ -5851,6 +5867,43 @@ if __name__ == "__main__":
                 
                 layout.addStretch()
                 return tab
+            
+            def update_standards_from_text_fields(self):
+                """Reads the editable standard fields, validates them, and updates the internal dictionary."""
+                try:
+                    # Read and parse quantities
+                    qty_text = self.standard_protein_values.text()
+                    quantities = [float(q.strip()) for q in qty_text.split(',') if q.strip()]
+
+                    # Read and parse areas
+                    area_text = self.standard_protein_areas_text.text()
+                    areas = [float(a.strip()) for a in area_text.split(',') if a.strip()]
+
+                    if len(quantities) != len(areas):
+                        QMessageBox.warning(self, "Mismatch Error",
+                                            "The number of quantities must match the number of areas.")
+                        return
+
+                    if len(quantities) < 2:
+                        QMessageBox.warning(self, "Data Error",
+                                            "At least two standard data points (quantity and area) are required.")
+                        return
+
+                    # Rebuild the standard dictionary
+                    self.quantities_peak_area_dict = dict(zip(quantities, areas))
+                    
+                    # Re-format and display the cleaned data back in the text boxes
+                    formatted_quantities = [f"{qty:.2f}" for qty in self.quantities_peak_area_dict.keys()]
+                    formatted_areas = [f"{area:.3f}" for area in self.quantities_peak_area_dict.values()]
+                    self.standard_protein_values.setText(", ".join(formatted_quantities))
+                    self.standard_protein_areas_text.setText(", ".join(formatted_areas))
+
+                    QMessageBox.information(self, "Success", "Standard curve data has been updated. Please run Analyze as Sample again.")
+
+                except ValueError:
+                    QMessageBox.critical(self, "Input Error", "Please ensure all values are comma-separated numbers.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Update Error", f"An unexpected error occurred: {e}")
             
             def open_glycosylation_mapper(self):
                 dialog = GlycosylationMapperDialog(
@@ -6752,7 +6805,7 @@ if __name__ == "__main__":
 
                 for region_info in extracted_regions_info: # Iterate over the populated list
                     lane_id = region_info['id']
-                    pil_image_for_dialog = region_info['pil'] # This is now correctly scoped
+                    pil_image_for_dialog = region_info['pil'] 
                     
                     peak_info_for_lane = self.calculate_peak_area(pil_image_for_dialog) 
 
@@ -6768,14 +6821,19 @@ if __name__ == "__main__":
                                 areas_for_this_lane 
                             )
                             self.latest_multi_lane_calculated_quantities[lane_id] = quantities_for_lane
-                            all_lanes_text_results.append(f"Lane {lane_id}: Areas={areas_for_this_lane}, Qty={quantities_for_lane}")
+                            # FIX: Format the lists for clean display in the QTextEdit
+                            formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
+                            formatted_quantities = ', '.join([f"{q:.2f}" for q in quantities_for_lane])
+                            all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}], Qty=[{formatted_quantities}]")
                         else:
                             self.latest_multi_lane_calculated_quantities[lane_id] = []
-                            all_lanes_text_results.append(f"Lane {lane_id}: Areas={self.latest_multi_lane_peak_areas[lane_id]} (No std curve for qty)")
+                            # FIX: Format the list for clean display
+                            formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
+                            all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}] (No std curve for qty)")
                     else:
                         all_lanes_text_results.append(f"Lane {lane_id}: Analysis failed or no peaks.")
                         self.latest_multi_lane_peak_areas[lane_id] = []
-                        self.latest_multi_lane_peak_details[lane_id] = [] # Ensure details is also cleared
+                        self.latest_multi_lane_peak_details[lane_id] = [] 
                         self.latest_multi_lane_calculated_quantities[lane_id] = []
                 
                 if 1 in self.latest_multi_lane_peak_areas:
