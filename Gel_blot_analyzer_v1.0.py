@@ -12,36 +12,34 @@ import traceback
 # --- NEW Minimal Loading Dialog ---
 class MinimalLoadingDialog(QDialog):
     """
-    A very lightweight, minimal-resource loading dialog.
-    Uses basic widgets and styling for fast appearance.
+    A lightweight loading dialog with a clean white background.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Loading...") # Simple title, might not show if frameless
-        # Use flags for a clean, frameless look that stays on top
+        self.setWindowTitle("Loading...")
         self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, True) # Allows for rounded corners if stylesheet uses them
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
 
-        # --- Styling (Keep it simple) ---
+        # --- FIX: Updated styling for white background and dark text ---
         self.setStyleSheet("""
             QDialog {
-                background-color: rgba(45, 45, 50, 240); /* Dark semi-transparent */
-                border: 1px solid #777777;
+                background-color: white;
+                border: 1px solid #AAAAAA; /* Light gray border */
                 border-radius: 8px;
             }
             QLabel {
-                color: #E0E0E0; /* Light text */
-                padding: 25px; /* Add space around text */
-                background-color: transparent; /* Ensure label bg is transparent */
+                color: #333333; /* Dark gray text for readability */
+                padding: 25px;
+                background-color: transparent;
             }
         """)
 
         # --- Layout and Label ---
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0) # No extra margins in layout
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Loading Software,\nPlease Wait...") # Updated text
-        font = QFont("Arial", 11) # Use a common system font
+        self.label = QLabel("Loading Software,\nPlease Wait...")
+        font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
         self.label.setAlignment(Qt.AlignCenter)
@@ -49,16 +47,13 @@ class MinimalLoadingDialog(QDialog):
 
         self.setLayout(layout)
 
-        # --- Size and Position ---
-        self.setFixedSize(320, 120) # Adjust size as needed
+        # --- Size and Position (Original size is fine without an icon) ---
+        self.setFixedSize(320, 120)
         self.center_on_screen()
 
     def center_on_screen(self):
         """Centers the dialog on the primary screen."""
         try:
-            # Use QGuiApplication to access screen information
-            # QApplication.primaryScreen() also works if an app instance exists,
-            # but QGuiApplication.primaryScreen() is safer if called very early.
             primary_screen = QGuiApplication.primaryScreen()
             if not primary_screen:
                 screens = QGuiApplication.screens()
@@ -75,7 +70,7 @@ class MinimalLoadingDialog(QDialog):
             self.move(dialog_geo.topLeft())
         except Exception as e:
             print(f"Warning: Could not center loading dialog: {e}")
-            self.move(100, 100) # Fallback position
+            self.move(100, 100)
 
 
 # --- End Style Sheet Definition ---
@@ -128,13 +123,6 @@ def log_exception(exc_type, exc_value, exc_traceback):
 
 # Set the custom exception handler
 sys.excepthook = log_exception
-
-
-
- 
-
-
-
 	
 if __name__ == "__main__":
     app = None             # Initialize variable
@@ -146,24 +134,6 @@ if __name__ == "__main__":
         # This helps in some environments or if the script is re-run partially
         app = QApplication.instance()
         if app is None:
-            # --- Create QApplication ONLY if one doesn't exist ---
-            # Enable High DPI Scaling FIRST if creating a new app
-            try:
-                # These attributes might only be settable *before* QApplication is instantiated
-                # or on the class itself. Check PySide6 docs for exact timing.
-                # For PySide6, it's often:
-                # QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-                # QApplication.setAttribute(Qt.AA_EnableHighDpiScaling) # PySide6 style
-                # QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)   # PySide6 style
-                # For now, keeping your original Qt5 style for direct porting,
-                # but be aware these might need adjustment for PySide6 optimal behavior.
-                QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-                QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-            except AttributeError:
-                print("Warning: Could not set High DPI attributes (AttributeError).")
-            except Exception as e_dpi: # Catch any other exception during DPI setting
-                print(f"Warning: Error setting High DPI attributes: {e_dpi}")
-
             app = QApplication(sys.argv if hasattr(sys, 'argv') and len(sys.argv) > 0 else [])
         else:
             print("INFO: Using existing QApplication instance.")
@@ -179,7 +149,7 @@ if __name__ == "__main__":
             loading_dialog = None #
 
         import sys
-        import svgwrite
+        #import svgwrite
         import tempfile
         from tempfile import NamedTemporaryFile
         import base64
@@ -2822,7 +2792,9 @@ if __name__ == "__main__":
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0; self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
                 base_img = self.original_pil_cropped_data.copy()
                 if self.denoise_sigma > 0.01:
-                    try: base_img = Image.fromarray(cv2.GaussianBlur(np.array(base_img), (0,0), self.denoise_sigma).astype(np.array(base_img).dtype), mode=base_img.mode)
+                    try:
+                        # FIX: Removed mode=base_img.mode parameter
+                        base_img = Image.fromarray(cv2.GaussianBlur(np.array(base_img), (0,0), self.denoise_sigma).astype(np.array(base_img).dtype))
                     except: pass
                 if base_img.mode.startswith('I') or base_img.mode == 'F': self.enhanced_cropped_image_for_display = Image.fromarray((np.clip((np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) / (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9), 0.0, 1.0) * 255).astype(np.uint8), mode='L')
                 else: self.enhanced_cropped_image_for_display = ImageOps.autocontrast(base_img.convert('L'))
@@ -6881,8 +6853,7 @@ if __name__ == "__main__":
                     if fmt == QImage.Format_Grayscale16:
                         np_array = self.qimage_to_numpy(qimg)
                         if np_array is not None and np_array.dtype == np.uint16:
-                            try: pil_img = Image.fromarray(np_array, mode='I;16')
-                            except ValueError: pil_img = Image.fromarray(np_array, mode='I')
+                            pil_img = Image.fromarray(np_array) # FIX: Removed mode='I;16'
                         else: raise ValueError("Failed NumPy conversion for Grayscale16")
                     elif fmt == QImage.Format_Grayscale8:
                         # Try direct conversion first
@@ -6892,7 +6863,7 @@ if __name__ == "__main__":
                         except Exception as e_direct:
                             np_array = self.qimage_to_numpy(qimg)
                             if np_array is not None and np_array.dtype == np.uint8:
-                                pil_img = Image.fromarray(np_array, mode='L')
+                                pil_img = Image.fromarray(np_array) # FIX: Removed mode='L'
                             else: raise ValueError("Failed NumPy conversion for Grayscale8")
                     else: # Color or other format
                         # Use NumPy for robust conversion to 16-bit grayscale intermediate
@@ -6902,12 +6873,10 @@ if __name__ == "__main__":
                             gray_np = cv2.cvtColor(np_img[...,:3], cv2.COLOR_BGR2GRAY) # Assume BGR/BGRA input
                             # Convert to 16-bit PIL
                             gray_np_16bit = (gray_np / 255.0 * 65535.0).astype(np.uint16)
-                            try: pil_img = Image.fromarray(gray_np_16bit, mode='I;16')
-                            except ValueError: pil_img = Image.fromarray(gray_np_16bit, mode='I')
+                            pil_img = Image.fromarray(gray_np_16bit) # FIX: Removed mode='I;16'
                         elif np_img.ndim == 2: # Should have been caught by Grayscale checks, but handle anyway
                              if np_img.dtype == np.uint16:
-                                 try: pil_img = Image.fromarray(np_img, mode='I;16')
-                                 except ValueError: pil_img = Image.fromarray(np_img, mode='I')
+                                 pil_img = Image.fromarray(np_img) # FIX: Removed mode='I;16'
                              else: # Assume uint8 or other, convert to L
                                  pil_img = Image.fromarray(np_img).convert('L')
                         else:
@@ -6920,7 +6889,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     traceback.print_exc()
-                    return None            
+                    return None         
                 
                 
                     
@@ -10655,8 +10624,6 @@ if __name__ == "__main__":
                     self.adjust_elements_for_padding(padding_left, padding_top)
 
                     # --- 2. Pad the image using NumPy for a pixel-perfect copy ---
-                    # >>> MODIFICATION START: Replaced QPainter with NumPy <<<
-                    
                     # Convert the source image to a NumPy array
                     np_img = self.qimage_to_numpy(self.image)
                     if np_img is None:
@@ -10665,32 +10632,36 @@ if __name__ == "__main__":
                     original_height, original_width = np_img.shape[:2]
                     new_width = original_width + padding_left + padding_right
                     new_height = original_height + padding_top + padding_bottom
-                    
-                    # Determine the fill value for "white" based on the image's data type
-                    # and the correct shape for the new canvas.
-                    if np_img.ndim == 2: # Grayscale
-                        fill_value = 65535 if np_img.dtype == np.uint16 else 255
-                        padded_shape = (new_height, new_width)
-                    elif np_img.ndim == 3: # Color
-                        channels = np_img.shape[2]
-                        fill_value = [255] * channels # e.g., (255, 255, 255) or (255, 255, 255, 255)
-                        padded_shape = (new_height, new_width, channels)
+                    target_dtype = np_img.dtype
+
+                    # --- FIX: ALWAYS create a 4-channel (BGRA) transparent canvas ---
+                    padded_shape = (new_height, new_width, 4)
+                    # Fill with [0, 0, 0, 0] for transparent black
+                    padded_np = np.zeros(padded_shape, dtype=target_dtype)
+
+                    # Get the slice where the original image will be placed
+                    target_slice = padded_np[padding_top:padding_top + original_height, padding_left:padding_left + original_width]
+
+                    # Copy original image data and set alpha channel to opaque
+                    if np_img.ndim == 2: # Grayscale input
+                        opaque_alpha = 65535 if target_dtype == np.uint16 else 255
+                        target_slice[:, :, 0] = np_img  # Blue channel
+                        target_slice[:, :, 1] = np_img  # Green channel
+                        target_slice[:, :, 2] = np_img  # Red channel
+                        target_slice[:, :, 3] = opaque_alpha # Alpha channel
+                    elif np_img.ndim == 3 and np_img.shape[2] == 3: # BGR input
+                        opaque_alpha = 65535 if target_dtype == np.uint16 else 255
+                        target_slice[:, :, :3] = np_img # Copy BGR channels
+                        target_slice[:, :, 3] = opaque_alpha # Set Alpha channel
+                    elif np_img.ndim == 3 and np_img.shape[2] == 4: # BGRA input
+                        target_slice[:, :, :] = np_img # Copy all four channels directly
                     else:
                         raise ValueError(f"Unsupported image dimension for padding: {np_img.ndim}")
-
-                    # Create a new, larger NumPy array filled with the white value
-                    padded_np = np.full(padded_shape, fill_value, dtype=np_img.dtype)
                     
-                    # Copy the original image data into the correct slice of the new array.
-                    # This is a direct data copy, no interpolation or anti-aliasing will occur.
-                    padded_np[padding_top:padding_top + original_height, padding_left:padding_left + original_width] = np_img
-
                     # Convert the padded NumPy array back to a QImage
                     padded_image = self.numpy_to_qimage(padded_np)
                     if padded_image.isNull():
                         raise ValueError("Conversion back to QImage failed after padding with NumPy.")
-                    # >>> MODIFICATION END <<<
-
 
                     # --- 3. Update main image and backups ---
                     self.image = padded_image
