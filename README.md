@@ -80,7 +80,7 @@ If you are a developer and want to run the script directly, you can use Conda fo
 
 4.  **Run the Program:**
     ```bash
-    python Gel_blot_analyzer_v1.0.py
+    python Gel_blot_analyzer.py
     ```
 
 #### Using `pip`
@@ -105,7 +105,7 @@ You can also use `pip` with the provided `requirements.txt` file, although depen
 
 4.  **Run the program:**
     ```bash
-    python Gel_blot_analyzer_v1.0.py
+    python Gel_blot_analyzer.py
     ```
 
 ---
