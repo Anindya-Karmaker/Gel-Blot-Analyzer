@@ -6,7 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
-SCRIPT_FILE = "Gel_blot_analyzer_v1.0.py"
+SCRIPT_FILE = "Gel_blot_analyzer.py"
 ICON_FILE = "Icon.icns"  # Make sure this file is in the same directory as this .spec file
 BUNDLE_ID = "com.anindyakarmaker.gelblotanalyzer"
 
@@ -32,8 +32,8 @@ hiddenimports = [
     'scipy.interpolate',
     'cv2',
     'openpyxl',
-    'svgwrite',
-    # The following are often needed for scipy/numpy to work correctly when bundled
+    'openpyxl.cell._writer',
+    # Often needed for scipy/numpy to work correctly when bundled
     'scipy.special._cdflib',
     'scipy.integrate',
     'scipy.linalg.cython_blas',
@@ -55,7 +55,7 @@ a = Analysis(
     hookspath=[],
     # runtime_hooks=['runtime_hook.py'], # Only needed for special runtime configurations.
     runtime_hooks=[],                   # Keep it empty if you don't have a hook file.
-    excludes=[],
+    excludes=['PyQt5', 'PyQt6'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
