@@ -45,13 +45,13 @@ def find_signtool():
 # Get the directory where PySide6 stores its plugins
 pyside_library = os.path.join(os.path.dirname(QtCore.__file__), "plugins")
 
-datas = [
-    # Manually bundle essential PySide6 Qt platform plugins for Windows
-    (os.path.join(pyside_library, "platforms", "qwindows.dll"), "_internal\\PySide6\\plugins\\platforms"),
-    (os.path.join(pyside_library, "styles", "qwindowsvistastyle.dll"), "_internal\\PySide6\\plugins\\styles"),
-]
+#datas = [
+#    # Manually bundle essential PySide6 Qt platform plugins for Windows
+#    (os.path.join(pyside_library, "platforms", "qwindows.dll"), "_internal\\PySide6\\plugins\\platforms"),
+#    (os.path.join(pyside_library, "styles", "qwindowsvistastyle.dll"), "_internal\\PySide6\\plugins\\styles"),
+#]
 # Automatically collect all necessary data files for matplotlib
-datas.extend(collect_data_files('matplotlib'))
+#datas.extend(collect_data_files('matplotlib'))
 
 # --- Hidden Imports ---
 # This list is crucial for libraries that PyInstaller's static analysis might miss.
@@ -82,7 +82,7 @@ a = Analysis(
     [SCRIPT_FILE],
     pathex=[],
     binaries=[],
-    datas=datas,
+#    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
