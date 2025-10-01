@@ -10,7 +10,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 APP_NAME = "Gel Blot Analyzer"
 SCRIPT_FILE = "Gel_blot_analyzer.py"
 ICON_FILE = "icon.ico"
-VERSION_FILE = "version_file.txt" # You must create this file for version info
+#VERSION_FILE = "version_file.txt" # You must create this file for version info
 
 # --- Code Signing Configuration (Optional - Edit for your needs) ---
 # Set to True to enable code signing. If False, the signing step will be skipped.
@@ -111,7 +111,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON_FILE,
-    version=VERSION_FILE, # Embed version info from our file
+    #version=VERSION_FILE, # Embed version info from our file
 )
 
 coll = COLLECT(
