@@ -21,7 +21,7 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 | **Densitometry Suite**   | Perform quantitative analysis by defining lanes with rectangular or quadrilateral selections to handle skewed gels.                       |
 | **Peak Analysis**        | Features multiple background subtraction methods (Rolling Ball, Valley-to-Valley) and tunable peak detection for accurate band quantification. |
 | **MW Prediction**        | Predict the molecular weight of unknown bands using a standard curve generated from your markers with multiple regression models.         |
-| **Glycan and Oligomer Analyis**        | Visualize and predict different protein bands based on glycosylation sites and dimer, trimer, tetramer or other oligomer configuration.         |
+| **Glycan/Oligomer Analysis**| Visualize and predict different protein bands based on glycosylation sites and dimer, trimer, tetramer or other oligomer configuration.         |
 | **Presets & Workflow**   | Save your favorite molecular weight marker layouts as presets. Undo/Redo support for a non-destructive workflow.                          |
 | **Professional Output**  | Export your final annotated image with a transparent background, perfect for posters and publications.                                    |
 | **Robust & Stable**      | Includes a built-in exception logger to help diagnose any issues and ensure a stable user experience.                                       |
