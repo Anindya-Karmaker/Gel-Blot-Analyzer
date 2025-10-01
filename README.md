@@ -78,9 +78,14 @@ If you are a developer and want to run the script directly, you can use Conda fo
     conda activate gel_analyzer_env
     ```
 
-4.  **Run the Program:**
+5.  **Run the Program:**
     ```bash
     python Gel_blot_analyzer.py
+    ```
+
+    If you get any bugs particularly due to missing library or C-code header mismatch (usually happens on Windows- Anaconda library issue). Run this code:
+    ```bash
+    pip install --force-reinstall --no-cache-dir numpy scikit-image
     ```
 
 #### Using `pip`
