@@ -84,7 +84,7 @@ If you are a developer and want to run the script directly, you can use Conda fo
     python Gel_blot_analyzer.py
     ```
 
-    If you get any bugs particularly due to missing library or C-code header mismatch (usually happens on Windows- Anaconda library issue). Run this code:
+    If you get any error or crashes particularly due to missing library or C-code header mismatch (usually happens on Windows- Anaconda library issue). Run this code:
     ```bash
     pip install --force-reinstall --no-cache-dir numpy scikit-image
     ```
