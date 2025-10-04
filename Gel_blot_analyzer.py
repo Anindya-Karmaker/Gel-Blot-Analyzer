@@ -236,7 +236,6 @@ if __name__ == "__main__":
             A dialog to display the molecular weight prediction plot, allowing for
             interactive changing of the regression model.
             """
-            # Signal to notify the main window of a model change
             model_changed_in_dialog = Signal(str)
 
             def __init__(self, parent_app, all_marker_positions, all_marker_values, 
@@ -245,7 +244,6 @@ if __name__ == "__main__":
                 self.setWindowTitle("Prediction Result")
                 self.setMinimumSize(550, 500)
 
-                # Store reference to the main app and raw data for recalculation
                 self.parent_app = parent_app
                 self.all_marker_positions = all_marker_positions
                 self.all_marker_values = all_marker_values
@@ -255,62 +253,46 @@ if __name__ == "__main__":
                 self.active_set_name = active_set_name
                 self.final_coeffs = None
                 self.final_min_max_pos = None
+                self.final_predicted_mw = 0.0 # Add attribute to store result
 
-                # --- UI Setup ---
                 main_layout = QVBoxLayout(self)
-                
-                # Controls (ComboBox)
                 controls_layout = QHBoxLayout()
                 controls_layout.addWidget(QLabel("Regression Model:"))
                 self.model_combo_dialog = QComboBox()
                 self.model_combo_dialog.addItems([
-                    "Log-Linear (Degree 1)",
-                    "Log-Polynomial (Degree 2)",
-                    "Log-Polynomial (Degree 3)"
+                    "Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"
                 ])
-                # Initialize with the main window's current selection
                 self.model_combo_dialog.setCurrentText(self.parent_app.mw_regression_model_combo.currentText())
                 self.model_combo_dialog.currentTextChanged.connect(self._recalculate_and_redraw)
                 controls_layout.addWidget(self.model_combo_dialog, 1)
                 main_layout.addLayout(controls_layout)
 
-                # Matplotlib Plot
                 self.fig, self.ax = plt.subplots(figsize=(5, 4))
                 self.canvas = FigureCanvas(self.fig)
                 main_layout.addWidget(self.canvas)
 
-                # Results Labels
                 self.mw_label = QLabel("Predicted MW: -")
                 self.r2_label = QLabel("Fit R²: -")
                 font = self.mw_label.font(); font.setBold(True); self.mw_label.setFont(font)
                 main_layout.addWidget(self.mw_label)
                 main_layout.addWidget(self.r2_label)
 
-                # Dialog Buttons
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok)
                 button_box.accepted.connect(self.accept)
                 main_layout.addWidget(button_box)
-
-                # Initial calculation and plot
                 self._recalculate_and_redraw()
 
             def _recalculate_and_redraw(self):
-                """Performs the regression, updates labels, and redraws the plot."""
                 selected_model_text = self.model_combo_dialog.currentText()
-                
-                # --- Perform Regression (logic moved from get_protein_location) ---
                 min_pos_active = np.min(self.active_marker_positions)
                 max_pos_active = np.max(self.active_marker_positions)
-
                 normalized_distances = (self.active_marker_positions - min_pos_active) / (max_pos_active - min_pos_active)
                 log_marker_values = np.log10(self.active_marker_values)
-                
                 poly_degree = 1
                 if "Degree 2" in selected_model_text: poly_degree = 2
                 elif "Degree 3" in selected_model_text: poly_degree = 3
 
                 if len(normalized_distances) <= poly_degree:
-                    # Handle error without crashing
                     self.ax.clear()
                     self.ax.text(0.5, 0.5, f"Not enough points ({len(normalized_distances)}) for degree {poly_degree} fit.", 
                                  ha='center', va='center', wrap=True, color='red')
@@ -324,32 +306,28 @@ if __name__ == "__main__":
                 ss_res = np.sum(residuals**2)
                 ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
                 r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-
                 normalized_protein_position = (self.protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
                 predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
                 predicted_weight = 10 ** predicted_log10_weight
+                
+                # Store all final values
                 self.final_coeffs = coefficients
                 self.final_min_max_pos = (min_pos_active, max_pos_active)
+                self.final_predicted_mw = predicted_weight # Store the predicted MW
 
-                # Update labels
                 self.mw_label.setText(f"Predicted MW: <b>{predicted_weight:.2f}</b> units")
                 self.r2_label.setText(f"Fit R² (on active set): {r_squared:.3f}")
                 
-                # --- Plotting ---
                 self.ax.clear()
-                
                 all_norm_distances_plot = (self.all_marker_positions.astype(float) - min_pos_active) / (max_pos_active - min_pos_active)
                 fit_line_x_dense_norm = np.linspace(np.min(normalized_distances), np.max(normalized_distances), 200)
                 fit_line_y_log_dense = np.polyval(coefficients, fit_line_x_dense_norm)
                 fit_line_y_mw_dense = 10**fit_line_y_log_dense
-
                 self.ax.scatter(all_norm_distances_plot, self.all_marker_values, color="grey", alpha=0.5, label="All Markers (Context)", s=25)
                 self.ax.scatter(normalized_distances, self.active_marker_values, color="red", label="Active Set Data", s=40, marker='o')
-
                 simple_model_name = selected_model_text.split('(')[0].strip()
                 self.ax.plot(fit_line_x_dense_norm, fit_line_y_mw_dense, color="blue", label=f"Fit ({simple_model_name})", linewidth=1.5)
                 self.ax.axvline(normalized_protein_position, color="green", linestyle="--", label=f"Target Protein ({predicted_weight:.1f} units)", linewidth=1.5)
-
                 self.ax.set_xlabel(f"Normalized Distance (Relative to {self.active_set_name})", fontsize=9)
                 self.ax.set_ylabel("Molecular Weight (units)", fontsize=9)
                 self.ax.set_yscale("log")
@@ -359,16 +337,14 @@ if __name__ == "__main__":
                 self.ax.tick_params(axis='both', which='major', labelsize=8)
                 self.fig.tight_layout(pad=0.5)
                 self.canvas.draw()
-                
-                # Emit signal to update the main window's combobox
                 self.model_changed_in_dialog.emit(selected_model_text)
 
             def get_final_prediction_model(self):
-                """Returns the regression model calculated by the dialog."""
-                return {
-                    "coeffs": self.final_coeffs,
-                    "min_max_pos": self.final_min_max_pos
-                }
+                return {"coeffs": self.final_coeffs, "min_max_pos": self.final_min_max_pos}
+            
+            def get_final_predicted_mw(self):
+                """Returns the final predicted molecular weight value."""
+                return self.final_predicted_mw
 
         class GlycosylationMapperDialog(QDialog):
             """
@@ -3521,6 +3497,18 @@ if __name__ == "__main__":
                                     painter.drawEllipse(handle_pt, handle_radius, handle_radius)
                             painter.setBrush(Qt.NoBrush)
 
+                preview_pen_crop = QPen(Qt.red); effective_pen_width_crop = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 0.5); preview_pen_crop.setWidthF(effective_pen_width_crop)
+                if self.drawing_crop_rect and self.crop_rect_start_view and self.crop_rect_end_view: preview_pen_crop.setStyle(Qt.DashLine); painter.setPen(preview_pen_crop); rect_to_draw = QRectF(self.crop_rect_start_view, self.crop_rect_end_view).normalized(); painter.drawRect(rect_to_draw)
+                elif self.crop_rect_final_view: preview_pen_crop.setStyle(Qt.SolidLine); painter.setPen(preview_pen_crop); painter.drawRect(self.crop_rect_final_view)
+                if self.app_instance and self.app_instance.drawing_mode in ['line', 'rectangle'] and self.app_instance.current_drawing_shape_preview: # Shape Preview
+                    try:
+                        start_pt_ls = self.app_instance.current_drawing_shape_preview['start']; end_pt_ls = self.app_instance.current_drawing_shape_preview['end']; preview_color = self.app_instance.custom_marker_color
+                        base_preview_thickness = float(self.app_instance.custom_font_size_spinbox.value()); effective_preview_thickness = min(1.0, base_preview_thickness / self.zoom_level if self.zoom_level > 0 else base_preview_thickness)
+                        preview_pen_shape = QPen(preview_color); preview_pen_shape.setWidthF(effective_preview_thickness); preview_pen_shape.setStyle(Qt.DotLine); painter.setPen(preview_pen_shape)
+                        if self.app_instance.drawing_mode == 'line': painter.drawLine(start_pt_ls, end_pt_ls)
+                        elif self.app_instance.drawing_mode == 'rectangle': painter.drawRect(QRectF(start_pt_ls, end_pt_ls).normalized())
+                    except Exception as e: print(f"Error drawing live shape preview in paintEvent: {e}")
+
                 # --- Draw Crop Rect, Shape Preview, MW Preview, Placed MW Marker (as before) ---
                 anchor_point_ls = None
                 if self.mw_predict_preview_enabled and self.mw_predict_preview_position:
@@ -3821,8 +3809,10 @@ if __name__ == "__main__":
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
+                self.last_predicted_mw = 0.0 
                 self.num_oligomers_to_model = 1
-                self.num_glycosylation_sites = 0
+                self.num_glycans_to_model = 0
+                #self.num_glycosylation_sites = 0
                 self.oligomer_products = [] # Combined list for all forms
                 self.last_mw_prediction_coeffs = None
                 self.last_mw_prediction_min_max_pos = None
@@ -6170,11 +6160,16 @@ if __name__ == "__main__":
                     QMessageBox.critical(self, "Update Error", f"An unexpected error occurred: {e}")
             
             def open_protein_analyzer(self):
+                # Use the last predicted MW if available and positive, otherwise use the stored base_mw
+                base_mw_for_dialog = self.last_predicted_mw if self.last_predicted_mw > 0 else self.base_protein_mw
+                # Default glycan mass to 0 if it hasn't been set to a positive value
+                glycan_mass_for_dialog = self.avg_glycan_mass if self.avg_glycan_mass > 0 else 0.0
+
                 dialog = GlycosylationMapperDialog(
                     self.protein_sequence,
-                    self.base_protein_mw,
-                    self.avg_glycan_mass,
-                    self.num_oligomers_to_model, # Pass current value
+                    base_mw_for_dialog,
+                    glycan_mass_for_dialog,
+                    self.num_oligomers_to_model,
                     self
                 )
                 if dialog.exec() == QDialog.Accepted:
@@ -6183,10 +6178,10 @@ if __name__ == "__main__":
                     self.base_protein_mw = results["base_mw"]
                     self.avg_glycan_mass = results["glycan_mass"]
                     self.num_glycosylation_sites = results["sites"]
-                    num_glycans_to_use = results["glycans_to_use"]
-                    self.num_oligomers_to_model = results["oligomers_to_use"] # Store updated value
+                    self.num_glycans_to_model = results["glycans_to_use"]
+                    self.num_oligomers_to_model = results["oligomers_to_use"]
 
-                    # Recalculate and store all potential products (oligomers + glycans)
+                    # Recalculate and store all potential products
                     self.oligomer_products = []
                     if self.base_protein_mw > 0:
                         for j in range(1, self.num_oligomers_to_model + 1):
@@ -6195,7 +6190,7 @@ if __name__ == "__main__":
                             self.oligomer_products.append(oligomer_base_mw)
                             # Add glycosylated forms if glycan mass is positive
                             if self.avg_glycan_mass > 0:
-                                for i in range(1, num_glycans_to_use + 1):
+                                for i in range(1, self.num_glycans_to_model + 1):
                                     self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
                     
                     self.update_live_view()
@@ -11936,7 +11931,6 @@ if __name__ == "__main__":
 
                 # --- 1. Generate a clean suggested name for the dialog ---
                 suggested_name = os.path.splitext(os.path.basename(self.image_path))[0] if self.image_path else "untitled_image"
-                # This part correctly cleans the suggestion
                 base_name_clean_for_dialog = suggested_name.replace("_original", "").replace("_modified", "")
                 save_dir = os.path.dirname(self.image_path) if self.image_path else ""
                 
@@ -11949,13 +11943,10 @@ if __name__ == "__main__":
                 )
                 if not base_save_path: return False
 
-                # --- 3. THE FIX: Clean the filename the user ACTUALLY selected ---
-                # First, get the base name without the extension from the user's choice
+                # --- 3. Clean the filename the user ACTUALLY selected ---
                 user_selected_base_name = os.path.splitext(base_save_path)[0]
-                # NOW, apply the same cleaning logic to whatever the user selected
                 final_clean_base = user_selected_base_name.replace("_original", "").replace("_modified", "")
                 
-                # Determine the correct suffix from the user's filter choice
                 suffix = os.path.splitext(base_save_path)[1].lower() or ".png"
                 if "tif" in selected_filter.lower(): suffix = ".tif"
                 elif "jpg" in selected_filter.lower(): suffix = ".jpg"
@@ -11974,7 +11965,7 @@ if __name__ == "__main__":
                     if not self.image.save(original_save_path, format=save_format if save_format else None, quality=quality):
                         QMessageBox.warning(self, "Error", f"Failed to save original image.")
 
-                # --- Create and save _modified image with annotations (SHARP VERSION) ---
+                # --- Create and save _modified image with annotations ---
                 render_scale = 3
                 native_width = self.image.width(); native_height = self.image.height()
                 if native_width <= 0 or native_height <= 0: return False
@@ -12048,8 +12039,17 @@ if __name__ == "__main__":
                     return False
 
                 self.is_modified = False
+
+                # --- THE FIX IS HERE ---
+                # After a successful save, update the internal path to the new path.
+                # We store the path to the "_original" file, as this is what's loaded.
+                self.image_path = original_save_path
+                # --- END FIX ---
+                
                 QMessageBox.information(self, "Saved", f"Files saved successfully to '{os.path.dirname(base_save_path)}'")
                 self.setWindowTitle(f"{self.window_title}::{final_clean_base}")
+                self._update_status_bar()
+
                 return True
                     
             def save_image_svg(self):
@@ -12406,41 +12406,109 @@ if __name__ == "__main__":
                 self.update_live_view()
                 
             def predict_molecular_weight(self):
-                # ... (existing initial checks for markers) ...
-                
-                self.live_view_label.preview_marker_enabled = False # Disable custom marker preview
-                self.live_view_label.mw_predict_preview_enabled = True # Enable MW preview
-                self.live_view_label.mw_predict_preview_position = None # Clear old position
-                self.live_view_label.setCursor(Qt.CrossCursor)
-                self.live_view_label.setMouseTracking(True) # Ensure it's on
-    
-                
-                # Determine which markers to use (left or right)
-                markers_raw_tuples = self.left_markers if self.left_markers else self.right_markers
-                if not markers_raw_tuples:
-                    QMessageBox.warning(self, "Error", "No markers available for prediction. Please place markers first.")
-                    self.live_view_label.setCursor(Qt.ArrowCursor) # Reset cursor
+                # --- Step 1: Check for available valid marker sets ---
+                has_left = hasattr(self, 'left_markers') and len(self.left_markers) >= 2
+                has_right = hasattr(self, 'right_markers') and len(self.right_markers) >= 2
+        
+                choices = []
+                if has_left:
+                    choices.append("Left Markers")
+                if has_right:
+                    choices.append("Right Markers")
+                if has_left and has_right:
+                    choices.append("Average of Left & Right")
+        
+                if not choices:
+                    QMessageBox.warning(self, "Error", "At least one set of two or more markers (Left or Right) is required for prediction.")
                     return
+        
+                # --- Step 2: Prompt user to select the marker source ---
+                source = choices[0] # Default to the first available option
+                if len(choices) > 1:
+                    selected_source, ok = QInputDialog.getItem(self, "Select Marker Source",
+                                                               "Which markers should be used for the standard curve?",
+                                                               choices, 2, False)
+                    if not ok or not selected_source:
+                        return # User cancelled
+                    source = selected_source
+        
+                # --- Step 3: Prepare the marker data based on user's choice ---
+                markers_raw_tuples = []
+                if source == "Left Markers":
+                    markers_raw_tuples = self.left_markers
+                elif source == "Right Markers":
+                    markers_raw_tuples = self.right_markers
+                elif source == "Average of Left & Right":
+                    
+                    # --- Self-contained logic for partitioning and averaging ---
+                    def _partition(marker_list):
+                        """Nested helper to partition a marker list into one or two sets."""
+                        if not marker_list or len(marker_list) < 2: return (marker_list, [])
+                        
+                        numeric_markers = sorted(
+                            [(float(pos), float(val)) for pos, val in marker_list if str(val).replace('.', '', 1).isdigit()],
+                            key=lambda item: item[0]
+                        )
+                        if len(numeric_markers) < 2: return (numeric_markers, [])
+                        
+                        values = [val for pos, val in numeric_markers]
+                        transition_index = -1
+                        initial_decrease = any(values[k] < values[k-1] for k in range(1, len(values)))
 
-                # --- Crucial Step: Sort markers by Y-position (migration distance) ---
-                # This ensures the order reflects the actual separation on the gel/blot
+                        if initial_decrease:
+                            for k in range(1, len(values)):
+                                if values[k] > values[k-1]:
+                                    transition_index = k
+                                    break
+                        
+                        return (numeric_markers[:transition_index], numeric_markers[transition_index:]) if transition_index != -1 else (numeric_markers, [])
+
+                    def _average(set_a, set_b):
+                        """Nested helper to average two corresponding sets."""
+                        if not set_a or not set_b: return []
+                        map_a = {val: pos for pos, val in set_a}
+                        map_b = {val: pos for pos, val in set_b}
+                        common_values = set(map_a.keys()) & set(map_b.keys())
+                        return [( (map_a[val] + map_b[val]) / 2.0, val ) for val in sorted(list(common_values))]
+
+                    left_set1, left_set2 = _partition(self.left_markers)
+                    right_set1, right_set2 = _partition(self.right_markers)
+
+                    avg_set1 = _average(left_set1, right_set1)
+                    avg_set2 = _average(left_set2, right_set2)
+                    
+                    markers_raw_tuples = avg_set1 + avg_set2
+                    
+                    if len(markers_raw_tuples) < 2:
+                        QMessageBox.warning(self, "Averaging Error", 
+                                            "Fewer than two common marker values were found between the Left and Right sets after partitioning.\n"
+                                            "Cannot create an averaged standard curve.")
+                        return
+                    # --- End of self-contained logic ---
+
+                # --- Step 4: Process the selected markers (validation, sorting) ---
+                self.live_view_label.preview_marker_enabled = False
+                self.live_view_label.mw_predict_preview_enabled = True
+                self.live_view_label.mw_predict_preview_position = None
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self.live_view_label.setMouseTracking(True)
+        
                 try:
-                    # Ensure marker values are numeric for sorting and processing
                     numeric_markers = []
-                    for pos, val_str in markers_raw_tuples:
+                    for pos, val in markers_raw_tuples:
                         try:
-                            numeric_markers.append((float(pos), float(val_str)))
+                            # If from "Average", value is already float. Otherwise, it could be a string.
+                            numeric_markers.append((float(pos), float(val)))
                         except (ValueError, TypeError):
-                            # Skip markers with non-numeric values for prediction
-                            continue
+                            continue # Skip non-numeric markers
 
                     if len(numeric_markers) < 2:
-                         QMessageBox.warning(self, "Error", "At least two valid numeric markers are needed for prediction.")
+                         QMessageBox.warning(self, "Error", f"The selected set ('{source}') has fewer than two valid numeric markers.")
                          self.live_view_label.setCursor(Qt.ArrowCursor)
                          return
 
+                    # Sort markers by Y-position (migration distance)
                     sorted_markers = sorted(numeric_markers, key=lambda item: item[0])
-                    # Separate sorted positions and values
                     sorted_marker_positions = np.array([pos for pos, val in sorted_markers])
                     sorted_marker_values = np.array([val for pos, val in sorted_markers])
 
@@ -12448,18 +12516,12 @@ if __name__ == "__main__":
                     QMessageBox.critical(self, "Marker Error", f"Error processing marker data: {e}\nPlease ensure markers have valid numeric values.")
                     self.live_view_label.setCursor(Qt.ArrowCursor)
                     return
-
-                # Ensure there are still at least two markers after potential filtering
-                if len(sorted_marker_positions) < 2:
-                    QMessageBox.warning(self, "Error", "Not enough valid numeric markers remain after filtering.")
-                    self.live_view_label.setCursor(Qt.ArrowCursor)
-                    return
-
-                # Prompt user and set up the click handler
+        
+                # --- Step 5: Set up the click handler with the processed marker data ---
                 QMessageBox.information(self, "Instruction",
-                                        "Click on the target protein location in the preview window.\n"
-                                        "The closest standard set (Gel or WB) will be used for calculation.")
-                # Pass the *sorted* full marker data to the click handler
+                                        f"Using '{source}' for calculation.\n\n"
+                                        "Click on the target protein location in the preview window.")
+                
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = lambda event: self.get_protein_location_and_clear_preview(
                     event, sorted_marker_positions, sorted_marker_values
@@ -12474,12 +12536,6 @@ if __name__ == "__main__":
                     self.mw_regression_model_combo.blockSignals(False)
 
             def get_protein_location(self, event, all_marker_positions, all_marker_values):
-                """
-                Handles the mouse click event for protein selection.
-                Determines the relevant standard set based on click proximity,
-                performs regression on that set, predicts MW, and plots the results.
-                """
-                # --- 1. Get Protein Click Position (Image Coordinates) ---
                 pos = event.position()
                 cursor_x, cursor_y = pos.x(), pos.y()
 
@@ -12499,124 +12555,83 @@ if __name__ == "__main__":
                 protein_y_image = (cursor_y - y_offset) / scale if scale != 0 else 0
                 self.protein_location = QPointF(cursor_x, cursor_y)
 
-                # --- 2. Identify Potential Standard Sets (Partitioning) ---
-                transition_index = -1
-                initial_decrease = False
+                transition_index = -1; initial_decrease = False
                 for k in range(1, len(all_marker_values)):
-                    if all_marker_values[k] < all_marker_values[k-1]:
-                        initial_decrease = True
+                    if all_marker_values[k] < all_marker_values[k-1]: initial_decrease = True
                     if initial_decrease and all_marker_values[k] > all_marker_values[k-1]:
-                        transition_index = k
-                        break
+                        transition_index = k; break
 
-                # --- 3. Select the Active Standard Set ---
-                active_marker_positions = None
-                active_marker_values = None
-                set_name = "Full Set"
-
+                active_marker_positions, active_marker_values, set_name = None, None, "Full Set"
                 if transition_index != -1:
-                    set1_positions = all_marker_positions[:transition_index]
-                    set1_values = all_marker_values[:transition_index]
-                    set2_positions = all_marker_positions[transition_index:]
-                    set2_values = all_marker_values[transition_index:]
-                    valid_set1 = len(set1_positions) >= 2
-                    valid_set2 = len(set2_positions) >= 2
-
+                    set1_pos, set1_val = all_marker_positions[:transition_index], all_marker_values[:transition_index]
+                    set2_pos, set2_val = all_marker_positions[transition_index:], all_marker_values[transition_index:]
+                    valid_set1, valid_set2 = len(set1_pos) >= 2, len(set2_pos) >= 2
                     if valid_set1 and valid_set2:
-                        mean_y_set1 = np.mean(set1_positions)
-                        mean_y_set2 = np.mean(set2_positions)
-                        if abs(protein_y_image - mean_y_set1) <= abs(protein_y_image - mean_y_set2):
-                            active_marker_positions = set1_positions
-                            active_marker_values = set1_values
-                            set_name = "Set 1 (e.g., Gel)"
+                        if abs(protein_y_image - np.mean(set1_pos)) <= abs(protein_y_image - np.mean(set2_pos)):
+                            active_marker_positions, active_marker_values, set_name = set1_pos, set1_val, "Set 1 (e.g., Gel)"
                         else:
-                            active_marker_positions = set2_positions
-                            active_marker_values = set2_values
-                            set_name = "Set 2 (e.g., WB)"
-                    elif valid_set1:
-                        active_marker_positions = set1_positions
-                        active_marker_values = set1_values
-                        set_name = "Set 1 (e.g., Gel)"
-                    elif valid_set2:
-                        active_marker_positions = set2_positions
-                        active_marker_values = set2_values
-                        set_name = "Set 2 (e.g., WB)"
-                    else:
-                        QMessageBox.warning(self, "Error", "Could not form valid standard sets after partitioning (need >= 2 points per set).")
-                        self.live_view_label.setCursor(Qt.ArrowCursor)
-                        if hasattr(self, "protein_location"): del self.protein_location
-                        return
+                            active_marker_positions, active_marker_values, set_name = set2_pos, set2_val, "Set 2 (e.g., WB)"
+                    elif valid_set1: active_marker_positions, active_marker_values, set_name = set1_pos, set1_val, "Set 1 (e.g., Gel)"
+                    elif valid_set2: active_marker_positions, active_marker_values, set_name = set2_pos, set2_val, "Set 2 (e.g., WB)"
                 else:
-                    if len(all_marker_positions) >= 2:
-                        active_marker_positions = all_marker_positions
-                        active_marker_values = all_marker_values
-                        set_name = "Single Set"
-                    else:
-                        QMessageBox.warning(self, "Error", "Not enough markers in the single set (need >= 2 points).")
-                        self.live_view_label.setCursor(Qt.ArrowCursor)
-                        if hasattr(self, "protein_location"): del self.protein_location
-                        return
+                    if len(all_marker_positions) >= 2: active_marker_positions, active_marker_values = all_marker_positions, all_marker_values
 
                 if active_marker_positions is None or len(active_marker_positions) < 2:
-                    QMessageBox.warning(self, "Error", f"Selected active set '{set_name}' has insufficient points ({len(active_marker_positions) if active_marker_positions is not None else 0}).")
-                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    QMessageBox.warning(self, "Error", f"Selected/available active set has insufficient points for prediction.")
                     if hasattr(self, "protein_location"): del self.protein_location
-                    return
+                    self._reset_live_view_label_custom_handlers(); self.live_view_label.setCursor(Qt.ArrowCursor); return
 
-                # --- 4. Perform Regression on the Active Set ---
-                dialog = PredictionResultDialog(
-                    parent_app=self,
-                    all_marker_positions=all_marker_positions,
-                    all_marker_values=all_marker_values,
-                    active_marker_positions=active_marker_positions,
-                    active_marker_values=active_marker_values,
-                    protein_y_image=protein_y_image,
-                    active_set_name=set_name
-                )
-                
+                dialog = PredictionResultDialog(self, all_marker_positions, all_marker_values, active_marker_positions, active_marker_values, protein_y_image, set_name)
                 dialog.model_changed_in_dialog.connect(self._update_main_model_from_dialog)
                 
-                # Execute the dialog and check if the user clicked "OK"
                 if dialog.exec() == QDialog.Accepted:
-                    # Retrieve the final model from the dialog
                     model_data = dialog.get_final_prediction_model()
                     self.last_mw_prediction_coeffs = model_data.get("coeffs")
                     self.last_mw_prediction_min_max_pos = model_data.get("min_max_pos")
-                    
-                    # Set the flag to indicate a prediction has been run
                     self.run_predict_MW = True
+
+                    # --- NEW LOGIC TO UPDATE STATE AFTER PREDICTION ---
+                    predicted_mw = dialog.get_final_predicted_mw()
+                    if predicted_mw > 0:
+                        self.last_predicted_mw = predicted_mw
+                        self.base_protein_mw = predicted_mw # Update the base MW for the analyzer
+                    
+                    if self.avg_glycan_mass <= 0:
+                        self.avg_glycan_mass = 0.0
+
+                    self.oligomer_products = []
+                    if self.base_protein_mw > 0:
+                        for j in range(1, self.num_oligomers_to_model + 1):
+                            oligomer_base_mw = self.base_protein_mw * j
+                            self.oligomer_products.append(oligomer_base_mw)
+                            if self.avg_glycan_mass > 0:
+                                for i in range(1, self.num_glycans_to_model + 1):
+                                    self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
+                    # --- END NEW LOGIC ---
                 else:
-                    # User cancelled, so clear any previous prediction model
                     self.last_mw_prediction_coeffs = None
                     self.last_mw_prediction_min_max_pos = None
-                    if hasattr(self, "protein_location"): 
-                        del self.protein_location # Clear the temporary marker
+                    if hasattr(self, "protein_location"): del self.protein_location
                     self.run_predict_MW = False
 
-                # --- 5. Final Cleanup and Redraw ---
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label.setCursor(Qt.ArrowCursor)
                 
-                # CRUCIAL: Redraw the view to show (or hide) the glycosylation overlay
+                if self.run_predict_MW:
+                    try:
+                        mw_marker_font = QFont(self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value() + 2)
+                        font_metrics_mw = QFontMetrics(mw_marker_font)
+                        text_mw = "⎯⎯"; text_bounding_rect_mw = font_metrics_mw.boundingRect(text_mw)
+                        loc_x_ls = self.protein_location.x()
+                        draw_x_mw_ls = loc_x_ls - (text_bounding_rect_mw.left() + text_bounding_rect_mw.width() / 2.0)
+                        self.last_mw_prediction_marker_x_ls = draw_x_mw_ls
+                        self.last_mw_prediction_marker_width_ls = text_bounding_rect_mw.width()
+                    except Exception as e_geom:
+                        print(f"Warning: Could not calculate MW marker geometry for overlay: {e_geom}")
+                        self.last_mw_prediction_marker_x_ls = None
+                        self.last_mw_prediction_marker_width_ls = None
+                
                 self.update_live_view()
-
-                try:
-                    mw_marker_font = QFont(self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value() + 2)
-                    font_metrics_mw = QFontMetrics(mw_marker_font)
-                    text_mw = "⎯⎯"
-                    text_bounding_rect_mw = font_metrics_mw.boundingRect(text_mw)
-                    
-                    # self.protein_location is the center point (cursor_x, cursor_y) in label space
-                    loc_x_ls, loc_y_ls = self.protein_location
-                    
-                    draw_x_mw_ls = loc_x_ls - (text_bounding_rect_mw.left() + text_bounding_rect_mw.width() / 2.0)
-                    
-                    self.last_mw_prediction_marker_x_ls = draw_x_mw_ls
-                    self.last_mw_prediction_marker_width_ls = text_bounding_rect_mw.width()
-                except Exception as e_geom:
-                    print(f"Warning: Could not calculate MW marker geometry for overlay: {e_geom}")
-                    self.last_mw_prediction_marker_x_ls = None
-                    self.last_mw_prediction_marker_width_ls = None
 
             def get_protein_location_and_clear_preview(self, event, all_marker_positions, all_marker_values):
                 self.get_protein_location(event, all_marker_positions, all_marker_values)
