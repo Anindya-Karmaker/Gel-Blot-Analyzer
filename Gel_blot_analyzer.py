@@ -5654,7 +5654,10 @@ if __name__ == "__main__":
             
             
             def calculate_unknown_quantity(self, standard_total_areas, known_quantities, sample_peak_areas):
-                """Calculates unknown quantities based on standards and sample areas. Returns a list of quantities."""
+                """
+                Calculates unknown quantities based on a given standard curve and sample areas. 
+                Returns a list of quantities.
+                """
                 if not standard_total_areas or not known_quantities or len(standard_total_areas) != len(known_quantities):
                     print("Error: Invalid standard data for quantity calculation.")
                     return []
@@ -5662,7 +5665,7 @@ if __name__ == "__main__":
                     print("Error: Need at least 2 standards for regression.")
                     return []
                 if not sample_peak_areas:
-                     print("Warning: No sample peak areas provided for quantity calculation.")
+                     # This is a valid case (e.g., just updating standards), so don't print a warning.
                      return []
 
                 calculated_quantities = []
@@ -5675,14 +5678,11 @@ if __name__ == "__main__":
                         val = np.polyval(coefficients, area)
                         calculated_quantities.append(round(val, 2))
 
-                    # Display the results in a message box (optional, but helpful feedback)
-                    # QMessageBox.information(self, "Protein Quantification", f"Predicted Quantities: {calculated_quantities} units")
-
                 except Exception as e:
-                     # QMessageBox.warning(self, "Calculation Error", f"Could not calculate quantities: {e}")
+                     print(f"Error during quantity calculation: {e}")
                      return [] # Return empty list on error
 
-                return calculated_quantities # <-- Return the list
+                return calculated_quantities
 
                 
             def draw_quantity_text(self, painter, x, y, quantity, scale_x, scale_y):
@@ -6123,24 +6123,19 @@ if __name__ == "__main__":
                 return tab
             
             def update_standards_from_text_fields(self):
-                """Reads the editable standard fields, validates them, and updates the internal dictionary."""
+                """
+                Reads the editable standard fields, validates them, updates the internal dictionary,
+                and automatically recalculates quantities for the last analyzed samples.
+                """
                 try:
-                    # Read and parse quantities
+                    # Read and parse quantities and areas
                     qty_text = self.standard_protein_values.text()
                     quantities = [float(q.strip()) for q in qty_text.split(',') if q.strip()]
-
-                    # Read and parse areas
                     area_text = self.standard_protein_areas_text.text()
                     areas = [float(a.strip()) for a in area_text.split(',') if a.strip()]
 
                     if len(quantities) != len(areas):
-                        QMessageBox.warning(self, "Mismatch Error",
-                                            "The number of quantities must match the number of areas.")
-                        return
-
-                    if len(quantities) < 2:
-                        QMessageBox.warning(self, "Data Error",
-                                            "At least two standard data points (quantity and area) are required.")
+                        QMessageBox.warning(self, "Mismatch Error", "The number of quantities must match the number of areas.")
                         return
 
                     # Rebuild the standard dictionary
@@ -6152,7 +6147,54 @@ if __name__ == "__main__":
                     self.standard_protein_values.setText(", ".join(formatted_quantities))
                     self.standard_protein_areas_text.setText(", ".join(formatted_areas))
 
-                    QMessageBox.information(self, "Success", "Standard curve data has been updated. Please run Analyze as Sample again.")
+                    QMessageBox.information(self, "Success", "Standard curve data has been updated.")
+                    
+                    # --- NEW: AUTOMATIC RECALCULATION LOGIC ---
+                    if len(self.quantities_peak_area_dict) < 2:
+                        # If standards are no longer valid, clear quantities
+                        self.latest_calculated_quantities = []
+                        self.latest_multi_lane_calculated_quantities = {}
+                        self.target_protein_areas_text.clear() # Clear the entire results box
+                        QMessageBox.information(self, "Info", "Standard curve is no longer valid (less than 2 points). Sample quantities cleared.")
+                        return
+
+                    all_lanes_text_results = []
+                    # Check if the last analysis was multi-lane
+                    if self.latest_multi_lane_peak_areas:
+                        for lane_id, lane_areas in self.latest_multi_lane_peak_areas.items():
+                            if lane_areas:
+                                new_quantities = self.calculate_unknown_quantity(
+                                    list(self.quantities_peak_area_dict.values()),
+                                    list(self.quantities_peak_area_dict.keys()),
+                                    lane_areas
+                                )
+                                self.latest_multi_lane_calculated_quantities[lane_id] = new_quantities
+                                
+                                # Rebuild the display text for this lane
+                                formatted_areas = ', '.join([f"{a:.3f}" for a in lane_areas])
+                                formatted_quantities = ', '.join([f"{q:.2f}" for q in new_quantities])
+                                all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}], Qty=[{formatted_quantities}]")
+                            else:
+                                all_lanes_text_results.append(f"Lane {lane_id}: No areas analyzed.")
+
+                    # Check if the last analysis was single-lane
+                    elif self.latest_peak_areas:
+                        new_quantities = self.calculate_unknown_quantity(
+                            list(self.quantities_peak_area_dict.values()),
+                            list(self.quantities_peak_area_dict.keys()),
+                            self.latest_peak_areas
+                        )
+                        self.latest_calculated_quantities = new_quantities
+                        
+                        # Rebuild the display text for the single lane
+                        formatted_areas = ', '.join([f"{a:.3f}" for a in self.latest_peak_areas])
+                        formatted_quantities = ', '.join([f"{q:.2f}" for q in new_quantities])
+                        all_lanes_text_results.append(f"Areas=[{formatted_areas}], Qty=[{formatted_quantities}]")
+
+                    # Update the UI text box with the newly calculated results
+                    if all_lanes_text_results:
+                        self.target_protein_areas_text.setText("\n".join(all_lanes_text_results))
+                    # --- END OF NEW LOGIC ---
 
                 except ValueError:
                     QMessageBox.critical(self, "Input Error", "Please ensure all values are comma-separated numbers.")
