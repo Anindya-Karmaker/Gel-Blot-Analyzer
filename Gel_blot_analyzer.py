@@ -4453,10 +4453,10 @@ if __name__ == "__main__":
                 self.paste_custom_items_action = QAction(paste_custom_icon, "Paste Custom Markers/Shapes", self)
                 self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
                 self.paste_custom_items_action.triggered.connect(self.paste_custom_items)
-                self.layout_top_action.triggered.connect(lambda: self._update_main_layout("Top"))
-                self.layout_bottom_action.triggered.connect(lambda: self._update_main_layout("Bottom"))
-                self.layout_left_action.triggered.connect(lambda: self._update_main_layout("Left"))
-                self.layout_right_action.triggered.connect(lambda: self._update_main_layout("Right"))
+                self.layout_top_action.triggered.connect(lambda: self._transition_layout_change("Top"))
+                self.layout_bottom_action.triggered.connect(lambda: self._transition_layout_change("Bottom"))
+                self.layout_left_action.triggered.connect(lambda: self._transition_layout_change("Left"))
+                self.layout_right_action.triggered.connect(lambda: self._transition_layout_change("Right"))
                 
                 # --- END: Connect Panning Action Signals ---
 
@@ -4497,6 +4497,30 @@ if __name__ == "__main__":
                     self.main_widget = new_main_widget
                     if old_central_widget:
                         old_central_widget.deleteLater()
+                
+            def _transition_layout_change(self, position: str):
+                """
+                Creates a 'blink' transition effect for changing the main layout
+                without using the animation framework.
+                """
+                # 1. Hide the main widgets
+                self.live_view_label.hide()
+                self.tab_widget.hide()
+
+                # 2. Update the layout instantly while widgets are hidden
+                self._update_main_layout(position)
+                
+                # 3. CRITICAL: Force the application to process the layout change immediately.
+                # This ensures the widgets' new positions are calculated before they are shown.
+                QApplication.processEvents()
+
+                # 4. Show the widgets again in their new positions
+                self.live_view_label.show()
+                self.tab_widget.show()
+
+                # --- THE FIX ---
+                # 5. Force a complete redraw now that the widgets have their final, correct sizes.
+                self.update_live_view()   
                 
             def copy_custom_items(self):
                 """Copies custom markers and shapes to the clipboard as JSON."""
