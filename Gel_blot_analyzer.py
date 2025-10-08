@@ -166,7 +166,7 @@ if __name__ == "__main__":
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF,
-            QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator 
+            QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
             Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal
@@ -3010,6 +3010,9 @@ if __name__ == "__main__":
             CORNER_HANDLE_BASE_RADIUS = 6.0
             def __init__(self, font_type, font_size, marker_color, app_instance, parent=None): # Added app_instance
                 super().__init__(parent)
+                self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+                self.setScaledContents(True)
+                self.setMinimumSize(400, 300)
                 self.app_instance = app_instance # Store the CombinedSDSApp instance
                 self.setMouseTracking(True)
                 self.preview_marker_enabled = False
@@ -3018,6 +3021,10 @@ if __name__ == "__main__":
                 self.marker_font_type = font_type
                 self.marker_font_size = font_size
                 self.marker_color = marker_color
+                self.standard_marker_preview_enabled = False
+                self.standard_marker_preview_position = None
+                self.standard_marker_preview_text = ""
+                self.standard_marker_preview_mode = None
                 self.setFocusPolicy(Qt.StrongFocus)
                 self.mw_predict_preview_enabled = False
                 self.mw_predict_preview_position = None # QPointF in unzoomed label space
@@ -3198,6 +3205,15 @@ if __name__ == "__main__":
                     event.accept()
                     return
                 
+                elif self.standard_marker_preview_enabled:
+                    snapped_label_pos = untransformed_label_pos
+                    if self.app_instance:
+                        snapped_label_pos = self.app_instance.snap_point_to_grid(untransformed_label_pos)
+                    self.standard_marker_preview_position = snapped_label_pos
+                    self.update()
+                    event.accept()
+                    return
+                
                 if self.mw_predict_preview_enabled: 
                     if self.app_instance and hasattr(self.app_instance, 'update_mw_predict_preview'):
                          self.app_instance.update_mw_predict_preview(event)
@@ -3366,6 +3382,8 @@ if __name__ == "__main__":
                 _img_h_orig_from_app = 1.0
                 _offset_x_img_in_label = 0.0
                 _offset_y_img_in_label = 0.0
+                _displayed_img_w_in_label = 0.0 # Initialize
+                _displayed_img_h_in_label = 0.0 # Initialize
                 if self.app_instance and self.app_instance.image and not self.app_instance.image.isNull():
                     current_app_image = self.app_instance.image
                     label_w_widget = float(self.width())
@@ -3381,6 +3399,25 @@ if __name__ == "__main__":
                             _offset_y_img_in_label = (label_h_widget - _displayed_img_h_in_label) / 2.0
                             _image_to_label_space_valid = True
                 
+                if _image_to_label_space_valid:
+                    # Draw magenta border around the image content area
+                    painter.save()
+                    border_pen = QPen(Qt.magenta)
+                    # Make the border width consistent regardless of zoom level
+                    border_pen_width = max(0.5, 2.0 / self.zoom_level if self.zoom_level > 0 else 2.0)
+                    border_pen.setWidthF(border_pen_width)
+                    painter.setPen(border_pen)
+                    painter.setBrush(Qt.NoBrush) # Make sure it's just an outline
+                    
+                    image_rect_in_label = QRectF(
+                        _offset_x_img_in_label, 
+                        _offset_y_img_in_label, 
+                        _displayed_img_w_in_label, 
+                        _displayed_img_h_in_label
+                    )
+                    painter.drawRect(image_rect_in_label)
+                    painter.restore()
+
                 def _app_image_coords_to_unzoomed_label_space(img_coords_tuple_or_qpointf):
                     if not _image_to_label_space_valid:
                         if isinstance(img_coords_tuple_or_qpointf, QPointF): return img_coords_tuple_or_qpointf
@@ -3445,6 +3482,63 @@ if __name__ == "__main__":
                             draw_x_marker = anchor_label_space.x() - (text_bounding_rect_marker.left() + text_bounding_rect_marker.width() / 2.0); draw_y_marker = anchor_label_space.y() - (text_bounding_rect_marker.top() + text_bounding_rect_marker.height() / 2.0)
                             painter.drawText(QPointF(draw_x_marker, draw_y_marker), marker_text_str)
                         except Exception as e: print(f"Error drawing app_instance custom marker: {marker_data_list}, {e}")
+                
+                # --- Draw standard marker preview ---
+                if self.standard_marker_preview_enabled and self.standard_marker_preview_position:
+                    painter.save()
+                    painter.setOpacity(0.7)
+                    
+                    std_marker_font = QFont(self.app_instance.font_family, self.app_instance.font_size)
+                    painter.setFont(std_marker_font)
+                    painter.setPen(self.app_instance.font_color)
+                    font_metrics_std = QFontMetrics(std_marker_font)
+                    y_offset_text_baseline_std = font_metrics_std.height() * 0.3 # Consistent baseline offset
+                    
+                    preview_text = self.standard_marker_preview_text
+                    preview_pos = self.standard_marker_preview_position
+
+                    if self.standard_marker_preview_mode == 'left':
+                        text_to_draw = f"{preview_text} ⎯"
+                        text_width = font_metrics_std.horizontalAdvance(text_to_draw)
+                        
+                        # --- FIX ---
+                        # If first marker, anchor X is at cursor. Else, it's at the slider position.
+                        is_first = len(self.app_instance.left_markers) == 0
+                        anchor_x_ls = preview_pos.x() if is_first else (_offset_x_img_in_label + self.app_instance.left_marker_shift_added * _scale_factor_img_to_label)
+                        
+                        draw_x_ls = anchor_x_ls - text_width
+                        draw_y_ls = preview_pos.y() + y_offset_text_baseline_std
+                        painter.drawText(QPointF(draw_x_ls, draw_y_ls), text_to_draw)
+                    
+                    elif self.standard_marker_preview_mode == 'right':
+                        text_to_draw = f"⎯ {preview_text}"
+
+                        # --- FIX ---
+                        is_first = len(self.app_instance.right_markers) == 0
+                        anchor_x_ls = preview_pos.x() if is_first else (_offset_x_img_in_label + self.app_instance.right_marker_shift_added * _scale_factor_img_to_label)
+                        
+                        draw_y_ls = preview_pos.y() + y_offset_text_baseline_std
+                        painter.drawText(QPointF(anchor_x_ls, draw_y_ls), text_to_draw)
+
+                    elif self.standard_marker_preview_mode == 'top':
+                        rotation_angle = self.app_instance.font_rotation
+                        
+                        # --- FIX ---
+                        is_first = len(self.app_instance.top_markers) == 0
+                        # Y anchor is at cursor for first marker, otherwise at slider position.
+                        anchor_y_ls = preview_pos.y() if is_first else (_offset_y_img_in_label + self.app_instance.top_marker_shift_added * _scale_factor_img_to_label)
+                        
+                        draw_baseline_y_ls = anchor_y_ls + y_offset_text_baseline_std
+
+                        painter.save()
+                        # X anchor always follows cursor.
+                        painter.translate(preview_pos.x(), draw_baseline_y_ls)
+                        painter.rotate(rotation_angle)
+                        painter.drawText(QPointF(0, 0), preview_text)
+                        painter.restore()
+
+                    painter.restore()
+
                 if self.preview_marker_enabled and self.preview_marker_position: # Preview Marker
                     painter.setOpacity(0.7); marker_preview_font = QFont(self.marker_font_type, self.marker_font_size); painter.setFont(marker_preview_font); painter.setPen(self.marker_color); font_metrics_preview = QFontMetrics(marker_preview_font)
                     preview_text_rect = font_metrics_preview.boundingRect(self.preview_marker_text); draw_x_preview = self.preview_marker_position.x() - (preview_text_rect.left() + preview_text_rect.width() / 2.0); draw_y_preview = self.preview_marker_position.y() - (preview_text_rect.top() + preview_text_rect.height() / 2.0)
@@ -3802,10 +3896,10 @@ if __name__ == "__main__":
                 self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
                 # window_width = int(self.screen_width * 0.5)  # 60% of screen width
                 # window_height = int(self.screen_height * 0.75)  # 95% of screen height
-                self.preview_label_width_setting = int(self.screen_width * 0.35)
-                self.preview_label_max_height_setting = int(self.screen_height * 0.30)
+                self.preview_label_width_setting = 400  # A smaller base width for the minimum calculation
+                self.preview_label_max_height_setting = 300 # A smaller base height for the minimum calculation
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER V2.00"
+                self.window_title="GEL BLOT ANALYZER V2.50"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -3957,15 +4051,12 @@ if __name__ == "__main__":
                 
                 
                 # Main container widget
-                main_widget = QWidget()
-                self.setCentralWidget(main_widget)
-                layout = QVBoxLayout(main_widget)
+                self.main_widget = QWidget()
+                self.setCentralWidget(self.main_widget)
+                self._deactivate_all_previews()
 
-                # Upper section (Preview and buttons)
-                upper_layout = QHBoxLayout()
-
-                self.label_width=int(self.label_size)
-            
+                # --- Create the two main widgets that will be rearranged ---
+                # 1. The image viewer widget, containing the live view label
                 self.live_view_label = LiveViewLabel(
                     font_type=QFont("Arial"),
                     font_size=int(24),
@@ -3973,29 +4064,25 @@ if __name__ == "__main__":
                     app_instance=self, # Pass the CombinedSDSApp instance
                     parent=self,
                 )
-                # Image display
-                self.live_view_label.setStyleSheet("background-color: white; border: 1px solid black;")
-                self.live_view_label.mouseMovedInLabel.connect(self.update_mouse_coords_in_statusbar)
+                self.live_view_label.setStyleSheet("background-color: white; border: 1px solid #CCCCCC;")
+                self.live_view_label.setAlignment(Qt.AlignCenter) # This centers the image within the label
                 
+                self.live_view_label.mouseMovedInLabel.connect(self.update_mouse_coords_in_statusbar)
+
                 self._create_actions()
-                #self.create_menu_bar()
                 self.create_tool_bar()
                 
                 self._update_preview_label_size()
-                upper_layout.addWidget(self.live_view_label, stretch=1)
-                layout.addLayout(upper_layout)
                 
-                # Lower section (Tabbed interface)
+                # 2. The tab widget for settings (created but not yet placed in a layout)
                 self.tab_widget = QTabWidget()
-                # self.tab_widget.setToolTip("Change the tabs quickly with shortcut: Ctrl+1,2,3 or 4 and CMD+1,2,3 or 4")
                 self.tab_widget.addTab(self.font_and_image_tab(), "Image and Font")
                 self.tab_widget.addTab(self.create_cropping_tab(), "Transform")
                 self.tab_widget.addTab(self.create_white_space_tab(), "Padding")
                 self.tab_widget.addTab(self.create_markers_tab(), "Markers")
                 self.tab_widget.addTab(self.combine_image_tab(), "Overlap Images")
                 self.tab_widget.addTab(self.analysis_tab(), "Analysis")
-                
-                layout.addWidget(self.tab_widget)
+
                 
                 #self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
                 #self.load_shortcut.activated.connect(self.load_action.trigger) # Trigger the action
@@ -4124,6 +4211,7 @@ if __name__ == "__main__":
                 self.move_tab_6_shortcut.activated.connect(lambda: self.move_tab(5))
                 
                 self.load_config()
+                self._update_main_layout("Top")
                 
             def update_mouse_coords_in_statusbar(self, label_pos: QPointF, image_pos: QPointF = None):
                 if image_pos is not None:
@@ -4240,6 +4328,10 @@ if __name__ == "__main__":
                 info_icon = create_text_icon("Wingdings", icon_size, text_color, "'")
                 copy_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "B") # Page with arrow out
                 paste_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "A") # Page with arrow in
+                layout_top_icon = create_text_icon("Webdings", icon_size, text_color, "5")
+                layout_bottom_icon = create_text_icon("Webdings", icon_size, text_color, "6")
+                layout_left_icon = create_text_icon("Webdings", icon_size, text_color, "7")
+                layout_right_icon = create_text_icon("Webdings", icon_size, text_color, "8")
 
 
                 # --- File Actions ---
@@ -4264,8 +4356,26 @@ if __name__ == "__main__":
                 self.pan_down_action = QAction(pan_down_icon, "Pan Down", self)
                 # --- END: Add Panning Actions ---
                 self.auto_lane_action = QAction(create_text_icon("Arial", icon_size, text_color, "A"), "&Automatic Lane Markers", self)
+
+                self.layout_top_action = QAction(layout_top_icon, "Viewer on Top", self)
+                self.layout_bottom_action = QAction(layout_bottom_icon, "Viewer on Bottom", self)
+                self.layout_left_action = QAction(layout_left_icon, "Viewer on Left", self)
+                self.layout_right_action = QAction(layout_right_icon, "Viewer on Right", self)
+                layout_actions = [self.layout_top_action, self.layout_bottom_action, self.layout_left_action, self.layout_right_action]
+                self.layout_action_group = QActionGroup(self)
+                self.layout_action_group.setExclusive(True)
+                for action in layout_actions:
+                    action.setCheckable(True)
+                    self.layout_action_group.addAction(action)
+
+                self.layout_top_action.setChecked(True)
+                self.layout_top_action.setToolTip("Place the image viewer above the settings tabs.")
+                self.layout_bottom_action.setToolTip("Place the image viewer below the settings tabs.")
+                self.layout_left_action.setToolTip("Place the image viewer to the left of the settings tabs.")
+                self.layout_right_action.setToolTip("Place the image viewer to the right of the settings tabs.")
                 self.auto_lane_action.setToolTip("Automatically detect and place lane markers based on a defined region.")
                 self.auto_lane_action.triggered.connect(self.start_auto_lane_marker)
+
                 
                 self.info_action = QAction(info_icon, "&Info/GitHub", self)
                 self.info_action.setToolTip("Open Project GitHub Page")
@@ -4343,6 +4453,10 @@ if __name__ == "__main__":
                 self.paste_custom_items_action = QAction(paste_custom_icon, "Paste Custom Markers/Shapes", self)
                 self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
                 self.paste_custom_items_action.triggered.connect(self.paste_custom_items)
+                self.layout_top_action.triggered.connect(lambda: self._update_main_layout("Top"))
+                self.layout_bottom_action.triggered.connect(lambda: self._update_main_layout("Bottom"))
+                self.layout_left_action.triggered.connect(lambda: self._update_main_layout("Left"))
+                self.layout_right_action.triggered.connect(lambda: self._update_main_layout("Right"))
                 
                 # --- END: Connect Panning Action Signals ---
 
@@ -4351,6 +4465,38 @@ if __name__ == "__main__":
                 self.pan_right_action.setEnabled(False)
                 self.pan_up_action.setEnabled(False)
                 self.pan_down_action.setEnabled(False)
+            def _update_main_layout(self, position: str):
+                """
+                Rebuilds the main window's layout by replacing the central widget
+                with a new one containing the rearranged child widgets.
+                """
+                new_main_widget = QWidget()
+                new_layout = None
+
+                if position in ["Top", "Bottom"]:
+                    new_layout = QVBoxLayout(new_main_widget)
+                    if position == "Top":
+                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
+                        new_layout.addWidget(self.tab_widget, 0)
+                    else:  # Bottom
+                        new_layout.addWidget(self.tab_widget, 0)
+                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
+                
+                elif position in ["Left", "Right"]:
+                    new_layout = QHBoxLayout(new_main_widget)
+                    if position == "Left":
+                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
+                        new_layout.addWidget(self.tab_widget, 0)
+                    else:  # Right
+                        new_layout.addWidget(self.tab_widget, 0)
+                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
+
+                if new_layout:
+                    old_central_widget = self.centralWidget()
+                    self.setCentralWidget(new_main_widget)
+                    self.main_widget = new_main_widget
+                    if old_central_widget:
+                        old_central_widget.deleteLater()
                 
             def copy_custom_items(self):
                 """Copies custom markers and shapes to the clipboard as JSON."""
@@ -4532,7 +4678,7 @@ if __name__ == "__main__":
                     # self.live_view_label.clear() # Optionally clear the label
 
                 # --- Set the Calculated Fixed Size ---
-                self.live_view_label.setFixedSize(final_w, final_h)
+                self.live_view_label.setMinimumSize(final_w, final_h)
                 
             def _update_status_bar(self):
                 """Updates the status bar labels with current image information."""
@@ -5158,6 +5304,11 @@ if __name__ == "__main__":
                 self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.reset_action)
                 
+                self.tool_bar.addSeparator()
+                self.tool_bar.addAction(self.layout_top_action)
+                self.tool_bar.addAction(self.layout_bottom_action)
+                self.tool_bar.addAction(self.layout_left_action)
+                self.tool_bar.addAction(self.layout_right_action)
                 self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.info_action)
 
@@ -9283,6 +9434,7 @@ if __name__ == "__main__":
                             return
                 if event.key() == Qt.Key_Escape:
                     a_mode_was_cancelled_or_view_reset = False # Flag if any action taken by Esc
+                    self._deactivate_all_previews()
 
                     if self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                         self.cancel_custom_item_interaction_mode()
@@ -11048,7 +11200,10 @@ if __name__ == "__main__":
                         marker_value_to_add = self.marker_values[current_marker_count] if current_marker_count < len(self.marker_values) else ""
                         
                         self.left_markers.append((image_y, marker_value_to_add)) 
-                        self.current_left_marker_index += 1
+                        #self.current_left_marker_index += 1
+                        next_index = len(self.left_markers)
+                        next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
+                        self.live_view_label.standard_marker_preview_text = next_label
 
                         if is_first_marker:
                             slider_target_value_native_pixels = int(round(image_x))
@@ -11069,7 +11224,10 @@ if __name__ == "__main__":
                         marker_value_to_add = self.marker_values[current_marker_count] if current_marker_count < len(self.marker_values) else ""
                         
                         self.right_markers.append((image_y, marker_value_to_add))
-                        self.current_right_marker_index += 1
+                        #self.current_right_marker_index += 1
+                        next_index = len(self.right_markers)
+                        next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
+                        self.live_view_label.standard_marker_preview_text = next_label
 
                         if is_first_marker:
                             slider_target_value_native_pixels = int(round(image_x))
@@ -11089,7 +11247,10 @@ if __name__ == "__main__":
                         label_to_add = self.top_label[current_marker_count] if current_marker_count < len(self.top_label) else ""
                         
                         self.top_markers.append((image_x, label_to_add))
-                        self.current_top_label_index += 1
+                        #self.current_top_label_index += 1
+                        next_index = len(self.top_markers)
+                        next_label = str(self.top_label[next_index]) if next_index < len(self.top_label) else ""
+                        self.live_view_label.standard_marker_preview_text = next_label
 
                         if is_first_marker:
                             slider_target_value_native_pixels = int(round(image_y)) # For Top marker, Y-coord determines offset
@@ -11109,28 +11270,60 @@ if __name__ == "__main__":
 
                 self.update_live_view()
                 
-
+            def _deactivate_all_previews(self):
+                """Helper to turn off all live preview modes on the label."""
+                if hasattr(self, 'live_view_label'):
+                    self.live_view_label.preview_marker_enabled = False
+                    self.live_view_label.mw_predict_preview_enabled = False
+                    self.live_view_label.standard_marker_preview_enabled = False
+                    self.live_view_label.standard_marker_preview_position = None
+                    self.live_view_label.preview_marker_position = None
+                    self.live_view_label.mw_predict_preview_position = None
                 
             def enable_left_marker_mode(self):
+                self._deactivate_all_previews()
                 self.marker_mode = "left"
-                self.current_left_marker_index = 0 # Reset index for this mode
+                self.current_left_marker_index = len(self.left_markers) # Start from the next available
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = self.add_band
                 self.live_view_label.setCursor(Qt.CrossCursor)
 
+                # --- NEW: Enable preview ---
+                self.live_view_label.standard_marker_preview_enabled = True
+                next_index = len(self.left_markers)
+                next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
+                self.live_view_label.standard_marker_preview_text = next_label
+                self.live_view_label.standard_marker_preview_mode = "left"
+
             def enable_right_marker_mode(self):
+                self._deactivate_all_previews()
                 self.marker_mode = "right"
-                self.current_right_marker_index = 0
+                self.current_right_marker_index = len(self.right_markers)
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = self.add_band
                 self.live_view_label.setCursor(Qt.CrossCursor)
+
+                # --- NEW: Enable preview ---
+                self.live_view_label.standard_marker_preview_enabled = True
+                next_index = len(self.right_markers)
+                next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
+                self.live_view_label.standard_marker_preview_text = next_label
+                self.live_view_label.standard_marker_preview_mode = "right"
             
             def enable_top_marker_mode(self):
+                self._deactivate_all_previews()
                 self.marker_mode = "top"
-                self.current_top_label_index = 0 # Assuming this is the correct index variable
+                self.current_top_label_index = len(self.top_markers)
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = self.add_band
                 self.live_view_label.setCursor(Qt.CrossCursor)
+
+                # --- NEW: Enable preview ---
+                self.live_view_label.standard_marker_preview_enabled = True
+                next_index = len(self.top_markers)
+                next_label = str(self.top_label[next_index]) if next_index < len(self.top_label) else ""
+                self.live_view_label.standard_marker_preview_text = next_label
+                self.live_view_label.standard_marker_preview_mode = "top"
                 
             # def remove_padding(self):
             #     if self.image_before_padding!=None:
