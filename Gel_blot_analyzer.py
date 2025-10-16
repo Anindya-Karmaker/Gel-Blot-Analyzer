@@ -2,13 +2,14 @@ import sys
 import re
 import os
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
-                             QMessageBox) 
+                             QMessageBox) # QDesktopWidget removed here
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QScreen, QGuiApplication 
+from PySide6.QtGui import QFont, QScreen, QGuiApplication # QScreen added for desktop geometry
 import logging
 import traceback
 
 
+# --- NEW Minimal Loading Dialog ---
 class MinimalLoadingDialog(QDialog):
     """
     A lightweight loading dialog with a clean white background.
@@ -19,6 +20,7 @@ class MinimalLoadingDialog(QDialog):
         self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
+        # --- FIX: Updated styling for white background and dark text ---
         self.setStyleSheet("""
             QDialog {
                 background-color: white;
@@ -32,6 +34,7 @@ class MinimalLoadingDialog(QDialog):
             }
         """)
 
+        # --- Layout and Label ---
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -44,6 +47,7 @@ class MinimalLoadingDialog(QDialog):
 
         self.setLayout(layout)
 
+        # --- Size and Position (Original size is fine without an icon) ---
         self.setFixedSize(320, 120)
         self.center_on_screen()
 
@@ -69,12 +73,16 @@ class MinimalLoadingDialog(QDialog):
             self.move(100, 100)
 
 
+# --- End Style Sheet Definition ---
+# Configure logging to write errors to a log file
 script_dir = os.path.dirname(os.path.abspath(__file__))
+# Construct the absolute path for the log file
 log_file_path = os.path.join(script_dir, "error_log.txt")
 
 
+# --- Configure logging ---
 logging.basicConfig(
-    filename=log_file_path, 
+    filename=log_file_path, # Use the absolute path
     level=logging.ERROR,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -92,11 +100,15 @@ def log_exception(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
+    # Log the exception
     try:
         logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        # Optional: Force flush if you suspect buffering issues, though unlikely for ERROR level
+        # logging.getLogger().handlers[0].flush()
     except Exception as log_err:
         print(f"ERROR: Failed to log exception to file: {log_err}") # Print logging specific errors
 
+    # Display a QMessageBox with the error details
     try:
         error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n(Check error_log.txt for details)"
         QMessageBox.critical(
@@ -109,33 +121,39 @@ def log_exception(exc_type, exc_value, exc_traceback):
          print(f"ERROR: Failed to show QMessageBox: {q_err}")
 
 
+# Set the custom exception handler
 sys.excepthook = log_exception
 	
 if __name__ == "__main__":
-    app = None             
-    loading_dialog = None  
-    main_window = None     
+    app = None             # Initialize variable
+    loading_dialog = None  # Initialize variable
+    main_window = None     # Initialize variable
 
     try:
+        # --- Try to get an existing QApplication instance FIRST ---
+        # This helps in some environments or if the script is re-run partially
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv if hasattr(sys, 'argv') and len(sys.argv) > 0 else [])
         else:
             print("INFO: Using existing QApplication instance.")
 
+        # --- Create and Show Minimal Loading Screen IMMEDIATELY ---
         try:
             loading_dialog = MinimalLoadingDialog()
             loading_dialog.show()
-            if app: app.processEvents() 
+            if app: app.processEvents() # Crucial: Make the GUI update and show the dialog
         except Exception as e_load_dialog:
             print(f"ERROR: Could not create/show minimal loading dialog: {e_load_dialog}")
+            # Proceed without loading screen if it fails, but log the error
             loading_dialog = None #
 
         import sys
+        #import svgwrite
         import tempfile
         from tempfile import NamedTemporaryFile
         import base64
-        from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps  
+        from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps  # Import Pillow's ImageGrab for clipboard access
         from io import BytesIO
         import io
         from PySide6.QtWidgets import (
@@ -157,8 +175,8 @@ if __name__ == "__main__":
         import os
         import numpy as np
         import matplotlib.pyplot as plt
-        import matplotlib.lines as mlines 
-        import matplotlib.patches as patches 
+        import matplotlib.lines as mlines # For draggable lines
+        import matplotlib.patches as patches # For draggable handles
         import platform
         import openpyxl
         from openpyxl.styles import Font
@@ -168,7 +186,7 @@ if __name__ == "__main__":
         from scipy.signal import find_peaks
         from scipy.ndimage import gaussian_filter1d
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
-        from scipy.interpolate import interp1d 
+        from scipy.interpolate import interp1d # Needed for interpolation
         import cv2
         import datetime
 
@@ -191,7 +209,7 @@ if __name__ == "__main__":
             "N-linked High-Mannose (Man9)": 2.1,
             "N-linked Complex (Sialylated)": 2.9,
             "O-linked Core 1 (Simple)": 0.4,
-            "Custom...": -1.0 
+            "Custom...": -1.0 # Special value to indicate manual input
         }
 
         def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: str) -> QIcon:
@@ -200,17 +218,22 @@ if __name__ == "__main__":
             pixmap.fill(Qt.transparent)
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.TextAntialiasing, True) 
+            painter.setRenderHint(QPainter.TextAntialiasing, True) # Good for text
 
+            # Font settings (adjust as needed)
             font = QFont(font_type)
+            # Make arrow slightly smaller than +/-, maybe not bold? Experiment.
             font.setPointSize(min(14, int(icon_size.height()*0.75)))
+            # font.setBold(True) # Optional: Make arrows bold or not
             painter.setFont(font)
             painter.setPen(color)
 
+            # Draw the symbol centered
             painter.drawText(pixmap.rect(), Qt.AlignCenter, symbol)
             painter.end()
             return QIcon(pixmap)
 
+        # Set Style (can be done after app exists)
         app.setStyle("Fusion")
         app.setStyleSheet("""
             /* ... Your existing stylesheet ... */
@@ -252,7 +275,7 @@ if __name__ == "__main__":
                 self.active_set_name = active_set_name
                 self.final_coeffs = None
                 self.final_min_max_pos = None
-                self.final_predicted_mw = 0.0 
+                self.final_predicted_mw = 0.0 # Add attribute to store result
 
                 main_layout = QVBoxLayout(self)
                 controls_layout = QHBoxLayout()
@@ -309,9 +332,10 @@ if __name__ == "__main__":
                 predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
                 predicted_weight = 10 ** predicted_log10_weight
                 
+                # Store all final values
                 self.final_coeffs = coefficients
                 self.final_min_max_pos = (min_pos_active, max_pos_active)
-                self.final_predicted_mw = predicted_weight 
+                self.final_predicted_mw = predicted_weight # Store the predicted MW
 
                 self.mw_label.setText(f"Predicted MW: <b>{predicted_weight:.2f}</b> units")
                 self.r2_label.setText(f"Fit R² (on active set): {r_squared:.3f}")
@@ -352,19 +376,22 @@ if __name__ == "__main__":
             def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Protein Size Analysis")
-                self.setMinimumWidth(650) 
+                self.setMinimumWidth(650) # Increased width for new widgets
 
+                # Store initial values
                 self.sequence = sequence
                 self.base_mw = base_mw
                 self.glycan_mass = glycan_mass
                 self.num_glycosylation_sites = 0
                 self.num_oligomers_to_model = num_oligomers
 
+                # --- Setup UI ---
                 main_layout = QVBoxLayout(self)
                 
                 form_layout = QGridLayout()
                 form_layout.setSpacing(8)
 
+                # --- Font for Readability ---
                 readable_font = QFont("Courier New", 12)
 
                 form_layout.addWidget(QLabel("Protein Sequence:"), 0, 0, Qt.AlignTop)
@@ -454,6 +481,7 @@ if __name__ == "__main__":
 
                 main_layout.addLayout(form_layout)
                 
+                # --- NEW: Import/Export Buttons ---
                 io_layout = QHBoxLayout()
                 self.export_button = QPushButton("Export Analysis")
                 self.export_button.setToolTip("Save all current analysis data to a text file.")
@@ -465,6 +493,7 @@ if __name__ == "__main__":
                 io_layout.addWidget(self.export_button)
                 io_layout.addStretch()
                 main_layout.addLayout(io_layout)
+                # --- END NEW ---
 
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 button_box.accepted.connect(self.accept)
@@ -656,11 +685,13 @@ if __name__ == "__main__":
                     num_oligomers = get_line_value("Number of Oligomers to Model", params_section)
                     
                     self.glycan_type_combo.setCurrentText(glycan_type)
+                    # Setting glycan mass might auto-set combo to Custom, which is fine
                     self.glycan_mass_input.setText(glycan_mass) 
                     
                     self.num_glycans_spinbox.setValue(int(num_glycans) if num_glycans.isdigit() else 0)
                     self.num_oligomers_spinbox.setValue(int(num_oligomers) if num_oligomers.isdigit() else 1)
                     
+                    # Re-run analysis to populate all fields and calculations
                     self._analyze_sequence()
                     QMessageBox.information(self, "Success", "Analysis data loaded successfully.")
 
@@ -697,36 +728,40 @@ if __name__ == "__main__":
             def __init__(self, pil_image_data, initial_settings, parent=None, is_from_quad_warp=False): # Added is_from_quad_warp
                 super().__init__(parent)
 
+                # Set window title based on the source of the image data
                 if is_from_quad_warp:
                     self.setWindowTitle("Tune Peaks (Warped Region)")
                 else:
                     self.setWindowTitle("Tune Automatic Peak Detection")
 
-                self.setGeometry(50, 50, 800, 700) 
+                self.setGeometry(50, 50, 800, 700) # Adjusted height
                 self.pil_image_for_display = pil_image_data
-                self.selected_peak_index = -1 
+                self.selected_peak_index = -1 # Stores the X-coordinate of the peak selected for deletion
                 self.deleted_peak_indices = set()
                 self._all_initial_peaks = np.array([])
                 self.add_peak_mode_active = False
 
+                # --- Validate and Store Input Image ---
                 if not isinstance(pil_image_data, Image.Image):
                     raise TypeError("Input 'pil_image_data' must be a PIL Image object")
 
+                # Determine intensity range and create numpy array
                 self.intensity_array_original_range = None
                 self.original_max_value = 255.0 # Default
                 pil_mode = pil_image_data.mode
                 try:
+                    # Handle common grayscale modes used in the main app
                     if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
                         self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
                         self.original_max_value = 65535.0
                     elif pil_mode == 'L':
                         self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
                         self.original_max_value = 255.0
-                    elif pil_mode == 'F': 
+                    elif pil_mode == 'F': # Handle float images
                         self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
                         max_in_float = np.max(self.intensity_array_original_range) if np.any(self.intensity_array_original_range) else 1.0
-                        self.original_max_value = max(1.0, max_in_float) 
-                    else: 
+                        self.original_max_value = max(1.0, max_in_float) # Use max value or 1.0
+                    else: # Attempt conversion to grayscale 'L' as fallback
                         gray_img = pil_image_data.convert("L")
                         self.intensity_array_original_range = np.array(gray_img, dtype=np.float64)
                         self.original_max_value = 255.0
@@ -740,67 +775,83 @@ if __name__ == "__main__":
                 except Exception as e:
                     raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
 
-                self.profile_original_inverted = None 
-                self.profile = None 
-                self.detected_peaks = np.array([]) 
+                self.profile_original_inverted = None # Smoothed, inverted profile (original range)
+                self.profile = None # Scaled (0-255), inverted, SMOOTHED profile for detection
+                self.detected_peaks = np.array([]) # Store indices of detected peaks
 
+                # --- Settings and State ---
+                # Use settings passed from the main app (likely self.peak_dialog_settings)
                 self.smoothing_sigma = initial_settings.get('smoothing_sigma', 0.0)
                 self.peak_height_factor = initial_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = initial_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', 0.00)
+                # Band estimation method is needed to generate the profile
                 self.band_estimation_method = initial_settings.get('band_estimation_method', "Mean")
-                self._final_settings = initial_settings.copy() 
+                self._final_settings = initial_settings.copy() # Store a copy to return modifications
 
+                # Check dependencies needed for profile generation and peak detection
                 if find_peaks is None or gaussian_filter1d is None:
                      QMessageBox.critical(self, "Dependency Error",
                                           "Missing SciPy library functions.\n"
                                           "Peak detection and smoothing require SciPy.\n"
                                           "Please install it (e.g., 'pip install scipy') and restart.")
+                     # Don't call accept/reject here, let init fail or handle gracefully
+                     # self.close() # Or close immediately
 
+                # Build UI & Initial Setup
                 self._setup_ui()
-                self.run_peak_detection_and_plot() 
+                self.run_peak_detection_and_plot() # Initial calculation and plot
 
             def _setup_ui(self):
                 """Creates and arranges the UI elements, including image preview."""
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
 
-                plot_widget = QWidget() 
+                # --- Matplotlib Plot Canvas Area ---
+                plot_widget = QWidget() # Container for the plots
                 plot_layout = QVBoxLayout(plot_widget)
-                plot_layout.setContentsMargins(0, 0, 0, 0) 
+                plot_layout.setContentsMargins(0, 0, 0, 0) # No margins for the layout
 
-                self.fig = plt.figure(figsize=(7, 5)) 
+                # Use GridSpec for plot and image preview arrangement
+                # More height for the profile plot
+                self.fig = plt.figure(figsize=(7, 5)) # Adjusted height for gridspec
                 gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
                 self.fig.tight_layout(pad=0.5)
-                self.ax_profile = self.fig.add_subplot(gs[0]) 
+                self.ax_profile = self.fig.add_subplot(gs[0]) # Axis for the profile
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile) # Axis for the image preview
 
                 self.canvas = FigureCanvas(self.fig)
                 self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                # --- Enable picking on the canvas ---
                 self.canvas.mpl_connect('button_press_event', self.on_canvas_click)
+                # --- End Enable picking ---
                 plot_layout.addWidget(self.canvas)
                 main_layout.addWidget(plot_widget, stretch=1)
 
+                # --- Controls Group ---
                 controls_group = QGroupBox("Peak Detection Parameters")
                 controls_layout = QGridLayout(controls_group)
                 controls_layout.setSpacing(8)
 
+                # Band Estimation (Needed for profile generation)
                 controls_layout.addWidget(QLabel("Profile Method:"), 0, 0)
                 self.band_estimation_combobox = QComboBox()
                 self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
                 self.band_estimation_combobox.setCurrentText(self.band_estimation_method)
                 self.band_estimation_combobox.currentIndexChanged.connect(self.run_peak_detection_and_plot)
-                controls_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2) 
+                controls_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2) # Span 2 columns
 
+                # Smoothing Sigma
                 self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
                 self.smoothing_slider = QSlider(Qt.Horizontal)
-                self.smoothing_slider.setRange(0, 100) 
+                self.smoothing_slider.setRange(0, 100) # 0.0 to 10.0
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
                 self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
-                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) 
+                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
                 controls_layout.addWidget(self.smoothing_label, 1, 0)
                 controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
 
+                # Peak Prominence
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})")
                 self.peak_prominence_slider = QSlider(Qt.Horizontal)
                 self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
@@ -4348,8 +4399,15 @@ if __name__ == "__main__":
                 self.move_tab_6_shortcut = QShortcut(QKeySequence("Ctrl+6"), self)
                 self.move_tab_6_shortcut.activated.connect(lambda: self.move_tab(5))
                 
+                self.viewer_position = "Top" # Default value before loading
                 self.load_config()
-                self._update_main_layout("Top")
+                self._update_main_layout(self.viewer_position)
+
+                # Update the checked state of the correct layout button in the toolbar
+                if self.viewer_position == "Top": self.layout_top_action.setChecked(True)
+                elif self.viewer_position == "Bottom": self.layout_bottom_action.setChecked(True)
+                elif self.viewer_position == "Left": self.layout_left_action.setChecked(True)
+                elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
                 
             def update_mouse_coords_in_statusbar(self, label_pos: QPointF, image_pos: QPointF = None):
                 if image_pos is not None:
@@ -4641,24 +4699,48 @@ if __name__ == "__main__":
                 Creates a 'blink' transition effect for changing the main layout
                 without using the animation framework.
                 """
-                # 1. Hide the main widgets
+                self.viewer_position = position
+                
+                # Define config path
+                if getattr(sys, 'frozen', False): application_path = os.path.dirname(sys.executable)
+                else:
+                    try: application_path = os.path.dirname(os.path.abspath(__file__))
+                    except NameError: application_path = os.getcwd()
+                config_filepath = os.path.join(application_path, self.CONFIG_PRESET_FILE_NAME)
+                
+                config_data = {}
+                try: # Read existing config to not overwrite presets
+                    if os.path.exists(config_filepath):
+                        with open(config_filepath, "r", encoding='utf-8') as f:
+                            config_data = json.load(f)
+                    if not isinstance(config_data, dict): config_data = {}
+                except (json.JSONDecodeError, IOError): config_data = {}
+
+                config_data["viewer_position"] = self.viewer_position # Update value
+                if "presets" not in config_data: config_data["presets"] = self.presets_data # Ensure presets key exists
+
+                try: # Write updated data back
+                    with open(config_filepath, "w", encoding='utf-8') as f:
+                        json.dump(config_data, f, indent=4)
+                except Exception as e:
+                    print(f"Warning: Could not save global config: {e}")
+
                 self.live_view_label.hide()
                 self.tab_widget.hide()
 
-                # 2. Update the layout instantly while widgets are hidden
                 self._update_main_layout(position)
                 
-                # 3. CRITICAL: Force the application to process the layout change immediately.
-                # This ensures the widgets' new positions are calculated before they are shown.
                 QApplication.processEvents()
 
-                # 4. Show the widgets again in their new positions
+                self.adjustSize()
+
                 self.live_view_label.show()
                 self.tab_widget.show()
 
-                # --- THE FIX ---
-                # 5. Force a complete redraw now that the widgets have their final, correct sizes.
+
                 self.update_live_view()  
+
+                
 
             def _constrain_point_orthogonally(self, start_point: QPointF, current_point: QPointF) -> QPointF:
                 """Constrains the current point to be on a straight horizontal or vertical line from the start point."""
@@ -10736,7 +10818,6 @@ if __name__ == "__main__":
                 config_loaded_successfully = False
                 self.presets_data.clear() # Start with an empty dictionary
 
-                # --- Determine Application Path (same as your existing load_config) ---
                 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
                     application_path = os.path.dirname(sys.executable)
                 elif getattr(sys, 'frozen', False):
@@ -10744,13 +10825,10 @@ if __name__ == "__main__":
                 else:
                     try: application_path = os.path.dirname(os.path.abspath(__file__))
                     except NameError: application_path = os.getcwd()
-                # --- End Application Path Detection ---
 
                 config_filepath = os.path.join(application_path, self.CONFIG_PRESET_FILE_NAME)
                 print(f"INFO: Attempting to load/create preset config at: {config_filepath}")
 
-                # --- Define Default Marker Data ---
-                # Use kDa for proteins, bp for DNA for clarity in keys, but values are just numbers
                 default_marker_standards = {
                     # Proteins (kDa)
                     "Precision Plus Protein All Blue Prestained (Bio-Rad)": [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
@@ -10784,6 +10862,8 @@ if __name__ == "__main__":
                     try:
                         with open(config_filepath, "r", encoding='utf-8') as f:
                             loaded_json = json.load(f)
+
+                        self.viewer_position = loaded_json.get("viewer_position", "Top")
                         
                         # Check for new "presets" key
                         if "presets" in loaded_json and isinstance(loaded_json["presets"], dict):
@@ -10812,25 +10892,26 @@ if __name__ == "__main__":
                             self.presets_data = migrated_data
                             # Save immediately in new format after migration
                             with open(config_filepath, "w", encoding='utf-8') as f_new:
-                                json.dump({"presets": self.presets_data}, f_new, indent=4)
+                                json.dump({"viewer_position": self.viewer_position, "presets": self.presets_data}, f_new, indent=4)
                             print("INFO: Config migrated to new format and saved.")
                             config_loaded_successfully = True
 
                     except (json.JSONDecodeError, IOError, TypeError) as e:
-                        QMessageBox.warning(self, "Preset Config Load Error",
-                                            f"Could not load '{self.CONFIG_PRESET_FILE_NAME}':\n{e}\n\nUsing default presets.")
-                        self.presets_data = default_presets_init.copy() # Fallback to defaults
+                        QMessageBox.warning(self, "Preset Config Load Error", f"Could not load '{self.CONFIG_PRESET_FILE_NAME}':\n{e}\n\nUsing defaults.")
+                        self.presets_data = default_presets_init.copy()
+                        self.viewer_position = "Top"
+                        
                     except Exception as e:
                         traceback.print_exc()
                         QMessageBox.warning(self, "Preset Config Load Error",
                                             f"Unexpected error loading '{self.CONFIG_PRESET_FILE_NAME}'.\n\nUsing default presets.")
                         self.presets_data = default_presets_init.copy() # Fallback
                 else:
-                    # Config file NOT found, create it with defaults
                     self.presets_data = default_presets_init.copy()
+                    self.viewer_position = "Top" 
                     try:
                         with open(config_filepath, "w", encoding='utf-8') as f:
-                            json.dump({"presets": self.presets_data}, f, indent=4)
+                            json.dump({"viewer_position": self.viewer_position, "presets": self.presets_data}, f, indent=4)
                         config_loaded_successfully = True # Created successfully
                         print(f"INFO: Default preset config created at: {config_filepath}")
                     except Exception as e:
@@ -10846,8 +10927,6 @@ if __name__ == "__main__":
                         sorted_preset_names = sorted(self.presets_data.keys())
                         self.combo_box.addItems(sorted_preset_names)
                         self.combo_box.addItem("Custom")
-
-                        # Set current item (same logic as your existing load_config)
                         default_biorad = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
                         idx_to_select = self.combo_box.findText(default_biorad)
                         if idx_to_select == -1 and sorted_preset_names:
