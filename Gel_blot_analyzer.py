@@ -2,14 +2,13 @@ import sys
 import re
 import os
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
-                             QMessageBox) # QDesktopWidget removed here
+                             QMessageBox) 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QScreen, QGuiApplication # QScreen added for desktop geometry
+from PySide6.QtGui import QFont, QScreen, QGuiApplication 
 import logging
 import traceback
 
 
-# --- NEW Minimal Loading Dialog ---
 class MinimalLoadingDialog(QDialog):
     """
     A lightweight loading dialog with a clean white background.
@@ -20,7 +19,6 @@ class MinimalLoadingDialog(QDialog):
         self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
-        # --- FIX: Updated styling for white background and dark text ---
         self.setStyleSheet("""
             QDialog {
                 background-color: white;
@@ -34,7 +32,6 @@ class MinimalLoadingDialog(QDialog):
             }
         """)
 
-        # --- Layout and Label ---
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -47,7 +44,6 @@ class MinimalLoadingDialog(QDialog):
 
         self.setLayout(layout)
 
-        # --- Size and Position (Original size is fine without an icon) ---
         self.setFixedSize(320, 120)
         self.center_on_screen()
 
@@ -73,16 +69,12 @@ class MinimalLoadingDialog(QDialog):
             self.move(100, 100)
 
 
-# --- End Style Sheet Definition ---
-# Configure logging to write errors to a log file
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Construct the absolute path for the log file
 log_file_path = os.path.join(script_dir, "error_log.txt")
 
 
-# --- Configure logging ---
 logging.basicConfig(
-    filename=log_file_path, # Use the absolute path
+    filename=log_file_path, 
     level=logging.ERROR,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -100,15 +92,11 @@ def log_exception(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    # Log the exception
     try:
         logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-        # Optional: Force flush if you suspect buffering issues, though unlikely for ERROR level
-        # logging.getLogger().handlers[0].flush()
     except Exception as log_err:
         print(f"ERROR: Failed to log exception to file: {log_err}") # Print logging specific errors
 
-    # Display a QMessageBox with the error details
     try:
         error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n(Check error_log.txt for details)"
         QMessageBox.critical(
@@ -121,39 +109,33 @@ def log_exception(exc_type, exc_value, exc_traceback):
          print(f"ERROR: Failed to show QMessageBox: {q_err}")
 
 
-# Set the custom exception handler
 sys.excepthook = log_exception
 	
 if __name__ == "__main__":
-    app = None             # Initialize variable
-    loading_dialog = None  # Initialize variable
-    main_window = None     # Initialize variable
+    app = None             
+    loading_dialog = None  
+    main_window = None     
 
     try:
-        # --- Try to get an existing QApplication instance FIRST ---
-        # This helps in some environments or if the script is re-run partially
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv if hasattr(sys, 'argv') and len(sys.argv) > 0 else [])
         else:
             print("INFO: Using existing QApplication instance.")
 
-        # --- Create and Show Minimal Loading Screen IMMEDIATELY ---
         try:
             loading_dialog = MinimalLoadingDialog()
             loading_dialog.show()
-            if app: app.processEvents() # Crucial: Make the GUI update and show the dialog
+            if app: app.processEvents() 
         except Exception as e_load_dialog:
             print(f"ERROR: Could not create/show minimal loading dialog: {e_load_dialog}")
-            # Proceed without loading screen if it fails, but log the error
             loading_dialog = None #
 
         import sys
-        #import svgwrite
         import tempfile
         from tempfile import NamedTemporaryFile
         import base64
-        from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps  # Import Pillow's ImageGrab for clipboard access
+        from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps  
         from io import BytesIO
         import io
         from PySide6.QtWidgets import (
@@ -169,14 +151,14 @@ if __name__ == "__main__":
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
-            Qt, QBuffer, QPoint,QPointF, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal
+            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal
         )
         import json
         import os
         import numpy as np
         import matplotlib.pyplot as plt
-        import matplotlib.lines as mlines # For draggable lines
-        import matplotlib.patches as patches # For draggable handles
+        import matplotlib.lines as mlines 
+        import matplotlib.patches as patches 
         import platform
         import openpyxl
         from openpyxl.styles import Font
@@ -186,9 +168,31 @@ if __name__ == "__main__":
         from scipy.signal import find_peaks
         from scipy.ndimage import gaussian_filter1d
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
-        from scipy.interpolate import interp1d # Needed for interpolation
+        from scipy.interpolate import interp1d 
         import cv2
         import datetime
+
+        AMINO_ACID_RESIDUE_WEIGHTS = {
+            'A': 71.0788, 'R': 156.1875, 'N': 114.1038, 'D': 115.0886,
+            'C': 103.1388, 'E': 129.1155, 'Q': 128.1307, 'G': 57.0519,
+            'H': 137.1411, 'I': 113.1594, 'L': 113.1594, 'K': 128.1741,
+            'M': 131.1926, 'F': 147.1766, 'P': 97.1167, 'S': 87.0782,
+            'T': 101.1051, 'W': 186.2132, 'Y': 163.1760, 'V': 99.1326
+        }
+
+        EXTINCTION_COEFFICIENTS = {
+            'W': 5500,  # Tryptophan (M⁻¹cm⁻¹)
+            'Y': 1490,  # Tyrosine (M⁻¹cm⁻¹)
+            'C': 125    # Cysteine in disulfide bond (M⁻¹cm⁻¹ per pair)
+        }
+
+        GLYCAN_MASSES_KDA = {
+            "--- Select Glycan Type ---": 0.0,
+            "N-linked High-Mannose (Man9)": 2.1,
+            "N-linked Complex (Sialylated)": 2.9,
+            "O-linked Core 1 (Simple)": 0.4,
+            "Custom...": -1.0 
+        }
 
         def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: str) -> QIcon:
             """Creates a QIcon by drawing text/symbol onto a pixmap."""
@@ -196,22 +200,17 @@ if __name__ == "__main__":
             pixmap.fill(Qt.transparent)
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.TextAntialiasing, True) # Good for text
+            painter.setRenderHint(QPainter.TextAntialiasing, True) 
 
-            # Font settings (adjust as needed)
             font = QFont(font_type)
-            # Make arrow slightly smaller than +/-, maybe not bold? Experiment.
             font.setPointSize(min(14, int(icon_size.height()*0.75)))
-            # font.setBold(True) # Optional: Make arrows bold or not
             painter.setFont(font)
             painter.setPen(color)
 
-            # Draw the symbol centered
             painter.drawText(pixmap.rect(), Qt.AlignCenter, symbol)
             painter.end()
             return QIcon(pixmap)
 
-        # Set Style (can be done after app exists)
         app.setStyle("Fusion")
         app.setStyleSheet("""
             /* ... Your existing stylesheet ... */
@@ -253,7 +252,7 @@ if __name__ == "__main__":
                 self.active_set_name = active_set_name
                 self.final_coeffs = None
                 self.final_min_max_pos = None
-                self.final_predicted_mw = 0.0 # Add attribute to store result
+                self.final_predicted_mw = 0.0 
 
                 main_layout = QVBoxLayout(self)
                 controls_layout = QHBoxLayout()
@@ -310,10 +309,9 @@ if __name__ == "__main__":
                 predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
                 predicted_weight = 10 ** predicted_log10_weight
                 
-                # Store all final values
                 self.final_coeffs = coefficients
                 self.final_min_max_pos = (min_pos_active, max_pos_active)
-                self.final_predicted_mw = predicted_weight # Store the predicted MW
+                self.final_predicted_mw = predicted_weight 
 
                 self.mw_label.setText(f"Predicted MW: <b>{predicted_weight:.2f}</b> units")
                 self.r2_label.setText(f"Fit R² (on active set): {r_squared:.3f}")
@@ -354,50 +352,83 @@ if __name__ == "__main__":
             def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Protein Size Analysis")
-                self.setMinimumWidth(550)
+                self.setMinimumWidth(650) 
 
-                # Store initial values
                 self.sequence = sequence
                 self.base_mw = base_mw
                 self.glycan_mass = glycan_mass
                 self.num_glycosylation_sites = 0
                 self.num_oligomers_to_model = num_oligomers
 
-                # --- Setup UI ---
                 main_layout = QVBoxLayout(self)
                 
                 form_layout = QGridLayout()
                 form_layout.setSpacing(8)
 
+                readable_font = QFont("Courier New", 12)
+
                 form_layout.addWidget(QLabel("Protein Sequence:"), 0, 0, Qt.AlignTop)
                 self.sequence_entry = QTextEdit(self.sequence)
                 self.sequence_entry.setPlaceholderText("Paste your protein sequence here (e.g., MNAEFGT...).")
                 self.sequence_entry.setFixedHeight(80)
+                self.sequence_entry.setFont(readable_font)
                 form_layout.addWidget(self.sequence_entry, 0, 1)
 
-                self.analyze_sequence_button = QPushButton("Find Potential N-Glycosylation Sites")
-                self.analyze_sequence_button.clicked.connect(self.process_sequence)
-                form_layout.addWidget(self.analyze_sequence_button, 1, 1)
+                self.analyze_sequence_button = QPushButton("Analyze Sequence")
+                self.analyze_sequence_button.setToolTip("Calculates MW, Extinction Coefficient, and N-Glycosylation sites from the sequence.")
+                self.analyze_sequence_button.clicked.connect(self._analyze_sequence)
+                form_layout.addWidget(self.analyze_sequence_button, 1, 1, alignment=Qt.AlignRight)
 
-                form_layout.addWidget(QLabel("Potential N-Glyco Sites:"), 2, 0, Qt.AlignTop)
-                self.glycosylation_result_text = QTextEdit()
-                self.glycosylation_result_text.setReadOnly(True)
-                self.glycosylation_result_text.setFixedHeight(80)
-                form_layout.addWidget(self.glycosylation_result_text, 2, 1)
+                analysis_group = QGroupBox("Sequence Analysis")
+                analysis_layout = QVBoxLayout(analysis_group)
+                self.sequence_analysis_text = QTextEdit()
+                self.sequence_analysis_text.setReadOnly(True)
+                self.sequence_analysis_text.setFont(readable_font)
+                self.sequence_analysis_text.setLineWrapMode(QTextEdit.NoWrap)
+                analysis_layout.addWidget(self.sequence_analysis_text)
+                form_layout.addWidget(analysis_group, 2, 0, 1, 2)
 
-                form_layout.addWidget(QLabel("Base Protein MW (kDa):"), 3, 0)
+                props_group = QGroupBox("Calculated Physicochemical Properties")
+                props_layout = QGridLayout(props_group)
+                props_layout.addWidget(QLabel("Sequence Length:"), 0, 0)
+                self.sequence_length_display = QLineEdit()
+                self.sequence_length_display.setReadOnly(True)
+                self.sequence_length_display.setPlaceholderText("0 residues")
+                props_layout.addWidget(self.sequence_length_display, 0, 1)
+                props_layout.addWidget(QLabel("Base Protein MW (kDa):"), 1, 0)
                 self.base_protein_mw_input = QLineEdit(str(self.base_mw) if self.base_mw > 0 else "")
-                self.base_protein_mw_input.setValidator(QDoubleValidator(0, 2000, 2, self))
-                self.base_protein_mw_input.setPlaceholderText("e.g., 55.4")
+                self.base_protein_mw_input.setValidator(QDoubleValidator(0, 2000, 3, self))
+                self.base_protein_mw_input.setPlaceholderText("e.g., 55.432 or calculate from sequence")
                 self.base_protein_mw_input.textChanged.connect(self.update_potential_fragments)
-                form_layout.addWidget(self.base_protein_mw_input, 3, 1)
+                props_layout.addWidget(self.base_protein_mw_input, 1, 1)
+                props_layout.addWidget(QLabel("Ext. Coeff. (Reduced Cys):"), 2, 0)
+                self.ext_coeff_reduced_display = QLineEdit()
+                self.ext_coeff_reduced_display.setReadOnly(True)
+                self.ext_coeff_reduced_display.setPlaceholderText("M⁻¹cm⁻¹")
+                props_layout.addWidget(self.ext_coeff_reduced_display, 2, 1)
+                props_layout.addWidget(QLabel("Ext. Coeff. (Oxidized Cys):"), 3, 0)
+                self.ext_coeff_oxidized_display = QLineEdit()
+                self.ext_coeff_oxidized_display.setReadOnly(True)
+                self.ext_coeff_oxidized_display.setPlaceholderText("M⁻¹cm⁻¹")
+                props_layout.addWidget(self.ext_coeff_oxidized_display, 3, 1)
+                info_label = QLabel("<i>Note: This is the theoretical molar extinction coefficient at 280nm.</i>")
+                info_label.setWordWrap(True)
+                props_layout.addWidget(info_label, 4, 0, 1, 2)
+                form_layout.addWidget(props_group, 3, 0, 1, 2)
 
                 form_layout.addWidget(QLabel("Avg. Glycan Mass (kDa):"), 4, 0)
+                glycan_layout = QHBoxLayout()
+                self.glycan_type_combo = QComboBox()
+                self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
+                self.glycan_type_combo.currentTextChanged.connect(self._on_glycan_type_selected)
                 self.glycan_mass_input = QLineEdit(str(self.glycan_mass) if self.glycan_mass > 0 else "")
                 self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self))
                 self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
                 self.glycan_mass_input.textChanged.connect(self.update_potential_fragments)
-                form_layout.addWidget(self.glycan_mass_input, 4, 1)
+                self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
+                glycan_layout.addWidget(self.glycan_type_combo, 1)
+                glycan_layout.addWidget(self.glycan_mass_input, 1)
+                form_layout.addLayout(glycan_layout, 4, 1)
 
                 form_layout.addWidget(QLabel("Number of Glycans to Model:"), 5, 0)
                 self.num_glycans_spinbox = QSpinBox()
@@ -406,69 +437,128 @@ if __name__ == "__main__":
                 self.num_glycans_spinbox.valueChanged.connect(self.update_potential_fragments)
                 form_layout.addWidget(self.num_glycans_spinbox, 5, 1)
 
-                # --- NEW: Oligomer selection ---
                 form_layout.addWidget(QLabel("Number of Oligomers to Model:"), 6, 0)
                 self.num_oligomers_spinbox = QSpinBox()
-                self.num_oligomers_spinbox.setRange(1, 10) # Monomer to Decamer
+                self.num_oligomers_spinbox.setRange(1, 10)
                 self.num_oligomers_spinbox.setValue(self.num_oligomers_to_model)
                 self.num_oligomers_spinbox.setToolTip("Set the number of oligomeric states to calculate (e.g., 2 for monomer and dimer).")
                 self.num_oligomers_spinbox.valueChanged.connect(self.update_potential_fragments)
                 form_layout.addWidget(self.num_oligomers_spinbox, 6, 1)
-                # --- END NEW ---
 
                 form_layout.addWidget(QLabel("Potential Fragments (kDa):"), 7, 0, Qt.AlignTop)
                 self.potential_fragments_text = QTextEdit()
                 self.potential_fragments_text.setReadOnly(True)
-                self.potential_fragments_text.setFixedHeight(120) # Increased height
+                self.potential_fragments_text.setFixedHeight(120)
+                self.potential_fragments_text.setFont(readable_font)
                 form_layout.addWidget(self.potential_fragments_text, 7, 1)
 
                 main_layout.addLayout(form_layout)
+                
+                io_layout = QHBoxLayout()
+                self.export_button = QPushButton("Export Analysis")
+                self.export_button.setToolTip("Save all current analysis data to a text file.")
+                self.export_button.clicked.connect(self._export_data)
+                self.load_button = QPushButton("Load Analysis")
+                self.load_button.setToolTip("Load a previously saved analysis text file.")
+                self.load_button.clicked.connect(self._load_data)
+                io_layout.addWidget(self.load_button)
+                io_layout.addWidget(self.export_button)
+                io_layout.addStretch()
+                main_layout.addLayout(io_layout)
 
-                # --- Dialog Buttons ---
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 button_box.accepted.connect(self.accept)
                 button_box.rejected.connect(self.reject)
                 main_layout.addWidget(button_box)
 
                 if self.sequence:
-                    self.process_sequence()
+                    self._analyze_sequence()
+            
+            def _format_sequence_with_numbers(self, sequence, line_length=50):
+                """Formats a sequence into blocks of 10 with start/end numbers."""
+                output = []
+                for i in range(0, len(sequence), line_length):
+                    chunk = sequence[i:i+line_length]
+                    start_pos = i + 1
+                    end_pos = i + len(chunk)
+                    grouped_chunk = " ".join(chunk[j:j+10] for j in range(0, len(chunk), 10))
+                    line = f"{str(start_pos):>6}  {grouped_chunk:<59}  {end_pos:<6}"
+                    output.append(line)
+                return "\n".join(output)
 
-            def process_sequence(self):
+            def _analyze_sequence(self):
+                """Calculates MW, Extinction Coefficient, and N-Glycosylation sites from sequence."""
                 self.sequence = self.sequence_entry.toPlainText().strip().upper()
-
                 if not self.sequence:
-                    self.glycosylation_result_text.setPlainText("Please enter a protein sequence.")
+                    self.sequence_analysis_text.setPlainText("Please enter a protein sequence.")
+                    self.base_protein_mw_input.clear()
+                    self.ext_coeff_reduced_display.clear()
+                    self.ext_coeff_oxidized_display.clear()
+                    self.sequence_length_display.clear()
                     self.num_glycosylation_sites = 0
                     self.num_glycans_spinbox.setValue(0)
                     self.update_potential_fragments()
                     return
 
+                total_mass = 0.0; unrecognized_chars = set()
+                num_W = self.sequence.count('W'); num_Y = self.sequence.count('Y'); num_C = self.sequence.count('C')
+                for aa in self.sequence:
+                    weight = AMINO_ACID_RESIDUE_WEIGHTS.get(aa)
+                    if weight: total_mass += weight
+                    else: unrecognized_chars.add(aa)
+                
+                if unrecognized_chars: print(f"Warning: Unrecognized chars ignored: {', '.join(unrecognized_chars)}")
+                
+                total_mass += 18.01528
+                self.sequence_length_display.setText(f"{len(self.sequence)} residues")
+
+                if total_mass > 18.1: self.base_protein_mw_input.setText(f"{(total_mass / 1000.0):.3f}")
+                else: self.base_protein_mw_input.clear()
+
+                ext_coeff_reduced = (num_W * EXTINCTION_COEFFICIENTS['W']) + (num_Y * EXTINCTION_COEFFICIENTS['Y'])
+                ext_coeff_oxidized = ext_coeff_reduced + ((num_C // 2) * EXTINCTION_COEFFICIENTS['C'])
+                self.ext_coeff_reduced_display.setText(f"{ext_coeff_reduced} M⁻¹cm⁻¹")
+                self.ext_coeff_oxidized_display.setText(f"{ext_coeff_oxidized} M⁻¹cm⁻¹")
+
                 try:
                     pattern = re.compile(r'N[^P][ST]')
                     matches = pattern.finditer(self.sequence)
-                    
                     locations = [(match.start(), match.group()) for match in matches]
                     self.num_glycosylation_sites = len(locations)
+                    self.num_glycans_spinbox.blockSignals(True); self.num_glycans_spinbox.setValue(self.num_glycosylation_sites); self.num_glycans_spinbox.blockSignals(False)
                     
-                    self.num_glycans_spinbox.blockSignals(True)
-                    self.num_glycans_spinbox.setValue(self.num_glycosylation_sites)
-                    self.num_glycans_spinbox.blockSignals(False)
-
+                    display_lines = ["<b>Formatted Sequence:</b>"]
+                    display_lines.append(self._format_sequence_with_numbers(self.sequence))
+                    display_lines.append("\n<b>Potential N-Glycosylation Sites:</b>")
+                    
                     if self.num_glycosylation_sites > 0:
-                        result_text_lines = [f"Site at position {loc + 1}: {seq}" for loc, seq in locations]
-                        result_text = "\n".join(result_text_lines)
-                        result_text += f"\n\nTOTAL POTENTIAL SITES FOUND: {self.num_glycosylation_sites}"
-                        self.glycosylation_result_text.setPlainText(result_text)
+                        site_lines = [f" - Site at position {loc + 1} (Sequence: {seq})" for loc, seq in locations]
+                        display_lines.extend(site_lines)
+                        display_lines.append(f"\n<b>Total Potential Sites Found: {self.num_glycosylation_sites}</b>")
                     else:
-                        self.glycosylation_result_text.setPlainText("No potential N-glycosylation sites found.")
+                        display_lines.append(" - None found.")
                     
+                    self.sequence_analysis_text.setHtml("<br>".join(display_lines))
                     self.update_potential_fragments()
-
                 except Exception as e:
-                    self.glycosylation_result_text.setPlainText(f"An error occurred: {e}")
+                    self.sequence_analysis_text.setPlainText(f"An error occurred: {e}")
                     self.num_glycosylation_sites = 0
                     self.num_glycans_spinbox.setValue(0)
                     self.update_potential_fragments()
+
+            def _on_glycan_type_selected(self, text):
+                mass = GLYCAN_MASSES_KDA.get(text, 0.0)
+                self.glycan_mass_input.blockSignals(True)
+                if mass == -1.0: self.glycan_mass_input.clear(); self.glycan_mass_input.setFocus()
+                elif mass >= 0.0: self.glycan_mass_input.setText(str(mass))
+                self.glycan_mass_input.blockSignals(False)
+                self.update_potential_fragments()
+
+            def _on_manual_glycan_mass_edit(self):
+                if not self.glycan_mass_input.signalsBlocked():
+                    self.glycan_type_combo.blockSignals(True); self.glycan_type_combo.setCurrentText("Custom..."); self.glycan_type_combo.blockSignals(False)
+            
+            def process_sequence(self): self._analyze_sequence()
 
             def update_potential_fragments(self):
                 try:
@@ -476,48 +566,116 @@ if __name__ == "__main__":
                     glycan_mass = float(self.glycan_mass_input.text())
                     num_glycans_to_calc = self.num_glycans_spinbox.value()
                     num_oligomers_to_calc = self.num_oligomers_spinbox.value()
-
-                    if base_mw <= 0:
-                        raise ValueError
-                    
+                    if base_mw <= 0: raise ValueError
                     fragments_text_lines = []
-                    oligomer_names = ["Monomer", "Dimer", "Trimer", "Tetramer", "Pentamer",
-                                    "Hexamer", "Heptamer", "Octamer", "Nonamer", "Decamer"]
-
+                    oligomer_names = ["Monomer", "Dimer", "Trimer", "Tetramer", "Pentamer", "Hexamer", "Heptamer", "Octamer", "Nonamer", "Decamer"]
                     for j in range(1, num_oligomers_to_calc + 1):
                         oligomer_base_mw = base_mw * j
                         name = oligomer_names[j-1] if j <= len(oligomer_names) else f"{j}-mer"
-                        
                         fragments_text_lines.append(f"--- {name} (Base MW: {oligomer_base_mw:.2f} kDa) ---")
-                        
                         fragments_text_lines.append(f" + 0 glycans: {oligomer_base_mw:.2f} kDa")
-                        
                         if glycan_mass > 0:
                             for i in range(1, num_glycans_to_calc + 1):
                                 potential_mw = oligomer_base_mw + (i * glycan_mass)
                                 fragments_text_lines.append(f" + {i} glycan(s): {potential_mw:.2f} kDa")
-                        
                         fragments_text_lines.append("")
-
                     self.potential_fragments_text.setPlainText("\n".join(fragments_text_lines))
-                except (ValueError, TypeError):
-                    self.potential_fragments_text.clear()
+                except (ValueError, TypeError): self.potential_fragments_text.clear()
+
+            def _export_data(self):
+                default_filename = f"Protein_Analysis_{datetime.datetime.now():%Y%m%d_%H%M%S}.txt"
+                file_path, _ = QFileDialog.getSaveFileName(self, "Export Analysis Data", default_filename, "Text Files (*.txt)")
+
+                if not file_path: return
+
+                try:
+                    content = []
+                    content.append(f"PROTEIN ANALYSIS REPORT")
+                    content.append(f"Generated: {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n")
+
+                    content.append("--- INPUT SEQUENCE ---")
+                    content.append(self.sequence_entry.toPlainText() + "\n")
+
+                    content.append("--- SEQUENCE ANALYSIS ---")
+                    content.append(self.sequence_analysis_text.toPlainText() + "\n")
+
+                    content.append("--- PHYSICOCHEMICAL PROPERTIES ---")
+                    content.append(f"Sequence Length: {self.sequence_length_display.text()}")
+                    content.append(f"Base Protein MW (kDa): {self.base_protein_mw_input.text()}")
+                    content.append(f"Ext. Coeff. (Reduced Cys): {self.ext_coeff_reduced_display.text()}")
+                    content.append(f"Ext. Coeff. (Oxidized Cys): {self.ext_coeff_oxidized_display.text()}\n")
+
+                    content.append("--- GLYCOSYLATION & OLIGOMERIZATION PARAMETERS ---")
+                    content.append(f"Selected Glycan Type: {self.glycan_type_combo.currentText()}")
+                    content.append(f"Avg. Glycan Mass (kDa): {self.glycan_mass_input.text()}")
+                    content.append(f"Number of Glycans to Model: {self.num_glycans_spinbox.value()}")
+                    content.append(f"Number of Oligomers to Model: {self.num_oligomers_spinbox.value()}\n")
+
+                    content.append("--- CALCULATED POTENTIAL FRAGMENTS ---")
+                    content.append(self.potential_fragments_text.toPlainText())
+
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write("\n".join(content))
+                    
+                    QMessageBox.information(self, "Success", f"Analysis data exported successfully to:\n{file_path}")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Export Error", f"Failed to export data: {e}")
+
+            def _load_data(self):
+                file_path, _ = QFileDialog.getOpenFileName(self, "Load Analysis Data", "", "Text Files (*.txt)")
+                if not file_path: return
+
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    # Use regex to find content between headers
+                    def get_section(header, text):
+                        match = re.search(f"--- {header} ---\n(.*?)\n---", text, re.DOTALL)
+                        return match.group(1).strip() if match else ""
+                    
+                    def get_line_value(key, text):
+                        match = re.search(f"^{re.escape(key)}: (.*)", text, re.MULTILINE)
+                        return match.group(1).strip() if match else ""
+
+                    # Parse sections
+                    sequence = get_section("INPUT SEQUENCE", content)
+                    props_section = get_section("PHYSICOCHEMICAL PROPERTIES", content)
+                    params_section = get_section("GLYCOSYLATION & OLIGOMERIZATION PARAMETERS", content)
+                    
+                    # Populate UI
+                    self.sequence_entry.setText(sequence)
+                    
+                    base_mw = get_line_value("Base Protein MW (kDa)", props_section)
+                    self.base_protein_mw_input.setText(base_mw)
+                    
+                    glycan_type = get_line_value("Selected Glycan Type", params_section)
+                    glycan_mass = get_line_value("Avg. Glycan Mass (kDa)", params_section)
+                    num_glycans = get_line_value("Number of Glycans to Model", params_section)
+                    num_oligomers = get_line_value("Number of Oligomers to Model", params_section)
+                    
+                    self.glycan_type_combo.setCurrentText(glycan_type)
+                    self.glycan_mass_input.setText(glycan_mass) 
+                    
+                    self.num_glycans_spinbox.setValue(int(num_glycans) if num_glycans.isdigit() else 0)
+                    self.num_oligomers_spinbox.setValue(int(num_oligomers) if num_oligomers.isdigit() else 1)
+                    
+                    self._analyze_sequence()
+                    QMessageBox.information(self, "Success", "Analysis data loaded successfully.")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Load Error", f"Failed to parse analysis file: {e}")
 
             def get_results(self):
-                try:
-                    base_mw = float(self.base_protein_mw_input.text())
-                except ValueError:
-                    base_mw = 0.0
-                try:
-                    glycan_mass = float(self.glycan_mass_input.text())
-                except ValueError:
-                    glycan_mass = 0.0
+                try: base_mw = float(self.base_protein_mw_input.text())
+                except ValueError: base_mw = 0.0
+                try: glycan_mass = float(self.glycan_mass_input.text())
+                except ValueError: glycan_mass = 0.0
 
                 return {
-                    "sequence": self.sequence,
-                    "base_mw": base_mw,
-                    "glycan_mass": glycan_mass,
-                    "sites": self.num_glycosylation_sites,
+                    "sequence": self.sequence_entry.toPlainText().strip(),
+                    "base_mw": base_mw, "glycan_mass": glycan_mass, "sites": self.num_glycosylation_sites,
                     "glycans_to_use": self.num_glycans_spinbox.value(),
                     "oligomers_to_use": self.num_oligomers_spinbox.value()
                 }
@@ -539,40 +697,36 @@ if __name__ == "__main__":
             def __init__(self, pil_image_data, initial_settings, parent=None, is_from_quad_warp=False): # Added is_from_quad_warp
                 super().__init__(parent)
 
-                # Set window title based on the source of the image data
                 if is_from_quad_warp:
                     self.setWindowTitle("Tune Peaks (Warped Region)")
                 else:
                     self.setWindowTitle("Tune Automatic Peak Detection")
 
-                self.setGeometry(50, 50, 800, 700) # Adjusted height
+                self.setGeometry(50, 50, 800, 700) 
                 self.pil_image_for_display = pil_image_data
-                self.selected_peak_index = -1 # Stores the X-coordinate of the peak selected for deletion
+                self.selected_peak_index = -1 
                 self.deleted_peak_indices = set()
                 self._all_initial_peaks = np.array([])
                 self.add_peak_mode_active = False
 
-                # --- Validate and Store Input Image ---
                 if not isinstance(pil_image_data, Image.Image):
                     raise TypeError("Input 'pil_image_data' must be a PIL Image object")
 
-                # Determine intensity range and create numpy array
                 self.intensity_array_original_range = None
                 self.original_max_value = 255.0 # Default
                 pil_mode = pil_image_data.mode
                 try:
-                    # Handle common grayscale modes used in the main app
                     if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
                         self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
                         self.original_max_value = 65535.0
                     elif pil_mode == 'L':
                         self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
                         self.original_max_value = 255.0
-                    elif pil_mode == 'F': # Handle float images
+                    elif pil_mode == 'F': 
                         self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
                         max_in_float = np.max(self.intensity_array_original_range) if np.any(self.intensity_array_original_range) else 1.0
-                        self.original_max_value = max(1.0, max_in_float) # Use max value or 1.0
-                    else: # Attempt conversion to grayscale 'L' as fallback
+                        self.original_max_value = max(1.0, max_in_float) 
+                    else: 
                         gray_img = pil_image_data.convert("L")
                         self.intensity_array_original_range = np.array(gray_img, dtype=np.float64)
                         self.original_max_value = 255.0
@@ -586,83 +740,67 @@ if __name__ == "__main__":
                 except Exception as e:
                     raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
 
-                self.profile_original_inverted = None # Smoothed, inverted profile (original range)
-                self.profile = None # Scaled (0-255), inverted, SMOOTHED profile for detection
-                self.detected_peaks = np.array([]) # Store indices of detected peaks
+                self.profile_original_inverted = None 
+                self.profile = None 
+                self.detected_peaks = np.array([]) 
 
-                # --- Settings and State ---
-                # Use settings passed from the main app (likely self.peak_dialog_settings)
                 self.smoothing_sigma = initial_settings.get('smoothing_sigma', 0.0)
                 self.peak_height_factor = initial_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = initial_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', 0.00)
-                # Band estimation method is needed to generate the profile
                 self.band_estimation_method = initial_settings.get('band_estimation_method', "Mean")
-                self._final_settings = initial_settings.copy() # Store a copy to return modifications
+                self._final_settings = initial_settings.copy() 
 
-                # Check dependencies needed for profile generation and peak detection
                 if find_peaks is None or gaussian_filter1d is None:
                      QMessageBox.critical(self, "Dependency Error",
                                           "Missing SciPy library functions.\n"
                                           "Peak detection and smoothing require SciPy.\n"
                                           "Please install it (e.g., 'pip install scipy') and restart.")
-                     # Don't call accept/reject here, let init fail or handle gracefully
-                     # self.close() # Or close immediately
 
-                # Build UI & Initial Setup
                 self._setup_ui()
-                self.run_peak_detection_and_plot() # Initial calculation and plot
+                self.run_peak_detection_and_plot() 
 
             def _setup_ui(self):
                 """Creates and arranges the UI elements, including image preview."""
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
 
-                # --- Matplotlib Plot Canvas Area ---
-                plot_widget = QWidget() # Container for the plots
+                plot_widget = QWidget() 
                 plot_layout = QVBoxLayout(plot_widget)
-                plot_layout.setContentsMargins(0, 0, 0, 0) # No margins for the layout
+                plot_layout.setContentsMargins(0, 0, 0, 0) 
 
-                # Use GridSpec for plot and image preview arrangement
-                # More height for the profile plot
-                self.fig = plt.figure(figsize=(7, 5)) # Adjusted height for gridspec
+                self.fig = plt.figure(figsize=(7, 5)) 
                 gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
                 self.fig.tight_layout(pad=0.5)
-                self.ax_profile = self.fig.add_subplot(gs[0]) # Axis for the profile
+                self.ax_profile = self.fig.add_subplot(gs[0]) 
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile) # Axis for the image preview
 
                 self.canvas = FigureCanvas(self.fig)
                 self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                # --- Enable picking on the canvas ---
                 self.canvas.mpl_connect('button_press_event', self.on_canvas_click)
-                # --- End Enable picking ---
                 plot_layout.addWidget(self.canvas)
                 main_layout.addWidget(plot_widget, stretch=1)
 
-                # --- Controls Group ---
                 controls_group = QGroupBox("Peak Detection Parameters")
                 controls_layout = QGridLayout(controls_group)
                 controls_layout.setSpacing(8)
 
-                # Band Estimation (Needed for profile generation)
                 controls_layout.addWidget(QLabel("Profile Method:"), 0, 0)
                 self.band_estimation_combobox = QComboBox()
                 self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
                 self.band_estimation_combobox.setCurrentText(self.band_estimation_method)
                 self.band_estimation_combobox.currentIndexChanged.connect(self.run_peak_detection_and_plot)
-                controls_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2) # Span 2 columns
+                controls_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2) 
 
-                # Smoothing Sigma
                 self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
                 self.smoothing_slider = QSlider(Qt.Horizontal)
-                self.smoothing_slider.setRange(0, 100) # 0.0 to 10.0
+                self.smoothing_slider.setRange(0, 100) 
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
                 self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
-                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) 
                 controls_layout.addWidget(self.smoothing_label, 1, 0)
                 controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
 
-                # Peak Prominence
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})")
                 self.peak_prominence_slider = QSlider(Qt.Horizontal)
                 self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
@@ -3565,7 +3703,7 @@ if __name__ == "__main__":
                         for i, corner in enumerate(corners):
                             radius = handle_radius * 1.5 if self.app_instance.resizing_overlay_corner_index == i else handle_radius
                             painter.drawEllipse(corner, radius, radius)
-                if self.app_instance and hasattr(self, 'moving_custom_item_info') and self.app_instance.moving_custom_item_info:
+                if self.app_instance and self.app_instance.moving_custom_item_info:
                     info = self.app_instance.moving_custom_item_info
                     is_resizing = self.app_instance.current_selection_mode == "resizing_custom_item"
                     selection_pen = QPen(Qt.magenta, max(0.5, 2.0 / self.zoom_level), Qt.DotLine)
@@ -3899,7 +4037,7 @@ if __name__ == "__main__":
                 self.preview_label_width_setting = 400  # A smaller base width for the minimum calculation
                 self.preview_label_max_height_setting = 300 # A smaller base height for the minimum calculation
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER V2.50"
+                self.window_title="GEL BLOT ANALYZER V3.0"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -4520,7 +4658,19 @@ if __name__ == "__main__":
 
                 # --- THE FIX ---
                 # 5. Force a complete redraw now that the widgets have their final, correct sizes.
-                self.update_live_view()   
+                self.update_live_view()  
+
+            def _constrain_point_orthogonally(self, start_point: QPointF, current_point: QPointF) -> QPointF:
+                """Constrains the current point to be on a straight horizontal or vertical line from the start point."""
+                delta_x = abs(current_point.x() - start_point.x())
+                delta_y = abs(current_point.y() - start_point.y())
+
+                if delta_x > delta_y:
+                    # Horizontal movement is dominant, lock the Y-coordinate
+                    return QPointF(current_point.x(), start_point.y())
+                else:
+                    # Vertical movement is dominant, lock the X-coordinate
+                    return QPointF(start_point.x(), current_point.y()) 
                 
             def copy_custom_items(self):
                 """Copies custom markers and shapes to the clipboard as JSON."""
@@ -4818,6 +4968,35 @@ if __name__ == "__main__":
                 if self.drawing_mode in ['line', 'rectangle'] and self.current_drawing_shape_preview:
                     end_point_transformed = self.live_view_label.transform_point(event.position())
                     snapped_end_point = self.snap_point_to_grid(end_point_transformed) # Snap it
+                    start_point = self.current_drawing_shape_preview['start']
+
+                    # --- MODIFIED: Constrain movement if Shift is pressed ---
+                    if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                        if self.drawing_mode == 'line':
+                            # --- Angle snapping logic for lines (0, 45, 90 degrees) ---
+                            delta = snapped_end_point - start_point
+                            angle_rad = np.arctan2(delta.y(), delta.x())
+                            angle_deg = np.degrees(angle_rad)
+                            
+                            # Snap angle to the nearest 45 degrees
+                            snapped_angle_deg = round(angle_deg / 45.0) * 45.0
+                            snapped_angle_rad = np.radians(snapped_angle_deg)
+                            
+                            # Recalculate the end point based on the original length and snapped angle
+                            length = np.sqrt(delta.x()**2 + delta.y()**2)
+                            snapped_end_point = QPointF(
+                                start_point.x() + length * np.cos(snapped_angle_rad),
+                                start_point.y() + length * np.sin(snapped_angle_rad)
+                            )
+                        elif self.drawing_mode == 'rectangle':
+                            # --- Square constraint logic for rectangles ---
+                            delta_x = snapped_end_point.x() - start_point.x()
+                            delta_y = snapped_end_point.y() - start_point.y()
+                            max_delta = max(abs(delta_x), abs(delta_y))
+                            
+                            new_x = start_point.x() + (max_delta if delta_x > 0 else -max_delta)
+                            new_y = start_point.y() + (max_delta if delta_y > 0 else -max_delta)
+                            snapped_end_point = QPointF(new_x, new_y)
                     
                     self.current_drawing_shape_preview['end'] = snapped_end_point
                     self.update_live_view()
@@ -4828,8 +5007,11 @@ if __name__ == "__main__":
                     # start_point_label_space is already snapped from start_shape_draw
                     start_point_label_space = self.current_drawing_shape_preview['start']
                     
-                    end_point_transformed_label_space = self.live_view_label.transform_point(event.position())
-                    end_point_snapped_label_space = self.snap_point_to_grid(end_point_transformed_label_space) # Snap it
+                    # --- THE FIX ---
+                    # Use the final, constrained end point from the preview data, not the raw mouse event.
+                    # The preview has already handled grid snapping and Shift key constraints.
+                    end_point_snapped_label_space = self.current_drawing_shape_preview['end']
+                    # --- END FIX ---
     
                     # ... (Get current style settings: color, thickness) ...
                     color = self.custom_marker_color
@@ -5155,38 +5337,31 @@ if __name__ == "__main__":
                     QMessageBox.warning(self, "Warp Error", f"Failed to convert image to NumPy: {e}")
                     return None
              
-                # --- !!! REMOVED INTERNAL GRAYSCALE CONVERSION !!! ---
-                # # OLD code that caused the issue if input was color:
-                # if img_array.ndim == 3:
-                #      print("Warning: Warping input array is 3D. Converting to grayscale.")
-                #      # THIS CONVERSION TO UINT8 WAS THE PROBLEM
-                #      color_code = cv2.COLOR_BGR2GRAY if img_array.shape[2] == 3 else cv2.COLOR_BGRA2GRAY
-                #      img_array = cv2.cvtColor(img_array, color_code)
-                #      # img_array = img_array.astype(np.uint8) # Explicit cast not needed, cvtColor usually returns uint8
-                # --- End Removed Block ---
-                # Now, warpPerspective will operate on the img_array with its original dtype (e.g., uint16 grayscale or color)
-             
-             
                 # --- Transform points from LiveViewLabel space to Image space ---
-                # (Coordinate transformation logic remains the same - assumes direct scaling for now)
                 label_width = self.live_view_label.width()
                 label_height = self.live_view_label.height()
                 current_img_width = image.width()
                 current_img_height = image.height()
-                scale_x_disp = current_img_width / label_width if label_width > 0 else 1
-                scale_y_disp = current_img_height / label_height if label_height > 0 else 1
-             
+                
+                if label_width <= 0 or label_height <= 0 or current_img_width <= 0 or current_img_height <= 0:
+                    QMessageBox.warning(self, "Warp Error", "Invalid image or view dimensions.")
+                    return None
+
+                # Calculate the scaling factor and offsets used to display the image centered in the label
+                scale_factor = min(label_width / current_img_width, label_height / current_img_height)
+                display_offset_x = (label_width - current_img_width * scale_factor) / 2.0
+                display_offset_y = (label_height - current_img_height * scale_factor) / 2.0
+
                 src_points_img = []
                 for point in quad_points:
-                    x_view, y_view = point.x(), point.y()
-                    # Account for zoom/pan in LiveViewLabel coordinates
-                    if self.live_view_label.zoom_level != 1.0:
-                        x_view = (x_view - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
-                        y_view = (y_view - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
-                    # Scale to image coordinates
-                    x_image = x_view * scale_x_disp
-                    y_image = y_view * scale_y_disp
+                    # The incoming points are already in un-zoomed, un-panned label space
+                    x_label, y_label = point.x(), point.y()
+                    
+                    # Convert from label space to image space
+                    x_image = (x_label - display_offset_x) / scale_factor
+                    y_image = (y_label - display_offset_y) / scale_factor
                     src_points_img.append([x_image, y_image])
+
                 src_np = np.array(src_points_img, dtype=np.float32)
              
                 # --- Define Destination Rectangle ---
@@ -5211,31 +5386,28 @@ if __name__ == "__main__":
                     matrix = cv2.getPerspectiveTransform(src_np, dst_np)
                     # Determine border color based on input array type
                     if img_array.ndim == 3: # Color
-                         # Use black (0,0,0) or white (255,255,255) depending on preference. Alpha needs 4 values if present.
                          border_val = (0, 0, 0, 0) if img_array.shape[2] == 4 else (0, 0, 0)
                     else: # Grayscale
                          border_val = 0 # Black for grayscale
              
                     # Warp the ORIGINAL NumPy array (could be uint8, uint16, color)
                     warped_array = cv2.warpPerspective(img_array, matrix, (max_width, max_height),
-                                                       flags=cv2.INTER_LINEAR, # Linear interpolation is usually good
+                                                       flags=cv2.INTER_LINEAR,
                                                        borderMode=cv2.BORDER_CONSTANT,
-                                                       borderValue=border_val) # Fill borders appropriately
+                                                       borderValue=border_val)
                 except Exception as e:
                      QMessageBox.warning(self, "Warp Error", f"OpenCV perspective warp failed: {e}")
-                     traceback.print_exc() # Print full traceback for debugging
+                     traceback.print_exc()
                      return None
              
                 # --- Convert warped NumPy array back to QImage ---
-                # numpy_to_qimage should handle uint16 correctly, creating Format_Grayscale16
                 try:
-                    warped_qimage = self.numpy_to_qimage(warped_array) # Handles uint8/uint16/color
+                    warped_qimage = self.numpy_to_qimage(warped_array)
                     if warped_qimage.isNull(): raise ValueError("numpy_to_qimage conversion failed.")
                     return warped_qimage
                 except Exception as e:
                     QMessageBox.warning(self, "Warp Error", f"Failed to convert warped array back to QImage: {e}")
                     return None
-           # --- END: Modified Warping ---
             
             
 
@@ -6803,24 +6975,31 @@ if __name__ == "__main__":
                 is_rect_resize_mode = is_multi_rect_resize or is_single_rect_resize
 
                 if self.current_selection_mode == "dragging_shape":
-                    # --- Logic for dragging the whole shape (remains the same) ---
-                    raw_mouse_delta_x = current_mouse_pos_label.x() - self.initial_mouse_pos_for_shape_drag_label.x()
-                    raw_mouse_delta_y = current_mouse_pos_label.y() - self.initial_mouse_pos_for_shape_drag_label.y()
+                    # --- Logic for dragging the whole shape ---
+                    # 1. Calculate the raw mouse movement delta
+                    raw_delta_ls = current_mouse_pos_label - self.initial_mouse_pos_for_shape_drag_label
+                    
+                    # --- THE FIX ---
+                    # 2. If Shift is pressed, constrain this delta to be orthogonal
+                    if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                        if abs(raw_delta_ls.x()) > abs(raw_delta_ls.y()):
+                            raw_delta_ls.setY(0)  # Lock to horizontal
+                        else:
+                            raw_delta_ls.setX(0)  # Lock to vertical
+                    
+                    # 3. Calculate the target position of the shape's reference point
                     reference_point_orig_label = self.shape_points_at_drag_start_label[0]
-                    raw_new_ref_point_x = reference_point_orig_label.x() + raw_mouse_delta_x
-                    raw_new_ref_point_y = reference_point_orig_label.y() + raw_mouse_delta_y
-                    snapped_new_ref_point_x = raw_new_ref_point_x; snapped_new_ref_point_y = raw_new_ref_point_y
-                    grid_size = 0; snap_x_enabled = False; snap_y_enabled = False
-                    if hasattr(self, 'grid_size_input'): grid_size = self.grid_size_input.value()
-                    if hasattr(self, 'show_grid_checkbox_x'): snap_x_enabled = self.show_grid_checkbox_x.isChecked()
-                    if hasattr(self, 'show_grid_checkbox_y'): snap_y_enabled = self.show_grid_checkbox_y.isChecked()
-                    if grid_size > 0:
-                        if snap_x_enabled: snapped_new_ref_point_x = round(raw_new_ref_point_x / grid_size) * grid_size
-                        if snap_y_enabled: snapped_new_ref_point_y = round(raw_new_ref_point_y / grid_size) * grid_size
-                    effective_delta_x = snapped_new_ref_point_x - reference_point_orig_label.x()
-                    effective_delta_y = snapped_new_ref_point_y - reference_point_orig_label.y()
-                    effective_delta_label = QPointF(effective_delta_x, effective_delta_y)
-                    new_shape_points_label = [p_orig_label + effective_delta_label for p_orig_label in self.shape_points_at_drag_start_label]
+                    target_ref_point_ls = reference_point_orig_label + raw_delta_ls
+
+                    # 4. Apply grid snapping to the final target position
+                    snapped_target_ref_point_ls = self.snap_point_to_grid(target_ref_point_ls)
+
+                    # 5. The final, effective delta is the difference between the snapped final position and the original
+                    effective_delta_ls = snapped_target_ref_point_ls - reference_point_orig_label
+                    # --- END FIX ---
+
+                    # 6. Apply this final, correct delta to all points of the shape
+                    new_shape_points_label = [p_orig_label + effective_delta_ls for p_orig_label in self.shape_points_at_drag_start_label]
                     # --- End whole shape drag logic ---
 
                 elif self.current_selection_mode == "resizing_corner" and self.resizing_corner_index != -1:
@@ -6828,9 +7007,19 @@ if __name__ == "__main__":
                     
                     if is_rect_resize_mode:
                         # --- Rectangle Resizing Logic ---
-                        # Corners are: 0:TL, 1:TR, 2:BR, 3:BL (from QRectF.topLeft() etc.)
                         moved_corner_idx = self.resizing_corner_index
                         fixed_opposite_corner_idx = (moved_corner_idx + 2) % 4 # Diagonal opposite
+                        
+                        # Constrain to square if Shift is pressed
+                        if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                            fixed_corner = self.shape_points_at_drag_start_label[fixed_opposite_corner_idx]
+                            delta_x = snapped_mouse_pos_label.x() - fixed_corner.x()
+                            delta_y = snapped_mouse_pos_label.y() - fixed_corner.y()
+                            max_delta = max(abs(delta_x), abs(delta_y))
+                            
+                            new_x = fixed_corner.x() + (max_delta if delta_x > 0 else -max_delta)
+                            new_y = fixed_corner.y() + (max_delta if delta_y > 0 else -max_delta)
+                            snapped_mouse_pos_label = QPointF(new_x, new_y)
                         
                         current_points = list(self.shape_points_at_drag_start_label) # Work with a copy
                         
@@ -6890,6 +7079,7 @@ if __name__ == "__main__":
                     self.live_view_label.quad_points = [] # Clear quad representation if it was a rect
                 
                 self.update_live_view()
+
             
             def handle_drag_release(self, event): # Renamed from end_move_selection
                 if self.current_selection_mode in ["dragging_shape", "resizing_corner"] and event.button() == Qt.LeftButton:
@@ -8648,6 +8838,8 @@ if __name__ == "__main__":
                 # Check if left button is held down (QApplication.mouseButtons() might be needed)
                 if event.buttons() & Qt.LeftButton:
                     current_point_view = self.live_view_label.transform_point(event.position())
+                    if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                        current_point_view = self._constrain_point_orthogonally(self.crop_rect_start_view, current_point_view)
                     # Tell LiveViewLabel to update the preview
                     self.live_view_label.update_crop_preview(self.crop_rect_start_view, current_point_view)
 
@@ -9433,6 +9625,30 @@ if __name__ == "__main__":
                 self.image_contrasted=self.image.copy()
 
             def keyPressEvent(self, event):
+                # --- NEW: Delete key handling for custom item selection ---
+                if event.key() == Qt.Key_Backspace and self.moving_custom_item_info:
+                    info = self.moving_custom_item_info
+                    item_type = info['type']
+                    item_index = info['index']
+                    
+                    self.save_state() # Save state before deletion for undo
+                        
+                    if item_type == 'marker' and 0 <= item_index < len(self.custom_markers):
+                        del self.custom_markers[item_index]
+                    elif item_type == 'shape' and 0 <= item_index < len(self.custom_shapes):
+                        del self.custom_shapes[item_index]
+                        
+                    self.is_modified = True
+                    # Reset selection state
+                    self.moving_custom_item_info = None
+                    self.resizing_corner_index = -1
+                    # Exit move/resize mode after deletion for clarity
+                    self.update_live_view()
+                    
+                    event.accept()
+                    return
+                # --- END: Delete key handling ---
+
                 # --- Escape Key Handling ---
                 if self.overlay_mode_active and self.selected_overlay_index > 0:
                     pos_slider_x = getattr(self, f'image{self.selected_overlay_index}_left_slider')
@@ -9721,9 +9937,27 @@ if __name__ == "__main__":
 
                 # --- DRAG LOGIC ---
                 if self.current_selection_mode == "dragging_custom_item":
+                    # --- THE FIX (Applying the same correct logic as in the other function) ---
+                    # 1. Calculate the raw mouse movement delta
                     raw_delta_ls = current_mouse_pos_ls - self.initial_mouse_pos_for_shape_drag_label
-                    snapped_new_ref_point_ls = self.snap_point_to_grid(self.shape_points_at_drag_start_label[0] + raw_delta_ls)
-                    effective_delta_ls = snapped_new_ref_point_ls - self.shape_points_at_drag_start_label[0]
+                    
+                    # 2. If Shift is pressed, constrain this delta to be orthogonal
+                    if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                        if abs(raw_delta_ls.x()) > abs(raw_delta_ls.y()):
+                            raw_delta_ls.setY(0)
+                        else:
+                            raw_delta_ls.setX(0)
+                    
+                    # 3. Calculate the target position of the shape's reference point
+                    reference_point_orig_label = self.shape_points_at_drag_start_label[0]
+                    target_ref_point_ls = reference_point_orig_label + raw_delta_ls
+
+                    # 4. Apply grid snapping to the final target position
+                    snapped_target_ref_point_ls = self.snap_point_to_grid(target_ref_point_ls)
+
+                    # 5. The final, effective delta is the difference between the snapped final position and the original
+                    effective_delta_ls = snapped_target_ref_point_ls - reference_point_orig_label
+                    # --- END FIX ---
 
                     if info['type'] == 'marker':
                         new_center_ls = self.shape_points_at_drag_start_label[0] + effective_delta_ls
@@ -9747,12 +9981,43 @@ if __name__ == "__main__":
                     shape_data = self.custom_shapes[info['index']]
                     if shape_data['type'] == 'rectangle':
                         fixed_corner_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 2) % 4]
+                        
+                        # Constrain to square if Shift is pressed
+                        if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                            delta_x = snapped_mouse_ls.x() - fixed_corner_ls.x()
+                            delta_y = snapped_mouse_ls.y() - fixed_corner_ls.y()
+                            max_delta = max(abs(delta_x), abs(delta_y))
+                            
+                            new_x = fixed_corner_ls.x() + (max_delta if delta_x > 0 else -max_delta)
+                            new_y = fixed_corner_ls.y() + (max_delta if delta_y > 0 else -max_delta)
+                            snapped_mouse_ls = QPointF(new_x, new_y)
+
                         p1_img = label_to_image(fixed_corner_ls); p2_img = label_to_image(snapped_mouse_ls)
                         xs = sorted([p1_img.x(), p2_img.x()]); ys = sorted([p1_img.y(), p2_img.y()])
                         shape_data['rect'] = (xs[0], ys[0], xs[1] - xs[0], ys[1] - ys[0])
                     elif shape_data['type'] == 'line':
-                        other_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
-                        p1_img = label_to_image(other_endpoint_ls); p2_img = label_to_image(snapped_mouse_ls)
+                        fixed_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
+                        
+                        # Snap to angles if Shift is pressed
+                        if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                            delta = snapped_mouse_ls - fixed_endpoint_ls
+                            angle_rad = np.arctan2(delta.y(), delta.x())
+                            angle_deg = np.degrees(angle_rad)
+                            
+                            # Snap angle to nearest 45 degrees
+                            snapped_angle_deg = round(angle_deg / 45.0) * 45.0
+                            snapped_angle_rad = np.radians(snapped_angle_deg)
+                            
+                            # Recalculate the snapped mouse position
+                            length = np.sqrt(delta.x()**2 + delta.y()**2)
+                            snapped_mouse_ls = QPointF(
+                                fixed_endpoint_ls.x() + length * np.cos(snapped_angle_rad),
+                                fixed_endpoint_ls.y() + length * np.sin(snapped_angle_rad)
+                            )
+
+                        p1_img = label_to_image(fixed_endpoint_ls)
+                        p2_img = label_to_image(snapped_mouse_ls)
+                        
                         if self.resizing_corner_index == 0:
                             shape_data['start'], shape_data['end'] = (p2_img.x(), p2_img.y()), (p1_img.x(), p1_img.y())
                         else:
