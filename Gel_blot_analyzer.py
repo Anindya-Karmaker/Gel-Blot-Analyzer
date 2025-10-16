@@ -161,7 +161,7 @@ if __name__ == "__main__":
             QScrollArea, QInputDialog, QFrame, QApplication, QSizePolicy,
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
-            QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox,
+            QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, 
         )
         from PySide6.QtGui import (
@@ -203,6 +203,8 @@ if __name__ == "__main__":
             'Y': 1490,  # Tyrosine (M⁻¹cm⁻¹)
             'C': 125    # Cysteine in disulfide bond (M⁻¹cm⁻¹ per pair)
         }
+
+        
 
         GLYCAN_MASSES_KDA = {
             "--- Select Glycan Type ---": 0.0,
@@ -376,7 +378,7 @@ if __name__ == "__main__":
             def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Protein Size Analysis")
-                self.setMinimumWidth(650) # Increased width for new widgets
+                self.setMinimumWidth(650) 
 
                 # Store initial values
                 self.sequence = sequence
@@ -387,201 +389,180 @@ if __name__ == "__main__":
 
                 # --- Setup UI ---
                 main_layout = QVBoxLayout(self)
-                
-                form_layout = QGridLayout()
-                form_layout.setSpacing(8)
+                readable_font = QFont("Courier New", 10)
 
-                # --- Font for Readability ---
-                readable_font = QFont("Courier New", 12)
-
-                form_layout.addWidget(QLabel("Protein Sequence:"), 0, 0, Qt.AlignTop)
+                # --- Group 1: Sequence Input ---
+                input_group = QGroupBox("1. Protein Sequence Input")
+                input_layout = QGridLayout(input_group)
                 self.sequence_entry = QTextEdit(self.sequence)
                 self.sequence_entry.setPlaceholderText("Paste your protein sequence here (e.g., MNAEFGT...).")
                 self.sequence_entry.setFixedHeight(80)
                 self.sequence_entry.setFont(readable_font)
-                form_layout.addWidget(self.sequence_entry, 0, 1)
-
                 self.analyze_sequence_button = QPushButton("Analyze Sequence")
-                self.analyze_sequence_button.setToolTip("Calculates MW, Extinction Coefficient, and N-Glycosylation sites from the sequence.")
+                self.analyze_sequence_button.setToolTip("Calculates all physicochemical properties and potential modifications from the sequence.")
                 self.analyze_sequence_button.clicked.connect(self._analyze_sequence)
-                form_layout.addWidget(self.analyze_sequence_button, 1, 1, alignment=Qt.AlignRight)
+                input_layout.addWidget(self.sequence_entry, 0, 0)
+                input_layout.addWidget(self.analyze_sequence_button, 1, 0, alignment=Qt.AlignRight)
+                main_layout.addWidget(input_group)
 
-                analysis_group = QGroupBox("Sequence Analysis")
+                # --- Group 2: Analysis Results (Read-Only) ---
+                analysis_group = QGroupBox("2. Sequence Analysis Results")
                 analysis_layout = QVBoxLayout(analysis_group)
                 self.sequence_analysis_text = QTextEdit()
                 self.sequence_analysis_text.setReadOnly(True)
                 self.sequence_analysis_text.setFont(readable_font)
                 self.sequence_analysis_text.setLineWrapMode(QTextEdit.NoWrap)
+                self.sequence_analysis_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 analysis_layout.addWidget(self.sequence_analysis_text)
-                form_layout.addWidget(analysis_group, 2, 0, 1, 2)
-
-                props_group = QGroupBox("Calculated Physicochemical Properties")
-                props_layout = QGridLayout(props_group)
-                props_layout.addWidget(QLabel("Sequence Length:"), 0, 0)
-                self.sequence_length_display = QLineEdit()
-                self.sequence_length_display.setReadOnly(True)
-                self.sequence_length_display.setPlaceholderText("0 residues")
+                
+                props_layout = QGridLayout()
+                props_layout.addWidget(QLabel("<b>Sequence Length:</b>"), 0, 0)
+                self.sequence_length_display = QLineEdit(); self.sequence_length_display.setReadOnly(True)
                 props_layout.addWidget(self.sequence_length_display, 0, 1)
-                props_layout.addWidget(QLabel("Base Protein MW (kDa):"), 1, 0)
-                self.base_protein_mw_input = QLineEdit(str(self.base_mw) if self.base_mw > 0 else "")
-                self.base_protein_mw_input.setValidator(QDoubleValidator(0, 2000, 3, self))
-                self.base_protein_mw_input.setPlaceholderText("e.g., 55.432 or calculate from sequence")
-                self.base_protein_mw_input.textChanged.connect(self.update_potential_fragments)
-                props_layout.addWidget(self.base_protein_mw_input, 1, 1)
-                props_layout.addWidget(QLabel("Ext. Coeff. (Reduced Cys):"), 2, 0)
-                self.ext_coeff_reduced_display = QLineEdit()
-                self.ext_coeff_reduced_display.setReadOnly(True)
-                self.ext_coeff_reduced_display.setPlaceholderText("M⁻¹cm⁻¹")
-                props_layout.addWidget(self.ext_coeff_reduced_display, 2, 1)
-                props_layout.addWidget(QLabel("Ext. Coeff. (Oxidized Cys):"), 3, 0)
-                self.ext_coeff_oxidized_display = QLineEdit()
-                self.ext_coeff_oxidized_display.setReadOnly(True)
-                self.ext_coeff_oxidized_display.setPlaceholderText("M⁻¹cm⁻¹")
-                props_layout.addWidget(self.ext_coeff_oxidized_display, 3, 1)
-                info_label = QLabel("<i>Note: This is the theoretical molar extinction coefficient at 280nm.</i>")
-                info_label.setWordWrap(True)
-                props_layout.addWidget(info_label, 4, 0, 1, 2)
-                form_layout.addWidget(props_group, 3, 0, 1, 2)
 
-                form_layout.addWidget(QLabel("Avg. Glycan Mass (kDa):"), 4, 0)
-                glycan_layout = QHBoxLayout()
-                self.glycan_type_combo = QComboBox()
-                self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
+                props_layout.addWidget(QLabel("<b>Ext. Coeff. (Reduced):</b>"), 1, 0)
+                self.ext_coeff_reduced_display = QLineEdit(); self.ext_coeff_reduced_display.setReadOnly(True)
+                self.ext_coeff_reduced_display.setToolTip("Assumes all Cysteine residues are reduced (free -SH groups).")
+                props_layout.addWidget(self.ext_coeff_reduced_display, 1, 1)
+                
+                props_layout.addWidget(QLabel("<b>Absorbance (Reduced, 0.1%):</b>"), 1, 2)
+                self.absorbance_reduced_display = QLineEdit(); self.absorbance_reduced_display.setReadOnly(True)
+                self.absorbance_reduced_display.setToolTip("Calculated as (Ext. Coeff. Reduced) / (Molecular Weight).")
+                props_layout.addWidget(self.absorbance_reduced_display, 1, 3)
+
+                props_layout.addWidget(QLabel("<b>Ext. Coeff. (Oxidized):</b>"), 2, 0)
+                self.ext_coeff_oxidized_display = QLineEdit(); self.ext_coeff_oxidized_display.setReadOnly(True)
+                self.ext_coeff_oxidized_display.setToolTip("Assumes all Cysteine pairs form disulfide bonds.")
+                props_layout.addWidget(self.ext_coeff_oxidized_display, 2, 1)
+                
+                props_layout.addWidget(QLabel("<b>Absorbance (Oxidized, 0.1%):</b>"), 2, 2)
+                self.absorbance_oxidized_display = QLineEdit(); self.absorbance_oxidized_display.setReadOnly(True)
+                self.absorbance_oxidized_display.setToolTip("Calculated as (Ext. Coeff. Oxidized) / (Molecular Weight).")
+                props_layout.addWidget(self.absorbance_oxidized_display, 2, 3)
+
+                props_layout.setColumnStretch(1, 1); props_layout.setColumnStretch(3, 1)
+                analysis_layout.addLayout(props_layout)
+                main_layout.addWidget(analysis_group, 1)
+
+                # --- Group 3: Fragment Modeling Parameters (Interactive) ---
+                params_group = QGroupBox("3. Fragment Modeling Parameters")
+                params_layout = QGridLayout(params_group)
+                params_layout.addWidget(QLabel("Base Protein MW (Da):"), 0, 0)
+                self.base_protein_mw_input_da = QLineEdit()
+                self.base_protein_mw_input_da.setValidator(QDoubleValidator(0, 2000000, 2, self))
+                self.base_protein_mw_input_da.setPlaceholderText("e.g., 44324.55 (Editable)")
+                self.base_protein_mw_input_da.textChanged.connect(self._on_mw_da_changed)
+                params_layout.addWidget(self.base_protein_mw_input_da, 0, 1, 1, 3)
+                
+                params_layout.addWidget(QLabel("Avg. Glycan Mass (kDa):"), 1, 0)
+                glycan_layout = QHBoxLayout(); self.glycan_type_combo = QComboBox(); self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
                 self.glycan_type_combo.currentTextChanged.connect(self._on_glycan_type_selected)
                 self.glycan_mass_input = QLineEdit(str(self.glycan_mass) if self.glycan_mass > 0 else "")
-                self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self))
-                self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
-                self.glycan_mass_input.textChanged.connect(self.update_potential_fragments)
-                self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
-                glycan_layout.addWidget(self.glycan_type_combo, 1)
-                glycan_layout.addWidget(self.glycan_mass_input, 1)
-                form_layout.addLayout(glycan_layout, 4, 1)
-
-                form_layout.addWidget(QLabel("Number of Glycans to Model:"), 5, 0)
-                self.num_glycans_spinbox = QSpinBox()
-                self.num_glycans_spinbox.setRange(0, 50)
-                self.num_glycans_spinbox.setToolTip("Manually set the number of glycans to calculate potential masses for.")
-                self.num_glycans_spinbox.valueChanged.connect(self.update_potential_fragments)
-                form_layout.addWidget(self.num_glycans_spinbox, 5, 1)
-
-                form_layout.addWidget(QLabel("Number of Oligomers to Model:"), 6, 0)
-                self.num_oligomers_spinbox = QSpinBox()
-                self.num_oligomers_spinbox.setRange(1, 10)
-                self.num_oligomers_spinbox.setValue(self.num_oligomers_to_model)
-                self.num_oligomers_spinbox.setToolTip("Set the number of oligomeric states to calculate (e.g., 2 for monomer and dimer).")
-                self.num_oligomers_spinbox.valueChanged.connect(self.update_potential_fragments)
-                form_layout.addWidget(self.num_oligomers_spinbox, 6, 1)
-
-                form_layout.addWidget(QLabel("Potential Fragments (kDa):"), 7, 0, Qt.AlignTop)
-                self.potential_fragments_text = QTextEdit()
-                self.potential_fragments_text.setReadOnly(True)
-                self.potential_fragments_text.setFixedHeight(120)
-                self.potential_fragments_text.setFont(readable_font)
-                form_layout.addWidget(self.potential_fragments_text, 7, 1)
-
-                main_layout.addLayout(form_layout)
+                self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self)); self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
+                self.glycan_mass_input.textChanged.connect(self.update_potential_fragments); self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
+                glycan_layout.addWidget(self.glycan_type_combo, 1); glycan_layout.addWidget(self.glycan_mass_input, 1)
+                params_layout.addLayout(glycan_layout, 1, 1, 1, 3)
                 
-                # --- NEW: Import/Export Buttons ---
-                io_layout = QHBoxLayout()
-                self.export_button = QPushButton("Export Analysis")
-                self.export_button.setToolTip("Save all current analysis data to a text file.")
-                self.export_button.clicked.connect(self._export_data)
-                self.load_button = QPushButton("Load Analysis")
-                self.load_button.setToolTip("Load a previously saved analysis text file.")
-                self.load_button.clicked.connect(self._load_data)
-                io_layout.addWidget(self.load_button)
-                io_layout.addWidget(self.export_button)
-                io_layout.addStretch()
-                main_layout.addLayout(io_layout)
-                # --- END NEW ---
+                params_layout.addWidget(QLabel("Number of Glycans:"), 2, 0)
+                self.num_glycans_spinbox = QSpinBox(); self.num_glycans_spinbox.setRange(0, 50)
+                self.num_glycans_spinbox.valueChanged.connect(self.update_potential_fragments)
+                params_layout.addWidget(self.num_glycans_spinbox, 2, 1)
 
+                params_layout.addWidget(QLabel("Number of Oligomers:"), 2, 2)
+                self.num_oligomers_spinbox = QSpinBox(); self.num_oligomers_spinbox.setRange(1, 10); self.num_oligomers_spinbox.setValue(self.num_oligomers_to_model)
+                self.num_oligomers_spinbox.valueChanged.connect(self.update_potential_fragments)
+                params_layout.addWidget(self.num_oligomers_spinbox, 2, 3)
+                main_layout.addWidget(params_group)
+
+                output_group = QGroupBox("4. Calculated Potential Fragments")
+                output_layout = QVBoxLayout(output_group)
+                self.potential_fragments_text = QTextEdit(); self.potential_fragments_text.setReadOnly(True); self.potential_fragments_text.setFixedHeight(120)
+                self.potential_fragments_text.setFont(readable_font)
+                output_layout.addWidget(self.potential_fragments_text)
+                main_layout.addWidget(output_group)
+                
+                io_layout = QHBoxLayout()
+                self.export_button = QPushButton("Export Analysis"); self.export_button.clicked.connect(self._export_data)
+                self.load_button = QPushButton("Load Analysis"); self.load_button.clicked.connect(self._load_data)
+                io_layout.addWidget(self.load_button); io_layout.addWidget(self.export_button); io_layout.addStretch()
+                main_layout.addLayout(io_layout)
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                button_box.accepted.connect(self.accept)
-                button_box.rejected.connect(self.reject)
+                button_box.accepted.connect(self.accept); button_box.rejected.connect(self.reject)
                 main_layout.addWidget(button_box)
 
-                if self.sequence:
-                    self._analyze_sequence()
-            
+                if self.sequence: self._analyze_sequence()
+                if self.base_mw > 0: self.base_protein_mw_input_da.setText(f"{(self.base_mw * 1000):.2f}")
+
+            def _on_mw_da_changed(self, text):
+                if self.base_protein_mw_input_da.signalsBlocked(): return
+                self.update_potential_fragments()
+
             def _format_sequence_with_numbers(self, sequence, line_length=50):
-                """Formats a sequence into blocks of 10 with start/end numbers."""
-                output = []
-                for i in range(0, len(sequence), line_length):
+                output = []; i = 0
+                while i < len(sequence):
                     chunk = sequence[i:i+line_length]
-                    start_pos = i + 1
-                    end_pos = i + len(chunk)
+                    start_pos = i + 1; end_pos = i + len(chunk)
                     grouped_chunk = " ".join(chunk[j:j+10] for j in range(0, len(chunk), 10))
                     line = f"{str(start_pos):>6}  {grouped_chunk:<59}  {end_pos:<6}"
-                    output.append(line)
+                    output.append(line); i += line_length
                 return "\n".join(output)
 
             def _analyze_sequence(self):
-                """Calculates MW, Extinction Coefficient, and N-Glycosylation sites from sequence."""
                 self.sequence = self.sequence_entry.toPlainText().strip().upper()
                 if not self.sequence:
-                    self.sequence_analysis_text.setPlainText("Please enter a protein sequence.")
-                    self.base_protein_mw_input.clear()
-                    self.ext_coeff_reduced_display.clear()
-                    self.ext_coeff_oxidized_display.clear()
-                    self.sequence_length_display.clear()
-                    self.num_glycosylation_sites = 0
-                    self.num_glycans_spinbox.setValue(0)
-                    self.update_potential_fragments()
+                    for widget in [self.sequence_analysis_text, self.base_protein_mw_input_da, self.ext_coeff_reduced_display,
+                                   self.ext_coeff_oxidized_display, self.sequence_length_display, self.absorbance_reduced_display,
+                                   self.absorbance_oxidized_display]:
+                        widget.clear()
+                    self.num_glycosylation_sites = 0; self.num_glycans_spinbox.setValue(0); self.update_potential_fragments()
                     return
 
-                total_mass = 0.0; unrecognized_chars = set()
+                total_mass = 18.01528 # Water
                 num_W = self.sequence.count('W'); num_Y = self.sequence.count('Y'); num_C = self.sequence.count('C')
-                for aa in self.sequence:
-                    weight = AMINO_ACID_RESIDUE_WEIGHTS.get(aa)
-                    if weight: total_mass += weight
-                    else: unrecognized_chars.add(aa)
+                for aa in self.sequence: total_mass += AMINO_ACID_RESIDUE_WEIGHTS.get(aa, 0)
                 
-                if unrecognized_chars: print(f"Warning: Unrecognized chars ignored: {', '.join(unrecognized_chars)}")
+                if self.sequence: self.sequence_length_display.setText(f"{len(self.sequence)} residues")
                 
-                total_mass += 18.01528
-                self.sequence_length_display.setText(f"{len(self.sequence)} residues")
-
-                if total_mass > 18.1: self.base_protein_mw_input.setText(f"{(total_mass / 1000.0):.3f}")
-                else: self.base_protein_mw_input.clear()
+                self.base_protein_mw_input_da.blockSignals(True)
+                self.base_protein_mw_input_da.setText(f"{total_mass:.2f}" if total_mass > 18.1 else "")
+                self.base_protein_mw_input_da.blockSignals(False)
 
                 ext_coeff_reduced = (num_W * EXTINCTION_COEFFICIENTS['W']) + (num_Y * EXTINCTION_COEFFICIENTS['Y'])
                 ext_coeff_oxidized = ext_coeff_reduced + ((num_C // 2) * EXTINCTION_COEFFICIENTS['C'])
                 self.ext_coeff_reduced_display.setText(f"{ext_coeff_reduced} M⁻¹cm⁻¹")
                 self.ext_coeff_oxidized_display.setText(f"{ext_coeff_oxidized} M⁻¹cm⁻¹")
-
+                
+                if total_mass > 18.1:
+                    if ext_coeff_reduced > 0:
+                        self.absorbance_reduced_display.setText(f"{(ext_coeff_reduced / total_mass):.3f}")
+                    else: self.absorbance_reduced_display.clear()
+                    if ext_coeff_oxidized > 0:
+                        self.absorbance_oxidized_display.setText(f"{(ext_coeff_oxidized / total_mass):.3f}")
+                    else: self.absorbance_oxidized_display.clear()
+                else:
+                    self.absorbance_reduced_display.clear(); self.absorbance_oxidized_display.clear()
+                
                 try:
                     pattern = re.compile(r'N[^P][ST]')
                     matches = pattern.finditer(self.sequence)
                     locations = [(match.start(), match.group()) for match in matches]
                     self.num_glycosylation_sites = len(locations)
                     self.num_glycans_spinbox.blockSignals(True); self.num_glycans_spinbox.setValue(self.num_glycosylation_sites); self.num_glycans_spinbox.blockSignals(False)
-                    
-                    display_lines = ["<b>Formatted Sequence:</b>"]
-                    display_lines.append(self._format_sequence_with_numbers(self.sequence))
-                    display_lines.append("\n<b>Potential N-Glycosylation Sites:</b>")
-                    
+                    display_lines = ["<b>Formatted Sequence:</b>", self._format_sequence_with_numbers(self.sequence), "\n<b>Potential N-Glycosylation Sites:</b>"]
                     if self.num_glycosylation_sites > 0:
-                        site_lines = [f" - Site at position {loc + 1} (Sequence: {seq})" for loc, seq in locations]
-                        display_lines.extend(site_lines)
+                        display_lines.extend([f" - Site at position {loc + 1} (Sequence: {seq})" for loc, seq in locations])
                         display_lines.append(f"\n<b>Total Potential Sites Found: {self.num_glycosylation_sites}</b>")
-                    else:
-                        display_lines.append(" - None found.")
-                    
+                    else: display_lines.append(" - None found.")
                     self.sequence_analysis_text.setHtml("<br>".join(display_lines))
-                    self.update_potential_fragments()
-                except Exception as e:
-                    self.sequence_analysis_text.setPlainText(f"An error occurred: {e}")
-                    self.num_glycosylation_sites = 0
-                    self.num_glycans_spinbox.setValue(0)
-                    self.update_potential_fragments()
+                except Exception as e: self.sequence_analysis_text.setPlainText(f"An error occurred: {e}")
+                self.update_potential_fragments()
 
             def _on_glycan_type_selected(self, text):
                 mass = GLYCAN_MASSES_KDA.get(text, 0.0)
                 self.glycan_mass_input.blockSignals(True)
                 if mass == -1.0: self.glycan_mass_input.clear(); self.glycan_mass_input.setFocus()
                 elif mass >= 0.0: self.glycan_mass_input.setText(str(mass))
-                self.glycan_mass_input.blockSignals(False)
-                self.update_potential_fragments()
+                self.glycan_mass_input.blockSignals(False); self.update_potential_fragments()
 
             def _on_manual_glycan_mass_edit(self):
                 if not self.glycan_mass_input.signalsBlocked():
@@ -591,15 +572,16 @@ if __name__ == "__main__":
 
             def update_potential_fragments(self):
                 try:
-                    base_mw = float(self.base_protein_mw_input.text())
+                    base_mw_da = float(self.base_protein_mw_input_da.text())
+                    base_mw_kda = base_mw_da / 1000.0
                     glycan_mass = float(self.glycan_mass_input.text())
                     num_glycans_to_calc = self.num_glycans_spinbox.value()
                     num_oligomers_to_calc = self.num_oligomers_spinbox.value()
-                    if base_mw <= 0: raise ValueError
+                    if base_mw_kda <= 0: raise ValueError
                     fragments_text_lines = []
                     oligomer_names = ["Monomer", "Dimer", "Trimer", "Tetramer", "Pentamer", "Hexamer", "Heptamer", "Octamer", "Nonamer", "Decamer"]
                     for j in range(1, num_oligomers_to_calc + 1):
-                        oligomer_base_mw = base_mw * j
+                        oligomer_base_mw = base_mw_kda * j
                         name = oligomer_names[j-1] if j <= len(oligomer_names) else f"{j}-mer"
                         fragments_text_lines.append(f"--- {name} (Base MW: {oligomer_base_mw:.2f} kDa) ---")
                         fragments_text_lines.append(f" + 0 glycans: {oligomer_base_mw:.2f} kDa")
@@ -614,99 +596,69 @@ if __name__ == "__main__":
             def _export_data(self):
                 default_filename = f"Protein_Analysis_{datetime.datetime.now():%Y%m%d_%H%M%S}.txt"
                 file_path, _ = QFileDialog.getSaveFileName(self, "Export Analysis Data", default_filename, "Text Files (*.txt)")
-
                 if not file_path: return
-
                 try:
-                    content = []
-                    content.append(f"PROTEIN ANALYSIS REPORT")
-                    content.append(f"Generated: {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n")
-
-                    content.append("--- INPUT SEQUENCE ---")
-                    content.append(self.sequence_entry.toPlainText() + "\n")
-
-                    content.append("--- SEQUENCE ANALYSIS ---")
-                    content.append(self.sequence_analysis_text.toPlainText() + "\n")
-
-                    content.append("--- PHYSICOCHEMICAL PROPERTIES ---")
-                    content.append(f"Sequence Length: {self.sequence_length_display.text()}")
-                    content.append(f"Base Protein MW (kDa): {self.base_protein_mw_input.text()}")
-                    content.append(f"Ext. Coeff. (Reduced Cys): {self.ext_coeff_reduced_display.text()}")
-                    content.append(f"Ext. Coeff. (Oxidized Cys): {self.ext_coeff_oxidized_display.text()}\n")
-
-                    content.append("--- GLYCOSYLATION & OLIGOMERIZATION PARAMETERS ---")
-                    content.append(f"Selected Glycan Type: {self.glycan_type_combo.currentText()}")
-                    content.append(f"Avg. Glycan Mass (kDa): {self.glycan_mass_input.text()}")
-                    content.append(f"Number of Glycans to Model: {self.num_glycans_spinbox.value()}")
-                    content.append(f"Number of Oligomers to Model: {self.num_oligomers_spinbox.value()}\n")
-
-                    content.append("--- CALCULATED POTENTIAL FRAGMENTS ---")
-                    content.append(self.potential_fragments_text.toPlainText())
-
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.write("\n".join(content))
-                    
+                    content = [f"PROTEIN ANALYSIS REPORT", f"Generated: {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n"]
+                    content.extend(["--- INPUT SEQUENCE ---", self.sequence_entry.toPlainText() + "\n"])
+                    content.extend(["--- SEQUENCE ANALYSIS ---", self.sequence_analysis_text.toPlainText() + "\n"])
+                    content.extend(["--- PHYSICOCHEMICAL PROPERTIES ---",
+                                    f"Sequence Length: {self.sequence_length_display.text()}",
+                                    f"Molecular Weight (Da): {self.base_protein_mw_input_da.text()}",
+                                    f"Ext. Coeff. (Reduced): {self.ext_coeff_reduced_display.text()}",
+                                    f"Ext. Coeff. (Oxidized): {self.ext_coeff_oxidized_display.text()}",
+                                    f"Absorbance (Reduced, 0.1%): {self.absorbance_reduced_display.text()}",
+                                    f"Absorbance (Oxidized, 0.1%): {self.absorbance_oxidized_display.text()}\n"])
+                    content.extend(["--- FRAGMENT MODELING PARAMETERS ---",
+                                    f"Selected Glycan Type: {self.glycan_type_combo.currentText()}",
+                                    f"Avg. Glycan Mass (kDa): {self.glycan_mass_input.text()}",
+                                    f"Number of Glycans to Model: {self.num_glycans_spinbox.value()}",
+                                    f"Number of Oligomers to Model: {self.num_oligomers_spinbox.value()}\n"])
+                    content.extend(["--- CALCULATED POTENTIAL FRAGMENTS ---", self.potential_fragments_text.toPlainText()])
+                    with open(file_path, 'w', encoding='utf-8') as f: f.write("\n".join(content))
                     QMessageBox.information(self, "Success", f"Analysis data exported successfully to:\n{file_path}")
-
-                except Exception as e:
-                    QMessageBox.critical(self, "Export Error", f"Failed to export data: {e}")
+                except Exception as e: QMessageBox.critical(self, "Export Error", f"Failed to export data: {e}")
 
             def _load_data(self):
                 file_path, _ = QFileDialog.getOpenFileName(self, "Load Analysis Data", "", "Text Files (*.txt)")
                 if not file_path: return
-
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-
-                    # Use regex to find content between headers
+                    with open(file_path, 'r', encoding='utf-8') as f: content = f.read()
                     def get_section(header, text):
                         match = re.search(f"--- {header} ---\n(.*?)\n---", text, re.DOTALL)
                         return match.group(1).strip() if match else ""
-                    
                     def get_line_value(key, text):
                         match = re.search(f"^{re.escape(key)}: (.*)", text, re.MULTILINE)
                         return match.group(1).strip() if match else ""
-
-                    # Parse sections
                     sequence = get_section("INPUT SEQUENCE", content)
+                    params_section = get_section("FRAGMENT MODELING PARAMETERS", content)
+                    if not params_section: params_section = get_section("GLYCOSYLATION & OLIGOMERIZATION PARAMETERS", content) # Backward compatibility
                     props_section = get_section("PHYSICOCHEMICAL PROPERTIES", content)
-                    params_section = get_section("GLYCOSYLATION & OLIGOMERIZATION PARAMETERS", content)
                     
-                    # Populate UI
                     self.sequence_entry.setText(sequence)
-                    
-                    base_mw = get_line_value("Base Protein MW (kDa)", props_section)
-                    self.base_protein_mw_input.setText(base_mw)
-                    
+                    base_mw = get_line_value("Molecular Weight (Da)", props_section)
+                    self.base_protein_mw_input_da.setText(base_mw)
                     glycan_type = get_line_value("Selected Glycan Type", params_section)
                     glycan_mass = get_line_value("Avg. Glycan Mass (kDa)", params_section)
                     num_glycans = get_line_value("Number of Glycans to Model", params_section)
                     num_oligomers = get_line_value("Number of Oligomers to Model", params_section)
                     
                     self.glycan_type_combo.setCurrentText(glycan_type)
-                    # Setting glycan mass might auto-set combo to Custom, which is fine
                     self.glycan_mass_input.setText(glycan_mass) 
-                    
                     self.num_glycans_spinbox.setValue(int(num_glycans) if num_glycans.isdigit() else 0)
                     self.num_oligomers_spinbox.setValue(int(num_oligomers) if num_oligomers.isdigit() else 1)
-                    
-                    # Re-run analysis to populate all fields and calculations
                     self._analyze_sequence()
                     QMessageBox.information(self, "Success", "Analysis data loaded successfully.")
-
-                except Exception as e:
-                    QMessageBox.critical(self, "Load Error", f"Failed to parse analysis file: {e}")
+                except Exception as e: QMessageBox.critical(self, "Load Error", f"Failed to parse analysis file: {e}")
 
             def get_results(self):
-                try: base_mw = float(self.base_protein_mw_input.text())
-                except ValueError: base_mw = 0.0
+                try: base_mw_da = float(self.base_protein_mw_input_da.text())
+                except ValueError: base_mw_da = 0.0
                 try: glycan_mass = float(self.glycan_mass_input.text())
                 except ValueError: glycan_mass = 0.0
-
                 return {
                     "sequence": self.sequence_entry.toPlainText().strip(),
-                    "base_mw": base_mw, "glycan_mass": glycan_mass, "sites": self.num_glycosylation_sites,
+                    "base_mw": base_mw_da / 1000.0,
+                    "glycan_mass": glycan_mass, "sites": self.num_glycosylation_sites,
                     "glycans_to_use": self.num_glycans_spinbox.value(),
                     "oligomers_to_use": self.num_oligomers_spinbox.value()
                 }
