@@ -389,10 +389,10 @@ if __name__ == "__main__":
 
                 # --- Setup UI ---
                 main_layout = QVBoxLayout(self)
-                readable_font = QFont("Courier New", 10)
+                readable_font = QFont("Courier New", 12)
 
                 # --- Group 1: Sequence Input ---
-                input_group = QGroupBox("1. Protein Sequence Input")
+                input_group = QGroupBox("Protein Sequence Input")
                 input_layout = QGridLayout(input_group)
                 self.sequence_entry = QTextEdit(self.sequence)
                 self.sequence_entry.setPlaceholderText("Paste your protein sequence here (e.g., MNAEFGT...).")
@@ -406,7 +406,7 @@ if __name__ == "__main__":
                 main_layout.addWidget(input_group)
 
                 # --- Group 2: Analysis Results (Read-Only) ---
-                analysis_group = QGroupBox("2. Sequence Analysis Results")
+                analysis_group = QGroupBox("Sequence Analysis Results")
                 analysis_layout = QVBoxLayout(analysis_group)
                 self.sequence_analysis_text = QTextEdit()
                 self.sequence_analysis_text.setReadOnly(True)
@@ -445,7 +445,7 @@ if __name__ == "__main__":
                 main_layout.addWidget(analysis_group, 1)
 
                 # --- Group 3: Fragment Modeling Parameters (Interactive) ---
-                params_group = QGroupBox("3. Fragment Modeling Parameters")
+                params_group = QGroupBox("Fragment Modeling Parameters")
                 params_layout = QGridLayout(params_group)
                 params_layout.addWidget(QLabel("Base Protein MW (Da):"), 0, 0)
                 self.base_protein_mw_input_da = QLineEdit()
@@ -474,7 +474,7 @@ if __name__ == "__main__":
                 params_layout.addWidget(self.num_oligomers_spinbox, 2, 3)
                 main_layout.addWidget(params_group)
 
-                output_group = QGroupBox("4. Calculated Potential Fragments")
+                output_group = QGroupBox("Calculated Potential Fragments")
                 output_layout = QVBoxLayout(output_group)
                 self.potential_fragments_text = QTextEdit(); self.potential_fragments_text.setReadOnly(True); self.potential_fragments_text.setFixedHeight(120)
                 self.potential_fragments_text.setFont(readable_font)
@@ -1259,51 +1259,38 @@ if __name__ == "__main__":
                 self.percent_precision_factor = 100.0
                 self.scale_precision_factor = 10.0
         
-                # Sliders for global adjustments (Shift, Scale, Font Scale)
-                # Each slider's valueChanged signal triggers _update_global_adjustments
-                # A second connection updates the percentage label for immediate feedback.
-                # ... (Slider creation logic is unchanged and correct) ...
-                # Absolute X Shift
+                # ... (Slider creation logic remains unchanged) ...
                 global_adjust_layout.addWidget(QLabel("Shift X (% Img W):"), 0, 0)
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
-                self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor))
-                self.abs_x_shift_slider.setValue(0)
+                self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_x_shift_slider.setValue(0)
                 self.abs_x_shift_slider.valueChanged.connect(self._update_global_adjustments)
                 self.abs_x_shift_label = QLabel("0.00%"); self.abs_x_shift_label.setFixedSize(80, 20)
                 self.abs_x_shift_slider.valueChanged.connect(lambda val: self.abs_x_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1); global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
-                # Absolute Y Shift
                 global_adjust_layout.addWidget(QLabel("Shift Y (% Img H):"), 1, 0)
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
-                self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor))
-                self.abs_y_shift_slider.setValue(0)
+                self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_y_shift_slider.setValue(0)
                 self.abs_y_shift_slider.valueChanged.connect(self._update_global_adjustments)
                 self.abs_y_shift_label = QLabel("0.00%"); self.abs_y_shift_label.setFixedSize(80, 20)
                 self.abs_y_shift_slider.valueChanged.connect(lambda val: self.abs_y_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1); global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
-                # Relative X Scale
                 global_adjust_layout.addWidget(QLabel("Scale X (%):"), 2, 0)
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
-                self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor))
-                self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
+                self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_x_scale_slider.valueChanged.connect(self._update_global_adjustments)
                 self.rel_x_scale_label = QLabel("100.0%"); self.rel_x_scale_label.setFixedSize(80, 20)
                 self.rel_x_scale_slider.valueChanged.connect(lambda val: self.rel_x_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1); global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
-                # Relative Y Scale
                 global_adjust_layout.addWidget(QLabel("Scale Y (%):"), 3, 0)
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
-                self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor))
-                self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
+                self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_y_scale_slider.valueChanged.connect(self._update_global_adjustments)
                 self.rel_y_scale_label = QLabel("100.0%"); self.rel_y_scale_label.setFixedSize(80, 20)
                 self.rel_y_scale_slider.valueChanged.connect(lambda val: self.rel_y_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1); global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
-                # Font Scale
                 global_adjust_layout.addWidget(QLabel("Font Scale (%):"), 4, 0)
                 self.font_scale_slider = QSlider(Qt.Horizontal)
-                self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor))
-                self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
+                self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.font_scale_slider.valueChanged.connect(self._update_global_adjustments)
                 self.font_scale_label = QLabel("100.0%"); self.font_scale_label.setFixedSize(80, 20)
                 self.font_scale_slider.valueChanged.connect(lambda val: self.font_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
@@ -1314,8 +1301,10 @@ if __name__ == "__main__":
         
                 # --- Table Widget ---
                 self.table_widget = QTableWidget()
-                self.table_widget.setColumnCount(8)
-                self.table_widget.setHorizontalHeaderLabels(["Type", "Text/Label", "Coordinates", "Style", "Bold", "Italic", "Color", "Actions"])
+                # --- FIX: Increase column count and update headers ---
+                self.table_widget.setColumnCount(9)
+                self.table_widget.setHorizontalHeaderLabels(["Type", "Text/Label", "Coordinates", "Font", "Size", "Bold", "Italic", "Color", "Actions"])
+                # --- END FIX ---
                 self.table_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
                 self.table_widget.setSelectionMode(QAbstractItemView.SingleSelection)
                 self.table_widget.setEditTriggers(QAbstractItemView.AnyKeyPressed | QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
@@ -1367,135 +1356,144 @@ if __name__ == "__main__":
                 self.table_widget.setSortingEnabled(False)
                 self.table_widget.clearContents()
                 self.table_widget.setRowCount(len(self.markers) + len(self.shapes))
+                standard_table_font = QFont("Arial", 12)
 
-                # --- Define a standard font for the table display ---
-                standard_table_font = QFont("Arial", 12) # A good, readable default
-
-                # --- Populate Markers ---
+                # --- Populate Markers (Unchanged) ---
                 for i, marker_data in enumerate(self.markers):
                     x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data
                     
-                    # --- Create Table Items ---
                     type_item = QTableWidgetItem("Marker")
                     type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': i})
-                    
                     text_item = QTableWidgetItem(text)
-                    text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
-                    
                     coord_item = QTableWidgetItem(f"{x:.1f},{y:.1f}")
-                    coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
-                    
-                    # Display the marker's actual style as text, but don't apply it to the cell
-                    style_item = QTableWidgetItem(f"{font_family} ({font_size}pt)")
-                    style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
-                    
-                    # --- Apply the standard font to all items ---
-                    items_to_set = [type_item, text_item, coord_item, style_item]
+                    size_item = QTableWidgetItem(str(font_size))
+
+                    items_to_set = [type_item, text_item, coord_item, size_item]
                     for col, item in enumerate(items_to_set):
-                        item.setFont(standard_table_font) # Use the standard font
-                        self.table_widget.setItem(i, col, item)
-                    
-                    # --- Checkboxes ---
-                    bold_checkbox = QCheckBox()
-                    bold_checkbox.setChecked(is_bold)
-                    bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
+                        item.setFont(standard_table_font)
+                        if col in [1, 2, 3]: # Text, Coords, Size are editable
+                            item.setFlags(item.flags() | Qt.ItemIsEditable)
+                        
+                        target_col = col if col < 3 else 4 # Skip col 3 (Font widget), go to col 4 (Size)
+                        self.table_widget.setItem(i, target_col, item)
+
+                    font_combo = QFontComboBox()
+                    font_combo.setCurrentFont(QFont(font_family))
+                    font_combo.currentFontChanged.connect(self.handle_marker_style_changed_from_widget)
+                    self.table_widget.setCellWidget(i, 3, font_combo)
+
+                    bold_checkbox = QCheckBox(); bold_checkbox.setChecked(is_bold)
+                    bold_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_widget)
                     cell_widget_bold = QWidget(); layout_bold = QHBoxLayout(cell_widget_bold); layout_bold.addWidget(bold_checkbox); layout_bold.setAlignment(Qt.AlignCenter); layout_bold.setContentsMargins(0,0,0,0)
-                    self.table_widget.setCellWidget(i, 4, cell_widget_bold)
+                    self.table_widget.setCellWidget(i, 5, cell_widget_bold)
 
-                    italic_checkbox = QCheckBox()
-                    italic_checkbox.setChecked(is_italic)
-                    italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_checkbox)
+                    italic_checkbox = QCheckBox(); italic_checkbox.setChecked(is_italic)
+                    italic_checkbox.stateChanged.connect(self.handle_marker_style_changed_from_widget)
                     cell_widget_italic = QWidget(); layout_italic = QHBoxLayout(cell_widget_italic); layout_italic.addWidget(italic_checkbox); layout_italic.setAlignment(Qt.AlignCenter); layout_italic.setContentsMargins(0,0,0,0)
-                    self.table_widget.setCellWidget(i, 5, cell_widget_italic)
+                    self.table_widget.setCellWidget(i, 6, cell_widget_italic)
 
-                    # --- Color cell ---
                     color_item = QTableWidgetItem(qcolor.name())
-                    color_item.setBackground(QBrush(qcolor))
-                    color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
-                    color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
-                    color_item.setFont(standard_table_font) # Use the standard font here too
-                    self.table_widget.setItem(i, 6, color_item)
+                    color_item.setBackground(QBrush(qcolor)); color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
+                    color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable); color_item.setFont(standard_table_font)
+                    self.table_widget.setItem(i, 7, color_item)
                     
-                    # --- Delete button ---
-                    delete_button = QPushButton("Delete")
-                    delete_button.clicked.connect(self.delete_item)
-                    self.table_widget.setCellWidget(i, 7, delete_button)
+                    delete_button = QPushButton("Delete"); delete_button.clicked.connect(self.delete_item)
+                    self.table_widget.setCellWidget(i, 8, delete_button)
 
-                # --- Populate Shapes (This part remains unchanged as it doesn't use variable fonts) ---
+                # --- Populate Shapes (Modified) ---
                 marker_count = len(self.markers)
                 for i, shape_data in enumerate(self.shapes):
                     row_idx = marker_count + i
                     shape_type = shape_data.get('type', 'Unknown').capitalize()
                     type_item = QTableWidgetItem(shape_type); type_item.setData(Qt.UserRole, {'type': 'shape', 'original_index': i})
+                    
+                    # Text column unused for shapes
                     text_item = QTableWidgetItem(""); text_item.setFlags(text_item.flags() & ~Qt.ItemIsEditable)
+                    
+                    # Coordinates
                     details_str, tooltip_str = "", ""
                     if shape_type == 'Line':
                         start, end = shape_data.get('start', (0,0)), shape_data.get('end', (0,0))
-                        details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"
-                        tooltip_str = "Edit format: X1,Y1,X2,Y2"
+                        details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"; tooltip_str = "Edit format: X1,Y1,X2,Y2"
                     elif shape_type == 'Rectangle':
                         x, y, w, h = shape_data.get('rect', (0,0,0,0))
-                        details_str = f"{x:.1f},{y:.1f},{w:.1f},{h:.1f}"
-                        tooltip_str = "Edit format: X,Y,Width,Height"
+                        details_str = f"{x:.1f},{y:.1f},{w:.1f},{h:.1f}"; tooltip_str = "Edit format: X,Y,Width,Height"
                     coord_item = QTableWidgetItem(details_str); coord_item.setToolTip(tooltip_str)
-                    if shape_type in ['Line', 'Rectangle']: coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
+                    coord_item.setFlags(coord_item.flags() | Qt.ItemIsEditable)
+
+                    # Col 3 (Font) - Placeholder for shapes
+                    font_item = QTableWidgetItem("Shape"); font_item.setFlags(font_item.flags() & ~Qt.ItemIsEditable)
+
+                    # --- FIX: Col 4 (Size) - Thickness, editable ---
                     thickness = int(shape_data.get('thickness', 1))
-                    style_item = QTableWidgetItem(f"{thickness}px"); style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
+                    size_item = QTableWidgetItem(str(thickness))
+                    size_item.setFlags(size_item.flags() | Qt.ItemIsEditable)
+                    # --- END FIX ---
+
+                    # Color
                     qcolor = QColor(shape_data.get('color', '#000000'))
                     color_item = QTableWidgetItem(qcolor.name()); color_item.setBackground(QBrush(qcolor))
                     color_item.setForeground(QBrush(Qt.white if qcolor.lightness() < 128 else Qt.black))
                     color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
                     
-                    # Apply standard font to shape rows as well for consistency
-                    shape_items_to_set = [type_item, text_item, coord_item, style_item, color_item]
-                    for item in shape_items_to_set:
-                        if item: item.setFont(standard_table_font)
-
-                    self.table_widget.setItem(row_idx, 0, type_item)
-                    self.table_widget.setItem(row_idx, 1, text_item)
-                    self.table_widget.setItem(row_idx, 2, coord_item)
-                    self.table_widget.setItem(row_idx, 3, style_item)
-                    self.table_widget.setItem(row_idx, 6, color_item)
+                    # Set items and fonts
+                    items_to_set = [(0, type_item), (1, text_item), (2, coord_item), (3, font_item), (4, size_item), (7, color_item)]
+                    for c_idx, item in items_to_set:
+                        item.setFont(standard_table_font)
+                        self.table_widget.setItem(row_idx, c_idx, item)
                     
                     delete_button = QPushButton("Delete"); delete_button.clicked.connect(self.delete_item)
-                    self.table_widget.setCellWidget(row_idx, 7, delete_button)
+                    self.table_widget.setCellWidget(row_idx, 8, delete_button)
 
                 self.table_widget.resizeColumnsToContents()
                 self.table_widget.setSortingEnabled(True)
                 self._block_signals = False
         
-            def handle_marker_style_changed_from_checkbox(self, state):
-                """Updates the data model when a checkbox is clicked, then repopulates the table."""
+            def handle_marker_style_changed_from_widget(self):
+                """Unified handler for font combobox and style checkboxes."""
                 if self._block_signals: return
         
-                sender_checkbox = self.sender()
-                if not isinstance(sender_checkbox, QCheckBox): return
+                sender_widget = self.sender()
+                if not sender_widget: return
         
-                # Find the row of the clicked checkbox
                 for row in range(self.table_widget.rowCount()):
-                    is_bold_checkbox = self.table_widget.cellWidget(row, 4) and sender_checkbox is self.table_widget.cellWidget(row, 4).findChild(QCheckBox)
-                    is_italic_checkbox = self.table_widget.cellWidget(row, 5) and sender_checkbox is self.table_widget.cellWidget(row, 5).findChild(QCheckBox)
-        
-                    if is_bold_checkbox or is_italic_checkbox:
+                    # Check if the sender is a widget in the current row
+                    font_widget = self.table_widget.cellWidget(row, 3)
+                    bold_widget = self.table_widget.cellWidget(row, 5)
+                    italic_widget = self.table_widget.cellWidget(row, 6)
+                    
+                    is_font_combo = (isinstance(font_widget, QFontComboBox) and sender_widget is font_widget)
+                    is_bold_checkbox = (bold_widget and sender_widget is bold_widget.findChild(QCheckBox))
+                    is_italic_checkbox = (italic_widget and sender_widget is italic_widget.findChild(QCheckBox))
+
+                    if is_font_combo or is_bold_checkbox or is_italic_checkbox:
                         type_item = self.table_widget.item(row, 0)
                         if not type_item: return
         
                         item_data = type_item.data(Qt.UserRole)
                         if not item_data or item_data.get('type') != 'marker': return
-        
-                        original_marker_index = item_data.get('original_index')
-                        if original_marker_index is None: return
-        
-                        # Update the data model
-                        is_checked = (state == Qt.Checked)
-                        idx_to_change = 6 if is_bold_checkbox else 7
-                        self.markers[original_marker_index][idx_to_change] = is_checked
                         
-                        temp_list = list(self._original_markers_data[original_marker_index])
-                        temp_list[idx_to_change] = is_checked
-                        self._original_markers_data[original_marker_index] = tuple(temp_list)
-        
-                        # Repopulate the table to reflect the change visually
+                        original_marker_index = item_data.get('original_index')
+                        if original_marker_index is None or not (0 <= original_marker_index < len(self.markers)): return
+                        
+                        # --- Update the data model based on which widget sent the signal ---
+                        if is_font_combo:
+                            new_font_family = sender_widget.currentFont().family()
+                            self.markers[original_marker_index][4] = new_font_family
+                            temp_list = list(self._original_markers_data[original_marker_index]); temp_list[4] = new_font_family
+                            self._original_markers_data[original_marker_index] = tuple(temp_list)
+                        elif is_bold_checkbox:
+                            is_checked = sender_widget.isChecked()
+                            self.markers[original_marker_index][6] = is_checked
+                            temp_list = list(self._original_markers_data[original_marker_index]); temp_list[6] = is_checked
+                            self._original_markers_data[original_marker_index] = tuple(temp_list)
+                        elif is_italic_checkbox:
+                            is_checked = sender_widget.isChecked()
+                            self.markers[original_marker_index][7] = is_checked
+                            temp_list = list(self._original_markers_data[original_marker_index]); temp_list[7] = is_checked
+                            self._original_markers_data[original_marker_index] = tuple(temp_list)
+                        
+                        # --- FIX: Repopulate the table to ensure UI consistency ---
                         self.populate_table()
                         self.global_markers_adjusted.emit(list(self.markers))
                         return
@@ -1505,76 +1503,83 @@ if __name__ == "__main__":
                 if self._block_signals: return
         
                 row, col = item.row(), item.column()
-                item_data = self.table_widget.item(row, 0).data(Qt.UserRole)
+                type_item = self.table_widget.item(row, 0)
+                if not type_item: return
+                item_data = type_item.data(Qt.UserRole)
                 if not item_data or item_data['type'] == 'error': return
                 
                 item_type, original_index = item_data['type'], item_data['original_index']
                 new_value = item.text()
                 
-                # ... (Marker text/coord update logic is unchanged and correct) ...
                 if item_type == 'marker':
+                    # ... (Marker editing logic remains unchanged) ...
                     if col == 1: # Text/Label
-                        self.markers[original_index][2] = new_value
-                        temp_list = list(self._original_markers_data[original_index]); temp_list[2] = new_value; self._original_markers_data[original_index] = tuple(temp_list)
+                        self.markers[original_index][2] = new_value; temp_list = list(self._original_markers_data[original_index]); temp_list[2] = new_value; self._original_markers_data[original_index] = tuple(temp_list)
                     elif col == 2: # Coordinates
                         try:
-                            x_str, y_str = new_value.split(',')
-                            new_x, new_y = float(x_str), float(y_str)
-                            
-                            self.markers[original_index][0] = new_x
-                            self.markers[original_index][1] = new_y
-                            
-                            # Back-calculate to update the pristine data for global sliders
+                            x_str, y_str = new_value.split(','); new_x, new_y = float(x_str), float(y_str)
+                            self.markers[original_index][0] = new_x; self.markers[original_index][1] = new_y
                             abs_x_shift = (self.abs_x_shift_slider.value() / self.percent_precision_factor / 100.0) * self._current_image_width
                             abs_y_shift = (self.abs_y_shift_slider.value() / self.percent_precision_factor / 100.0) * self._current_image_height
-                            rel_x_scale = self.rel_x_scale_slider.value() / self.scale_precision_factor / 100.0
-                            rel_y_scale = self.rel_y_scale_slider.value() / self.scale_precision_factor / 100.0
-                            
-                            base_x = (new_x - abs_x_shift) / rel_x_scale if rel_x_scale != 0 else new_x
-                            base_y = (new_y - abs_y_shift) / rel_y_scale if rel_y_scale != 0 else new_y
-        
-                            temp_list = list(self._original_markers_data[original_index])
-                            temp_list[0], temp_list[1] = base_x, base_y
-                            self._original_markers_data[original_index] = tuple(temp_list)
-        
+                            rel_x_scale = self.rel_x_scale_slider.value() / self.scale_precision_factor / 100.0; rel_y_scale = self.rel_y_scale_slider.value() / self.scale_precision_factor / 100.0
+                            base_x = (new_x - abs_x_shift) / rel_x_scale if rel_x_scale != 0 else new_x; base_y = (new_y - abs_y_shift) / rel_y_scale if rel_y_scale != 0 else new_y
+                            temp_list = list(self._original_markers_data[original_index]); temp_list[0], temp_list[1] = base_x, base_y; self._original_markers_data[original_index] = tuple(temp_list)
                         except ValueError:
-                            # Revert on error
-                            self._block_signals = True
-                            prev_x, prev_y = self.markers[original_index][0:2]
-                            item.setText(f"{prev_x:.1f},{prev_y:.1f}")
-                            self._block_signals = False
-                            QMessageBox.warning(self, "Invalid Input", "Coordinates must be in 'X,Y' format (e.g., '100.5,250.2').")
+                            self._block_signals = True; prev_x, prev_y = self.markers[original_index][0:2]; item.setText(f"{prev_x:.1f},{prev_y:.1f}"); self._block_signals = False
+                            QMessageBox.warning(self, "Invalid Input", "Coordinates must be in 'X,Y' format.")
+                    elif col == 4: # Size
+                        try:
+                            new_size = int(new_value)
+                            if new_size < 1: new_size = 1
+                            self.markers[original_index][5] = new_size
+                            temp_list = list(self._original_markers_data[original_index]); temp_list[5] = new_size; self._original_markers_data[original_index] = tuple(temp_list)
+                        except ValueError:
+                            self._block_signals = True; item.setText(str(self.markers[original_index][5])); self._block_signals = False
+                            QMessageBox.warning(self, "Invalid Input", "Font size must be an integer.")
                 
-                # --- NEW: Handle editable shape coordinates ---
-                elif item_type == 'shape' and col == 2:
+                elif item_type == 'shape':
                     shape_data = self.shapes[original_index]
-                    shape_type_internal = shape_data.get('type')
-                    try:
-                        coords = [float(c.strip()) for c in new_value.split(',')]
-                        if shape_type_internal == 'line' and len(coords) == 4:
-                            shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
-                        elif shape_type_internal == 'rectangle' and len(coords) == 4:
-                            if coords[2] < 0 or coords[3] < 0: raise ValueError("Width/Height must be non-negative.")
-                            shape_data['rect'] = (coords[0], coords[1], coords[2], coords[3])
-                        else: raise ValueError("Incorrect number of coordinates.")
-                    except ValueError as e:
-                        self._block_signals = True
-                        self.populate_table() # Revert by repopulating
-                        self._block_signals = False
-                        QMessageBox.warning(self, "Invalid Input", f"Could not parse shape coordinates.\nError: {e}")
+                    
+                    if col == 2: # Coordinates
+                        shape_type_internal = shape_data.get('type')
+                        try:
+                            coords = [float(c.strip()) for c in new_value.split(',')]
+                            if shape_type_internal == 'line' and len(coords) == 4: shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
+                            elif shape_type_internal == 'rectangle' and len(coords) == 4:
+                                if coords[2] < 0 or coords[3] < 0: raise ValueError("Width/Height must be non-negative.")
+                                shape_data['rect'] = (coords[0], coords[1], coords[2], coords[3])
+                            else: raise ValueError("Incorrect number of coordinates.")
+                        except ValueError as e:
+                            self._block_signals = True; self.populate_table(); self._block_signals = False
+                            QMessageBox.warning(self, "Invalid Input", f"Could not parse shape coordinates.\nError: {e}")
+                    
+                    # --- FIX: Handle Thickness in Column 4 ---
+                    elif col == 4: # Size/Thickness
+                        try:
+                            new_thickness = int(new_value)
+                            if new_thickness < 1: new_thickness = 1
+                            shape_data['thickness'] = new_thickness
+                        except ValueError:
+                            self._block_signals = True
+                            current_thickness = shape_data.get('thickness', 1)
+                            item.setText(str(current_thickness))
+                            self._block_signals = False
+                            QMessageBox.warning(self, "Invalid Input", "Thickness must be an integer.")
+                    # --- END FIX ---
         
                 self.shapes_adjusted_preview.emit(list(self.shapes))
                 self.global_markers_adjusted.emit(list(self.markers))
         
             def handle_cell_double_clicked(self, row, column):
-                """Handles dialogs for non-text edits (color, font, thickness)."""
-                if column in [1, 2]: return # Let itemChanged handle these
+                """Handles dialogs for non-text edits (color)."""
+                # Let itemChanged handle editable text columns (1, 2, 4), and widgets handle 3, 5, 6
+                if column != 7: return # Only color (col 7) is handled here now
         
                 item_data = self.table_widget.item(row, 0).data(Qt.UserRole)
                 if not item_data or item_data['type'] == 'error': return
                 item_type, original_index = item_data['type'], item_data['original_index']
         
-                if column == 6: # Color
+                if column == 7: # Color
                     current_color = QColor(self.markers[original_index][3] if item_type == 'marker' else self.shapes[original_index]['color'])
                     new_color = QColorDialog.getColor(current_color, self, "Select Color")
                     if new_color.isValid():
@@ -1582,22 +1587,6 @@ if __name__ == "__main__":
                             self.markers[original_index][3] = new_color
                             temp_list = list(self._original_markers_data[original_index]); temp_list[3] = new_color; self._original_markers_data[original_index] = tuple(temp_list)
                         else: self.shapes[original_index]['color'] = new_color.name()
-                        self.populate_table()
-        
-                elif column == 3 and item_type == 'marker': # Marker Font
-                    _x, _y, _text, _qcolor, family, size, bold, italic = self.markers[original_index]
-                    current_font = QFont(family, size); current_font.setBold(bold); current_font.setItalic(italic)
-                    ok, new_font = QFontDialog.getFont(current_font, self)
-                    if ok:
-                        self.markers[original_index][4:8] = [new_font.family(), new_font.pointSize(), new_font.bold(), new_font.italic()]
-                        temp_list = list(self._original_markers_data[original_index]); temp_list[4:8] = self.markers[original_index][4:8]; self._original_markers_data[original_index] = tuple(temp_list)
-                        self.populate_table()
-        
-                elif column == 3 and item_type == 'shape': # Shape Thickness
-                    current_thickness = self.shapes[original_index].get('thickness', 1)
-                    new_thickness, ok = QInputDialog.getInt(self, "Set Thickness", "Enter thickness (pixels):", current_thickness, 1, 100)
-                    if ok:
-                        self.shapes[original_index]['thickness'] = new_thickness
                         self.populate_table()
                 
                 self.shapes_adjusted_preview.emit(list(self.shapes))
@@ -3793,36 +3782,69 @@ if __name__ == "__main__":
                         painter.drawText(QPointF(predict_line_draw_start_x_ls, draw_y_mw_ls), line_symbol)
 
                     # 3. Draw the FINAL oligomer/glyco overlay lines (after dialog OK)
-                    should_draw_oligomer_overlay = (
-                        self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and 
-                        self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and
-                        self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_coeffs is not None
-                    )
+                    should_draw_oligomer_overlay = (self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and 
+                                                    self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and
+                                                    self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_coeffs is not None)
                     if should_draw_oligomer_overlay:
-                        line_colors = [QColor(255, 140, 0, 200), QColor(0, 128, 0, 200), QColor(0, 0, 139, 200), QColor(139, 0, 139, 200)]
-                        text_colors = [Qt.darkRed, Qt.darkGreen, Qt.darkBlue, Qt.darkMagenta]
+                        line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]
+                        text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
 
+                        text_font = QFont("Arial"); text_font.setPointSizeF(max(4.0, 12.0 / self.zoom_level)); text_font.setBold(True)
+                        painter.setFont(text_font); fm_text = QFontMetricsF(text_font)
+                        text_height = fm_text.height(); min_text_spacing = text_height * 1.2
+                        
+                        bands_to_draw = []
                         for i, mw in enumerate(self.app_instance.oligomer_products):
                             y_pos_img = self.app_instance._get_y_pos_from_mw(mw, self.app_instance.last_mw_prediction_coeffs, self.app_instance.last_mw_prediction_min_max_pos)
-                            
                             if y_pos_img is not None:
                                 y_pos_ls = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
-                                
-                                # Draw the line symbol using the unified geometry
-                                painter.setFont(predict_font)
-                                painter.setPen(line_colors[i % len(line_colors)])
-                                line_draw_y_ls = y_pos_ls - (predict_line_rect.top() + predict_line_rect.height() / 2.0)
-                                painter.drawText(QPointF(predict_line_draw_start_x_ls, line_draw_y_ls), line_symbol)
-                                
-                                # Draw the text label
-                                text_font = QFont("Arial"); text_font.setPointSizeF(max(4.0, 10.0 / self.zoom_level)); text_font.setBold(True)
-                                painter.setFont(text_font)
-                                painter.setPen(text_colors[i % len(text_colors)])
-                                text = f"{mw:.1f} kDa"
-                                fm_text = QFontMetricsF(text_font); text_rect = fm_text.boundingRect(text)
-                                text_pos_x = predict_line_draw_start_x_ls + predict_line_rect.width() + (5 / self.zoom_level)
-                                text_pos_y = y_pos_ls - (text_rect.top() + text_rect.height() / 2.0)
-                                painter.drawText(QPointF(text_pos_x, text_pos_y), text)
+                                bands_to_draw.append({'mw': mw, 'y_ls': y_pos_ls, 'color': line_colors[i % len(line_colors)], 'text_color': text_colors[i % len(text_colors)]})
+                        if not bands_to_draw: painter.restore(); return
+                        bands_to_draw.sort(key=lambda b: b['y_ls'])
+
+                        last_text_y = -float('inf')
+                        for band in bands_to_draw:
+                            ideal_text_y = band['y_ls']
+                            if ideal_text_y < last_text_y + min_text_spacing: band['text_y_ls'] = last_text_y + min_text_spacing
+                            else: band['text_y_ls'] = ideal_text_y
+                            last_text_y = band['text_y_ls']
+
+                        arrow_line_width = max(0.8, 2.0 / self.zoom_level)
+                        
+                        for band in bands_to_draw:
+                            pen = QPen(band['color']); pen.setWidthF(arrow_line_width); painter.setPen(pen)
+                            
+                            # --- START OF NEW DRAWING LOGIC ---
+                            # A. Calculate geometry
+                            text = f"{band['mw']:.1f} kDa"
+                            text_rect = fm_text.boundingRect(text)
+                            line_start_x = predict_line_draw_start_x_ls
+                            line_end_x = predict_line_draw_start_x_ls + predict_line_rect.width()
+                            
+                            # Point where the angled line leaves the main band line
+                            callout_start_point = QPointF(line_end_x, band['y_ls'])
+                            
+                            # Point where the angled line meets the horizontal text leader
+                            text_leader_start_x = line_end_x + (40 / self.zoom_level)
+                            callout_bend_point = QPointF(text_leader_start_x, band['text_y_ls'])
+                            
+                            # Point where the text begins
+                            text_start_x = callout_bend_point.x() + (5 / self.zoom_level)
+                            text_draw_y = band['text_y_ls'] - (text_rect.top() + text_rect.height() / 2.0)
+
+                            # B. Draw the main horizontal line over the band
+                            painter.drawLine(QPointF(line_start_x, band['y_ls']), callout_start_point)
+                            
+                            # C. Draw the angled callout line
+                            painter.drawLine(callout_start_point, callout_bend_point)
+                            
+                            # D. Draw the short horizontal leader line next to the text
+                            painter.drawLine(callout_bend_point, QPointF(text_start_x, band['text_y_ls']))
+                            
+                            # E. Draw the text label
+                            painter.setFont(text_font)
+                            painter.setPen(band['text_color'])
+                            painter.drawText(QPointF(text_start_x, text_draw_y), text)
 
                 # --- >>> MODIFICATION IS HERE <<< ---
                 # --- Mode-Specific Previews and Finalized Shapes ---
@@ -4106,6 +4128,9 @@ if __name__ == "__main__":
                 self.image_before_contrast=None
                 self.contrast_applied=False
                 self.image_padded=False
+                self.channel_mixer_data = {'r': 100, 'g': 100, 'b': 100, 'mono': False}
+                self.unsharp_mask_data = {'amount': 0, 'radius': 1.0, 'threshold': 0}
+                self.clahe_data = {'clip_limit': 1.0, 'tile_size': 8}
                 self.predict_size=False
                 self.warped_image=None
                 self.transparency=1
@@ -4217,7 +4242,7 @@ if __name__ == "__main__":
                 
                 # 2. The tab widget for settings (created but not yet placed in a layout)
                 self.tab_widget = QTabWidget()
-                self.tab_widget.addTab(self.font_and_image_tab(), "Image and Font")
+                self.tab_widget.addTab(self.font_and_image_tab(), "Image and Contrast")
                 self.tab_widget.addTab(self.create_cropping_tab(), "Transform")
                 self.tab_widget.addTab(self.create_white_space_tab(), "Padding")
                 self.tab_widget.addTab(self.create_markers_tab(), "Markers")
@@ -6078,11 +6103,7 @@ if __name__ == "__main__":
                 self.tab_widget.setCurrentIndex(tab)
                 
             def save_state(self):
-                """Save the current state of the image, markers, shapes, and relevant UI/font settings."""
-                # Get current state of UI elements related to fonts/colors for custom markers
-                custom_font_family = self.custom_font_type_dropdown.currentText() if hasattr(self, 'custom_font_type_dropdown') else "Arial"
-                custom_font_size = self.custom_font_size_spinbox.value() if hasattr(self, 'custom_font_size_spinbox') else 12
-
+                """Save the current state of the image, markers, shapes, and all adjustment settings."""
                 state = {
                     "image": self.image.copy() if self.image else None,
                     "left_markers": self.left_markers.copy(),
@@ -6093,289 +6114,101 @@ if __name__ == "__main__":
                     "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
                     "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
                     "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
-                    # Standard marker font settings
-                    "font_family": self.font_family,
-                    "font_size": self.font_size,
-                    "font_color": self.font_color, # QColor object is fine for in-memory stack
-                    "font_rotation": self.font_rotation,
-                    # Marker positioning shifts
-                    "left_marker_shift_added": self.left_marker_shift_added,
-                    "right_marker_shift_added": self.right_marker_shift_added,
-                    "top_marker_shift_added": self.top_marker_shift_added,
-                    # Analysis data (keep as before)
-                    "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(),
-                    "quantities": self.quantities.copy(),
-                    "protein_quantities": self.protein_quantities.copy(),
-                    "standard_protein_areas": self.standard_protein_areas.copy(),
-                    # --- NEW: Custom marker font/color states ---
-                    "custom_marker_color": self.custom_marker_color, # QColor object
-                    "custom_font_family": custom_font_family, # String from dropdown
-                    "custom_font_size": custom_font_size,     # Integer from spinbox
-                    # --- END NEW ---
+                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation,
+                    "left_marker_shift_added": self.left_marker_shift_added, "right_marker_shift_added": self.right_marker_shift_added, "top_marker_shift_added": self.top_marker_shift_added,
+                    "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(), "quantities": self.quantities.copy(), "protein_quantities": self.protein_quantities.copy(), "standard_protein_areas": self.standard_protein_areas.copy(),
+                    "custom_marker_color": self.custom_marker_color, 
+                    "custom_font_family": self.custom_font_type_dropdown.currentText(), "custom_font_size": self.custom_font_size_spinbox.value(),
+                    # --- NEW: Save advanced adjustment states ---
+                    "channel_mixer_data": self.channel_mixer_data.copy(),
+                    "unsharp_mask_data": self.unsharp_mask_data.copy(),
+                    "clahe_data": self.clahe_data.copy(),
+                    "black_point": self.black_point_slider.value(), "white_point": self.white_point_slider.value(), "gamma": self.gamma_slider.value()
                 }
                 self.undo_stack.append(state)
-                self.redo_stack.clear() # Clear redo stack on new action
+                self.redo_stack.clear()
+
+            def _restore_state_from_dict(self, state_dict):
+                """Helper to apply a state dictionary to the application."""
+                self.image = state_dict["image"]
+                self.left_markers = state_dict["left_markers"]; self.right_markers = state_dict["right_markers"]; self.top_markers = state_dict["top_markers"]
+                self.custom_markers = state_dict.get("custom_markers", []); self.custom_shapes = state_dict.get("custom_shapes", [])
+                self.image_before_padding = state_dict["image_before_padding"]; self.image_contrasted = state_dict["image_contrasted"]; self.image_before_contrast = state_dict["image_before_contrast"]
+                self.font_family = state_dict["font_family"]; self.font_size = state_dict["font_size"]; self.font_color = state_dict["font_color"]; self.font_rotation = state_dict["font_rotation"]
+                self.left_marker_shift_added = state_dict["left_marker_shift_added"]; self.right_marker_shift_added = state_dict["right_marker_shift_added"]; self.top_marker_shift_added = state_dict["top_marker_shift_added"]
+                self.quantities_peak_area_dict = state_dict["quantities_peak_area_dict"]; self.quantities = state_dict["quantities"]; self.protein_quantities = state_dict["protein_quantities"]; self.standard_protein_areas = state_dict["standard_protein_areas"]
+                self.custom_marker_color = state_dict.get("custom_marker_color", QColor(0,0,0))
+                
+                # --- NEW: Restore advanced adjustments and update sliders ---
+                self.channel_mixer_data = state_dict.get("channel_mixer_data", {'r': 100, 'g': 100, 'b': 100, 'mono': False})
+                self.unsharp_mask_data = state_dict.get("unsharp_mask_data", {'amount': 0, 'radius': 1.0, 'threshold': 0})
+                self.clahe_data = state_dict.get("clahe_data", {'clip_limit': 1.0, 'tile_size': 8})
+                
+                for slider, data, key in [(self.cm_red_slider, self.channel_mixer_data, 'r'), (self.cm_green_slider, self.channel_mixer_data, 'g'), (self.cm_blue_slider, self.channel_mixer_data, 'b')]:
+                    slider.blockSignals(True); slider.setValue(data[key]); slider.blockSignals(False)
+                self.cm_mono_checkbox.blockSignals(True); self.cm_mono_checkbox.setChecked(self.channel_mixer_data['mono']); self.cm_mono_checkbox.blockSignals(False)
+                
+                self.usm_amount_slider.blockSignals(True); self.usm_amount_slider.setValue(self.unsharp_mask_data['amount']); self.usm_amount_slider.blockSignals(False)
+                self.usm_radius_slider.blockSignals(True); self.usm_radius_slider.setValue(int(self.unsharp_mask_data['radius']*10)); self.usm_radius_slider.blockSignals(False)
+                self.usm_threshold_slider.blockSignals(True); self.usm_threshold_slider.setValue(self.unsharp_mask_data['threshold']); self.usm_threshold_slider.blockSignals(False)
+
+                self.clahe_clip_slider.blockSignals(True); self.clahe_clip_slider.setValue(int(self.clahe_data['clip_limit']*10)); self.clahe_clip_slider.blockSignals(False)
+                self.clahe_tile_slider.blockSignals(True); self.clahe_tile_slider.setValue(self.clahe_data['tile_size']); self.clahe_tile_slider.blockSignals(False)
+
+                self.black_point_slider.blockSignals(True); self.black_point_slider.setValue(state_dict.get("black_point", 0)); self.black_point_slider.blockSignals(False)
+                self.white_point_slider.blockSignals(True); self.white_point_slider.setValue(state_dict.get("white_point", self.white_point_slider.maximum())); self.white_point_slider.blockSignals(False)
+                self.gamma_slider.blockSignals(True); self.gamma_slider.setValue(state_dict.get("gamma", 100)); self.gamma_slider.blockSignals(False)
+                # --- END NEW ---
+
+                # Update all other UI elements (this part is long but necessary)
+                self.font_combo_box.blockSignals(True); self.font_combo_box.setCurrentFont(QFont(self.font_family)); self.font_combo_box.blockSignals(False)
+                self.font_size_spinner.blockSignals(True); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.blockSignals(False)
+                self._update_color_button_style(self.font_color_button, self.font_color)
+                self.font_rotation_input.blockSignals(True); self.font_rotation_input.setValue(self.font_rotation); self.font_rotation_input.blockSignals(False)
+                self.left_padding_slider.setValue(self.left_marker_shift_added)
+                self.right_padding_slider.setValue(self.right_marker_shift_added)
+                self.top_padding_slider.setValue(self.top_marker_shift_added)
+                self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
+                self.custom_font_type_dropdown.blockSignals(True); self.custom_font_type_dropdown.setCurrentFont(QFont(state_dict.get("custom_font_family", "Arial"))); self.custom_font_type_dropdown.blockSignals(False)
+                self.custom_font_size_spinbox.blockSignals(True); self.custom_font_size_spinbox.setValue(state_dict.get("custom_font_size", 12)); self.custom_font_size_spinbox.blockSignals(False)
+                
+                self.update_live_view()
             
             def undo_action_m(self):
-                """Undo the last action by restoring the previous state, including font settings."""
+                """Undo the last action by restoring the previous state."""
                 if self.undo_stack:
-                    # Get current state of UI elements before overwriting self attributes
-                    current_custom_font_family = self.custom_font_type_dropdown.currentText() if hasattr(self, 'custom_font_type_dropdown') else "Arial"
-                    current_custom_font_size = self.custom_font_size_spinbox.value() if hasattr(self, 'custom_font_size_spinbox') else 12
-
-                    # Save the current state to the redo stack
-                    current_state = {
-                        "image": self.image.copy() if self.image else None,
-                        "left_markers": self.left_markers.copy(),
-                        "right_markers": self.right_markers.copy(),
-                        "top_markers": self.top_markers.copy(),
-                        "custom_markers": [list(m) for m in getattr(self, "custom_markers", [])],
-                        "custom_shapes": [dict(s) for s in getattr(self, "custom_shapes", [])],
-                        "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
-                        "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
-                        "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
-                        # Standard marker font settings
-                        "font_family": self.font_family,
-                        "font_size": self.font_size,
-                        "font_color": self.font_color,
-                        "font_rotation": self.font_rotation,
-                        # Marker positioning shifts
-                        "left_marker_shift_added": self.left_marker_shift_added,
-                        "right_marker_shift_added": self.right_marker_shift_added,
-                        "top_marker_shift_added": self.top_marker_shift_added,
-                        # Analysis data
-                        "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(),
-                        "quantities": self.quantities.copy(),
-                        "protein_quantities": self.protein_quantities.copy(),
-                        "standard_protein_areas": self.standard_protein_areas.copy(),
-                        # --- NEW: Custom marker font/color states ---
-                        "custom_marker_color": self.custom_marker_color,
-                        "custom_font_family": current_custom_font_family, # Use value read from UI
-                        "custom_font_size": current_custom_font_size,     # Use value read from UI
-                        # --- END NEW ---
-                    }
+                    current_state = self.get_current_config_for_state() # Use helper
                     self.redo_stack.append(current_state)
-
-                    # Restore the previous state from the undo stack
                     previous_state = self.undo_stack.pop()
-                    self.image = previous_state["image"]
-                    self._update_marker_slider_ranges()
-                    self.left_markers = previous_state["left_markers"]
-                    self.right_markers = previous_state["right_markers"]
-                    self.top_markers = previous_state["top_markers"]
-                    self.custom_markers = previous_state.get("custom_markers", [])
-                    self.custom_shapes = previous_state.get("custom_shapes", [])
-                    self.image_before_padding = previous_state["image_before_padding"]
-                    self.image_contrasted = previous_state["image_contrasted"]
-                    self.image_before_contrast = previous_state["image_before_contrast"]
-                    # Restore standard font settings
-                    self.font_family = previous_state["font_family"]
-                    self.font_size = previous_state["font_size"]
-                    self.font_color = previous_state["font_color"]
-                    self.font_rotation = previous_state["font_rotation"]
-                    # Restore shifts
-                    self.left_marker_shift_added = previous_state["left_marker_shift_added"]
-                    self.right_marker_shift_added = previous_state["right_marker_shift_added"]
-                    self.top_marker_shift_added = previous_state["top_marker_shift_added"]
-                    # Restore analysis data
-                    self.quantities_peak_area_dict = previous_state["quantities_peak_area_dict"]
-                    self.quantities = previous_state["quantities"]
-                    self.protein_quantities = previous_state["protein_quantities"]
-                    self.standard_protein_areas = previous_state["standard_protein_areas"]
-                    # --- NEW: Restore custom marker font/color states ---
-                    self.custom_marker_color = previous_state.get("custom_marker_color", QColor(0,0,0)) # Default if missing
-                    restored_custom_font_family = previous_state.get("custom_font_family", "Arial")
-                    restored_custom_font_size = previous_state.get("custom_font_size", 12)
-                    # --- END NEW RESTORE ---
-
-                    # --- Update UI Elements to reflect restored state ---
-                    # Standard font UI
-                    if hasattr(self, 'font_combo_box'):
-                        self.font_combo_box.blockSignals(True)
-                        # Find the font; setCurrentText might be less reliable than setCurrentFont
-                        found_font = False
-                        for i in range(self.font_combo_box.count()):
-                            if self.font_combo_box.itemText(i) == self.font_family:
-                                self.font_combo_box.setCurrentIndex(i)
-                                found_font = True
-                                break
-                        if not found_font: # Fallback if font name isn't exact match
-                            self.font_combo_box.setCurrentFont(QFont(self.font_family))
-                        self.font_combo_box.blockSignals(False)
-                    if hasattr(self, 'font_size_spinner'):
-                        self.font_size_spinner.blockSignals(True)
-                        self.font_size_spinner.setValue(self.font_size)
-                        self.font_size_spinner.blockSignals(False)
-                    if hasattr(self, 'font_color_button'):
-                        self._update_color_button_style(self.font_color_button, self.font_color)
-                    if hasattr(self, 'font_rotation_input'):
-                        self.font_rotation_input.blockSignals(True)
-                        self.font_rotation_input.setValue(self.font_rotation)
-                        self.font_rotation_input.blockSignals(False)
-
-                    # Slider positions (reflecting restored shifts)
-                    if hasattr(self, 'left_padding_slider'): self.left_padding_slider.setValue(self.left_marker_shift_added)
-                    if hasattr(self, 'right_padding_slider'): self.right_padding_slider.setValue(self.right_marker_shift_added)
-                    if hasattr(self, 'top_padding_slider'): self.top_padding_slider.setValue(self.top_marker_shift_added)
-
-                    # --- NEW: Update Custom Marker UI ---
-                    if hasattr(self, 'custom_marker_color_button'):
-                        self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                    if hasattr(self, 'custom_font_type_dropdown'):
-                         self.custom_font_type_dropdown.blockSignals(True)
-                         # Find the font like standard font combo
-                         found_custom_font = False
-                         for i in range(self.custom_font_type_dropdown.count()):
-                             if self.custom_font_type_dropdown.itemText(i) == restored_custom_font_family:
-                                 self.custom_font_type_dropdown.setCurrentIndex(i)
-                                 found_custom_font = True
-                                 break
-                         if not found_custom_font: # Fallback
-                             self.custom_font_type_dropdown.setCurrentFont(QFont(restored_custom_font_family))
-                         self.custom_font_type_dropdown.blockSignals(False)
-                         # Also update the entry box font if needed (optional)
-                         # self.update_marker_text_font(self.custom_font_type_dropdown.currentFont())
-                    if hasattr(self, 'custom_font_size_spinbox'):
-                         self.custom_font_size_spinbox.blockSignals(True)
-                         self.custom_font_size_spinbox.setValue(restored_custom_font_size)
-                         self.custom_font_size_spinbox.blockSignals(False)
-                    # --- END NEW UI UPDATE ---
-
-                    # Update other UI if needed (e.g., analysis text boxes)
-
-                    # Refresh display and status bar
-                    try:
-                        self._update_preview_label_size()
-                    except Exception: pass # Ignore errors if label size fails temporarily
-                    self._update_status_bar()
-                    self.update_live_view()
-                    self.is_modified = True # Undoing makes it modified again relative to last save
+                    self._restore_state_from_dict(previous_state) # Use helper
+                    self.is_modified = True
                     
             
             def redo_action_m(self):
-                """Redo the last undone action by restoring the next state, including font settings."""
+                """Redo the last undone action by restoring the next state."""
                 if self.redo_stack:
-                    # Get current state of UI elements before overwriting self attributes
-                    current_custom_font_family = self.custom_font_type_dropdown.currentText() if hasattr(self, 'custom_font_type_dropdown') else "Arial"
-                    current_custom_font_size = self.custom_font_size_spinbox.value() if hasattr(self, 'custom_font_size_spinbox') else 12
-
-                    # Save the current state to the undo stack
-                    current_state = {
-                        "image": self.image.copy() if self.image else None,
-                        "left_markers": self.left_markers.copy(),
-                        "right_markers": self.right_markers.copy(),
-                        "top_markers": self.top_markers.copy(),
-                        "custom_markers": [list(m) for m in getattr(self, "custom_markers", [])],
-                        "custom_shapes": [dict(s) for s in getattr(self, "custom_shapes", [])],
-                        "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
-                        "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
-                        "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
-                        # Standard marker font settings
-                        "font_family": self.font_family,
-                        "font_size": self.font_size,
-                        "font_color": self.font_color,
-                        "font_rotation": self.font_rotation,
-                        # Marker positioning shifts
-                        "left_marker_shift_added": self.left_marker_shift_added,
-                        "right_marker_shift_added": self.right_marker_shift_added,
-                        "top_marker_shift_added": self.top_marker_shift_added,
-                        # Analysis data
-                        "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(),
-                        "quantities": self.quantities.copy(),
-                        "protein_quantities": self.protein_quantities.copy(),
-                        "standard_protein_areas": self.standard_protein_areas.copy(),
-                        # --- NEW: Custom marker font/color states ---
-                        "custom_marker_color": self.custom_marker_color,
-                        "custom_font_family": current_custom_font_family, # Use value read from UI
-                        "custom_font_size": current_custom_font_size,     # Use value read from UI
-                        # --- END NEW ---
-                    }
+                    current_state = self.get_current_config_for_state() # Use helper
                     self.undo_stack.append(current_state)
-
-                    # Restore the next state from the redo stack
                     next_state = self.redo_stack.pop()
-                    self.image = next_state["image"]
-                    self._update_marker_slider_ranges()
-                    self.left_markers = next_state["left_markers"]
-                    self.right_markers = next_state["right_markers"]
-                    self.top_markers = next_state["top_markers"]
-                    self.custom_markers = next_state.get("custom_markers", [])
-                    self.custom_shapes = next_state.get("custom_shapes", [])
-                    self.image_before_padding = next_state["image_before_padding"]
-                    self.image_contrasted = next_state["image_contrasted"]
-                    self.image_before_contrast = next_state["image_before_contrast"]
-                    # Restore standard font settings
-                    self.font_family = next_state["font_family"]
-                    self.font_size = next_state["font_size"]
-                    self.font_color = next_state["font_color"]
-                    self.font_rotation = next_state["font_rotation"]
-                    # Restore shifts
-                    self.left_marker_shift_added = next_state["left_marker_shift_added"]
-                    self.right_marker_shift_added = next_state["right_marker_shift_added"]
-                    self.top_marker_shift_added = next_state["top_marker_shift_added"]
-                    # Restore analysis data
-                    self.quantities_peak_area_dict = next_state["quantities_peak_area_dict"]
-                    self.quantities = next_state["quantities"]
-                    self.protein_quantities = next_state["protein_quantities"]
-                    self.standard_protein_areas = next_state["standard_protein_areas"]
-                    # --- NEW: Restore custom marker font/color states ---
-                    self.custom_marker_color = next_state.get("custom_marker_color", QColor(0,0,0)) # Default if missing
-                    restored_custom_font_family = next_state.get("custom_font_family", "Arial")
-                    restored_custom_font_size = next_state.get("custom_font_size", 12)
-                    # --- END NEW RESTORE ---
+                    self._restore_state_from_dict(next_state) # Use helper
+                    self.is_modified = True
 
-                    # --- Update UI Elements to reflect restored state ---
-                    # (Identical UI update logic as in undo_action_m)
-                    # Standard font UI
-                    if hasattr(self, 'font_combo_box'):
-                        self.font_combo_box.blockSignals(True)
-                        found_font = False
-                        for i in range(self.font_combo_box.count()):
-                            if self.font_combo_box.itemText(i) == self.font_family:
-                                self.font_combo_box.setCurrentIndex(i)
-                                found_font = True
-                                break
-                        if not found_font: self.font_combo_box.setCurrentFont(QFont(self.font_family))
-                        self.font_combo_box.blockSignals(False)
-                    if hasattr(self, 'font_size_spinner'):
-                        self.font_size_spinner.blockSignals(True); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.blockSignals(False)
-                    if hasattr(self, 'font_color_button'):
-                        self._update_color_button_style(self.font_color_button, self.font_color)
-                    if hasattr(self, 'font_rotation_input'):
-                        self.font_rotation_input.blockSignals(True); self.font_rotation_input.setValue(self.font_rotation); self.font_rotation_input.blockSignals(False)
-
-                    # Slider positions
-                    if hasattr(self, 'left_padding_slider'): self.left_padding_slider.setValue(self.left_marker_shift_added)
-                    if hasattr(self, 'right_padding_slider'): self.right_padding_slider.setValue(self.right_marker_shift_added)
-                    if hasattr(self, 'top_padding_slider'): self.top_padding_slider.setValue(self.top_marker_shift_added)
-
-                    # --- NEW: Update Custom Marker UI ---
-                    if hasattr(self, 'custom_marker_color_button'):
-                        self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                    if hasattr(self, 'custom_font_type_dropdown'):
-                         self.custom_font_type_dropdown.blockSignals(True)
-                         found_custom_font = False
-                         for i in range(self.custom_font_type_dropdown.count()):
-                             if self.custom_font_type_dropdown.itemText(i) == restored_custom_font_family:
-                                 self.custom_font_type_dropdown.setCurrentIndex(i)
-                                 found_custom_font = True
-                                 break
-                         if not found_custom_font: self.custom_font_type_dropdown.setCurrentFont(QFont(restored_custom_font_family))
-                         self.custom_font_type_dropdown.blockSignals(False)
-                         # self.update_marker_text_font(self.custom_font_type_dropdown.currentFont()) # Optional
-                    if hasattr(self, 'custom_font_size_spinbox'):
-                         self.custom_font_size_spinbox.blockSignals(True); self.custom_font_size_spinbox.setValue(restored_custom_font_size); self.custom_font_size_spinbox.blockSignals(False)
-                    # --- END NEW UI UPDATE ---
-
-                    # Update other UI if needed
-
-                    # Refresh display and status bar
-                    try:
-                        self._update_preview_label_size()
-                    except Exception: pass
-                    self._update_status_bar()
-                    self.update_live_view()
-                    self.is_modified = True # Redoing makes it modified again relative to last save
+            def get_current_config_for_state(self):
+                # Helper to gather current state for undo/redo stack
+                return {
+                    "image": self.image.copy() if self.image else None,
+                    "left_markers": self.left_markers.copy(), "right_markers": self.right_markers.copy(), "top_markers": self.top_markers.copy(),
+                    "custom_markers": [list(m) for m in getattr(self, "custom_markers", [])], "custom_shapes": [dict(s) for s in getattr(self, "custom_shapes", [])],
+                    "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
+                    "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
+                    "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
+                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation,
+                    "left_marker_shift_added": self.left_marker_shift_added, "right_marker_shift_added": self.right_marker_shift_added, "top_marker_shift_added": self.top_marker_shift_added,
+                    "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(), "quantities": self.quantities.copy(), "protein_quantities": self.protein_quantities.copy(), "standard_protein_areas": self.standard_protein_areas.copy(),
+                    "custom_marker_color": self.custom_marker_color, "custom_font_family": self.custom_font_type_dropdown.currentText(), "custom_font_size": self.custom_font_size_spinbox.value(),
+                    "channel_mixer_data": self.channel_mixer_data.copy(), "unsharp_mask_data": self.unsharp_mask_data.copy(), "clahe_data": self.clahe_data.copy(),
+                    "black_point": self.black_point_slider.value(), "white_point": self.white_point_slider.value(), "gamma": self.gamma_slider.value()
+                }
                     
             def analysis_tab(self):
                 tab = QWidget()
@@ -6584,7 +6417,7 @@ if __name__ == "__main__":
             
             def open_protein_analyzer(self):
                 # Use the last predicted MW if available and positive, otherwise use the stored base_mw
-                base_mw_for_dialog = self.last_predicted_mw if self.last_predicted_mw > 0 else self.base_protein_mw
+                base_mw_for_dialog = self.base_protein_mw if self.base_protein_mw > 0 else self.last_predicted_mw
                 # Default glycan mass to 0 if it hasn't been set to a positive value
                 glycan_mass_for_dialog = self.avg_glycan_mass if self.avg_glycan_mass > 0 else 0.0
 
@@ -8098,156 +7931,217 @@ if __name__ == "__main__":
 
             def font_and_image_tab(self):
                 tab = QWidget()
-                layout = QVBoxLayout(tab)
-                layout.setSpacing(15) # Add spacing between groups
+                main_layout = QHBoxLayout(tab)
+                main_layout.setSpacing(15)
 
-                # --- Font Options Group ---
-                font_options_group = QGroupBox("Marker and Label Font") # Renamed for clarity
-                font_options_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                font_options_layout = QGridLayout(font_options_group)
-                font_options_layout.setSpacing(8)
+                left_column_layout = QVBoxLayout()
+                levels_group = QGroupBox("Levels & Gamma"); levels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                levels_layout = QGridLayout(levels_group)
+                self.black_point_label = QLabel("Black Point:"); levels_layout.addWidget(self.black_point_label, 0, 0)
+                self.black_point_slider = QSlider(Qt.Horizontal); self.black_point_slider.setRange(0, 65535); self.black_point_slider.setValue(0); levels_layout.addWidget(self.black_point_slider, 0, 1)
+                self.black_point_value_label = QLabel("0"); self.black_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.black_point_value_label, 0, 2)
+                self.black_point_slider.valueChanged.connect(self.update_image_levels_and_gamma); self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
+                self.white_point_label = QLabel("White Point:"); levels_layout.addWidget(self.white_point_label, 1, 0)
+                self.white_point_slider = QSlider(Qt.Horizontal); self.white_point_slider.setRange(0, 65535); self.white_point_slider.setValue(65535); levels_layout.addWidget(self.white_point_slider, 1, 1)
+                self.white_point_value_label = QLabel("65535"); self.white_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.white_point_value_label, 1, 2)
+                self.white_point_slider.valueChanged.connect(self.update_image_levels_and_gamma); self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
+                gamma_label = QLabel("Gamma:"); levels_layout.addWidget(gamma_label, 2, 0)
+                self.gamma_slider = QSlider(Qt.Horizontal); self.gamma_slider.setRange(10, 500); self.gamma_slider.setValue(100); levels_layout.addWidget(self.gamma_slider, 2, 1)
+                self.gamma_value_label = QLabel("1.00"); self.gamma_value_label.setFixedWidth(50); levels_layout.addWidget(self.gamma_value_label, 2, 2)
+                self.gamma_slider.valueChanged.connect(self.update_image_levels_and_gamma); self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}"))
+                left_column_layout.addWidget(levels_group)
 
-                # Font type
-                font_type_label = QLabel("Font Family:")
-                self.font_combo_box = QFontComboBox()
-                self.font_combo_box.setEditable(False)
-                self.font_combo_box.setCurrentFont(QFont(self.font_family)) # Use initialized value
-                self.font_combo_box.currentFontChanged.connect(self.update_font) # Connect signal
-                font_options_layout.addWidget(font_type_label, 0, 0)
-                font_options_layout.addWidget(self.font_combo_box, 0, 1, 1, 2) # Span 2 columns
+                actions_group = QGroupBox("General Image Actions"); actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                actions_layout = QHBoxLayout(actions_group)
+                self.bw_button = QPushButton("Grayscale"); self.bw_button.clicked.connect(self.convert_to_black_and_white)
+                invert_button = QPushButton("Invert"); invert_button.clicked.connect(self.invert_image)
+                reset_button = QPushButton("Reset All Adjustments"); reset_button.clicked.connect(self.reset_all_adjustments)
+                actions_layout.addWidget(self.bw_button); actions_layout.addWidget(invert_button); actions_layout.addStretch(); actions_layout.addWidget(reset_button)
+                left_column_layout.addWidget(actions_group)
+                left_column_layout.addStretch(); main_layout.addLayout(left_column_layout)
 
-                # Font size
-                font_size_label = QLabel("Font Size:")
-                self.font_size_spinner = QSpinBox()
-                self.font_size_spinner.setRange(6, 72)  # Adjusted range
-                self.font_size_spinner.setValue(self.font_size) # Use initialized value
-                self.font_size_spinner.valueChanged.connect(self.update_font) # Connect signal
-                font_options_layout.addWidget(font_size_label, 1, 0)
-                font_options_layout.addWidget(self.font_size_spinner, 1, 1)
+                right_column_layout = QVBoxLayout()
+                cm_group = QGroupBox("Channel Mixer (for Color Images)"); cm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                cm_layout = QGridLayout(cm_group)
+                self.cm_red_slider = QSlider(Qt.Horizontal); self.cm_red_slider.setRange(0, 200); self.cm_red_slider.setValue(100)
+                self.cm_red_label = QLabel("100%"); self.cm_red_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Red:"), 0, 0); cm_layout.addWidget(self.cm_red_slider, 0, 1); cm_layout.addWidget(self.cm_red_label, 0, 2)
+                self.cm_green_slider = QSlider(Qt.Horizontal); self.cm_green_slider.setRange(0, 200); self.cm_green_slider.setValue(100)
+                self.cm_green_label = QLabel("100%"); self.cm_green_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Green:"), 1, 0); cm_layout.addWidget(self.cm_green_slider, 1, 1); cm_layout.addWidget(self.cm_green_label, 1, 2)
+                self.cm_blue_slider = QSlider(Qt.Horizontal); self.cm_blue_slider.setRange(0, 200); self.cm_blue_slider.setValue(100)
+                self.cm_blue_label = QLabel("100%"); self.cm_blue_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Blue:"), 2, 0); cm_layout.addWidget(self.cm_blue_slider, 2, 1); cm_layout.addWidget(self.cm_blue_label, 2, 2)
+                self.cm_mono_checkbox = QCheckBox("Monochrome"); cm_layout.addWidget(self.cm_mono_checkbox, 3, 1)
+                self.cm_red_slider.valueChanged.connect(self._update_channel_mixer); self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
+                self.cm_green_slider.valueChanged.connect(self._update_channel_mixer); self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
+                self.cm_blue_slider.valueChanged.connect(self._update_channel_mixer); self.cm_blue_slider.valueChanged.connect(lambda v: self.cm_blue_label.setText(f"{v}%"))
+                self.cm_mono_checkbox.stateChanged.connect(self._update_channel_mixer)
+                right_column_layout.addWidget(cm_group)
 
-                # Font color
-                self.font_color_button = QPushButton("Font Color")
-                self.font_color_button.setToolTip("Select color for Left, Right, Top markers.")
-                self.font_color_button.clicked.connect(self.select_font_color)
-                self._update_color_button_style(self.font_color_button, self.font_color) # Set initial button color
-                font_options_layout.addWidget(self.font_color_button, 1, 2)
+                usm_group = QGroupBox("Sharpening (Unsharp Mask)"); usm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                usm_layout = QGridLayout(usm_group)
+                self.usm_amount_slider = QSlider(Qt.Horizontal); self.usm_amount_slider.setRange(0, 500); self.usm_amount_slider.setValue(0)
+                self.usm_amount_label = QLabel("0%"); self.usm_amount_label.setFixedWidth(40); usm_layout.addWidget(QLabel("Amount:"), 0, 0); usm_layout.addWidget(self.usm_amount_slider, 0, 1); usm_layout.addWidget(self.usm_amount_label, 0, 2)
+                self.usm_radius_slider = QSlider(Qt.Horizontal); self.usm_radius_slider.setRange(1, 250); self.usm_radius_slider.setValue(10)
+                self.usm_radius_label = QLabel("1.0 px"); self.usm_radius_label.setFixedWidth(50); usm_layout.addWidget(QLabel("Radius:"), 1, 0); usm_layout.addWidget(self.usm_radius_slider, 1, 1); usm_layout.addWidget(self.usm_radius_label, 1, 2)
+                self.usm_threshold_slider = QSlider(Qt.Horizontal); self.usm_threshold_slider.setRange(0, 255); self.usm_threshold_slider.setValue(0)
+                self.usm_threshold_label = QLabel("0"); self.usm_threshold_label.setFixedWidth(40); usm_layout.addWidget(QLabel("Threshold:"), 2, 0); usm_layout.addWidget(self.usm_threshold_slider, 2, 1); usm_layout.addWidget(self.usm_threshold_label, 2, 2)
+                self.usm_amount_slider.valueChanged.connect(self._update_unsharp_mask); self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
+                self.usm_radius_slider.valueChanged.connect(self._update_unsharp_mask); self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
+                self.usm_threshold_slider.valueChanged.connect(self._update_unsharp_mask); self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
+                right_column_layout.addWidget(usm_group)
 
-                # Font rotation (Top/Bottom)
-                font_rotation_label = QLabel("Top Label Rotation:") # Specific label
-                self.font_rotation_input = QSpinBox()
-                self.font_rotation_input.setRange(-180, 180)
-                self.font_rotation_input.setValue(self.font_rotation) # Use initialized value
-                self.font_rotation_input.setSuffix(" °") # Add degree symbol
-                self.font_rotation_input.valueChanged.connect(self.update_font) # Connect signal
-                font_options_layout.addWidget(font_rotation_label, 2, 0)
-                font_options_layout.addWidget(self.font_rotation_input, 2, 1, 1, 2) # Span 2 columns
+                clahe_group = QGroupBox("Local Contrast (CLAHE)"); clahe_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                clahe_layout = QGridLayout(clahe_group)
+                self.clahe_clip_slider = QSlider(Qt.Horizontal); self.clahe_clip_slider.setRange(10, 100); self.clahe_clip_slider.setValue(10)
+                self.clahe_clip_label = QLabel("1.0"); self.clahe_clip_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Clip Limit:"), 0, 0); clahe_layout.addWidget(self.clahe_clip_slider, 0, 1); clahe_layout.addWidget(self.clahe_clip_label, 0, 2)
+                self.clahe_tile_slider = QSlider(Qt.Horizontal); self.clahe_tile_slider.setRange(2, 32); self.clahe_tile_slider.setValue(8)
+                self.clahe_tile_label = QLabel("8x8"); self.clahe_tile_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Tile Size:"), 1, 0); clahe_layout.addWidget(self.clahe_tile_slider, 1, 1); clahe_layout.addWidget(self.clahe_tile_label, 1, 2)
+                self.clahe_clip_slider.valueChanged.connect(self._update_clahe); self.clahe_clip_slider.valueChanged.connect(lambda v: self.clahe_clip_label.setText(f"{(v/10.0):.1f}"))
+                self.clahe_tile_slider.valueChanged.connect(self._update_clahe); self.clahe_tile_slider.valueChanged.connect(lambda v: self.clahe_tile_label.setText(f"{v}x{v}"))
+                right_column_layout.addWidget(clahe_group)
 
-                layout.addWidget(font_options_group)
-
-
-                # --- Image Adjustments Group ---
-                img_adjust_group = QGroupBox("Image Adjustments (Levels & Gamma)") # MODIFIED Group Title
-                img_adjust_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                img_adjust_layout = QGridLayout(img_adjust_group)
-                img_adjust_layout.setSpacing(8)
-
-                # Display Black Point Slider
-                self.black_point_label = QLabel("Black Point:") # MODIFIED LABEL
-                self.black_point_slider = QSlider(Qt.Horizontal)
-                self.black_point_slider.setRange(0, 65535) # Initial default range, will be updated
-                self.black_point_slider.setValue(0)      # Default black point
-                self.black_point_slider.valueChanged.connect(self.update_image_levels_and_gamma) # Connect to new handler
-                self.black_point_value_label = QLabel("0") # Display actual pixel value
-                self.black_point_value_label.setMinimumWidth(50)
-                self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
-                self.black_point_slider.setToolTip("Set the black point for display. Pixels below this value will be black.")
-                img_adjust_layout.addWidget(self.black_point_label, 0, 0)
-                img_adjust_layout.addWidget(self.black_point_slider, 0, 1)
-                img_adjust_layout.addWidget(self.black_point_value_label, 0, 2)
-
-                # Display White Point Slider
-                self.white_point_label = QLabel("White Point:") # MODIFIED LABEL
-                self.white_point_slider = QSlider(Qt.Horizontal)
-                self.white_point_slider.setRange(0, 65535) # Initial default range
-                self.white_point_slider.setValue(65535)    # Default white point
-                self.white_point_slider.valueChanged.connect(self.update_image_levels_and_gamma) # Connect to new handler
-                self.white_point_value_label = QLabel("65535") # Display actual pixel value
-                self.white_point_value_label.setMinimumWidth(50)
-                self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
-                self.white_point_slider.setToolTip("Set the white point for display. Pixels above this value will be white.")
-                img_adjust_layout.addWidget(self.white_point_label, 1, 0)
-                img_adjust_layout.addWidget(self.white_point_slider, 1, 1)
-                img_adjust_layout.addWidget(self.white_point_value_label, 1, 2)
-
-
-                # Gamma Adjustment Slider (remains similar)
-                gamma_label = QLabel("Gamma:")
-                self.gamma_slider = QSlider(Qt.Horizontal)
-                self.gamma_slider.setRange(10, 500)  # Range 0.1 to 3.0 (factor = value / 100.0)
-                self.gamma_slider.setValue(100)      # Default 1.0
-                self.gamma_slider.valueChanged.connect(self.update_image_levels_and_gamma) # Connect to new handler
-                self.gamma_value_label = QLabel("1.00") # Display factor
-                self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}"))
-                self.gamma_slider.setToolTip("Adjust mid-tone brightness after levels adjustment.")
-                img_adjust_layout.addWidget(gamma_label, 2, 0)
-                img_adjust_layout.addWidget(self.gamma_slider, 2, 1)
-                img_adjust_layout.addWidget(self.gamma_value_label, 2, 2)
-
-
-                # Separator
-                img_adjust_layout.addWidget(self.create_separator(), 3, 0, 1, 3) # Span across columns
-
-                # Action Buttons
-                btn_layout = QHBoxLayout()
-                self.bw_button = QPushButton("Grayscale")
-                self.bw_button.setToolTip("Convert the image to grayscale.\nShortcut: Ctrl+B / Cmd+B")
-                self.bw_button.clicked.connect(self.convert_to_black_and_white)
-                invert_button = QPushButton("Invert")
-                invert_button.setToolTip("Invert image colors.\nShortcut: Ctrl+I / Cmd+I")
-                invert_button.clicked.connect(self.invert_image)
-                reset_button = QPushButton("Reset Adjustments")
-                reset_button.setToolTip("Reset Black/White Points and Gamma sliders to default.") # MODIFIED TOOLTIP
-                reset_button.clicked.connect(self.reset_levels_and_gamma) # MODIFIED connection
-                btn_layout.addWidget(self.bw_button)
-                btn_layout.addWidget(invert_button)
-                btn_layout.addStretch() # Push reset button to the right
-                btn_layout.addWidget(reset_button)
-
-                img_adjust_layout.addLayout(btn_layout, 4, 0, 1, 3) # Add button layout
-
-                layout.addWidget(img_adjust_group)
-                layout.addStretch() # Push groups up
+                right_column_layout.addStretch(); main_layout.addLayout(right_column_layout)
                 return tab
             
-            def reset_levels_and_gamma(self): # Renamed from reset_gamma_contrast
-                # This method resets the UI sliders and then triggers an update.
-                # The actual image reset to "before contrast" state happens via update_image_levels_and_gamma
-                # when it uses self.image_contrasted as its base.
-                
-                self._update_level_slider_ranges_and_defaults() # This sets sliders to 0 and max_val
+            def _update_channel_mixer(self):
+                if not self.image or self.image.isNull(): return
+                self.channel_mixer_data = {
+                    'r': self.cm_red_slider.value(), 'g': self.cm_green_slider.value(),
+                    'b': self.cm_blue_slider.value(), 'mono': self.cm_mono_checkbox.isChecked()
+                }
+                self.apply_all_adjustments()
 
-                if hasattr(self, 'gamma_slider'):
-                    self.gamma_slider.blockSignals(True)
-                    self.gamma_slider.setValue(100) # Reset gamma to 1.0
-                    self.gamma_slider.blockSignals(False)
-                    if hasattr(self, 'gamma_value_label'): self.gamma_value_label.setText("1.00")
-                
-                # Crucially, after resetting sliders, call update_image_levels_and_gamma
-                # to apply these defaults to self.image_contrasted (which should be the pristine version at this point if contrast_applied was false, or the version before last adjustment).
-                # If contrast_applied was true, self.image_contrasted holds the "before current adjustment" state.
-                # If contrast_applied was false, update_image_levels_and_gamma will set it up.
-                
-                # To ensure we are resetting from the true "before any contrast" state:
-                if hasattr(self, 'image_before_contrast') and self.image_before_contrast and not self.image_before_contrast.isNull():
-                     self.image_contrasted = self.image_before_contrast.copy()
-                elif self.image_master and not self.image_master.isNull(): # Fallback to master
-                    self.image_contrasted = self.image_master.copy()
-                elif self.image and not self.image.isNull(): # Fallback to current if others are missing
-                    self.image_contrasted = self.image.copy()
-                # else: # No valid base image to reset from
+            def _update_unsharp_mask(self):
+                if not self.image or self.image.isNull(): return
+                self.unsharp_mask_data = {
+                    'amount': self.usm_amount_slider.value(),
+                    'radius': self.usm_radius_slider.value() / 10.0,
+                    'threshold': self.usm_threshold_slider.value()
+                }
+                self.apply_all_adjustments()
 
-                self.contrast_applied = True # Mark that an "adjustment" (the reset) has been made
-                self.update_image_levels_and_gamma() # This will now apply the 0-max levels and gamma 1.0
+            def _update_clahe(self):
+                if not self.image or self.image.isNull(): return
+                self.clahe_data = {
+                    'clip_limit': self.clahe_clip_slider.value() / 10.0,
+                    'tile_size': self.clahe_tile_slider.value()
+                }
+                self.apply_all_adjustments()
+
+            def apply_all_adjustments(self):
+                """A single function to apply all adjustments in order, respecting transparency."""
+                if not self.image_before_contrast or self.image_before_contrast.isNull(): return
+
+                temp_image = self.image_before_contrast.copy()
+                np_img_full = self.qimage_to_numpy(temp_image)
+                if np_img_full is None: return
+
+                content_rect = None
+                has_alpha = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
+                if has_alpha:
+                    alpha_channel = np_img_full[:, :, 3]
+                    rows, cols = np.any(alpha_channel, axis=1), np.any(alpha_channel, axis=0)
+                    if np.any(rows) and np.any(cols):
+                        ymin, ymax = np.where(rows)[0][[0, -1]]
+                        xmin, xmax = np.where(cols)[0][[0, -1]]
+                        content_rect = (xmin, ymin, xmax - xmin + 1, ymax - ymin + 1)
+                        np_content = np_img_full[ymin:ymax+1, xmin:xmax+1]
+                    else: np_content = np_img_full
+                else:
+                    np_content = np_img_full
+
+                if np_content.ndim == 3:
+                    is_mono = self.channel_mixer_data['mono']
+                    r, g, b = self.channel_mixer_data['r']/100.0, self.channel_mixer_data['g']/100.0, self.channel_mixer_data['b']/100.0
+                    np_float = np_content.astype(np.float32)
+                    
+                    if is_mono:
+                        gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
+                        np_content = np.clip(gray, 0, 255).astype(np.uint8)
+                    else:
+                        np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
+                        np_content = np.clip(np_float, 0, 255).astype(np.uint8)
+
+                clip_limit = self.clahe_data['clip_limit']
+                if clip_limit > 1.0:
+                    tile_size = self.clahe_data['tile_size']
+                    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
+                    if np_content.ndim == 2:
+                        np_content = clahe.apply(np_content)
+                    elif np_content.ndim == 3:
+                        if np_content.shape[2] == 4: # BGRA
+                            bgr = np_content[...,:3]
+                            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                            lab[..., 0] = clahe.apply(lab[..., 0])
+                            np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                        else: # BGR
+                            lab = cv2.cvtColor(np_content, cv2.COLOR_BGR2LAB)
+                            lab[..., 0] = clahe.apply(lab[..., 0])
+                            np_content = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                
+                if content_rect:
+                    np_img = np_img_full.copy()
+                    xmin, ymin, w, h = content_rect
+                    # --- START FIX: Handle channel mismatch ---
+                    if np_content.ndim == 2 and np_img.ndim == 3: # Grayscale content into color canvas
+                        if np_img.shape[2] == 4: # Target is BGRA
+                            np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
+                        else: # Target is BGR
+                            np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
+                    else: # Channels match or source is color, target is grayscale (less likely)
+                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                    # --- END FIX ---
+                else:
+                    np_img = np_content
+                
+                amount = self.unsharp_mask_data['amount'] / 100.0
+                if amount > 0:
+                    radius = self.unsharp_mask_data['radius']
+                    # --- FIX: Use a better sharpening method (Gaussian difference) ---
+                    sigma = max(0.1, radius)
+                    blurred = cv2.GaussianBlur(np_img, (0, 0), sigma)
+                    # Add the difference back to the original, weighted by amount
+                    sharpened = cv2.addWeighted(np_img, 1.0 + amount, blurred, -amount, 0)
+                    np_img = sharpened
+                    # --- END FIX ---
+
+                self.image_contrasted = self.numpy_to_qimage(np_img)
+                self.update_image_levels_and_gamma()
+
+            def reset_all_adjustments(self):
+                """Resets all sliders on the Image & Contrast tab to their defaults."""
+                self.save_state()
+                # Reset Levels and Gamma
+                self._update_level_slider_ranges_and_defaults()
+                if hasattr(self, 'gamma_slider'): self.gamma_slider.setValue(100)
+                
+                # Reset Channel Mixer
+                self.cm_red_slider.setValue(100); self.cm_green_slider.setValue(100); self.cm_blue_slider.setValue(100)
+                self.cm_mono_checkbox.setChecked(False)
+                
+                # Reset Unsharp Mask
+                self.usm_amount_slider.setValue(0); self.usm_radius_slider.setValue(10); self.usm_threshold_slider.setValue(0)
+                
+                # Reset CLAHE
+                self.clahe_clip_slider.setValue(10); self.clahe_tile_slider.setValue(8)
+
+                # --- NEW: Explicitly update labels after reset ---
+                self.cm_red_label.setText("100%"); self.cm_green_label.setText("100%"); self.cm_blue_label.setText("100%")
+                self.usm_amount_label.setText("0%"); self.usm_radius_label.setText("1.0 px"); self.usm_threshold_label.setText("0")
+                self.clahe_clip_label.setText("1.0"); self.clahe_tile_label.setText("8x8")
+                self.gamma_value_label.setText("1.00")
+                # --- END NEW ---
+
+                # Reset internal data stores
+                self.channel_mixer_data = {'r': 100, 'g': 100, 'b': 100, 'mono': False}
+                self.unsharp_mask_data = {'amount': 0, 'radius': 1.0, 'threshold': 0}
+                self.clahe_data = {'clip_limit': 1.0, 'tile_size': 8}
+                
+                # Re-apply the full (now reset) pipeline
+                self.apply_all_adjustments()
+            
+            def reset_levels_and_gamma(self):
+                # This function is now just an alias for the more comprehensive reset
+                self.reset_all_adjustments()
                 
             def apply_levels_gamma(self, qimage_base, black_point_ui, white_point_ui, gamma_ui_factor):
                 if not qimage_base or qimage_base.isNull():
@@ -8512,7 +8406,6 @@ if __name__ == "__main__":
                 self.orientation_slider.valueChanged.connect(self._update_rotation_label)
                 # Update preview only when slider is released for performance
                 self.orientation_slider.valueChanged.connect(self.update_live_view)
-                # Make slider expand to take available space
                 self.orientation_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
                 self.align_button = QPushButton("Apply Rotation")
@@ -8521,7 +8414,6 @@ if __name__ == "__main__":
                 self.reset_align_button = QPushButton("Reset Rotation")
                 self.reset_align_button.clicked.connect(self.reset_align_image)
 
-                # Add widgets to the first row layout
                 rotation_controls_layout.addWidget(self.show_guides_label)
                 rotation_controls_layout.addWidget(self.show_guides_checkbox)
                 rotation_controls_layout.addSpacing(10) # Add a small visual gap
@@ -8530,45 +8422,33 @@ if __name__ == "__main__":
                 rotation_controls_layout.addWidget(self.align_button)
                 rotation_controls_layout.addWidget(self.reset_align_button)
 
-                # Add the first row layout to the main group layout
                 alignment_group_layout.addLayout(rotation_controls_layout)
 
-                # --- Row 2: Flip Controls ---
                 flip_controls_layout = QHBoxLayout()
                 flip_controls_layout.setSpacing(6) # Spacing between flip buttons
 
                 self.flip_vertical_button = QPushButton("Flip Vertical")
                 self.flip_vertical_button.setToolTip("Flips the image in vertical direction")
                 self.flip_vertical_button.clicked.connect(self.flip_vertical)
-                # Make buttons expand equally to fill width
                 self.flip_vertical_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
                 self.flip_horizontal_button = QPushButton("Flip Horizontal")
                 self.flip_horizontal_button.setToolTip("Flips the image in horizontal direction")
                 self.flip_horizontal_button.clicked.connect(self.flip_horizontal)
-                # Make buttons expand equally to fill width
                 self.flip_horizontal_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-                # Add widgets to the second row layout
-                # No stretch needed here as buttons expand
                 flip_controls_layout.addWidget(self.flip_vertical_button)
                 flip_controls_layout.addWidget(self.flip_horizontal_button)
 
-                # Add the second row layout to the main group layout
                 alignment_group_layout.addLayout(flip_controls_layout)
                 
-                # guide_layout.addStretch()
                 
 
                 alignment_params_group.setLayout(alignment_group_layout)
                 layout.addWidget(alignment_params_group)
-                # --- End Alignment Group ---
 
-                # --- Skew Fix Group (Keep as is - assume it's defined elsewhere) ---
                 taper_skew_group = QGroupBox("Skew Fix")
                 taper_skew_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                # ... (Add skew widgets here) ...
-                # Example structure:
                 taper_skew_layout = QHBoxLayout()
                 self.taper_skew_label = QLabel("Tapering Skew (0.00)")
                 self.taper_skew_label.setToolTip("Can be used to fix gel distortion by adjusting the skewness/broadening of the gel at the top or bottom region")
@@ -8576,19 +8456,22 @@ if __name__ == "__main__":
                 self.taper_skew_slider = QSlider(Qt.Horizontal)
                 self.taper_skew_slider.setRange(-70, 70)
                 self.taper_skew_slider.setValue(0)
-                # self.taper_skew_slider.valueChanged.connect(self._update_skew_label)
                 self.taper_skew_slider.valueChanged.connect(self.update_live_view)
+                
                 self.skew_button = QPushButton("Apply Skew")
                 self.skew_button.clicked.connect(self.update_skew)
+                
+                self.reset_skew_button = QPushButton("Reset Skew")
+                self.reset_skew_button.clicked.connect(lambda: self.taper_skew_slider.setValue(0))
+
                 taper_skew_layout.addWidget(self.taper_skew_label)
                 taper_skew_layout.addWidget(self.taper_skew_slider)
                 taper_skew_layout.addWidget(self.skew_button)
+                taper_skew_layout.addWidget(self.reset_skew_button) # Add button to layout
                 taper_skew_group.setLayout(taper_skew_layout)
                 layout.addWidget(taper_skew_group)
-                # --- End Skew Fix Group ---
 
 
-                # --- START: Modified Cropping Group ---
                 cropping_params_group = QGroupBox("Cropping Options")
                 cropping_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 cropping_layout = QVBoxLayout(cropping_params_group)      
@@ -9107,148 +8990,88 @@ if __name__ == "__main__":
             def create_markers_tab(self):
                 """Create the Markers tab with a more compact and organized layout."""
                 tab = QWidget()
-                # Main vertical layout for the tab
                 main_layout = QVBoxLayout(tab)
-                main_layout.setSpacing(10) # Consistent spacing between major sections
+                main_layout.setSpacing(10)
 
-                # --- Top Row: Presets and Top Labels ---
-                top_row_layout = QHBoxLayout()
-                presets_group = QGroupBox("Left/Right Marker Presets")
+                # --- Group 1: Marker Data (Presets and Labels) ---
+                presets_group = QGroupBox("Marker Presets & Labels")
                 presets_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 presets_layout = QGridLayout(presets_group)
-                presets_layout.setSpacing(5)
                 presets_layout.addWidget(QLabel("Preset:"), 0, 0)
                 self.combo_box = QComboBox(self)
-                if hasattr(self, 'presets_data') and self.presets_data:
-                    self.combo_box.addItems(sorted(self.presets_data.keys()))
-                self.combo_box.addItem("Custom")
-                self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
+                if hasattr(self, 'presets_data') and self.presets_data: self.combo_box.addItems(sorted(self.presets_data.keys()))
+                self.combo_box.addItem("Custom"); self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
                 presets_layout.addWidget(self.combo_box, 0, 1)
-                self.marker_values_textbox = QLineEdit(self)
-                self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-sep)")
-                self.marker_values_textbox.setEnabled(False)
-                presets_layout.addWidget(self.marker_values_textbox, 1, 0, 1, 2)
                 self.rename_input = QLineEdit(self)
-                self.rename_input.setPlaceholderText("New name for Custom preset")
-                self.rename_input.setEnabled(False)
-                presets_layout.addWidget(self.rename_input, 2, 0, 1, 2)
-                preset_buttons_layout = QHBoxLayout()
-                preset_buttons_layout.setContentsMargins(0, 0, 0, 0)
-                self.save_button = QPushButton("Save Preset", self)
-                self.save_button.setToolTip("Saves the current L/R, Top, Custom Markers/Shapes to the selected/new preset name.")
+                self.rename_input.setPlaceholderText("Enter new name to save preset..."); self.rename_input.setEnabled(False)
+                presets_layout.addWidget(self.rename_input, 0, 2)
+                self.save_button = QPushButton("Save"); self.save_button.setToolTip("Saves the current L/R, Top, Custom Markers/Shapes to the selected/new preset name.")
                 self.save_button.clicked.connect(self.save_config)
-                self.remove_config_button = QPushButton("Remove Preset", self)
-                self.remove_config_button.clicked.connect(self.remove_config)
-                preset_buttons_layout.addWidget(self.save_button)
-                preset_buttons_layout.addWidget(self.remove_config_button)
-                preset_buttons_layout.addStretch()
-                presets_layout.addLayout(preset_buttons_layout, 3, 0, 1, 2)
-                presets_layout.setColumnStretch(1, 1)
-                top_row_layout.addWidget(presets_group, 1)
+                presets_layout.addWidget(self.save_button, 0, 3)
+                self.remove_config_button = QPushButton("Remove"); self.remove_config_button.clicked.connect(self.remove_config)
+                presets_layout.addWidget(self.remove_config_button, 0, 4)
 
-                top_labels_group = QGroupBox("Top Marker Labels")
-                top_labels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                top_labels_layout = QVBoxLayout(top_labels_group)
+                presets_layout.addWidget(QLabel("L/R Values:"), 1, 0)
+                self.marker_values_textbox = QLineEdit(self)
+                self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-separated)"); self.marker_values_textbox.setEnabled(False)
+                presets_layout.addWidget(self.marker_values_textbox, 1, 1, 1, 4)
+
+                presets_layout.addWidget(QLabel("Top Labels:"), 2, 0, Qt.AlignTop)
                 self.top_marker_input = QTextEdit(self)
-                current_top_label_text = ", ".join(map(str, getattr(self, 'top_label', [])))
-                self.top_marker_input.setText(current_top_label_text)
-                self.top_marker_input.setMinimumHeight(40)
-                self.top_marker_input.setMaximumHeight(100)
-                self.top_marker_input.setPlaceholderText("Top labels (comma-separated)")
-                top_labels_layout.addWidget(self.top_marker_input)
-                self.update_top_labels_button = QPushButton("Update All L/R/Top Labels")
-                self.update_top_labels_button.setToolTip("Apply values from text boxes to current markers on the image.")
-                self.update_top_labels_button.clicked.connect(self.update_all_labels)
-                top_labels_layout.addWidget(self.update_top_labels_button)
-                top_row_layout.addWidget(top_labels_group, 1)
-                main_layout.addLayout(top_row_layout)
+                self.top_marker_input.setText(", ".join(map(str, getattr(self, 'top_label', []))))
+                self.top_marker_input.setFixedHeight(50); self.top_marker_input.setPlaceholderText("Top labels (comma-separated)")
+                presets_layout.addWidget(self.top_marker_input, 2, 1, 1, 3)
+                self.update_labels_button = QPushButton("Update Labels")
+                self.update_labels_button.setToolTip("Apply values from the L/R and Top text boxes to any markers currently on the image.")
+                self.update_labels_button.clicked.connect(self.update_all_labels)
+                presets_layout.addWidget(self.update_labels_button, 2, 4)
+                main_layout.addWidget(presets_group)
 
-                # --- Middle Section: Marker Placement and Offsets ---
-                placement_group = QGroupBox("Marker Placement and Offsets")
-                placement_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                placement_layout = QGridLayout(placement_group)
-                placement_layout.setColumnStretch(4, 1)
-                if not hasattr(self, 'left_slider_range'): self.left_slider_range = [-100, 1000]
-                if not hasattr(self, 'right_slider_range'): self.right_slider_range = [-100, 1000]
-                if not hasattr(self, 'top_slider_range'): self.top_slider_range = [-100, 1000]
-                if not hasattr(self, 'left_marker_shift_added'): self.left_marker_shift_added = 0
-                if not hasattr(self, 'right_marker_shift_added'): self.right_marker_shift_added = 0
-                if not hasattr(self, 'top_marker_shift_added'): self.top_marker_shift_added = 0
-                left_marker_button = QPushButton("Place Left"); left_marker_button.setToolTip("Ctrl+Shift+L")
-                left_marker_button.clicked.connect(self.enable_left_marker_mode)
-                remove_left_button = QPushButton("Remove Last")
-                remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove'))
-                reset_left_button = QPushButton("Reset All"); reset_left_button.setToolTip("Reset All Left Markers")
-                reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
-                self.left_padding_slider = QSlider(Qt.Horizontal)
-                self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1])
-                self.left_padding_slider.setValue(self.left_marker_shift_added)
-                self.left_padding_slider.valueChanged.connect(self.update_left_padding)
-                duplicate_left_button = QPushButton("Copy →") 
-                duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left")
-                duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left'))
-                placement_layout.addWidget(left_marker_button, 0, 0)
-                placement_layout.addWidget(remove_left_button, 0, 1)
-                placement_layout.addWidget(reset_left_button, 0, 2)
-                placement_layout.addWidget(QLabel("Offset Left:"), 0, 3, Qt.AlignRight | Qt.AlignVCenter)
-                placement_layout.addWidget(self.left_padding_slider, 0, 4)
-                placement_layout.addWidget(duplicate_left_button, 0, 5)
-                right_marker_button = QPushButton("Place Right"); right_marker_button.setToolTip("Ctrl+Shift+R")
-                right_marker_button.clicked.connect(self.enable_right_marker_mode)
-                remove_right_button = QPushButton("Remove Last")
-                remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove'))
-                reset_right_button = QPushButton("Reset All"); reset_right_button.setToolTip("Reset All Right Markers")
-                reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
-                self.right_padding_slider = QSlider(Qt.Horizontal)
-                self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1])
-                self.right_padding_slider.setValue(self.right_marker_shift_added)
-                self.right_padding_slider.valueChanged.connect(self.update_right_padding)
-                duplicate_right_button = QPushButton("← Copy") 
-                duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right")
-                duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right'))
-                placement_layout.addWidget(right_marker_button, 1, 0)
-                placement_layout.addWidget(remove_right_button, 1, 1)
-                placement_layout.addWidget(reset_right_button, 1, 2)
-                placement_layout.addWidget(QLabel("Offset Right:"), 1, 3, Qt.AlignRight | Qt.AlignVCenter)
-                placement_layout.addWidget(self.right_padding_slider, 1, 4)
-                placement_layout.addWidget(duplicate_right_button, 1, 5)
-                top_marker_button = QPushButton("Place Top"); top_marker_button.setToolTip("Ctrl+Shift+T")
-                top_marker_button.clicked.connect(self.enable_top_marker_mode)
-                remove_top_button = QPushButton("Remove Last")
-                remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove'))
-                reset_top_button = QPushButton("Reset All"); reset_top_button.setToolTip("Reset All Top Markers")
-                reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
-                self.top_padding_slider = QSlider(Qt.Horizontal)
-                self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1])
-                self.top_padding_slider.setValue(self.top_marker_shift_added)
-                self.top_padding_slider.valueChanged.connect(self.update_top_padding)
-                placement_layout.addWidget(top_marker_button, 2, 0)
-                placement_layout.addWidget(remove_top_button, 2, 1)
-                placement_layout.addWidget(reset_top_button, 2, 2)
-                placement_layout.addWidget(QLabel("Offset Top:"), 2, 3, Qt.AlignRight | Qt.AlignVCenter)
-                placement_layout.addWidget(self.top_padding_slider, 2, 4)
-                main_layout.addWidget(placement_group)
+                # --- Group 2: Standard Marker Tools ---
+                standard_group = QGroupBox("Standard Marker Tools")
+                standard_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                standard_layout = QGridLayout(standard_group)
+                standard_layout.setColumnStretch(1, 1)
 
+                # Font Controls (MOVED HERE)
+                font_options_layout = QHBoxLayout()
+                self.font_combo_box = QFontComboBox(); self.font_combo_box.setCurrentFont(QFont(self.font_family)); self.font_combo_box.currentFontChanged.connect(self.update_font)
+                self.font_size_spinner = QSpinBox(); self.font_size_spinner.setRange(6, 72); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.valueChanged.connect(self.update_font)
+                self.font_color_button = QPushButton("Color"); self.font_color_button.clicked.connect(self.select_font_color); self._update_color_button_style(self.font_color_button, self.font_color)
+                self.font_rotation_input = QSpinBox(); self.font_rotation_input.setRange(-180, 180); self.font_rotation_input.setValue(self.font_rotation); self.font_rotation_input.setSuffix(" °"); self.font_rotation_input.valueChanged.connect(self.update_font)
+                font_options_layout.addWidget(QLabel("Font:")); font_options_layout.addWidget(self.font_combo_box, 1); font_options_layout.addWidget(self.font_size_spinner)
+                font_options_layout.addWidget(self.font_color_button); font_options_layout.addWidget(QLabel("Top Rotation:")); font_options_layout.addWidget(self.font_rotation_input)
+                standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
+                standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
 
-                # --- Bottom Section: Custom Markers / Shapes / Grid (COMPACT 2-ROW LAYOUT) ---
-                custom_group = QGroupBox("Custom Markers, Shapes, and Grid")
+                # Placement Controls
+                left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
+                left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
+                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(self.update_left_padding)
+                standard_layout.addWidget(self.left_padding_slider, 2, 1)
+                duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
+                
+                right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
+                right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
+                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(self.update_right_padding)
+                standard_layout.addWidget(self.right_padding_slider, 3, 1)
+                duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
+                
+                top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
+                top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
+                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(self.update_top_padding)
+                standard_layout.addWidget(self.top_padding_slider, 4, 1)
+                main_layout.addWidget(standard_group)
+
+                # --- Group 3: Custom Markers, Shapes & Grid ---
+                custom_group = QGroupBox("Custom Markers, Shapes & Grid") # This group is fine as-is
                 custom_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                custom_layout = QVBoxLayout(custom_group)
-                custom_layout.setSpacing(6)
-
-                # --- Row 1: Placement and Styling ---
-                row1_layout = QHBoxLayout()
-                row1_layout.setSpacing(6)
-
-                self.custom_marker_button = QPushButton("Place Custom", self)
-                self.custom_marker_button.setToolTip("Click to activate, then click on image to place text/arrow")
-                self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
-
-                self.custom_marker_text_entry = QLineEdit(self)
-                self.custom_marker_text_entry.setPlaceholderText("Custom text...")
-
-                arrow_buttons_layout = QHBoxLayout()
-                arrow_buttons_layout.setContentsMargins(0, 0, 0, 0); arrow_buttons_layout.setSpacing(2)
+                # ... (The rest of this method, containing the logic for the custom_group, is unchanged) ...
+                custom_layout = QVBoxLayout(custom_group); custom_layout.setSpacing(6)
+                row1_layout = QHBoxLayout(); row1_layout.setSpacing(6)
+                self.custom_marker_button = QPushButton("Place Custom", self); self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
+                self.custom_marker_text_entry = QLineEdit(self); self.custom_marker_text_entry.setPlaceholderText("Custom text...")
+                arrow_buttons_layout = QHBoxLayout(); arrow_buttons_layout.setContentsMargins(0, 0, 0, 0); arrow_buttons_layout.setSpacing(2)
                 arrow_size = 25
                 self.custom_marker_button_left_arrow = QPushButton("←"); self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left")
                 self.custom_marker_button_right_arrow = QPushButton("→"); self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right")
@@ -9260,39 +9083,21 @@ if __name__ == "__main__":
                 self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
                 self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
                 self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
-                
-                self.custom_font_type_dropdown = QFontComboBox()
-                self.custom_font_type_dropdown.setCurrentFont(QFont("Arial"))
-                self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
-                
-                self.custom_font_size_spinbox = QSpinBox()
-                self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12); self.custom_font_size_spinbox.setPrefix("Size: ")
-
-                self.custom_marker_color_button = QPushButton("Color")
-                self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
+                self.custom_font_type_dropdown = QFontComboBox(); self.custom_font_type_dropdown.setCurrentFont(QFont("Arial")); self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
+                self.custom_font_size_spinbox = QSpinBox(); self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12); self.custom_font_size_spinbox.setPrefix("Size: ")
+                self.custom_marker_color_button = QPushButton("Color"); self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
                 if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
                 self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                
-                row1_layout.addWidget(self.custom_marker_button)
-                row1_layout.addWidget(self.custom_marker_text_entry)
-                row1_layout.addLayout(arrow_buttons_layout)
-                row1_layout.addWidget(self.custom_font_type_dropdown, 1) # Give font dropdown stretch factor
-                row1_layout.addWidget(self.custom_font_size_spinbox)
-                row1_layout.addWidget(self.custom_marker_color_button)
+                row1_layout.addWidget(self.custom_marker_button); row1_layout.addWidget(self.custom_marker_text_entry); row1_layout.addLayout(arrow_buttons_layout)
+                row1_layout.addWidget(self.custom_font_type_dropdown, 1); row1_layout.addWidget(self.custom_font_size_spinbox); row1_layout.addWidget(self.custom_marker_color_button)
                 custom_layout.addLayout(row1_layout)
-
-                # --- Row 2: Management and Tools ---
-                row2_layout = QHBoxLayout()
-                row2_layout.setSpacing(6)
-
+                row2_layout = QHBoxLayout(); row2_layout.setSpacing(6)
                 self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
                 self.reset_custom_marker_button = QPushButton("Reset All"); self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
-                
                 shape_size = 25
                 self.draw_line_button = QPushButton("L"); self.draw_line_button.setToolTip("Draw Line"); self.draw_line_button.setFixedSize(shape_size, shape_size); self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
                 self.draw_rect_button = QPushButton("R"); self.draw_rect_button.setToolTip("Draw Rectangle"); self.draw_rect_button.setFixedSize(shape_size, shape_size); self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
                 self.remove_shape_button = QPushButton("X"); self.remove_shape_button.setToolTip("Remove Last Shape"); self.remove_shape_button.setFixedSize(shape_size, shape_size); self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
-                
                 self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X or CMD+Shift+X toggles X and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
                 self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y or CMD+Shift+Y  toggles Y and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
@@ -9300,26 +9105,15 @@ if __name__ == "__main__":
                 self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
                 self.grid_size_input.valueChanged.connect(self.update_live_view)
                 self.grid_size_input.setToolTip("Can increase or decrease grid pixel size by CTRL+Shift+Up or CTRL+Shift+Down")
-
                 self.move_resize_button = QPushButton("Move/Resize"); self.move_resize_button.setToolTip("Toggle mode to move/resize custom markers and shapes on the image."); self.move_resize_button.setCheckable(True); self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
                 self.modify_custom_marker_button = QPushButton("Modify All"); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes"); self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
-
-                row2_layout.addWidget(self.remove_custom_marker_button)
-                row2_layout.addWidget(self.reset_custom_marker_button)
-                row2_layout.addSpacing(10)
-                row2_layout.addWidget(QLabel("Shapes:"))
-                row2_layout.addWidget(self.draw_line_button); row2_layout.addWidget(self.draw_rect_button); row2_layout.addWidget(self.remove_shape_button)
-                row2_layout.addSpacing(10)
-                row2_layout.addWidget(self.show_grid_checkbox_x)
-                row2_layout.addWidget(self.show_grid_checkbox_y)
-                row2_layout.addWidget(self.grid_size_input)
-                row2_layout.addStretch(1) # Main stretch to push final buttons to the right
-                row2_layout.addWidget(self.move_resize_button)
-                row2_layout.addWidget(self.modify_custom_marker_button)
-                
+                row2_layout.addWidget(self.remove_custom_marker_button); row2_layout.addWidget(self.reset_custom_marker_button); row2_layout.addSpacing(10)
+                row2_layout.addWidget(QLabel("Shapes:")); row2_layout.addWidget(self.draw_line_button); row2_layout.addWidget(self.draw_rect_button); row2_layout.addWidget(self.remove_shape_button); row2_layout.addSpacing(10)
+                row2_layout.addWidget(self.show_grid_checkbox_x); row2_layout.addWidget(self.show_grid_checkbox_y); row2_layout.addWidget(self.grid_size_input); row2_layout.addStretch(1)
+                row2_layout.addWidget(self.move_resize_button); row2_layout.addWidget(self.modify_custom_marker_button)
                 custom_layout.addLayout(row2_layout)
-
                 main_layout.addWidget(custom_group)
+
                 main_layout.addStretch()
                 return tab
 
@@ -13149,7 +12943,7 @@ if __name__ == "__main__":
                     predicted_mw = dialog.get_final_predicted_mw()
                     if predicted_mw > 0:
                         self.last_predicted_mw = predicted_mw
-                        self.base_protein_mw = predicted_mw # Update the base MW for the analyzer
+                        #self.base_protein_mw = predicted_mw # Update the base MW for the analyzer
                     
                     if self.avg_glycan_mass <= 0:
                         self.avg_glycan_mass = 0.0
@@ -13314,11 +13108,13 @@ if __name__ == "__main__":
                 if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
                 if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
                 if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
-                                
+                
+                self.reset_all_adjustments()
                 self._update_overlay_slider_ranges()
                 self._update_marker_slider_ranges()
                 self.update_live_view()
                 self._update_status_bar()
+                
 
         if app: # Ensure app exists before trying to set style
             app.setStyle("Fusion")
