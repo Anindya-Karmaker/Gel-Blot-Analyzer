@@ -92,23 +92,46 @@ try:
 except Exception as e:
     print(f"ERROR: Could not write initial log message: {e}") # Print error if immediate logging fails
 
+logger = logging.getLogger()
+logger.setLevel(logging.ERROR)
+
+try:
+    # Use append mode 'a' and specify utf-8 encoding
+    handler = logging.FileHandler(log_file_path, 'a', 'utf-8')
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    # --- END FIX ---
+    
+    logging.error("--- Logging initialized ---")
+except Exception as e:
+    print(f"ERROR: Could not configure logging or write initial message: {e}")
+
 
 def log_exception(exc_type, exc_value, exc_traceback):
     """Log uncaught exceptions to the error log."""
-    print("!!! log_exception called !!!") # Add print statement here too
+    print("!!! log_exception called !!!")
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
     # Log the exception
     try:
+        # --- START FIX: Explicitly flush the handler ---
+        # Log the error first
         logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-        # Optional: Force flush if you suspect buffering issues, though unlikely for ERROR level
-        # logging.getLogger().handlers[0].flush()
-    except Exception as log_err:
-        print(f"ERROR: Failed to log exception to file: {log_err}") # Print logging specific errors
+        
+        # Get the root logger's handlers and flush them.
+        # This forces the buffered log messages to be written to the file immediately,
+        # which is crucial in a crash scenario.
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        # --- END FIX ---
 
-    # Display a QMessageBox with the error details
+    except Exception as log_err:
+        print(f"ERROR: Failed to log exception to file: {log_err}")
+
+    # Display a QMessageBox with the error details (this part is fine)
     try:
         error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n(Check error_log.txt for details)"
         QMessageBox.critical(
@@ -723,6 +746,14 @@ if __name__ == "__main__":
                         raise ValueError("Failed to convert PIL image to NumPy array.")
                     if self.intensity_array_original_range.ndim != 2:
                         raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
+                    
+                    if np.any(self.intensity_array_original_range):
+                        # Use percentiles to avoid extreme outliers affecting contrast
+                        self.display_vmin, self.display_vmax = np.percentile(self.intensity_array_original_range, (1, 99))
+                        if self.display_vmax <= self.display_vmin: # Fallback for low-contrast images
+                           self.display_vmin, self.display_vmax = np.min(self.intensity_array_original_range), np.max(self.intensity_array_original_range)
+                    else:
+                        self.display_vmin, self.display_vmax = 0, self.original_max_value
 
                 except Exception as e:
                     raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
@@ -3217,6 +3248,7 @@ if __name__ == "__main__":
                     self.crop_rect_start_view = start_point_view
                     self.crop_rect_end_view = current_point_view
                     self.update()
+                    
 
             def finalize_crop_preview(self, start_point_view, end_point_view):
                 """Stores the final rectangle dimensions for persistent preview."""
@@ -4057,6 +4089,18 @@ if __name__ == "__main__":
                         print("Warning: No screens detected. Using default screen dimensions.")
                         self.screen = QRect(0, 0, 1024, 768) # Arbitrary default
                 self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
+                self.hist_fig, self.hist_ax, self.hist_canvas = None, None, None
+                self.overlay_mode_active = False
+                self.adjustment_context = "Main Image" # 'Main Image', 'Overlay 1', or 'Overlay 2'
+                self.image1_adjustments = {}
+                self.image2_adjustments = {}
+                self.is_in_dedicated_edit_mode = False
+                self.main_view_widgets = {}
+                self.main_image_is_inverted = False
+                self.selected_overlay_index = 0  # 0 for none, 1 for image1, 2 for image2
+                self.overlay_interaction_mode = None  # None, 'moving', or 'resizing'
+                self.resizing_overlay_corner_index = -1 # 0:TL, 1:TR, 2:BR, 3:BL
+                self.drag_start_overlay_state = {}
                 # window_width = int(self.screen_width * 0.5)  # 60% of screen width
                 # window_height = int(self.screen_height * 0.75)  # 95% of screen height
                 self.preview_label_width_setting = 400  # A smaller base width for the minimum calculation
@@ -4385,6 +4429,134 @@ if __name__ == "__main__":
                 elif self.viewer_position == "Bottom": self.layout_bottom_action.setChecked(True)
                 elif self.viewer_position == "Left": self.layout_left_action.setChecked(True)
                 elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
+
+
+            def _update_levels_histogram(self):
+                """Draws or updates the intensity histogram for the currently selected adjustment context."""
+                # --- START FIX: Correctly select the source image and apply pre-level adjustments ---
+                source_image = None
+                settings_dict = {}
+            
+                # 1. Get the base image and settings for the current context
+                if self.adjustment_context == "Main Image":
+                    source_image = self.image_before_contrast
+                    settings_dict = {
+                        'is_inverted': self.main_image_is_inverted,
+                        'channel_mixer': self.channel_mixer_data,
+                        'unsharp_mask': self.unsharp_mask_data,
+                        'clahe': self.clahe_data
+                    }
+                elif self.adjustment_context == "Overlay 1 (Base)":
+                    source_image = getattr(self, 'image1_original', None)
+                    settings_dict = self.image1_adjustments
+                elif self.adjustment_context == "Overlay 2 (Overlay)":
+                    source_image = getattr(self, 'image2_original', None)
+                    settings_dict = self.image2_adjustments
+            
+                # 2. Generate the pre-levels image for the histogram by replicating the adjustment pipeline
+                source_image_for_hist = None
+                if source_image and not source_image.isNull():
+                    # This logic mirrors the first part of _apply_all_adjustments_to_image
+                    temp_image = source_image.copy()
+                    if settings_dict.get('is_inverted', False):
+                        temp_image.invertPixels()
+            
+                    np_img_full = self.qimage_to_numpy(temp_image)
+                    if np_img_full is not None:
+                        np_content = np_img_full # Process the full image for histogram
+            
+                        # Apply Channel Mixer
+                        cm_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
+                        if np_content.ndim == 3:
+                            is_mono = cm_settings.get('mono', False)
+                            r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
+                            np_float = np_content.astype(np.float32)
+                            if is_mono:
+                                gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
+                                np_content = np.clip(gray, 0, 255).astype(np.uint8)
+                            else:
+                                np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
+                                np_content = np.clip(np_float, 0, 255).astype(np.uint8)
+            
+                        # Apply CLAHE
+                        clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
+                        if clahe_settings.get('clip_limit', 1.0) > 1.0:
+                            clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
+                            if np_content.ndim == 2: np_content = clahe.apply(np_content)
+                            elif np_content.ndim == 3:
+                                # Simplified for brevity, same as in original
+                                if np_content.shape[2] == 4:
+                                    bgr = np_content[...,:3]; lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                                    lab[..., 0] = clahe.apply(lab[..., 0]); np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                                else:
+                                    lab = cv2.cvtColor(np_content, cv2.COLOR_BGR2LAB); lab[..., 0] = clahe.apply(lab[..., 0]); np_content = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                        
+                        # Apply Unsharp Mask
+                        usm_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
+                        if usm_settings.get('amount', 0) > 0:
+                            amount = usm_settings['amount'] / 100.0
+                            sigma = max(0.1, usm_settings['radius'])
+                            blurred = cv2.GaussianBlur(np_content, (0, 0), sigma)
+                            np_content = cv2.addWeighted(np_content, 1.0 + amount, blurred, -amount, 0)
+                        
+                        source_image_for_hist = self.numpy_to_qimage(np_content)
+                    else:
+                        source_image_for_hist = temp_image # Fallback if numpy fails
+                # --- END FIX ---
+
+                # Ensure the plot canvas exists and there's an image to analyze.
+                if not self.hist_ax or not source_image_for_hist or source_image_for_hist.isNull():
+                    if self.hist_ax:
+                        self.hist_ax.clear()
+                        self.hist_ax.text(0.5, 0.5, 'No Image Selected', transform=self.hist_ax.transAxes, ha='center', va='center', fontsize=9, color='gray')
+                        self.hist_ax.set_xticks([]); self.hist_ax.set_yticks([])
+                        self.hist_fig.tight_layout(pad=0.2)
+                        self.hist_canvas.draw_idle()
+                    return
+
+                try:
+                    # The rest of the histogram logic remains the same, but now operates on the correct source image.
+                    np_img = self.qimage_to_numpy(source_image_for_hist)
+                    if np_img is None: return
+
+                    if np_img.ndim == 3:
+                        gray_np = cv2.cvtColor(np_img[:,:,:3], cv2.COLOR_BGR2GRAY)
+                    else:
+                        gray_np = np_img
+                    
+                    is_16bit = gray_np.dtype == np.uint16
+                    bins = 256
+                    hist_range = (0, 65536) if is_16bit else (0, 256)
+                    
+                    hist, bin_edges = np.histogram(gray_np.ravel(), bins=bins, range=hist_range)
+                    log_hist = np.log1p(hist)
+                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+                    self.hist_ax.clear()
+                    self.hist_ax.plot(bin_centers, log_hist, color='black', linewidth=1.0)
+                    self.hist_ax.fill_between(bin_centers, 0, log_hist, color='#cccccc', alpha=1.0)
+                    
+                    self.hist_ax.set_yticks([]); self.hist_ax.set_xticks([])
+                    for spine in self.hist_ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1)
+                    self.hist_ax.set_xlim(hist_range[0], hist_range[1])
+                    self.hist_ax.set_ylim(bottom=0)
+                    self.hist_ax.text(0.02, 0.95, 'Histogram (log)', transform=self.hist_ax.transAxes, fontsize=9, verticalalignment='top', horizontalalignment='left', weight='bold')
+                    
+                    black_point_slider_val = self.black_point_slider.value()
+                    white_point_slider_val = self.white_point_slider.value()
+                    slider_max = self.black_point_slider.maximum()
+                    black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
+                    white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
+                    
+                    self.hist_ax.axvline(black_point_pos, color='red', lw=1.2)
+                    self.hist_ax.axvline(white_point_pos, color='red', lw=1.2)
+                    self.hist_ax.plot(black_point_pos, 0, marker='^', color='red', markersize=8, clip_on=False)
+                    self.hist_ax.plot(white_point_pos, 0, marker='^', color='red', markersize=8, clip_on=False)
+                    
+                    self.hist_fig.tight_layout(pad=0.2)
+                    self.hist_canvas.draw_idle()
+                except Exception as e:
+                    print(f"Error updating levels histogram: {e}")
                 
             def update_mouse_coords_in_statusbar(self, label_pos: QPointF, image_pos: QPointF = None):
                 if image_pos is not None:
@@ -4673,49 +4845,61 @@ if __name__ == "__main__":
                 
             def _transition_layout_change(self, position: str):
                 """
-                Creates a 'blink' transition effect for changing the main layout
-                without using the animation framework.
+                Rebuilds the main window's layout, handling the case where we might be in editor mode.
                 """
                 self.viewer_position = position
                 
-                # Define config path
-                if getattr(sys, 'frozen', False): application_path = os.path.dirname(sys.executable)
+                # --- Save the new layout preference to the config file ---
+                if getattr(sys, 'frozen', False):
+                    application_path = os.path.dirname(sys.executable)
                 else:
-                    try: application_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError: application_path = os.getcwd()
+                    try:
+                        application_path = os.path.dirname(os.path.abspath(__file__))
+                    except NameError:
+                        application_path = os.getcwd()
                 config_filepath = os.path.join(application_path, self.CONFIG_PRESET_FILE_NAME)
                 
                 config_data = {}
-                try: # Read existing config to not overwrite presets
+                try: 
                     if os.path.exists(config_filepath):
                         with open(config_filepath, "r", encoding='utf-8') as f:
                             config_data = json.load(f)
-                    if not isinstance(config_data, dict): config_data = {}
-                except (json.JSONDecodeError, IOError): config_data = {}
-
-                config_data["viewer_position"] = self.viewer_position # Update value
-                if "presets" not in config_data: config_data["presets"] = self.presets_data # Ensure presets key exists
-
-                try: # Write updated data back
+                    if not isinstance(config_data, dict):
+                        config_data = {}
+                except (json.JSONDecodeError, IOError):
+                    config_data = {}
+                
+                config_data["viewer_position"] = self.viewer_position
+                if "presets" not in config_data:
+                    config_data["presets"] = self.presets_data
+                
+                try: 
                     with open(config_filepath, "w", encoding='utf-8') as f:
                         json.dump(config_data, f, indent=4)
                 except Exception as e:
                     print(f"Warning: Could not save global config: {e}")
 
-                self.live_view_label.hide()
-                self.tab_widget.hide()
-
-                self._update_main_layout(position)
-                
-                QApplication.processEvents()
-
-                self.adjustSize()
-
-                self.live_view_label.show()
-                self.tab_widget.show()
-
-
-                self.update_live_view()  
+                # --- FIX: Only change the layout if NOT in dedicated editor mode ---
+                if not self.is_in_dedicated_edit_mode:
+                    # Use a "blink" transition to avoid visual artifacts
+                    self.live_view_label.hide()
+                    self.tab_widget.hide()
+                    
+                    # Rebuild the main layout
+                    self._update_main_layout(position)
+                    
+                    # Process events to apply the layout change
+                    QApplication.processEvents()
+                    
+                    # Adjust window size to fit the new layout
+                    self.adjustSize()
+                    
+                    # Show the widgets again in their new positions
+                    self.live_view_label.show()
+                    self.tab_widget.show()
+                    
+                    # Redraw the content
+                    self.update_live_view()
 
                 
 
@@ -7497,120 +7681,244 @@ if __name__ == "__main__":
                 tab = QWidget()
                 layout = QVBoxLayout(tab)
                 layout.setSpacing(10)
-        
-                initial_dim_placeholder = 1000
-                initial_x_range_min = -initial_dim_placeholder
-                initial_x_range_max = initial_dim_placeholder * 2
-                initial_y_range_min = -initial_dim_placeholder
-                initial_y_range_max = initial_dim_placeholder * 2
-        
-                # --- Image 1 Group ---
-                image1_group = QGroupBox("Image 1 Overlay")
-                image1_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                image1_layout = QGridLayout(image1_group)
-                image1_layout.setSpacing(8)
-        
-                copy_image1_button = QPushButton("Copy Current Image")
-                copy_image1_button.setToolTip("Copies the main image to the Image 1 buffer.")
-                copy_image1_button.clicked.connect(self.save_image1)
-                place_image1_button = QPushButton("Place Image 1")
-                place_image1_button.setToolTip("Positions Image 1 based on sliders.")
-                place_image1_button.clicked.connect(self.place_image1) # This connection is correct
-                remove_image1_button = QPushButton("Remove Image 1")
-                remove_image1_button.setToolTip("Removes Image 1 from the overlay.")
-                remove_image1_button.clicked.connect(lambda: (self.remove_image1(), self.update_live_view()))
-        
-                image1_layout.addWidget(copy_image1_button, 0, 0)
-                image1_layout.addWidget(place_image1_button, 0, 1)
-                image1_layout.addWidget(remove_image1_button, 0, 2)
-        
-                image1_layout.addWidget(QLabel("Horizontal Pos (px):"), 1, 0)
-                self.image1_left_slider = QSlider(Qt.Horizontal)
-                self.image1_left_slider.setRange(initial_x_range_min, initial_x_range_max)
-                self.image1_left_slider.setValue(0)
-                # FIX: Connect sliders to the NEW dedicated handler function
-                self.image1_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                image1_layout.addWidget(self.image1_left_slider, 1, 1, 1, 2)
-        
-                image1_layout.addWidget(QLabel("Vertical Pos (px):"), 2, 0)
-                self.image1_top_slider = QSlider(Qt.Horizontal)
-                self.image1_top_slider.setRange(initial_y_range_min, initial_y_range_max)
-                self.image1_top_slider.setValue(0)
-                # FIX: Connect sliders to the NEW dedicated handler function
-                self.image1_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                image1_layout.addWidget(self.image1_top_slider, 2, 1, 1, 2)
-        
-                image1_layout.addWidget(QLabel("Resize (%):"), 3, 0)
-                self.image1_resize_slider = QSlider(Qt.Horizontal)
-                self.image1_resize_slider.setRange(10, 300)
-                self.image1_resize_slider.setValue(100)
-                self.image1_resize_slider.valueChanged.connect(self.update_live_view)
-                self.image1_resize_label = QLabel("100%")
+
+                # --- Group 1: Image Sources & Blending ---
+                source_group = QGroupBox("Image Sources & Blending")
+                source_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                source_layout = QGridLayout(source_group)
+                source_layout.setSpacing(10)
+
+                set_base_button = QPushButton("Set Current as Base Image (Image 1)")
+                set_base_button.setToolTip("Copies the main image to the 'Image 1' buffer to act as the bottom layer.")
+                set_base_button.clicked.connect(self.set_overlay_base)
+
+                self.load_overlay_button = QPushButton("Load Overlay Image (Image 2)")
+                self.load_overlay_button.setToolTip("Loads a second image from a file into the 'Image 2' buffer to act as the top layer.")
+                self.load_overlay_button.clicked.connect(self.load_overlay_image)
+                self.load_overlay_button.setEnabled(False)
+
+                source_layout.addWidget(set_base_button, 0, 0)
+                source_layout.addWidget(self.load_overlay_button, 0, 1)
+
+                source_layout.addWidget(QLabel("Blend (Base ↔ Overlay):"), 1, 0)
+                self.blend_slider = QSlider(Qt.Horizontal)
+                self.blend_slider.setRange(0, 100)
+                self.blend_slider.setValue(50)
+                self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
+                self.blend_slider.valueChanged.connect(self.update_live_view)
+                source_layout.addWidget(self.blend_slider, 1, 1)
+                layout.addWidget(source_group)
+
+                # --- Group 2: Advanced Positioning ---
+                position_group = QGroupBox("Advanced Positioning")
+                position_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                position_layout = QVBoxLayout(position_group)
+                
+                # Image 1 (Base) Controls
+                image1_subgroup = QGroupBox("Base Image (Image 1)")
+                image1_layout = QGridLayout(image1_subgroup)
+                copy_image1_button = QPushButton("Copy Current to Buffer 1"); copy_image1_button.clicked.connect(self.save_image1)
+                place_image1_button = QPushButton("Place Buffer 1"); place_image1_button.setToolTip("Make the buffered Image 1 visible on the canvas."); place_image1_button.clicked.connect(self.place_image1)
+                remove_image1_button = QPushButton("Remove"); remove_image1_button.clicked.connect(lambda: (self.remove_image1(), self.update_live_view()))
+                reset_overlay1_button = QPushButton("Reset Position"); reset_overlay1_button.setToolTip("Reset the position, size, and rotation of Image 1."); reset_overlay1_button.clicked.connect(self.reset_overlay1_transform)
+
+                image1_layout.addWidget(copy_image1_button, 0, 0, 1, 1)
+                image1_layout.addWidget(place_image1_button, 0, 1, 1, 1)
+                image1_layout.addWidget(remove_image1_button, 0, 2, 1, 1)
+                image1_layout.addWidget(reset_overlay1_button, 0, 3, 1, 2)
+
+                # Position X slider with value label
+                image1_layout.addWidget(QLabel("Pos X:"), 1, 0)
+                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image1_pos_x_label = QLabel("0"); self.image1_pos_x_label.setFixedWidth(50)
+                self.image1_left_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_x_label: lbl.setText(str(val)))
+                image1_layout.addWidget(self.image1_left_slider, 1, 1, 1, 3)
+                image1_layout.addWidget(self.image1_pos_x_label, 1, 4)
+
+                # Position Y slider with value label
+                image1_layout.addWidget(QLabel("Pos Y:"), 2, 0)
+                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image1_pos_y_label = QLabel("0"); self.image1_pos_y_label.setFixedWidth(50)
+                self.image1_top_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_y_label: lbl.setText(str(val)))
+                image1_layout.addWidget(self.image1_top_slider, 2, 1, 1, 3)
+                image1_layout.addWidget(self.image1_pos_y_label, 2, 4)
+
+                # Resize slider with value label
+                image1_layout.addWidget(QLabel("Resize:"), 3, 0)
+                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(self.update_live_view)
+                self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(50)
                 self.image1_resize_slider.valueChanged.connect(lambda val, lbl=self.image1_resize_label: lbl.setText(f"{val}%"))
-                image1_layout.addWidget(self.image1_resize_slider, 3, 1)
-                image1_layout.addWidget(self.image1_resize_label, 3, 2)
-                layout.addWidget(image1_group)
-                self.interactive_overlay_button = QPushButton("Activate Interactive Overlay Mode")
-                self.interactive_overlay_button.setCheckable(True)
-                self.interactive_overlay_button.setToolTip("Toggle mode to move overlays with the mouse and resize with the scroll wheel.")
-                self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
-                layout.addWidget(self.interactive_overlay_button)
-        
-                # --- Image 2 Group ---
-                image2_group = QGroupBox("Image 2 Overlay")
-                image2_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                image2_layout = QGridLayout(image2_group)
-                copy_image2_button = QPushButton("Copy Current Image")
-                copy_image2_button.clicked.connect(self.save_image2)
-                place_image2_button = QPushButton("Place Image 2")
-                place_image2_button.clicked.connect(self.place_image2) # This connection is correct
-                remove_image2_button = QPushButton("Remove Image 2")
-                remove_image2_button.clicked.connect(lambda: (self.remove_image2(), self.update_live_view()))
-                image2_layout.addWidget(copy_image2_button, 0, 0)
-                image2_layout.addWidget(place_image2_button, 0, 1)
-                image2_layout.addWidget(remove_image2_button, 0, 2)
-        
-                image2_layout.addWidget(QLabel("Horizontal Pos (px):"), 1, 0)
-                self.image2_left_slider = QSlider(Qt.Horizontal)
-                self.image2_left_slider.setRange(initial_x_range_min, initial_x_range_max)
-                self.image2_left_slider.setValue(0)
-                # FIX: Connect sliders to the NEW dedicated handler function
-                self.image2_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                image2_layout.addWidget(self.image2_left_slider, 1, 1, 1, 2)
-        
-                image2_layout.addWidget(QLabel("Vertical Pos (px):"), 2, 0)
-                self.image2_top_slider = QSlider(Qt.Horizontal)
-                self.image2_top_slider.setRange(initial_y_range_min, initial_y_range_max)
-                self.image2_top_slider.setValue(0)
-                # FIX: Connect sliders to the NEW dedicated handler function
-                self.image2_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                image2_layout.addWidget(self.image2_top_slider, 2, 1, 1, 2)
-        
-                image2_layout.addWidget(QLabel("Resize (%):"), 3, 0)
-                self.image2_resize_slider = QSlider(Qt.Horizontal)
-                self.image2_resize_slider.setRange(10, 300)
-                self.image2_resize_slider.setValue(100)
-                self.image2_resize_slider.valueChanged.connect(self.update_live_view)
-                self.image2_resize_label = QLabel("100%")
+                image1_layout.addWidget(self.image1_resize_slider, 3, 1, 1, 3)
+                image1_layout.addWidget(self.image1_resize_label, 3, 4)
+
+                # Rotation slider with value label
+                image1_layout.addWidget(QLabel("Rotation:"), 4, 0)
+                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(self.update_live_view)
+                self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(50)
+                self.image1_rotation_slider.valueChanged.connect(lambda val, lbl=self.image1_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
+                image1_layout.addWidget(self.image1_rotation_slider, 4, 1, 1, 3)
+                image1_layout.addWidget(self.image1_rotation_label, 4, 4)
+
+                position_layout.addWidget(image1_subgroup)
+
+                # Image 2 (Overlay) Controls
+                image2_subgroup = QGroupBox("Overlay Image (Image 2)")
+                image2_layout = QGridLayout(image2_subgroup)
+                copy_image2_button = QPushButton("Copy Current to Buffer 2"); copy_image2_button.clicked.connect(self.save_image2)
+                place_image2_button = QPushButton("Place Buffer 2"); place_image2_button.setToolTip("Make the buffered Image 2 visible on the canvas."); place_image2_button.clicked.connect(self.place_image2)
+                remove_image2_button = QPushButton("Remove"); remove_image2_button.clicked.connect(lambda: (self.remove_image2(), self.update_live_view()))
+                reset_overlay2_button = QPushButton("Reset Position"); reset_overlay2_button.setToolTip("Reset the position, size, and rotation of Image 2."); reset_overlay2_button.clicked.connect(self.reset_overlay2_transform)
+
+                image2_layout.addWidget(copy_image2_button, 0, 0, 1, 1)
+                image2_layout.addWidget(place_image2_button, 0, 1, 1, 1)
+                image2_layout.addWidget(remove_image2_button, 0, 2, 1, 1)
+                image2_layout.addWidget(reset_overlay2_button, 0, 3, 1, 2)
+
+                # Position X slider with value label
+                image2_layout.addWidget(QLabel("Pos X:"), 1, 0)
+                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image2_pos_x_label = QLabel("0"); self.image2_pos_x_label.setFixedWidth(50)
+                self.image2_left_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_x_label: lbl.setText(str(val)))
+                image2_layout.addWidget(self.image2_left_slider, 1, 1, 1, 3)
+                image2_layout.addWidget(self.image2_pos_x_label, 1, 4)
+
+                # Position Y slider with value label
+                image2_layout.addWidget(QLabel("Pos Y:"), 2, 0)
+                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image2_pos_y_label = QLabel("0"); self.image2_pos_y_label.setFixedWidth(50)
+                self.image2_top_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_y_label: lbl.setText(str(val)))
+                image2_layout.addWidget(self.image2_top_slider, 2, 1, 1, 3)
+                image2_layout.addWidget(self.image2_pos_y_label, 2, 4)
+
+                # Resize slider with value label
+                image2_layout.addWidget(QLabel("Resize:"), 3, 0)
+                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(self.update_live_view)
+                self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(50)
                 self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
-                image2_layout.addWidget(self.image2_resize_slider, 3, 1)
-                image2_layout.addWidget(self.image2_resize_label, 3, 2)
-                layout.addWidget(image2_group)
-        
-                finalize_button = QPushButton("Rasterize Image")
-                finalize_button.setToolTip("Permanently merges the placed overlays onto the main image.")
-                finalize_button.clicked.connect(self.finalize_combined_image)
-                layout.addWidget(finalize_button)
-        
+                image2_layout.addWidget(self.image2_resize_slider, 3, 1, 1, 3)
+                image2_layout.addWidget(self.image2_resize_label, 3, 4)
+
+                # Rotation slider with value label
+                image2_layout.addWidget(QLabel("Rotation:"), 4, 0)
+                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(self.update_live_view)
+                self.image2_rotation_label = QLabel("0.0°"); self.image2_rotation_label.setFixedWidth(50)
+                self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
+                image2_layout.addWidget(self.image2_rotation_slider, 4, 1, 1, 3)
+                image2_layout.addWidget(self.image2_rotation_label, 4, 4)
+                
+                position_layout.addWidget(image2_subgroup)
+                layout.addWidget(position_group)
+
+                # --- Group 3: Actions ---
+                actions_group = QGroupBox("Actions")
+                actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                actions_layout = QHBoxLayout(actions_group)
+                self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
+                finalize_button = QPushButton("Rasterize Image"); finalize_button.clicked.connect(self.finalize_combined_image)
+                actions_layout.addWidget(self.interactive_overlay_button, 1)
+                actions_layout.addWidget(finalize_button, 1)
+                layout.addWidget(actions_group)
+
                 layout.addStretch()
-                self._update_overlay_slider_ranges()
-        
+                self._update_overlay_slider_ranges() # Initialize slider ranges
                 return tab
+            
+            def set_overlay_base(self):
+                """Convenience method to copy current image and place it as the base (Image 1)."""
+                if self.image and not self.image.isNull():
+                    # --- FIX: Only initialize adjustments if they don't already exist ---
+                    if not self.image1_adjustments:
+                        self.image1_adjustments = self._get_default_adjustments()
+                    # --- END FIX ---
+                    
+                    self.save_image1() # Copies current image to buffer 1
+                    self.place_image1() # Places it at default position
+                    self.adjustment_context_combo.model().item(1).setEnabled(True)
+                    self.adjustment_context_combo.setCurrentText("Overlay 1 (Base)") # This will load UI
+                    
+                    # --- START FIX ---
+                    # Enable the button for loading Image 2 now that a base exists
+                    if hasattr(self, 'load_overlay_button'):
+                        self.load_overlay_button.setEnabled(True)
+                    # --- END FIX ---
+
+                    QMessageBox.information(self, "Success", "Current image set as the base (Image 1).")
+                else:
+                    QMessageBox.warning(self, "Error", "No image is loaded to set as base.")
+
+            def load_overlay_image(self):
+                options = QFileDialog.Options()
+                file_path, _ = QFileDialog.getOpenFileName(self, "Open Overlay Image File", "", "Image Files (*.png *.jpg *.bmp *.tif *.tiff)", options=options)
+                if not file_path: return
+
+                overlay_image = QImage(file_path)
+                if overlay_image.isNull():
+                    try:
+                        pil_image = Image.open(file_path); np_array = np.array(pil_image)
+                        overlay_image = self.numpy_to_qimage(np_array)
+                        if overlay_image.isNull(): raise ValueError("Pillow/NumPy conversion failed.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Error", f"Failed to load overlay image: {e}")
+                        return
+                
+                # --- START of MODIFICATION ---
+                # If a base image (Image 1) is already present, replace the main image with a transparent canvas.
+                if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull():
+                    # Use the dimensions of the existing base overlay (Image 1) to define the canvas size.
+                    width = self.image1_original.width()
+                    height = self.image1_original.height()
+                    
+                    # Create a new transparent canvas.
+                    transparent_canvas = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+                    transparent_canvas.fill(Qt.transparent)
+                    
+                    # Replace the main image and all its backups. This effectively removes the original main image
+                    # from the view when in overlay mode, leaving only the two overlays.
+                    self.image = transparent_canvas
+                    self.image_master = self.image.copy()
+                    self.image_before_padding = None # Padding is irrelevant for the new canvas
+                    self.image_padded = False
+                    self.image_contrasted = self.image.copy()
+                    self.image_before_contrast = self.image.copy()
+                    self.main_image_is_inverted = False # Reset inversion state for the transparent canvas
+
+                    # Reset adjustment settings for the "Main Image" context to their defaults
+                    default_settings = self._get_default_adjustments()
+                    self.channel_mixer_data = default_settings['channel_mixer'].copy()
+                    self.unsharp_mask_data = default_settings['unsharp_mask'].copy()
+                    self.clahe_data = default_settings['clahe'].copy()
+                    
+                    # If the user is currently viewing/adjusting the "Main Image", update the UI sliders to reflect the reset.
+                    if self.adjustment_context == "Main Image":
+                        self._load_adjustments_to_ui("Main Image")
+
+                    print("INFO: Main image has been replaced with a transparent canvas for overlay-only view.")
+                # --- END of MODIFICATION ---
+                
+                self.image2_adjustments = self._get_default_adjustments()
+                self.image2_original = overlay_image
+                self.place_image2()
+                self.adjustment_context_combo.model().item(2).setEnabled(True)
+                self.adjustment_context_combo.setCurrentText("Overlay 2 (Overlay)")
+                QMessageBox.information(self, "Success", "Overlay image loaded (Image 2). Use 'Interactive Alignment' to position it.")
             
             def remove_image1(self):
                 """Hides Image 1 and resets its sliders, without triggering a redraw."""
                 if hasattr(self, 'image1_position'):
                     del self.image1_position
+
+                # --- START FIX ---
+                # If Image 1 is removed, we can no longer load Image 2.
+                if hasattr(self, 'load_overlay_button'):
+                    self.load_overlay_button.setEnabled(False)
+                
+                # Also disable the context switcher for overlay 1
+                if hasattr(self, 'adjustment_context_combo'):
+                    self.adjustment_context_combo.model().item(1).setEnabled(False)
+                    # If the current context was Overlay 1, switch back to Main Image
+                    if self.adjustment_context_combo.currentText() == "Overlay 1 (Base)":
+                        self.adjustment_context_combo.setCurrentText("Main Image")
+                # --- END FIX ---
 
                 if hasattr(self, 'image1_left_slider'): self.image1_left_slider.setValue(0)
                 if hasattr(self, 'image1_top_slider'): self.image1_top_slider.setValue(0)
@@ -7674,66 +7982,91 @@ if __name__ == "__main__":
                     self.update_live_view()
                 else:
                     QMessageBox.warning(self, "Info", "No image copied to Image 2 buffer yet.")
+
+            def reset_overlay1_transform(self):
+                """Resets position, size, and rotation for Image 1 overlay."""
+                if hasattr(self, 'image1_left_slider'):
+                    self.image1_left_slider.setValue(0)
+                if hasattr(self, 'image1_top_slider'):
+                    self.image1_top_slider.setValue(0)
+                if hasattr(self, 'image1_resize_slider'):
+                    self.image1_resize_slider.setValue(100)
+                if hasattr(self, 'image1_rotation_slider'):
+                    self.image1_rotation_slider.setValue(0)
+                # The slider value changes will automatically trigger the necessary updates.
+                # A final update_live_view() call ensures consistency.
+                self.update_live_view()
+
+            def reset_overlay2_transform(self):
+                """Resets position, size, and rotation for Image 2 overlay."""
+                if hasattr(self, 'image2_left_slider'):
+                    self.image2_left_slider.setValue(0)
+                if hasattr(self, 'image2_top_slider'):
+                    self.image2_top_slider.setValue(0)
+                if hasattr(self, 'image2_resize_slider'):
+                    self.image2_resize_slider.setValue(100)
+                if hasattr(self, 'image2_rotation_slider'):
+                    self.image2_rotation_slider.setValue(0)
+                self.update_live_view()
             
             
             
             def finalize_combined_image(self):
-                """
-                Rasterizes placed overlays onto the main image, clears the overlay state,
-                and performs a final, clean redraw.
-                """
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Warning", "No base image loaded.")
-                    return
+                """ Rasterizes placed overlays onto the main image, baking in their individual adjustments. """
+                has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
+                has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
 
-                # Check if there's anything to rasterize
-                if not hasattr(self, 'image1_position') and not hasattr(self, 'image2_position'):
+                if not (has_img1 or has_img2):
                     QMessageBox.information(self, "Info", "No overlays are currently placed to rasterize.")
                     return
-                    
+
                 self.save_state()
 
-                # --- Step 1: Render the final image to an off-screen canvas ---
-                render_scale = 3
-                # ... (the entire rendering logic to create 'final_canvas' remains the same as before) ...
-                try:
-                    view_width = self.live_view_label.width() if self.live_view_label.width() > 0 else 600
-                    view_height = self.live_view_label.height() if self.live_view_label.height() > 0 else 400
-                    target_render_width = view_width * render_scale
-                    target_render_height = view_height * render_scale
-                    scaled_image_for_render = self.image.scaled(
-                        target_render_width, target_render_height, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                    )
-                    final_canvas = QImage(target_render_width, target_render_height, QImage.Format_ARGB32_Premultiplied)
-                    final_canvas.fill(Qt.transparent)
-                    self.render_image_on_canvas(
-                        canvas=final_canvas, scaled_image=scaled_image_for_render,
-                        x_start=0, y_start=0, render_scale=render_scale, draw_guides=False
-                    )
-                except Exception as e:
-                     QMessageBox.critical(self, "Render Error", f"Failed during final rendering: {e}")
-                     return
+                # Start with the currently adjusted main image as the canvas
+                final_canvas = self.image.copy()
+                if not final_canvas.hasAlphaChannel():
+                    final_canvas = final_canvas.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+                
+                painter = QPainter(final_canvas)
+                is_blending = has_img1 and has_img2
+                blend_value = self.blend_slider.value()
 
-                # --- Step 2: Update the main image and its backups ---
+                # Draw Image 1 with its adjustments
+                if has_img1:
+                    adjusted_img1 = self._apply_all_adjustments_to_image(self.image1_original, self.image1_adjustments)
+                    if is_blending: painter.setOpacity((100 - blend_value) / 100.0)
+                    rect1_native = QRectF(QPointF(*self.image1_position), QSizeF(adjusted_img1.width() * (self.image1_resize_slider.value()/100.0), adjusted_img1.height() * (self.image1_resize_slider.value()/100.0)))
+                    painter.drawImage(rect1_native, adjusted_img1)
+                    painter.setOpacity(1.0)
+                
+                # Draw Image 2 with its adjustments
+                if has_img2:
+                    adjusted_img2 = self._apply_all_adjustments_to_image(self.image2_original, self.image2_adjustments)
+                    if is_blending: painter.setOpacity(blend_value / 100.0)
+                    rect2_native = QRectF(QPointF(*self.image2_position), QSizeF(adjusted_img2.width() * (self.image2_resize_slider.value()/100.0), adjusted_img2.height() * (self.image2_resize_slider.value()/100.0)))
+                    painter.drawImage(rect2_native, adjusted_img2)
+                    painter.setOpacity(1.0)
+
+                painter.end()
+
+                # Update main image and backups
                 self.image = final_canvas
                 self.is_modified = True
+                self.image_master = self.image.copy()
                 self.image_before_padding = self.image.copy()
                 self.image_contrasted = self.image.copy()
                 self.image_before_contrast = self.image.copy()
-                self.image_padded = True
-                
-                # --- Step 3: Silently clear the overlay states using the modified helpers ---
-                self.remove_image1()
-                self.remove_image2()
+                self.main_image_is_inverted = False
 
-                # --- Step 4: Update all necessary UI and redraw once ---
-                self._update_preview_label_size()
-                self._update_status_bar()
-                self._update_marker_slider_ranges()
-                self._update_overlay_slider_ranges()
-                self.update_live_view() # The single, final redraw
+                # Clear overlay state
+                self.remove_image1(); self.remove_image2()
+                self.adjustment_context_combo.model().item(1).setEnabled(False)
+                self.adjustment_context_combo.model().item(2).setEnabled(False)
+                self.adjustment_context_combo.setCurrentText("Main Image")
 
-                QMessageBox.information(self, "Success", "The overlays have been rasterized onto the image.")
+                self.update_live_view()
+                self._update_levels_histogram()
+                QMessageBox.information(self, "Success", "The overlay(s) have been rasterized onto the image.")
 
             def _update_overlay_position_from_sliders(self):
                 """
@@ -7935,27 +8268,56 @@ if __name__ == "__main__":
                 main_layout.setSpacing(15)
 
                 left_column_layout = QVBoxLayout()
-                levels_group = QGroupBox("Levels & Gamma"); levels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+
+                # --- NEW: Adjustment Context Switcher ---
+                context_group = QGroupBox("Adjustment Target")
+                context_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                context_layout = QHBoxLayout(context_group)
+                context_layout.addWidget(QLabel("Adjusting:"))
+                self.adjustment_context_combo = QComboBox()
+                self.adjustment_context_combo.addItems(["Main Image", "Overlay 1 (Base)", "Overlay 2 (Overlay)"])
+                self.adjustment_context_combo.model().item(1).setEnabled(False) # Disable Overlay 1
+                self.adjustment_context_combo.model().item(2).setEnabled(False) # Disable Overlay 2
+                self.adjustment_context_combo.currentTextChanged.connect(self._on_adjustment_context_changed)
+                context_layout.addWidget(self.adjustment_context_combo, 1)
+                left_column_layout.addWidget(context_group)
+                # --- END NEW ---
+
+                levels_group = QGroupBox("Levels and Gamma"); levels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 levels_layout = QGridLayout(levels_group)
-                self.black_point_label = QLabel("Black Point:"); levels_layout.addWidget(self.black_point_label, 0, 0)
-                self.black_point_slider = QSlider(Qt.Horizontal); self.black_point_slider.setRange(0, 65535); self.black_point_slider.setValue(0); levels_layout.addWidget(self.black_point_slider, 0, 1)
-                self.black_point_value_label = QLabel("0"); self.black_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.black_point_value_label, 0, 2)
-                self.black_point_slider.valueChanged.connect(self.update_image_levels_and_gamma); self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
-                self.white_point_label = QLabel("White Point:"); levels_layout.addWidget(self.white_point_label, 1, 0)
-                self.white_point_slider = QSlider(Qt.Horizontal); self.white_point_slider.setRange(0, 65535); self.white_point_slider.setValue(65535); levels_layout.addWidget(self.white_point_slider, 1, 1)
-                self.white_point_value_label = QLabel("65535"); self.white_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.white_point_value_label, 1, 2)
-                self.white_point_slider.valueChanged.connect(self.update_image_levels_and_gamma); self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
-                gamma_label = QLabel("Gamma:"); levels_layout.addWidget(gamma_label, 2, 0)
-                self.gamma_slider = QSlider(Qt.Horizontal); self.gamma_slider.setRange(10, 500); self.gamma_slider.setValue(100); levels_layout.addWidget(self.gamma_slider, 2, 1)
-                self.gamma_value_label = QLabel("1.00"); self.gamma_value_label.setFixedWidth(50); levels_layout.addWidget(self.gamma_value_label, 2, 2)
-                self.gamma_slider.valueChanged.connect(self.update_image_levels_and_gamma); self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}"))
+                from matplotlib.figure import Figure
+                self.hist_fig = Figure(figsize=(5, 1.5), dpi=72)
+                self.hist_fig.patch.set_facecolor('none')
+                self.hist_ax = self.hist_fig.add_subplot(111)
+                self.hist_ax.patch.set_facecolor('white')
+                self.hist_canvas = FigureCanvas(self.hist_fig)
+                self.hist_canvas.setFixedHeight(80) 
+                self._update_levels_histogram() 
+                levels_layout.addWidget(self.hist_canvas, 0, 0, 1, 3) 
+                
+                self.black_point_label = QLabel("Black Point:"); levels_layout.addWidget(self.black_point_label, 1, 0)
+                self.black_point_slider = QSlider(Qt.Horizontal); self.black_point_slider.setRange(0, 65535); self.black_point_slider.setValue(0); levels_layout.addWidget(self.black_point_slider, 1, 1)
+                self.black_point_value_label = QLabel("0"); self.black_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.black_point_value_label, 1, 2)
+                self.black_point_slider.sliderReleased.connect(self.apply_all_adjustments) # Changed
+                self.black_point_slider.valueChanged.connect(self._update_levels_histogram) 
+                self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
+                self.white_point_label = QLabel("White Point:"); levels_layout.addWidget(self.white_point_label, 2, 0)
+                self.white_point_slider = QSlider(Qt.Horizontal); self.white_point_slider.setRange(0, 65535); self.white_point_slider.setValue(65535); levels_layout.addWidget(self.white_point_slider, 2, 1)
+                self.white_point_value_label = QLabel("65535"); self.white_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.white_point_value_label, 2, 2)
+                self.white_point_slider.sliderReleased.connect(self.apply_all_adjustments) # Changed
+                self.white_point_slider.valueChanged.connect(self._update_levels_histogram)
+                self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
+                gamma_label = QLabel("Gamma:"); levels_layout.addWidget(gamma_label, 3, 0)
+                self.gamma_slider = QSlider(Qt.Horizontal); self.gamma_slider.setRange(10, 500); self.gamma_slider.setValue(100); levels_layout.addWidget(self.gamma_slider, 3, 1)
+                self.gamma_value_label = QLabel("1.00"); self.gamma_value_label.setFixedWidth(50); levels_layout.addWidget(self.gamma_value_label, 3, 2)
+                self.gamma_slider.valueChanged.connect(self.apply_all_adjustments); self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}")) # Changed
                 left_column_layout.addWidget(levels_group)
 
                 actions_group = QGroupBox("General Image Actions"); actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 actions_layout = QHBoxLayout(actions_group)
                 self.bw_button = QPushButton("Grayscale"); self.bw_button.clicked.connect(self.convert_to_black_and_white)
                 invert_button = QPushButton("Invert"); invert_button.clicked.connect(self.invert_image)
-                reset_button = QPushButton("Reset All Adjustments"); reset_button.clicked.connect(self.reset_all_adjustments)
+                reset_button = QPushButton("Reset Current Adjustments"); reset_button.clicked.connect(self.reset_all_adjustments)
                 actions_layout.addWidget(self.bw_button); actions_layout.addWidget(invert_button); actions_layout.addStretch(); actions_layout.addWidget(reset_button)
                 left_column_layout.addWidget(actions_group)
                 left_column_layout.addStretch(); main_layout.addLayout(left_column_layout)
@@ -7970,10 +8332,10 @@ if __name__ == "__main__":
                 self.cm_blue_slider = QSlider(Qt.Horizontal); self.cm_blue_slider.setRange(0, 200); self.cm_blue_slider.setValue(100)
                 self.cm_blue_label = QLabel("100%"); self.cm_blue_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Blue:"), 2, 0); cm_layout.addWidget(self.cm_blue_slider, 2, 1); cm_layout.addWidget(self.cm_blue_label, 2, 2)
                 self.cm_mono_checkbox = QCheckBox("Monochrome"); cm_layout.addWidget(self.cm_mono_checkbox, 3, 1)
-                self.cm_red_slider.valueChanged.connect(self._update_channel_mixer); self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
-                self.cm_green_slider.valueChanged.connect(self._update_channel_mixer); self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
-                self.cm_blue_slider.valueChanged.connect(self._update_channel_mixer); self.cm_blue_slider.valueChanged.connect(lambda v: self.cm_blue_label.setText(f"{v}%"))
-                self.cm_mono_checkbox.stateChanged.connect(self._update_channel_mixer)
+                self.cm_red_slider.valueChanged.connect(self.apply_all_adjustments); self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%")) # Changed
+                self.cm_green_slider.valueChanged.connect(self.apply_all_adjustments); self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%")) # Changed
+                self.cm_blue_slider.valueChanged.connect(self.apply_all_adjustments); self.cm_blue_slider.valueChanged.connect(lambda v: self.cm_blue_label.setText(f"{v}%")) # Changed
+                self.cm_mono_checkbox.stateChanged.connect(self.apply_all_adjustments) # Changed
                 right_column_layout.addWidget(cm_group)
 
                 usm_group = QGroupBox("Sharpening (Unsharp Mask)"); usm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -7984,9 +8346,9 @@ if __name__ == "__main__":
                 self.usm_radius_label = QLabel("1.0 px"); self.usm_radius_label.setFixedWidth(50); usm_layout.addWidget(QLabel("Radius:"), 1, 0); usm_layout.addWidget(self.usm_radius_slider, 1, 1); usm_layout.addWidget(self.usm_radius_label, 1, 2)
                 self.usm_threshold_slider = QSlider(Qt.Horizontal); self.usm_threshold_slider.setRange(0, 255); self.usm_threshold_slider.setValue(0)
                 self.usm_threshold_label = QLabel("0"); self.usm_threshold_label.setFixedWidth(40); usm_layout.addWidget(QLabel("Threshold:"), 2, 0); usm_layout.addWidget(self.usm_threshold_slider, 2, 1); usm_layout.addWidget(self.usm_threshold_label, 2, 2)
-                self.usm_amount_slider.valueChanged.connect(self._update_unsharp_mask); self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
-                self.usm_radius_slider.valueChanged.connect(self._update_unsharp_mask); self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
-                self.usm_threshold_slider.valueChanged.connect(self._update_unsharp_mask); self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
+                self.usm_amount_slider.valueChanged.connect(self.apply_all_adjustments); self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%")) # Changed
+                self.usm_radius_slider.valueChanged.connect(self.apply_all_adjustments); self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px")) # Changed
+                self.usm_threshold_slider.valueChanged.connect(self.apply_all_adjustments); self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}")) # Changed
                 right_column_layout.addWidget(usm_group)
 
                 clahe_group = QGroupBox("Local Contrast (CLAHE)"); clahe_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -7995,12 +8357,125 @@ if __name__ == "__main__":
                 self.clahe_clip_label = QLabel("1.0"); self.clahe_clip_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Clip Limit:"), 0, 0); clahe_layout.addWidget(self.clahe_clip_slider, 0, 1); clahe_layout.addWidget(self.clahe_clip_label, 0, 2)
                 self.clahe_tile_slider = QSlider(Qt.Horizontal); self.clahe_tile_slider.setRange(2, 32); self.clahe_tile_slider.setValue(8)
                 self.clahe_tile_label = QLabel("8x8"); self.clahe_tile_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Tile Size:"), 1, 0); clahe_layout.addWidget(self.clahe_tile_slider, 1, 1); clahe_layout.addWidget(self.clahe_tile_label, 1, 2)
-                self.clahe_clip_slider.valueChanged.connect(self._update_clahe); self.clahe_clip_slider.valueChanged.connect(lambda v: self.clahe_clip_label.setText(f"{(v/10.0):.1f}"))
-                self.clahe_tile_slider.valueChanged.connect(self._update_clahe); self.clahe_tile_slider.valueChanged.connect(lambda v: self.clahe_tile_label.setText(f"{v}x{v}"))
+                self.clahe_clip_slider.valueChanged.connect(self.apply_all_adjustments); self.clahe_clip_slider.valueChanged.connect(lambda v: self.clahe_clip_label.setText(f"{(v/10.0):.1f}")) # Changed
+                self.clahe_tile_slider.valueChanged.connect(self.apply_all_adjustments); self.clahe_tile_slider.valueChanged.connect(lambda v: self.clahe_tile_label.setText(f"{v}x{v}")) # Changed
                 right_column_layout.addWidget(clahe_group)
 
                 right_column_layout.addStretch(); main_layout.addLayout(right_column_layout)
                 return tab
+            
+            def _get_default_adjustments(self):
+                """Returns a dictionary with default adjustment settings."""
+                return {
+                    'is_inverted': False, # <-- ADD THIS LINE
+                    'levels_gamma': {'black_point': 0, 'white_point': 65535, 'gamma': 100},
+                    'channel_mixer': {'r': 100, 'g': 100, 'b': 100, 'mono': False},
+                    'unsharp_mask': {'amount': 0, 'radius': 1.0, 'threshold': 0},
+                    'clahe': {'clip_limit': 1.0, 'tile_size': 8}
+                }
+
+            def _save_current_ui_adjustments(self):
+                """Saves the current state of the UI sliders into the appropriate settings dictionary."""
+                target_dict = None
+                if self.adjustment_context == "Main Image":
+                    # For main image, we save to the top-level attributes
+                    self.channel_mixer_data = {'r': self.cm_red_slider.value(), 'g': self.cm_green_slider.value(), 'b': self.cm_blue_slider.value(), 'mono': self.cm_mono_checkbox.isChecked()}
+                    self.unsharp_mask_data = {'amount': self.usm_amount_slider.value(), 'radius': self.usm_radius_slider.value() / 10.0, 'threshold': self.usm_threshold_slider.value()}
+                    self.clahe_data = {'clip_limit': self.clahe_clip_slider.value() / 10.0, 'tile_size': self.clahe_tile_slider.value()}
+                    # The main image levels are not stored separately, they are part of the main undo stack
+                    return
+                elif self.adjustment_context == "Overlay 1 (Base)":
+                    target_dict = self.image1_adjustments
+                elif self.adjustment_context == "Overlay 2 (Overlay)":
+                    target_dict = self.image2_adjustments
+
+                if target_dict:
+                    target_dict['levels_gamma'] = {'black_point': self.black_point_slider.value(), 'white_point': self.white_point_slider.value(), 'gamma': self.gamma_slider.value()}
+                    target_dict['channel_mixer'] = {'r': self.cm_red_slider.value(), 'g': self.cm_green_slider.value(), 'b': self.cm_blue_slider.value(), 'mono': self.cm_mono_checkbox.isChecked()}
+                    target_dict['unsharp_mask'] = {'amount': self.usm_amount_slider.value(), 'radius': self.usm_radius_slider.value() / 10.0, 'threshold': self.usm_threshold_slider.value()}
+                    target_dict['clahe'] = {'clip_limit': self.clahe_clip_slider.value() / 10.0, 'tile_size': self.clahe_tile_slider.value()}
+
+            def _load_adjustments_to_ui(self, context):
+                """Loads settings from the appropriate dictionary and updates the UI sliders."""
+                settings = {}
+                if context == "Main Image":
+                    settings['levels_gamma'] = {'black_point': self.black_point_slider.value(), 'white_point': self.white_point_slider.value(), 'gamma': self.gamma_slider.value()} # Use current values
+                    settings['channel_mixer'] = self.channel_mixer_data
+                    settings['unsharp_mask'] = self.unsharp_mask_data
+                    settings['clahe'] = self.clahe_data
+                elif context == "Overlay 1 (Base)" and self.image1_adjustments:
+                    settings = self.image1_adjustments
+                elif context == "Overlay 2 (Overlay)" and self.image2_adjustments:
+                    settings = self.image2_adjustments
+                else: # Fallback to defaults if dictionary is missing
+                    settings = self._get_default_adjustments()
+
+                # Block signals to prevent feedback loops
+                for slider in [self.black_point_slider, self.white_point_slider, self.gamma_slider, self.cm_red_slider, self.cm_green_slider, self.cm_blue_slider, self.usm_amount_slider, self.usm_radius_slider, self.usm_threshold_slider, self.clahe_clip_slider, self.clahe_tile_slider, self.cm_mono_checkbox]:
+                    slider.blockSignals(True)
+                
+                # Update Levels/Gamma
+                lg_settings = settings.get('levels_gamma', self._get_default_adjustments()['levels_gamma'])
+                self.black_point_slider.setValue(lg_settings.get('black_point', 0))
+                self.white_point_slider.setValue(lg_settings.get('white_point', 65535))
+                self.gamma_slider.setValue(lg_settings.get('gamma', 100))
+
+                # Update Channel Mixer
+                cm_settings = settings.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
+                self.cm_red_slider.setValue(cm_settings.get('r', 100))
+                self.cm_green_slider.setValue(cm_settings.get('g', 100))
+                self.cm_blue_slider.setValue(cm_settings.get('b', 100))
+                self.cm_mono_checkbox.setChecked(cm_settings.get('mono', False))
+
+                # Update Unsharp Mask
+                usm_settings = settings.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
+                self.usm_amount_slider.setValue(usm_settings.get('amount', 0))
+                self.usm_radius_slider.setValue(int(usm_settings.get('radius', 1.0) * 10))
+                self.usm_threshold_slider.setValue(usm_settings.get('threshold', 0))
+
+                # Update CLAHE
+                clahe_settings = settings.get('clahe', self._get_default_adjustments()['clahe'])
+                self.clahe_clip_slider.setValue(int(clahe_settings.get('clip_limit', 1.0) * 10))
+                self.clahe_tile_slider.setValue(clahe_settings.get('tile_size', 8))
+
+                # Unblock signals
+                for slider in [self.black_point_slider, self.white_point_slider, self.gamma_slider, self.cm_red_slider, self.cm_green_slider, self.cm_blue_slider, self.usm_amount_slider, self.usm_radius_slider, self.usm_threshold_slider, self.clahe_clip_slider, self.clahe_tile_slider, self.cm_mono_checkbox]:
+                    slider.blockSignals(False)
+
+                # Manually trigger label updates
+                self.black_point_value_label.setText(f"{self.black_point_slider.value()}")
+                self.white_point_value_label.setText(f"{self.white_point_slider.value()}")
+                self.gamma_value_label.setText(f"{self.gamma_slider.value() / 100.0:.2f}")
+                self.cm_red_label.setText(f"{self.cm_red_slider.value()}%")
+                self.cm_green_label.setText(f"{self.cm_green_slider.value()}%")
+                self.cm_blue_label.setText(f"{self.cm_blue_slider.value()}%")
+                self.usm_amount_label.setText(f"{self.usm_amount_slider.value()}%")
+                self.usm_radius_label.setText(f"{self.usm_radius_slider.value() / 10.0:.1f} px")
+                self.usm_threshold_label.setText(f"{self.usm_threshold_slider.value()}")
+                self.clahe_clip_label.setText(f"{self.clahe_clip_slider.value() / 10.0:.1f}")
+                self.clahe_tile_label.setText(f"{self.clahe_tile_slider.value()}x{self.clahe_tile_slider.value()}")
+
+            def _on_adjustment_context_changed(self, new_context):
+                # 1. Save UI state from the old context before switching
+                self._save_current_ui_adjustments()
+                
+                # 2. Update the internal context tracker
+                self.adjustment_context = new_context
+                
+                # 3. Set the flag that tells the rendering engine if we are in an isolated editor view
+                if new_context in ["Overlay 1 (Base)", "Overlay 2 (Overlay)"]:
+                    self.is_in_dedicated_edit_mode = True
+                else: # "Main Image"
+                    self.is_in_dedicated_edit_mode = False
+                    
+                # 4. Load the new context's settings into the UI sliders
+                self._load_adjustments_to_ui(new_context)
+                
+                # 5. Update the histogram to reflect the newly selected image's base state
+                self._update_levels_histogram()
+                
+                # 6. Refresh the entire view. The rendering functions will now use the new context.
+                self.update_live_view()
             
             def _update_channel_mixer(self):
                 if not self.image or self.image.isNull(): return
@@ -8029,12 +8504,56 @@ if __name__ == "__main__":
 
             def apply_all_adjustments(self):
                 """A single function to apply all adjustments in order, respecting transparency."""
-                if not self.image_before_contrast or self.image_before_contrast.isNull(): return
+                # This function now only acts on the MAIN IMAGE context.
+                # Overlays are handled during rendering.
+                self._save_current_ui_adjustments() # Save UI state to current context
+                
+                # Save state for undo when a slider is changed
+                self.save_state()
+                
+                if self.adjustment_context == "Main Image":
+                    # The logic to adjust self.image_contrasted and self.image
+                    if not self.image_before_contrast or self.image_before_contrast.isNull(): return
+                    base_image = self.image_before_contrast.copy()
+                    
+                    # --- START FIX: Add the 'is_inverted' flag to the settings dictionary ---
+                    adjusted_image = self._apply_all_adjustments_to_image(base_image, {
+                        'is_inverted': self.main_image_is_inverted, # This line was missing
+                        'levels_gamma': {'black_point': self.black_point_slider.value(), 'white_point': self.white_point_slider.value(), 'gamma': self.gamma_slider.value()},
+                        'channel_mixer': self.channel_mixer_data,
+                        'unsharp_mask': self.unsharp_mask_data,
+                        'clahe': self.clahe_data
+                    })
+                    # --- END FIX ---
+                    
+                    self.image = adjusted_image
+                    # self.image_contrasted is the base for levels/gamma, so we don't update it here.
+                    self.update_live_view()
+                    self._update_levels_histogram()
+                else:
+                    # If context is an overlay, just update the view to show the change.
+                    self.update_live_view()
+                    self._update_levels_histogram()
 
-                temp_image = self.image_before_contrast.copy()
+            def _apply_all_adjustments_to_image(self, source_image, settings_dict):
+                """Applies a full suite of adjustments from a settings dict to a source QImage."""
+                if not source_image or source_image.isNull(): return source_image
+                
+                # --- START OF THE CRITICAL FIX ---
+                # 1. Apply inversion FIRST if the flag is set.
+                temp_image = source_image.copy()
+                is_inverted = settings_dict.get('is_inverted', False)
+                if is_inverted:
+                    temp_image.invertPixels()
+                
+                # 2. All subsequent operations now use the (potentially) inverted temp_image.
                 np_img_full = self.qimage_to_numpy(temp_image)
-                if np_img_full is None: return
+                # --- END OF THE CRITICAL FIX ---
 
+                if np_img_full is None: return source_image
+
+                # ... (The rest of the adjustment logic remains the same, but now operates on the correctly inverted source) ...
+                
                 content_rect = None
                 has_alpha = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
                 if has_alpha:
@@ -8049,11 +8568,11 @@ if __name__ == "__main__":
                 else:
                     np_content = np_img_full
 
+                channel_mixer_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
                 if np_content.ndim == 3:
-                    is_mono = self.channel_mixer_data['mono']
-                    r, g, b = self.channel_mixer_data['r']/100.0, self.channel_mixer_data['g']/100.0, self.channel_mixer_data['b']/100.0
+                    is_mono = channel_mixer_settings.get('mono', False)
+                    r, g, b = channel_mixer_settings.get('r',100)/100.0, channel_mixer_settings.get('g',100)/100.0, channel_mixer_settings.get('b',100)/100.0
                     np_float = np_content.astype(np.float32)
-                    
                     if is_mono:
                         gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
                         np_content = np.clip(gray, 0, 255).astype(np.uint8)
@@ -8061,82 +8580,64 @@ if __name__ == "__main__":
                         np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
                         np_content = np.clip(np_float, 0, 255).astype(np.uint8)
 
-                clip_limit = self.clahe_data['clip_limit']
+                clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
+                clip_limit = clahe_settings.get('clip_limit', 1.0)
                 if clip_limit > 1.0:
-                    tile_size = self.clahe_data['tile_size']
+                    tile_size = clahe_settings.get('tile_size', 8)
                     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
-                    if np_content.ndim == 2:
-                        np_content = clahe.apply(np_content)
+                    if np_content.ndim == 2: np_content = clahe.apply(np_content)
                     elif np_content.ndim == 3:
                         if np_content.shape[2] == 4: # BGRA
-                            bgr = np_content[...,:3]
-                            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-                            lab[..., 0] = clahe.apply(lab[..., 0])
-                            np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                            bgr = np_content[...,:3]; lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                            lab[..., 0] = clahe.apply(lab[..., 0]); np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
                         else: # BGR
-                            lab = cv2.cvtColor(np_content, cv2.COLOR_BGR2LAB)
-                            lab[..., 0] = clahe.apply(lab[..., 0])
-                            np_content = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                            lab = cv2.cvtColor(np_content, cv2.COLOR_BGR2LAB); lab[..., 0] = clahe.apply(lab[..., 0]); np_content = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
                 
                 if content_rect:
                     np_img = np_img_full.copy()
                     xmin, ymin, w, h = content_rect
-                    # --- START FIX: Handle channel mismatch ---
-                    if np_content.ndim == 2 and np_img.ndim == 3: # Grayscale content into color canvas
-                        if np_img.shape[2] == 4: # Target is BGRA
-                            np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
-                        else: # Target is BGR
-                            np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
-                    else: # Channels match or source is color, target is grayscale (less likely)
-                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
-                    # --- END FIX ---
-                else:
-                    np_img = np_content
+                    if np_content.ndim == 2 and np_img.ndim == 3:
+                        if np_img.shape[2] == 4: np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
+                        else: np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
+                    else: np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                else: np_img = np_content
                 
-                amount = self.unsharp_mask_data['amount'] / 100.0
+                unsharp_mask_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
+                amount = unsharp_mask_settings.get('amount', 0) / 100.0
                 if amount > 0:
-                    radius = self.unsharp_mask_data['radius']
-                    # --- FIX: Use a better sharpening method (Gaussian difference) ---
+                    radius = unsharp_mask_settings.get('radius', 1.0)
                     sigma = max(0.1, radius)
                     blurred = cv2.GaussianBlur(np_img, (0, 0), sigma)
-                    # Add the difference back to the original, weighted by amount
                     sharpened = cv2.addWeighted(np_img, 1.0 + amount, blurred, -amount, 0)
                     np_img = sharpened
-                    # --- END FIX ---
 
-                self.image_contrasted = self.numpy_to_qimage(np_img)
-                self.update_image_levels_and_gamma()
+                temp_image_after_effects = self.numpy_to_qimage(np_img)
+
+                # Finally, apply levels and gamma
+                lg_settings = settings_dict.get('levels_gamma', self._get_default_adjustments()['levels_gamma'])
+                self._update_levels_histogram()
+                return self.apply_levels_gamma(temp_image_after_effects, lg_settings['black_point'], lg_settings['white_point'], lg_settings['gamma'] / 100.0)
 
             def reset_all_adjustments(self):
-                """Resets all sliders on the Image & Contrast tab to their defaults."""
-                self.save_state()
-                # Reset Levels and Gamma
-                self._update_level_slider_ranges_and_defaults()
-                if hasattr(self, 'gamma_slider'): self.gamma_slider.setValue(100)
+                # This now only resets the settings for the CURRENT context
+                self._save_current_ui_adjustments() # Save state before resetting
                 
-                # Reset Channel Mixer
-                self.cm_red_slider.setValue(100); self.cm_green_slider.setValue(100); self.cm_blue_slider.setValue(100)
-                self.cm_mono_checkbox.setChecked(False)
-                
-                # Reset Unsharp Mask
-                self.usm_amount_slider.setValue(0); self.usm_radius_slider.setValue(10); self.usm_threshold_slider.setValue(0)
-                
-                # Reset CLAHE
-                self.clahe_clip_slider.setValue(10); self.clahe_tile_slider.setValue(8)
+                default_settings = self._get_default_adjustments()
 
-                # --- NEW: Explicitly update labels after reset ---
-                self.cm_red_label.setText("100%"); self.cm_green_label.setText("100%"); self.cm_blue_label.setText("100%")
-                self.usm_amount_label.setText("0%"); self.usm_radius_label.setText("1.0 px"); self.usm_threshold_label.setText("0")
-                self.clahe_clip_label.setText("1.0"); self.clahe_tile_label.setText("8x8")
-                self.gamma_value_label.setText("1.00")
-                # --- END NEW ---
-
-                # Reset internal data stores
-                self.channel_mixer_data = {'r': 100, 'g': 100, 'b': 100, 'mono': False}
-                self.unsharp_mask_data = {'amount': 0, 'radius': 1.0, 'threshold': 0}
-                self.clahe_data = {'clip_limit': 1.0, 'tile_size': 8}
+                if self.adjustment_context == "Main Image":
+                    self.image_before_contrast = self.image_master.copy() if self.image_master else None
+                    self.image_contrasted = self.image_master.copy() if self.image_master else None
+                    self.channel_mixer_data = default_settings['channel_mixer']
+                    self.unsharp_mask_data = default_settings['unsharp_mask']
+                    self.clahe_data = default_settings['clahe']
+                    self._update_level_slider_ranges_and_defaults() # This resets main levels sliders
+                    self.gamma_slider.setValue(100)
+                elif self.adjustment_context == "Overlay 1 (Base)":
+                    self.image1_adjustments = default_settings
+                elif self.adjustment_context == "Overlay 2 (Overlay)":
+                    self.image2_adjustments = default_settings
                 
-                # Re-apply the full (now reset) pipeline
+                self._load_adjustments_to_ui(self.adjustment_context)
                 self.apply_all_adjustments()
             
             def reset_levels_and_gamma(self):
@@ -9433,24 +9934,42 @@ if __name__ == "__main__":
                          self.image_before_padding = self.image.copy() if self.image else None # Ensure image exists before copying
 
                      # Reset contrast/gamma sliders as appearance changed significantly
-                     self.reset_gamma_contrast() # Resets sliders and updates view
+                     self.reset_gamma_contrast()
                      self._update_status_bar()
-                     self.update_live_view() # Ensure view updates even if reset_gamma_contrast fails
+                     self.update_live_view()
+                     self._update_levels_histogram() # Ensure view updates even if reset_gamma_contrast fails
                 else:
                      # This case should be less likely now with better error handling
                      QMessageBox.warning(self, "Conversion Failed", "Could not convert image to the target grayscale format.")
 
 
             def invert_image(self):
+                """Toggles the inversion state for the current adjustment context and re-applies all adjustments."""
                 self.save_state()
-                if self.image:
-                    inverted_image = self.image.copy()
-                    inverted_image.invertPixels()
-                    self.image = inverted_image
-                    self.update_live_view()
-                self.image_before_contrast=self.image.copy()
-                self.image_before_padding=self.image.copy()
-                self.image_contrasted=self.image.copy()
+                context = self.adjustment_context
+                
+                if context == "Main Image":
+                    if not self.image or self.image.isNull():
+                        QMessageBox.warning(self, "Invert Error", "No main image loaded to invert.")
+                        return
+                    self.main_image_is_inverted = not self.main_image_is_inverted
+                
+                elif context == "Overlay 1 (Base)":
+                    if not hasattr(self, 'image1_original') or not self.image1_original:
+                        QMessageBox.warning(self, "Invert Error", "No image loaded in Overlay 1 buffer.")
+                        return
+                    self.image1_adjustments['is_inverted'] = not self.image1_adjustments.get('is_inverted', False)
+
+                elif context == "Overlay 2 (Overlay)":
+                    if not hasattr(self, 'image2_original') or not self.image2_original:
+                        QMessageBox.warning(self, "Invert Error", "No image loaded in Overlay 2 buffer.")
+                        return
+                    self.image2_adjustments['is_inverted'] = not self.image2_adjustments.get('is_inverted', False)
+
+                # After toggling the flag, re-run the entire adjustment pipeline.
+                # This will now apply inversion first, then all other effects.
+                self.apply_all_adjustments()
+                self._update_levels_histogram()
 
             def keyPressEvent(self, event):
                 # --- NEW: Delete key handling for custom item selection ---
@@ -10838,7 +11357,8 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                    self.update_live_view()
+                    self.update_live_view() # Render the loaded image
+                    self._update_levels_histogram() # Update histogram for new image
                     self.save_state()
 
                 else:
@@ -10857,7 +11377,8 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
                     self._update_status_bar()
-                    self.update_live_view()
+                    self.update_live_view() # Render the loaded image
+                    self._update_levels_histogram() # Update histogram for new image
                 
             def update_font(self):
                 self.save_state()
@@ -10900,15 +11421,19 @@ if __name__ == "__main__":
                         # Try loading with Pillow as fallback
                         try:
                             pil_image = Image.open(self.image_path)
-                            # Use ImageQt for reliable conversion, preserves most formats
-                            loaded_image = ImageQt.ImageQt(pil_image)
+                            # Use our numpy converter which correctly handles 16-bit arrays
+                            np_array = np.array(pil_image)
+                            loaded_image = self.numpy_to_qimage(np_array)
                             if loaded_image.isNull():
-                                raise ValueError("Pillow could not convert to QImage.")
-
-                        except Exception as e:
-                            QMessageBox.warning(self, "Error", f"Failed to load image '{os.path.basename(file_path)}': {e}")
-                            self.image_path = None
-                            return
+                                raise ValueError("Pillow/NumPy could not convert to QImage.")
+                        except Exception as e_pil:
+                            print(f"Pillow/NumPy load failed: {e_pil}. Falling back to Qt loader.")
+                            # Fallback to Qt's loader if Pillow fails
+                            loaded_image = QImage(self.image_path)
+                            if loaded_image.isNull():
+                                QMessageBox.warning(self, "Error", f"Failed to load image '{os.path.basename(file_path)}' with both Pillow and Qt.")
+                                self.image_path = None
+                                return
 
                     # --- Keep the loaded image format ---
                     self.image = loaded_image
@@ -10978,7 +11503,8 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
                     self.update_live_view() # Render the loaded image
-                    self.save_state() # Save initial loaded state
+                    self._update_levels_histogram() # Update histogram for new image
+                    self.save_state()
             
             def apply_config(self, config_data):
                 # --- 1. Load data from config_data into self attributes ---
@@ -11439,22 +11965,6 @@ if __name__ == "__main__":
                 self.live_view_label.standard_marker_preview_text = next_label
                 self.live_view_label.standard_marker_preview_mode = "top"
                 
-            # def remove_padding(self):
-            #     if self.image_before_padding!=None:
-            #         self.image = self.image_before_padding.copy()  # Revert to the image before padding
-            #     self.image_contrasted = self.image.copy()  # Sync the contrasted image
-            #     self.image_padded = False  # Reset the padding state
-            #     w=self.image.width()
-            #     h=self.image.height()
-            #     # Preview window
-            #     ratio=w/h
-            #     self.label_width = 540
-            #     label_height=int(self.label_width/ratio)
-            #     if label_height>self.label_width:
-            #         label_height=540
-            #         self.label_width=ratio*label_height
-            #     self.live_view_label.setFixedSize(int(self.label_width), int(label_height))
-            #     self.update_live_view()
                 
             def finalize_image(self): # Padding
                 if not self.image or self.image.isNull():
@@ -11552,6 +12062,7 @@ if __name__ == "__main__":
                             elif slider == self.top_padding_slider: self.top_marker_shift_added = slider.value()
 
                     self.update_live_view() 
+                    self._update_levels_histogram()
 
                 except Exception as e:
                     QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
@@ -11633,16 +12144,44 @@ if __name__ == "__main__":
                 self.update_live_view()
 
             def update_live_view(self):
+                # --- START FIX: Context-aware rendering ---
+                image_for_view = None
+                
+                if self.is_in_dedicated_edit_mode:
+                    # If in editor mode, get the specific original overlay image
+                    if self.adjustment_context == "Overlay 1 (Base)":
+                        source_image = getattr(self, 'image1_original', None)
+                        adjustments = self.image1_adjustments
+                    elif self.adjustment_context == "Overlay 2 (Overlay)":
+                        source_image = getattr(self, 'image2_original', None)
+                        adjustments = self.image2_adjustments
+                    else: # Should not happen, but fallback
+                        source_image = self.image
+                        adjustments = {}
+
+                    if source_image and not source_image.isNull():
+                         # Apply this image's adjustments for the preview
+                         image_for_view = self._apply_all_adjustments_to_image(source_image, adjustments)
+                    else:
+                         # Show a blank if the overlay isn't loaded
+                         image_for_view = QImage(600, 400, QImage.Format_RGB32)
+                         image_for_view.fill(Qt.darkGray)
+
+                else:
+                    # If in main view mode, use the main self.image which is the blended result
+                    image_for_view = self.image
+                # --- END FIX ---
+
                 if hasattr(self, 'live_view_label') and hasattr(self, 'pan_left_action'):
                     enable_pan_actions = self.live_view_label.zoom_level > 1.0
                     self.pan_left_action.setEnabled(enable_pan_actions)
                     self.pan_right_action.setEnabled(enable_pan_actions)
                     self.pan_up_action.setEnabled(enable_pan_actions)
                     self.pan_down_action.setEnabled(enable_pan_actions)
-                if not self.image or self.image.isNull(): 
-                    if hasattr(self, 'live_view_label'):
-                        self.live_view_label.clear()
-                        self.live_view_label.update()
+                
+                if not image_for_view or image_for_view.isNull(): 
+                    if hasattr(self, 'live_view_label'): self.live_view_label.clear(); self.live_view_label.update()
+                    # ... (rest of the null-image handling)
                     if hasattr(self, 'predict_button'): self.predict_button.setEnabled(False)
                     if hasattr(self, 'save_action'): self.save_action.setEnabled(False)
                     if hasattr(self, 'copy_action'): self.copy_action.setEnabled(False)
@@ -11651,9 +12190,11 @@ if __name__ == "__main__":
                     if hasattr(self, 'save_action'): self.save_action.setEnabled(True)
                     if hasattr(self, 'copy_action'): self.copy_action.setEnabled(True)
                     if hasattr(self, 'predict_button'):
-                        left_m = getattr(self, 'left_markers', [])
-                        right_m = getattr(self, 'right_markers', [])
+                        left_m = getattr(self, 'left_markers', []); right_m = getattr(self, 'right_markers', [])
                         self.predict_button.setEnabled(bool(left_m or right_m))
+
+                # ... (The rest of the update_live_view method from here on is UNCHANGED) ...
+                # ... It will now correctly use `image_for_view` for all subsequent rendering steps ...
 
                 current_zoom_level = 1.0
                 current_pan_offset = QPointF(0, 0)
@@ -11672,10 +12213,11 @@ if __name__ == "__main__":
                 except Exception:
                      render_width = 1800; render_height = 1200
                 
-                if not self.image or self.image.isNull():
+                if not image_for_view or image_for_view.isNull():
                     if hasattr(self, 'live_view_label'): self.live_view_label.clear()
                     return
-                image_to_transform = self.image.copy()
+                
+                image_to_transform = image_for_view.copy()
 
                 orientation = 0.0
                 if hasattr(self, 'orientation_slider') and self.orientation_slider:
@@ -11839,66 +12381,90 @@ if __name__ == "__main__":
             
             def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
                 painter = QPainter(canvas)
-                x_offset = (canvas.width() - scaled_image.width()) // 2
-                y_offset = (canvas.height() - scaled_image.height()) // 2
-                
-                self.x_offset_s=x_offset
-                self.y_offset_s=y_offset
-            
-                painter.drawImage(x_offset, y_offset, scaled_image)
-                
-                native_width = self.image.width() if self.image and self.image.width() > 0 else 1
-                native_height = self.image.height() if self.image and self.image.height() > 0 else 1
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.TextAntialiasing, True)
 
-                scale_native_to_scaled_x = scaled_image.width() / native_width
-                scale_native_to_scaled_y = scaled_image.height() / native_height
+                # --- START OF THE FIX: Context-aware rendering logic ---
+                if self.is_in_dedicated_edit_mode:
+                    # In an isolated editor view, we ONLY draw the image being edited.
+                    # The 'scaled_image' passed to this function is already the correctly adjusted overlay.
+                    x_offset = (canvas.width() - scaled_image.width()) // 2
+                    y_offset = (canvas.height() - scaled_image.height()) // 2
+                    self.x_offset_s=x_offset
+                    self.y_offset_s=y_offset
+                    painter.drawImage(x_offset, y_offset, scaled_image)
+                    # We do NOT draw the other overlays or the main image.
 
-                # --- Draw Image 1 Overlay (Combined Image Feature) ---
-                # FIX: Added 'and self.image1_original' to check for None before calling .isNull()
-                if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position'):
-                    try:
+                else:
+                    # In the main view, we render the full composite image.
+                    # 'scaled_image' passed in is the adjusted main canvas.
+                    x_offset = (canvas.width() - scaled_image.width()) // 2
+                    y_offset = (canvas.height() - scaled_image.height()) // 2
+                    self.x_offset_s=x_offset
+                    self.y_offset_s=y_offset
+                    painter.drawImage(x_offset, y_offset, scaled_image)
+
+                    # Now, draw the overlays on top of the main image canvas.
+                    is_blending = (hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')) and \
+                                  (hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position'))
+                    blend_value = self.blend_slider.value() if hasattr(self, 'blend_slider') else 50
+
+                    # Draw Image 1 Overlay with Rotation
+                    if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position'):
+                        adjusted_img1 = self._apply_all_adjustments_to_image(self.image1_original, self.image1_adjustments)
+                        if is_blending: painter.setOpacity((100 - blend_value) / 100.0)
+                        
                         rect_in_label_space = self._get_overlay_rect_in_label_space(1)
                         if rect_in_label_space:
-                            rect_in_canvas_space = QRectF(
-                                rect_in_label_space.left() * render_scale,
-                                rect_in_label_space.top() * render_scale,
-                                rect_in_label_space.width() * render_scale,
-                                rect_in_label_space.height() * render_scale
-                            )
-                            painter.drawImage(rect_in_canvas_space, self.image1_original)
-                    except Exception as e:
-                        print(f"Error rendering overlay image 1: {e}")
+                            rect_in_canvas_space = QRectF(rect_in_label_space.left() * render_scale, rect_in_label_space.top() * render_scale, rect_in_label_space.width() * render_scale, rect_in_label_space.height() * render_scale)
+                            rotation1 = self.image1_rotation_slider.value() / 10.0 if hasattr(self, 'image1_rotation_slider') else 0.0
 
+                            if abs(rotation1) > 0.01:
+                                center_point_canvas = rect_in_canvas_space.center()
+                                painter.save()
+                                painter.translate(center_point_canvas)
+                                painter.rotate(rotation1)
+                                painter.translate(-center_point_canvas)
+                                painter.drawImage(rect_in_canvas_space, adjusted_img1)
+                                painter.restore()
+                            else:
+                                painter.drawImage(rect_in_canvas_space, adjusted_img1)
+                                
+                        painter.setOpacity(1.0)
 
-                # --- Draw Image 2 Overlay ---
-                # FIX: Added 'and self.image2_original' to check for None before calling .isNull()
-                if hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position'):
-                    try:
+                    # Draw Image 2 Overlay with Rotation
+                    if hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position'):
+                        adjusted_img2 = self._apply_all_adjustments_to_image(self.image2_original, self.image2_adjustments)
+                        if is_blending: painter.setOpacity(blend_value / 100.0)
+
                         rect_in_label_space = self._get_overlay_rect_in_label_space(2)
                         if rect_in_label_space:
-                            rect_in_canvas_space = QRectF(
-                                rect_in_label_space.left() * render_scale,
-                                rect_in_label_space.top() * render_scale,
-                                rect_in_label_space.width() * render_scale,
-                                rect_in_label_space.height() * render_scale
-                            )
-                            painter.drawImage(rect_in_canvas_space, self.image2_original)
-                    except Exception as e:
-                        print(f"Error rendering overlay image 2: {e}")
+                            rect_in_canvas_space = QRectF(rect_in_label_space.left() * render_scale, rect_in_label_space.top() * render_scale, rect_in_label_space.width() * render_scale, rect_in_label_space.height() * render_scale)
+                            rotation2 = self.image2_rotation_slider.value() / 10.0 if hasattr(self, 'image2_rotation_slider') else 0.0
+
+                            if abs(rotation2) > 0.01:
+                                center_point_canvas = rect_in_canvas_space.center()
+                                painter.save()
+                                painter.translate(center_point_canvas)
+                                painter.rotate(rotation2)
+                                painter.translate(-center_point_canvas)
+                                painter.drawImage(rect_in_canvas_space, adjusted_img2)
+                                painter.restore()
+                            else:
+                                painter.drawImage(rect_in_canvas_space, adjusted_img2)
+
+                        painter.setOpacity(1.0)
+                # --- END OF THE FIX ---
                 
-            
+                # Guides and other annotations are drawn on top of whatever was rendered above.
                 if draw_guides and hasattr(self, 'show_guides_checkbox') and self.show_guides_checkbox.isChecked():
-                    pen_guides = QPen(Qt.red, 2 * render_scale)
-                    painter.setPen(pen_guides)
-                    center_x_canvas = canvas.width() // 2
-                    center_y_canvas = canvas.height() // 2
+                    pen_guides = QPen(Qt.red, 2 * render_scale); painter.setPen(pen_guides)
+                    center_x_canvas = canvas.width() // 2; center_y_canvas = canvas.height() // 2
                     painter.drawLine(center_x_canvas, 0, center_x_canvas, canvas.height())
                     painter.drawLine(0, center_y_canvas, canvas.width(), center_y_canvas)
             
                 painter.end()
 
-
-             
             def crop_image(self):
                 """Function to crop the current image."""
                 if not self.image:
@@ -12009,6 +12575,7 @@ if __name__ == "__main__":
                     # This will correctly scale the new high-res self.image for display
                     # and draw markers/overlays relative to the new image.
                     self.update_live_view()
+                    self._update_levels_histogram()
 
                 except Exception as e:
                     QMessageBox.critical(self, "Rotation Error", f"Failed to rotate image: {e}")
@@ -12076,9 +12643,6 @@ if __name__ == "__main__":
                     QMessageBox.warning(self, "Crop Error", "No image loaded to crop.")
                     return
 
-                if not self.crop_rectangle_coords:
-                    # ... (message box logic) ...
-                    return
 
                 try:
                     img_x_intent, img_y_intent, img_w_intent, img_h_intent = self.crop_rectangle_coords
@@ -12165,6 +12729,7 @@ if __name__ == "__main__":
                     self.image_contrasted = self.image.copy()      
                     self.image_before_contrast = self.image.copy() 
                     self.image_padded = False 
+                    self.main_image_is_inverted = False
 
                     self.crop_rectangle_coords = None 
                     self.live_view_label.clear_crop_preview() 
@@ -12196,6 +12761,7 @@ if __name__ == "__main__":
                             elif slider == self.top_padding_slider: self.top_marker_shift_added = slider.value()
                     
                     self.update_live_view()
+                    self._update_levels_histogram()
 
                 except Exception as e:
                     # ... (error handling) ...
@@ -12263,6 +12829,7 @@ if __name__ == "__main__":
                     self._update_overlay_slider_ranges()
                     self._update_status_bar()
                     self.update_live_view()
+                    self._update_levels_histogram()
 
                 except Exception as e:
                     QMessageBox.critical(self, "Skew Error", f"Failed to apply skew: {e}")
@@ -13040,7 +13607,14 @@ if __name__ == "__main__":
                 # This ensures the UI on the "Overlap Images" tab is also reset.
                 self.remove_image1()
                 self.remove_image2()
-                # --- END: THE CRUCIAL FIX FOR OVERLAYS ---
+                self.image1_adjustments = {}
+                self.image2_adjustments = {}
+                if hasattr(self, 'blend_slider'): self.blend_slider.setValue(50)
+                self.cancel_interactive_overlay_mode()
+                if hasattr(self, 'adjustment_context_combo'):
+                    self.adjustment_context_combo.model().item(1).setEnabled(False)
+                    self.adjustment_context_combo.model().item(2).setEnabled(False)
+                    self.adjustment_context_combo.setCurrentText("Main Image")
 
                 if hasattr(self, 'show_grid_checkbox_x'): self.show_grid_checkbox_x.setChecked(False)
                 if hasattr(self, 'show_grid_checkbox_y'): self.show_grid_checkbox_y.setChecked(False)
@@ -13113,6 +13687,7 @@ if __name__ == "__main__":
                 self._update_overlay_slider_ranges()
                 self._update_marker_slider_ranges()
                 self.update_live_view()
+                self._update_levels_histogram() # Update histogram after reset
                 self._update_status_bar()
                 
 
