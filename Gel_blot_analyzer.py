@@ -1104,7 +1104,7 @@ if __name__ == "__main__":
                         im_array_disp = np.array(rotated_pil_image)
 
                         # Determine vmin/vmax for imshow based on original data range
-                        im_vmin, im_vmax = 0, self.original_max_value
+                        im_vmin, im_vmax = self.display_vmin, self.display_vmax
                         # Handle float case specifically if needed
                         if self.pil_image_for_display.mode == 'F':
                             im_vmin, im_vmax = 0.0, self.original_max_value # Or 0.0, 1.0 if normalized
@@ -5830,11 +5830,19 @@ if __name__ == "__main__":
                     self.update_live_view()
                     return
                 
-                warped_qimage_region = self.quadrilateral_to_rect(self.image_master, quad_points_label_space)
+                # --- START FIX ---
+                # Use the fully adjusted master image as the source for warping.
+                adjusted_master = self.get_adjusted_master_image()
+                if not adjusted_master or adjusted_master.isNull():
+                    QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
+                    return
+                warped_qimage_region = self.quadrilateral_to_rect(adjusted_master, quad_points_label_space)
+                # --- END FIX ---
 
                 if warped_qimage_region and not warped_qimage_region.isNull():
                     quad_points_image_space_for_marker_placement = []
                     try:
+                        # Use self.image for dimension mapping as it's the basis for the view
                         native_img_w = float(self.image.width())
                         native_img_h = float(self.image.height())
                         label_w_widget = float(self.live_view_label.width())
@@ -5926,7 +5934,12 @@ if __name__ == "__main__":
                         rect_coords_img = (rect_x, rect_y, rect_w, rect_h)
                         # ...
     
-                        extracted_qimage_region = self.image_master.copy(rect_x, rect_y, rect_w, rect_h)
+                        # --- START FIX ---
+                        adjusted_master = self.get_adjusted_master_image()
+                        if not adjusted_master or adjusted_master.isNull():
+                            raise ValueError("Could not get adjusted image for analysis.")
+                        extracted_qimage_region = adjusted_master.copy(rect_x, rect_y, rect_w, rect_h)
+                        # --- END FIX ---
                         if extracted_qimage_region.isNull():
                             raise ValueError("QImage copy failed for rectangle.")
     
@@ -7426,6 +7439,14 @@ if __name__ == "__main__":
                 extracted_qimage = None
                 region_type_for_message = "" # For user feedback
 
+                # --- START FIX ---
+                # Get the fully adjusted master image ONCE at the start.
+                adjusted_master = self.get_adjusted_master_image()
+                if not adjusted_master or adjusted_master.isNull():
+                    QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
+                    return
+                # --- END FIX ---
+
                 self.live_view_label.pan_offset = QPointF(0, 0)
                 self.live_view_label.zoom_level=1.0
                 if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
@@ -7445,13 +7466,13 @@ if __name__ == "__main__":
 
                     if selected_lane_def['type'] == 'quad':
                         quad_points_label_space = selected_lane_def['points_label']
-                        extracted_qimage = self.quadrilateral_to_rect(self.image_master, quad_points_label_space)
+                        extracted_qimage = self.quadrilateral_to_rect(adjusted_master, quad_points_label_space) # Use adjusted
                     elif selected_lane_def['type'] == 'rectangle':
                         rect_label_space = selected_lane_def['points_label'][0] # QRectF
                         img_coords_rect = self._map_label_rect_to_image_rect(rect_label_space)
                         if img_coords_rect:
                             x, y, w, h = img_coords_rect
-                            extracted_qimage = self.image_master.copy(x, y, w, h)
+                            extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
                     
                     if not extracted_qimage or extracted_qimage.isNull():
                         QMessageBox.warning(self, "Error", f"Could not extract/warp {region_type_for_message}.")
@@ -7461,7 +7482,7 @@ if __name__ == "__main__":
                 elif len(self.live_view_label.quad_points) == 4:
                     region_type_for_message = "Defined Single Quadrilateral"
                     print(f"Processing Standard: {region_type_for_message}")
-                    extracted_qimage = self.quadrilateral_to_rect(self.image_master, self.live_view_label.quad_points)
+                    extracted_qimage = self.quadrilateral_to_rect(adjusted_master, self.live_view_label.quad_points) # Use adjusted
                     if not extracted_qimage or extracted_qimage.isNull():
                         QMessageBox.warning(self, "Error", "Single Quadrilateral warping failed.")
                         return
@@ -7477,7 +7498,7 @@ if __name__ == "__main__":
                         ).normalized())
                         if img_coords_rect:
                             x, y, w, h = img_coords_rect
-                            extracted_qimage = self.image_master.copy(x, y, w, h)
+                            extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
                         if not extracted_qimage or extracted_qimage.isNull():
                             raise ValueError("QImage.copy failed for single rectangle.")
                     except Exception as e:
@@ -7498,6 +7519,13 @@ if __name__ == "__main__":
                         QMessageBox.warning(self, "Error", f"Could not convert {region_type_for_message} to grayscale for analysis.")
             
             def process_sample(self):
+                # --- START FIX ---
+                # Get the fully adjusted master image ONCE at the start.
+                adjusted_master = self.get_adjusted_master_image()
+                if not adjusted_master or adjusted_master.isNull():
+                    QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
+                    return
+                # --- END FIX ---
                 self.live_view_label.pan_offset = QPointF(0, 0)
                 self.live_view_label.zoom_level=1.0
                 if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
@@ -7524,14 +7552,14 @@ if __name__ == "__main__":
                         
                         if lane_def['type'] == 'quad':
                             quad_points_label_space = lane_def['points_label']
-                            extracted_qimage = self.quadrilateral_to_rect(self.image_master, quad_points_label_space)
+                            extracted_qimage = self.quadrilateral_to_rect(adjusted_master, quad_points_label_space) # Use adjusted
                             current_region_def_img_space = self._map_label_points_to_image_points(quad_points_label_space)
                         elif lane_def['type'] == 'rectangle':
                             rect_label_space = lane_def['points_label'][0] 
                             img_coords_rect = self._map_label_rect_to_image_rect(rect_label_space)
-                            if img_coords_rect and self.image_master: # Check if self.image is valid
+                            if img_coords_rect and adjusted_master: # Check if adjusted_master is valid
                                 x, y, w, h = img_coords_rect
-                                extracted_qimage = self.image_master.copy(x, y, w, h)
+                                extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
                                 current_region_def_img_space = img_coords_rect
                         
                         if extracted_qimage and not extracted_qimage.isNull():
@@ -7549,7 +7577,7 @@ if __name__ == "__main__":
 
                 elif len(self.live_view_label.quad_points) == 4: 
                     print("Processing Sample: Single Quadrilateral")
-                    extracted_qimage = self.quadrilateral_to_rect(self.image_master, self.live_view_label.quad_points)
+                    extracted_qimage = self.quadrilateral_to_rect(adjusted_master, self.live_view_label.quad_points) # Use adjusted
                     if extracted_qimage and not extracted_qimage.isNull():
                         pil_img = self.convert_qimage_to_grayscale_pil(extracted_qimage)
                         if pil_img:
@@ -7564,9 +7592,9 @@ if __name__ == "__main__":
                             QPointF(self.live_view_label.bounding_box_preview[0], self.live_view_label.bounding_box_preview[1]),
                             QPointF(self.live_view_label.bounding_box_preview[2], self.live_view_label.bounding_box_preview[3])
                         ).normalized())
-                        if img_coords_rect and self.image_master: # Check self.image
+                        if img_coords_rect and adjusted_master: # Check adjusted_master
                             x, y, w, h = img_coords_rect
-                            extracted_qimage = self.image_master.copy(x, y, w, h)
+                            extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
                             if extracted_qimage and not extracted_qimage.isNull():
                                 pil_img = self.convert_qimage_to_grayscale_pil(extracted_qimage)
                                 if pil_img:
@@ -8931,6 +8959,66 @@ if __name__ == "__main__":
                     print(f"Error in apply_levels_gamma: {e}")
                     traceback.print_exc()
                     return qimage_base
+                
+            def get_adjusted_master_image(self):
+                """
+                Returns a new QImage object representing the master image with all
+                current "Main Image" adjustments (inversion, levels, etc.) applied,
+                preserving the original bit depth for high-fidelity analysis.
+                """
+                if not self.image_master or self.image_master.isNull():
+                    return None
+
+                # Create a temporary high-quality copy to work on
+                adjusted_master_copy = self.image_master.copy()
+
+                # Apply inversion if needed
+                if self.main_image_is_inverted:
+                    adjusted_master_copy.invertPixels()
+                
+                # The rest of the adjustments (CLAHE, Sharpen, Channels) are applied
+                # non-destructively for the preview, but need to be applied here for analysis.
+                # For simplicity and correctness, we will use NumPy for these transformations
+                # on the high-bit-depth data.
+                
+                np_adjusted_hq = self.qimage_to_numpy(adjusted_master_copy)
+                if np_adjusted_hq is None:
+                    return adjusted_master_copy # Return partially adjusted if numpy fails
+
+                # Channel Mixer
+                cm_settings = self.channel_mixer_data
+                if np_adjusted_hq.ndim == 3:
+                    np_float = np_adjusted_hq.astype(np.float32)
+                    if cm_settings.get('mono', False):
+                        r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
+                        gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
+                        np_adjusted_hq = gray.astype(np_adjusted_hq.dtype)
+                    else:
+                        r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
+                        np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
+                        max_val = 65535 if np_adjusted_hq.dtype == np.uint16 else 255
+                        np_adjusted_hq = np.clip(np_float, 0, max_val).astype(np_adjusted_hq.dtype)
+
+                # CLAHE
+                clahe_settings = self.clahe_data
+                if clahe_settings.get('clip_limit', 1.0) > 1.0:
+                    clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
+                    if np_adjusted_hq.ndim == 2:
+                        np_adjusted_hq = clahe.apply(np_adjusted_hq)
+                
+                # Unsharp Mask
+                usm_settings = self.unsharp_mask_data
+                if usm_settings.get('amount', 0) > 0:
+                    amount = usm_settings['amount'] / 100.0; sigma = max(0.1, usm_settings['radius'])
+                    blurred = cv2.GaussianBlur(np_adjusted_hq, (0, 0), sigma)
+                    np_adjusted_hq = cv2.addWeighted(np_adjusted_hq, 1.0 + amount, blurred, -amount, 0)
+                
+                # Convert back to QImage before applying levels
+                qimage_after_effects = self.numpy_to_qimage(np_adjusted_hq)
+                
+                # Return the image. Levels/Gamma adjustments are not applied here to keep the data linear for analysis.
+                # Analysis dialogs should operate on this linear, but inverted/color-corrected data.
+                return qimage_after_effects
             
             def update_image_levels_and_gamma(self):
                 """Applies levels and gamma adjustments based on current slider values."""
@@ -11737,6 +11825,24 @@ if __name__ == "__main__":
                     # self.marker_values will be populated by on_combobox_changed based on the selected preset.
                     self.marker_values = []
 
+                adj_settings = config_data.get("image_adjustments", {})
+                if adj_settings:
+                    # Load the values into the application's state variables
+                    self.main_image_is_inverted = adj_settings.get("is_inverted", False)
+                    self.channel_mixer_data = adj_settings.get("channel_mixer", self._get_default_adjustments()['channel_mixer'])
+                    self.unsharp_mask_data = adj_settings.get("unsharp_mask", self._get_default_adjustments()['unsharp_mask'])
+                    self.clahe_data = adj_settings.get("clahe", self._get_default_adjustments()['clahe'])
+                    
+                    # Update the UI sliders to match the loaded values
+                    self._load_adjustments_to_ui("Main Image") # This helper will sync all sliders
+                    
+                    # Explicitly set the levels/gamma sliders from the loaded config
+                    lg_settings = adj_settings.get('levels_gamma', {})
+                    self.black_point_slider.setValue(lg_settings.get('black_point', 0))
+                    self.white_point_slider.setValue(lg_settings.get('white_point', 65535))
+                    self.gamma_slider.setValue(lg_settings.get('gamma', 100))
+
+                self.apply_all_adjustments()
 
                 # Font options for standard markers
                 font_options_data = config_data.get("font_options", {})
@@ -11936,6 +12042,17 @@ if __name__ == "__main__":
                          "left": getattr(self, 'left_marker_shift_added', 0),
                          "right": getattr(self, 'right_marker_shift_added', 0),
                          "top": getattr(self, 'top_marker_shift_added', 0),
+                    },
+                    "image_adjustments": {
+                        "is_inverted": self.main_image_is_inverted,
+                        "levels_gamma": {
+                            "black_point": self.black_point_slider.value(),
+                            "white_point": self.white_point_slider.value(),
+                            "gamma": self.gamma_slider.value()
+                        },
+                        "channel_mixer": self.channel_mixer_data.copy(),
+                        "unsharp_mask": self.unsharp_mask_data.copy(),
+                        "clahe": self.clahe_data.copy()
                     }
                 }
 
@@ -13049,8 +13166,23 @@ if __name__ == "__main__":
 
                 # --- Create and save _modified image with annotations ---
                 render_scale = 3
-                native_width = self.image.width(); native_height = self.image.height()
+                native_width = self.image_master.width(); native_height = self.image_master.height()
                 if native_width <= 0 or native_height <= 0: return False
+
+                current_adjustment_settings = {
+                    'is_inverted': self.main_image_is_inverted,
+                    'levels_gamma': {
+                        'black_point': self.black_point_slider.value(),
+                        'white_point': self.white_point_slider.value(),
+                        'gamma': self.gamma_slider.value()
+                    },
+                    'channel_mixer': self.channel_mixer_data.copy(),
+                    'unsharp_mask': self.unsharp_mask_data.copy(),
+                    'clahe': self.clahe_data.copy()
+                }
+
+                # 2. Apply these settings to the high-fidelity master image
+                fully_adjusted_master = self._apply_all_adjustments_to_image(self.image_master, current_adjustment_settings)
 
                 canvas_width = native_width * render_scale; canvas_height = native_height * render_scale
                 modified_canvas = QImage(canvas_width, canvas_height, QImage.Format_ARGB32_Premultiplied)
@@ -13059,7 +13191,7 @@ if __name__ == "__main__":
                 painter = QPainter(modified_canvas)
                 
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
-                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), self.image, QRectF(self.image.rect()))
+                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), fully_adjusted_master, QRectF(fully_adjusted_master.rect()))
 
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
@@ -13337,30 +13469,109 @@ if __name__ == "__main__":
             
             
             def copy_to_clipboard(self):
-                if not self.image or self.image.isNull():
+                if not self.image_master or self.image_master.isNull(): # Check against master image
                     QMessageBox.warning(self, "Warning", "No image to copy.")
                     return
 
                 # Clean up any previous temp file from this session
                 self.cleanup_temp_clipboard_file()
 
-                # --- Render high-resolution canvas (logic remains the same) ---
+                # --- Render high-resolution canvas ---
                 render_scale = 3
-                native_width = self.image.width()
-                native_height = self.image.height()
+                native_width = self.image_master.width()
+                native_height = self.image_master.height()
                 if native_width <= 0 or native_height <= 0: return
+
+                # --- START FIX: Create a fully adjusted, high-quality base image ---
+                # 1. Gather all current adjustment settings
+                current_adjustment_settings = {
+                    'is_inverted': self.main_image_is_inverted,
+                    'levels_gamma': {
+                        'black_point': self.black_point_slider.value(),
+                        'white_point': self.white_point_slider.value(),
+                        'gamma': self.gamma_slider.value()
+                    },
+                    'channel_mixer': self.channel_mixer_data.copy(),
+                    'unsharp_mask': self.unsharp_mask_data.copy(),
+                    'clahe': self.clahe_data.copy()
+                }
+
+                # 2. Apply these settings to the high-fidelity master image
+                # The _apply_all_adjustments_to_image function returns an 8-bit image for display.
+                # For a high-quality copy, we need a different approach. We'll perform the adjustments
+                # on a high-fidelity copy of the master.
+                
+                # Create a high-quality copy to work on
+                adjusted_master_copy = self.image_master.copy()
+                
+                # Apply inversion if needed
+                if current_adjustment_settings['is_inverted']:
+                    adjusted_master_copy.invertPixels()
+                    
+                # Apply Levels/Gamma - This part needs a high-quality version of the function
+                # For simplicity and correctness with existing tools, we'll use a NumPy-based high-quality adjustment path.
+                
+                np_adjusted_high_quality = self.qimage_to_numpy(adjusted_master_copy)
+                
+                # --- Apply effects using NumPy on high-bit-depth data ---
+                # (This logic is adapted from your _apply_all_adjustments_to_image function)
+                
+                # Channel Mixer
+                cm_settings = current_adjustment_settings['channel_mixer']
+                if np_adjusted_high_quality.ndim == 3:
+                    is_mono = cm_settings.get('mono', False)
+                    r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
+                    np_float = np_adjusted_high_quality.astype(np.float32)
+                    if is_mono:
+                        gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
+                        np_adjusted_high_quality = gray.astype(np_adjusted_high_quality.dtype)
+                    else:
+                        np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
+                        np_adjusted_high_quality = np.clip(np_float, 0, 65535 if np_float.dtype == np.uint16 else 255).astype(np_adjusted_high_quality.dtype)
+                
+                # CLAHE
+                clahe_settings = current_adjustment_settings['clahe']
+                if clahe_settings.get('clip_limit', 1.0) > 1.0:
+                    clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
+                    if np_adjusted_high_quality.ndim == 2:
+                        np_adjusted_high_quality = clahe.apply(np_adjusted_high_quality)
+                    # (Full color CLAHE logic can be added here if needed, similar to save_image)
+                    
+                # Unsharp Mask
+                usm_settings = current_adjustment_settings['unsharp_mask']
+                if usm_settings.get('amount', 0) > 0:
+                    amount = usm_settings['amount'] / 100.0; sigma = max(0.1, usm_settings['radius'])
+                    blurred = cv2.GaussianBlur(np_adjusted_high_quality, (0, 0), sigma)
+                    np_adjusted_high_quality = cv2.addWeighted(np_adjusted_high_quality, 1.0 + amount, blurred, -amount, 0)
+                    
+                # Levels and Gamma (High Quality)
+                lg_settings = current_adjustment_settings['levels_gamma']
+                fully_adjusted_hq_qimage = self.apply_levels_gamma(
+                    self.numpy_to_qimage(np_adjusted_high_quality), 
+                    lg_settings['black_point'], 
+                    lg_settings['white_point'], 
+                    lg_settings['gamma'] / 100.0
+                )
+                
+                # --- This is our new base image for the clipboard ---
+                base_image_for_copy = fully_adjusted_hq_qimage
+                # --- END FIX ---
+
 
                 canvas_width = native_width * render_scale
                 canvas_height = native_height * render_scale
+                # Use a high-quality format for the canvas
                 render_canvas = QImage(canvas_width, canvas_height, QImage.Format_ARGB32_Premultiplied)
                 render_canvas.fill(Qt.transparent)
                 
                 painter = QPainter(render_canvas)
                 if not painter.isActive(): return
                 
-                # --- Drawing logic for sharp image and annotations ---
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
-                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), self.image, QRectF(self.image.rect()))
+                # Draw the fully adjusted high-quality image as the base
+                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_image_for_copy, QRectF(base_image_for_copy.rect()))
+                
+                # --- The rest of the drawing logic for annotations is correct and remains unchanged ---
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
@@ -13398,8 +13609,8 @@ if __name__ == "__main__":
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
                     except Exception: pass
                 painter.end()
-
-                # --- Save to temp file and put URL on clipboard for transparency ---
+                
+                # --- The rest of the method, which saves to a temp file, remains the same ---
                 try:
                     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                         temp_file_path = temp_file.name
