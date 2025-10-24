@@ -1,4 +1,4 @@
-# Gel Blot Analyzer (Previously Imaging-Assistant)
+# Gel Blot Analyzer 
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/639edac5-089e-4219-a3f5-6d7a06ad1932" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
