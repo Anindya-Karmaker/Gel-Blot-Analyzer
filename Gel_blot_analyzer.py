@@ -3650,7 +3650,8 @@ if __name__ == "__main__":
                     painter.save()
                     painter.setOpacity(0.7)
                     
-                    std_marker_font = QFont(self.app_instance.font_family, self.app_instance.font_size)
+                    std_marker_font = QFont(self.app_instance.font_family)
+                    std_marker_font.setPixelSize(self.app_instance.font_size)
                     painter.setFont(std_marker_font)
                     painter.setPen(self.app_instance.font_color)
                     font_metrics_std = QFontMetrics(std_marker_font)
@@ -3702,9 +3703,20 @@ if __name__ == "__main__":
                     painter.restore()
 
                 if self.preview_marker_enabled and self.preview_marker_position: # Preview Marker
-                    painter.setOpacity(0.7); marker_preview_font = QFont(self.marker_font_type, self.marker_font_size); painter.setFont(marker_preview_font); painter.setPen(self.marker_color); font_metrics_preview = QFontMetrics(marker_preview_font)
-                    preview_text_rect = font_metrics_preview.boundingRect(self.preview_marker_text); draw_x_preview = self.preview_marker_position.x() - (preview_text_rect.left() + preview_text_rect.width() / 2.0); draw_y_preview = self.preview_marker_position.y() - (preview_text_rect.top() + preview_text_rect.height() / 2.0)
-                    painter.drawText(QPointF(draw_x_preview, draw_y_preview), self.preview_marker_text); painter.setOpacity(1.0)
+                    painter.setOpacity(0.7)
+                    
+                    # CORRECTED: Use setPixelSize for the preview font
+                    marker_preview_font = QFont(self.marker_font_type)
+                    marker_preview_font.setPixelSize(self.marker_font_size)
+
+                    painter.setFont(marker_preview_font)
+                    painter.setPen(self.marker_color)
+                    font_metrics_preview = QFontMetrics(marker_preview_font)
+                    preview_text_rect = font_metrics_preview.boundingRect(self.preview_marker_text)
+                    draw_x_preview = self.preview_marker_position.x() - (preview_text_rect.left() + preview_text_rect.width() / 2.0)
+                    draw_y_preview = self.preview_marker_position.y() - (preview_text_rect.top() + preview_text_rect.height() / 2.0)
+                    painter.drawText(QPointF(draw_x_preview, draw_y_preview), self.preview_marker_text)
+                    painter.setOpacity(1.0)
                 if self.app_instance.overlay_mode_active and self.app_instance.selected_overlay_index > 0:
                     rect_ls = self.app_instance._get_overlay_rect_in_label_space(self.app_instance.selected_overlay_index)
                     if rect_ls:
@@ -3793,7 +3805,8 @@ if __name__ == "__main__":
                     line_symbol = "⎯⎯"
                     base_font_size = self.app_instance.custom_font_size_spinbox.value() + 2
                     predict_font = QFont(self.app_instance.custom_font_type_dropdown.currentText())
-                    scaled_pixel_size = max(4, int(base_font_size / self.zoom_level)) # base_font_size is now in pixels
+                    # CORRECTED: Use setPixelSize
+                    scaled_pixel_size = max(4, int(base_font_size / self.zoom_level))
                     predict_font.setPixelSize(scaled_pixel_size)
                     
                     predict_fm = QFontMetricsF(predict_font)
@@ -3835,7 +3848,9 @@ if __name__ == "__main__":
                         line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]
                         text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
 
-                        text_font = QFont("Arial"); text_font.setPointSizeF(max(4.0, 12.0 / self.zoom_level)); text_font.setBold(True)
+                        text_font = QFont(self.app_instance.custom_font_type_dropdown.currentText())
+                        text_font.setPixelSize(max(4, int(self.app_instance.custom_font_size_spinbox.value() / self.zoom_level)))
+                        text_font.setBold(True)
                         painter.setFont(text_font); fm_text = QFontMetricsF(text_font)
                         text_height = fm_text.height(); min_text_spacing = text_height * 1.2
                         
@@ -4554,10 +4569,18 @@ if __name__ == "__main__":
                     self.hist_ax.fill_between(bin_centers, 0, log_hist, color='#cccccc', alpha=1.0)
                     
                     self.hist_ax.set_yticks([]); self.hist_ax.set_xticks([])
-                    for spine in self.hist_ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1)
+                    self.hist_ax.text(0.02, 0.95, 'Histogram (log)', transform=self.hist_ax.transAxes, fontsize=9, verticalalignment='top', horizontalalignment='left', weight='bold')
+                    
+                    # FIX 3: Make plot cleaner by hiding unnecessary spines
+                    self.hist_ax.spines['top'].set_visible(False)
+                    self.hist_ax.spines['right'].set_visible(False)
+                    self.hist_ax.spines['left'].set_visible(False) # Hide left spine
+                    self.hist_ax.spines['bottom'].set_linewidth(1.5) # Make bottom line a bit stronger
+                    self.hist_ax.spines['bottom'].set_color('#555555') # Dark gray
+
                     self.hist_ax.set_xlim(hist_range[0], hist_range[1])
                     self.hist_ax.set_ylim(bottom=0)
-                    self.hist_ax.text(0.02, 0.95, 'Histogram (log)', transform=self.hist_ax.transAxes, fontsize=9, verticalalignment='top', horizontalalignment='left', weight='bold')
+                    # The groupbox title "Levels and Gamma" is enough; remove the text inside the plot.
                     
                     black_point_slider_val = self.black_point_slider.value()
                     white_point_slider_val = self.white_point_slider.value()
@@ -4565,12 +4588,14 @@ if __name__ == "__main__":
                     black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
                     white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
                     
-                    self.hist_ax.axvline(black_point_pos, color='red', lw=1.2)
-                    self.hist_ax.axvline(white_point_pos, color='red', lw=1.2)
-                    self.hist_ax.plot(black_point_pos, 0, marker='^', color='red', markersize=8, clip_on=False)
-                    self.hist_ax.plot(white_point_pos, 0, marker='^', color='red', markersize=8, clip_on=False)
+                    self.hist_ax.axvline(black_point_pos, color='red', lw=1.0) # Thinner line
+                    self.hist_ax.axvline(white_point_pos, color='red', lw=1.0)
+                    # Make markers a bit smaller and sit nicely on the bottom spine
+                    self.hist_ax.plot(black_point_pos, 0, marker='^', color='red', markersize=6, clip_on=False)
+                    self.hist_ax.plot(white_point_pos, 0, marker='^', color='red', markersize=6, clip_on=False)
                     
-                    self.hist_fig.tight_layout(pad=0.2)
+                    # FIX 4: Use subplots_adjust for precise padding control instead of tight_layout
+                    self.hist_fig.subplots_adjust(left=0.01, right=0.99, top=1.0, bottom=0.15)
                     self.hist_canvas.draw_idle()
                 except Exception as e:
                     print(f"Error updating levels histogram: {e}")
@@ -8059,7 +8084,10 @@ if __name__ == "__main__":
                 """ Rasterizes placed overlays onto a new opaque canvas, baking in their individual adjustments. """
                 has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
                 has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
-
+                
+                if hasattr(self, 'interactive_overlay_button'):
+                    self.interactive_overlay_button.setChecked(False)
+                    
                 if not (has_img1 or has_img2):
                     QMessageBox.information(self, "Info", "No overlays are currently placed to rasterize.")
                     return
@@ -8445,9 +8473,9 @@ if __name__ == "__main__":
                 self.cm_blue_slider.sliderReleased.connect(save_and_apply)
                 self.cm_mono_checkbox.stateChanged.connect(save_and_apply)
 
-                self.cm_red_slider.valueChanged.connect(self.apply_all_adjustments)
-                self.cm_green_slider.valueChanged.connect(self.apply_all_adjustments)
-                self.cm_blue_slider.valueChanged.connect(self.apply_all_adjustments)
+                self.cm_red_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.cm_green_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.cm_blue_slider.sliderReleased.connect(self.apply_all_adjustments)
                 
                 self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
                 self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
@@ -8458,9 +8486,9 @@ if __name__ == "__main__":
                 self.usm_radius_slider.sliderReleased.connect(save_and_apply)
                 self.usm_threshold_slider.sliderReleased.connect(save_and_apply)
                 
-                self.usm_amount_slider.valueChanged.connect(self.apply_all_adjustments)
-                self.usm_radius_slider.valueChanged.connect(self.apply_all_adjustments)
-                self.usm_threshold_slider.valueChanged.connect(self.apply_all_adjustments)
+                self.usm_amount_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.usm_radius_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.usm_threshold_slider.sliderReleased.connect(self.apply_all_adjustments)
                 
                 self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
                 self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
@@ -8470,8 +8498,8 @@ if __name__ == "__main__":
                 self.clahe_clip_slider.sliderReleased.connect(save_and_apply)
                 self.clahe_tile_slider.sliderReleased.connect(save_and_apply)
 
-                self.clahe_clip_slider.valueChanged.connect(self.apply_all_adjustments)
-                self.clahe_tile_slider.valueChanged.connect(self.apply_all_adjustments)
+                self.clahe_clip_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.clahe_tile_slider.sliderReleased.connect(self.apply_all_adjustments)
 
                 self.clahe_clip_slider.valueChanged.connect(lambda v: self.clahe_clip_label.setText(f"{(v/10.0):.1f}"))
                 self.clahe_tile_slider.valueChanged.connect(lambda v: self.clahe_tile_label.setText(f"{v}x{v}"))
@@ -9662,8 +9690,8 @@ if __name__ == "__main__":
                         return
 
                     # Set recommended padding values in the QLineEdit fields
-                    self.left_padding_input.setText(str(int(native_width * 0.1)))
-                    self.right_padding_input.setText(str(int(native_width * 0.1)))
+                    self.left_padding_input.setText(str(int(native_width * 0.15)))
+                    self.right_padding_input.setText(str(int(native_width * 0.15)))
                     self.top_padding_input.setText(str(int(native_height * 0.15)))
                     self.bottom_padding_input.setText(str(int(0))) # Or another sensible default
 
@@ -12128,105 +12156,95 @@ if __name__ == "__main__":
                 cursor_y_ls = snapped_click_pos_label_space.y()
 
                 # --- 3. Transform Snapped Label Space Coords to Native Image Coords ---
-                if not (self.image and not self.image.isNull()): # Corrected: use self directly
-                    return 
-
+                # (This logic is unchanged)
                 current_app_image = self.image
- 
                 label_w_widget = float(self.live_view_label.width())
                 label_h_widget = float(self.live_view_label.height())
                 img_w_native = float(current_app_image.width())
                 img_h_native = float(current_app_image.height())
-
-                if img_w_native <= 0 or img_h_native <= 0 or label_w_widget <= 0 or label_h_widget <= 0:
-                    return
-
+                if img_w_native <= 0 or img_h_native <= 0 or label_w_widget <= 0 or label_h_widget <= 0: return
                 scale_native_to_label = min(label_w_widget / img_w_native, label_h_widget / img_h_native)
-                if scale_native_to_label <= 1e-9: 
-                    return
-                
+                if scale_native_to_label <= 1e-9: return
                 displayed_img_w_in_label = img_w_native * scale_native_to_label
                 displayed_img_h_in_label = img_h_native * scale_native_to_label
                 offset_x_img_in_label = (label_w_widget - displayed_img_w_in_label) / 2.0
                 offset_y_img_in_label = (label_h_widget - displayed_img_h_in_label) / 2.0
-
                 image_x = (cursor_x_ls - offset_x_img_in_label) / scale_native_to_label
                 image_y = (cursor_y_ls - offset_y_img_in_label) / scale_native_to_label
-                
-                # Clamp to native image dimensions
                 image_x = max(0.0, min(image_x, img_w_native))
                 image_y = max(0.0, min(image_y, img_h_native))
                 
                 try:
+                    target_list = None
+                    label_source = None
+                    new_position = 0.0
+                    is_first_marker = False
+
                     if self.marker_mode == "left":
-                        current_marker_count = len(self.left_markers)
-                        is_first_marker = (current_marker_count == 0)
-                        marker_value_to_add = self.marker_values[current_marker_count] if current_marker_count < len(self.marker_values) else ""
-                        
-                        self.left_markers.append((image_y, marker_value_to_add)) 
-                        #self.current_left_marker_index += 1
-                        next_index = len(self.left_markers)
-                        next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
-                        self.live_view_label.standard_marker_preview_text = next_label
-
-                        if is_first_marker:
-                            slider_target_value_native_pixels = int(round(image_x))
-                            self._update_marker_slider_ranges() 
-                            
-                            self.left_padding_slider.blockSignals(True)
-                            self.left_padding_slider.setValue(
-                                max(self.left_slider_range[0], min(slider_target_value_native_pixels, self.left_slider_range[1]))
-                            )
-                            self.left_padding_slider.blockSignals(False)
-                            # Update internal shift variable to match the actual (possibly clamped) slider value.
-                            self.left_marker_shift_added = self.left_padding_slider.value()
-
-
+                        target_list = self.left_markers
+                        label_source = self.marker_values
+                        new_position = image_y
+                        is_first_marker = (len(self.left_markers) == 0)
                     elif self.marker_mode == "right":
-                        current_marker_count = len(self.right_markers)
-                        is_first_marker = (current_marker_count == 0)
-                        marker_value_to_add = self.marker_values[current_marker_count] if current_marker_count < len(self.marker_values) else ""
-                        
-                        self.right_markers.append((image_y, marker_value_to_add))
-                        #self.current_right_marker_index += 1
-                        next_index = len(self.right_markers)
-                        next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
-                        self.live_view_label.standard_marker_preview_text = next_label
-
-                        if is_first_marker:
-                            slider_target_value_native_pixels = int(round(image_x))
-                            self._update_marker_slider_ranges()
-                            
-                            self.right_padding_slider.blockSignals(True)
-                            self.right_padding_slider.setValue(
-                                max(self.right_slider_range[0], min(slider_target_value_native_pixels, self.right_slider_range[1]))
-                            )
-                            self.right_padding_slider.blockSignals(False)
-                            self.right_marker_shift_added = self.right_padding_slider.value()
-
-
+                        target_list = self.right_markers
+                        label_source = self.marker_values
+                        new_position = image_y
+                        is_first_marker = (len(self.right_markers) == 0)
                     elif self.marker_mode == "top":
-                        current_marker_count = len(self.top_markers)
-                        is_first_marker = (current_marker_count == 0)
-                        label_to_add = self.top_label[current_marker_count] if current_marker_count < len(self.top_label) else ""
-                        
-                        self.top_markers.append((image_x, label_to_add))
-                        #self.current_top_label_index += 1
-                        next_index = len(self.top_markers)
-                        next_label = str(self.top_label[next_index]) if next_index < len(self.top_label) else ""
-                        self.live_view_label.standard_marker_preview_text = next_label
+                        target_list = self.top_markers
+                        label_source = self.top_label
+                        new_position = image_x
+                        is_first_marker = (len(self.top_markers) == 0)
+                    
+                    if target_list is not None:
+                        # 1. Add the new marker with a temporary blank label
+                        target_list.append((new_position, ""))
 
+                        # 2. Sort the entire list by position (the first element of the tuple)
+                        target_list.sort(key=lambda m: m[0])
+
+                        # 3. Re-label the entire sorted list from scratch
+                        for i in range(len(target_list)):
+                            pos = target_list[i][0]
+                            new_label = str(label_source[i]) if i < len(label_source) else ""
+                            target_list[i] = (pos, new_label)
+
+                        # 4. Handle the special case of setting the offset slider on the very first marker
                         if is_first_marker:
-                            slider_target_value_native_pixels = int(round(image_y)) # For Top marker, Y-coord determines offset
-                            self._update_marker_slider_ranges()
+                            slider_to_update = None
+                            range_to_use = []
+                            shift_attr_to_set = ""
+                            pos_to_use_for_slider = 0
 
-                            self.top_padding_slider.blockSignals(True)
-                            self.top_padding_slider.setValue(
-                                max(self.top_slider_range[0], min(slider_target_value_native_pixels, self.top_slider_range[1]))
-                            )
-                            self.top_padding_slider.blockSignals(False)
-                            self.top_marker_shift_added = self.top_padding_slider.value()
-                            
+                            if self.marker_mode == "left":
+                                slider_to_update = self.left_padding_slider
+                                range_to_use = self.left_slider_range
+                                shift_attr_to_set = "left_marker_shift_added"
+                                pos_to_use_for_slider = image_x
+                            elif self.marker_mode == "right":
+                                slider_to_update = self.right_padding_slider
+                                range_to_use = self.right_slider_range
+                                shift_attr_to_set = "right_marker_shift_added"
+                                pos_to_use_for_slider = image_x
+                            elif self.marker_mode == "top":
+                                slider_to_update = self.top_padding_slider
+                                range_to_use = self.top_slider_range
+                                shift_attr_to_set = "top_marker_shift_added"
+                                pos_to_use_for_slider = image_y
+
+                            if slider_to_update:
+                                slider_target_value = int(round(pos_to_use_for_slider))
+                                self._update_marker_slider_ranges() # Ensure range is up-to-date
+                                slider_to_update.blockSignals(True)
+                                slider_to_update.setValue(max(range_to_use[0], min(slider_target_value, range_to_use[1])))
+                                slider_to_update.blockSignals(False)
+                                setattr(self, shift_attr_to_set, slider_to_update.value())
+
+                        # 5. Update the preview text for the *next* click
+                        next_index = len(target_list)
+                        next_label_for_preview = str(label_source[next_index]) if next_index < len(label_source) else ""
+                        self.live_view_label.standard_marker_preview_text = next_label_for_preview
+
                 except Exception as e:
                      import traceback
                      traceback.print_exc()
@@ -13265,7 +13283,7 @@ if __name__ == "__main__":
                 def map_img_coords_to_canvas(img_x, img_y):
                     return QPointF(img_x * render_scale, img_y * render_scale)
 
-                std_font = QFont(self.font_family, int(self.font_size * font_scale_factor))
+                std_font = QFont(self.font_family); std_font.setPixelSize(int(self.font_size * font_scale_factor))
                 painter.setFont(std_font); painter.setPen(self.font_color)
                 fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
                 for y_img, text in self.left_markers:
@@ -13281,7 +13299,7 @@ if __name__ == "__main__":
                 for marker_data in getattr(self, "custom_markers", []):
                     try:
                         x, y, text, color, font, size, is_bold, is_italic = marker_data
-                        custom_font = QFont(font, int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
+                        custom_font = QFont(font); custom_font.setPixelSize(int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
                         painter.setFont(custom_font); painter.setPen(QColor(color))
                         fm = QFontMetrics(custom_font); rect = fm.boundingRect(text)
                         draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
@@ -13559,65 +13577,9 @@ if __name__ == "__main__":
                     'clahe': self.clahe_data.copy()
                 }
 
-                # 2. Apply these settings to the high-fidelity master image
-                # The _apply_all_adjustments_to_image function returns an 8-bit image for display.
-                # For a high-quality copy, we need a different approach. We'll perform the adjustments
-                # on a high-fidelity copy of the master.
-                
-                # Create a high-quality copy to work on
-                adjusted_master_copy = self.image_master.copy()
-                
-                # Apply inversion if needed
-                if current_adjustment_settings['is_inverted']:
-                    adjusted_master_copy.invertPixels()
-                    
-                # Apply Levels/Gamma - This part needs a high-quality version of the function
-                # For simplicity and correctness with existing tools, we'll use a NumPy-based high-quality adjustment path.
-                
-                np_adjusted_high_quality = self.qimage_to_numpy(adjusted_master_copy)
-                
-                # --- Apply effects using NumPy on high-bit-depth data ---
-                # (This logic is adapted from your _apply_all_adjustments_to_image function)
-                
-                # Channel Mixer
-                cm_settings = current_adjustment_settings['channel_mixer']
-                if np_adjusted_high_quality.ndim == 3:
-                    is_mono = cm_settings.get('mono', False)
-                    r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
-                    np_float = np_adjusted_high_quality.astype(np.float32)
-                    if is_mono:
-                        gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
-                        np_adjusted_high_quality = gray.astype(np_adjusted_high_quality.dtype)
-                    else:
-                        np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
-                        np_adjusted_high_quality = np.clip(np_float, 0, 65535 if np_float.dtype == np.uint16 else 255).astype(np_adjusted_high_quality.dtype)
-                
-                # CLAHE
-                clahe_settings = current_adjustment_settings['clahe']
-                if clahe_settings.get('clip_limit', 1.0) > 1.0:
-                    clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
-                    if np_adjusted_high_quality.ndim == 2:
-                        np_adjusted_high_quality = clahe.apply(np_adjusted_high_quality)
-                    # (Full color CLAHE logic can be added here if needed, similar to save_image)
-                    
-                # Unsharp Mask
-                usm_settings = current_adjustment_settings['unsharp_mask']
-                if usm_settings.get('amount', 0) > 0:
-                    amount = usm_settings['amount'] / 100.0; sigma = max(0.1, usm_settings['radius'])
-                    blurred = cv2.GaussianBlur(np_adjusted_high_quality, (0, 0), sigma)
-                    np_adjusted_high_quality = cv2.addWeighted(np_adjusted_high_quality, 1.0 + amount, blurred, -amount, 0)
-                    
-                # Levels and Gamma (High Quality)
-                lg_settings = current_adjustment_settings['levels_gamma']
-                fully_adjusted_hq_qimage = self.apply_levels_gamma(
-                    self.numpy_to_qimage(np_adjusted_high_quality), 
-                    lg_settings['black_point'], 
-                    lg_settings['white_point'], 
-                    lg_settings['gamma'] / 100.0
-                )
-                
-                # --- This is our new base image for the clipboard ---
-                base_image_for_copy = fully_adjusted_hq_qimage
+                # 2. Use the single, reliable helper function to apply all adjustments
+                #    to the master image, just like save_image() does.
+                base_image_for_copy = self._apply_all_adjustments_to_image(self.image_master, current_adjustment_settings)
                 # --- END FIX ---
 
 
@@ -13638,9 +13600,11 @@ if __name__ == "__main__":
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
+
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
                 def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
-                std_font = QFont(self.font_family, int(self.font_size * font_scale_factor))
+                std_font = QFont(self.font_family)
+                std_font.setPixelSize(int(self.font_size * font_scale_factor))
                 painter.setFont(std_font); painter.setPen(self.font_color)
                 fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
                 for y_img, text in self.left_markers:
@@ -13656,7 +13620,7 @@ if __name__ == "__main__":
                 for marker_data in getattr(self, "custom_markers", []):
                     try:
                         x, y, text, color, font, size, is_bold, is_italic = marker_data
-                        custom_font = QFont(font, int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
+                        custom_font = QFont(font); custom_font.setPixelSize(int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
                         painter.setFont(custom_font); painter.setPen(QColor(color))
                         fm = QFontMetrics(custom_font); rect = fm.boundingRect(text)
                         draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
