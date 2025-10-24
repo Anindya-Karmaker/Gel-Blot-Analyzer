@@ -3600,7 +3600,7 @@ if __name__ == "__main__":
 
                 # --- Draw standard markers, custom markers, custom shapes (as before) ---
                 if _image_to_label_space_valid and self.app_instance: # Standard Markers
-                    std_marker_font = QFont(self.app_instance.font_family, self.app_instance.font_size); std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
+                    std_marker_font = QFont(self.app_instance.font_family); std_marker_font.setPixelSize(self.app_instance.font_size); std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
                     painter.setFont(std_marker_font); painter.setPen(std_marker_color); font_metrics_std = QFontMetrics(std_marker_font)
                     text_height_std_label_space = font_metrics_std.height(); y_offset_text_baseline_std = text_height_std_label_space * 0.3
                     if hasattr(self.app_instance, 'left_markers'):
@@ -3637,7 +3637,7 @@ if __name__ == "__main__":
                     for marker_data_list in self.app_instance.custom_markers:
                         try:
                             x_pos_img, y_pos_img, marker_text_str, qcolor_obj, font_family_str, font_size_int, is_bold, is_italic = marker_data_list
-                            anchor_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, y_pos_img)); current_marker_font = QFont(font_family_str, font_size_int); current_marker_font.setBold(is_bold); current_marker_font.setItalic(is_italic); painter.setFont(current_marker_font)
+                            anchor_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, y_pos_img)); current_marker_font = QFont(font_family_str); current_marker_font.setPixelSize(font_size_int); current_marker_font.setBold(is_bold); current_marker_font.setItalic(is_italic); painter.setFont(current_marker_font)
                             if not isinstance(qcolor_obj, QColor): qcolor_obj = QColor(qcolor_obj)
                             if not qcolor_obj.isValid(): qcolor_obj = Qt.black
                             painter.setPen(qcolor_obj); font_metrics_marker = QFontMetrics(current_marker_font); text_bounding_rect_marker = font_metrics_marker.boundingRect(marker_text_str)
@@ -3793,8 +3793,8 @@ if __name__ == "__main__":
                     line_symbol = "⎯⎯"
                     base_font_size = self.app_instance.custom_font_size_spinbox.value() + 2
                     predict_font = QFont(self.app_instance.custom_font_type_dropdown.currentText())
-                    scaled_point_size = max(4.0, base_font_size / self.zoom_level)
-                    predict_font.setPointSizeF(scaled_point_size)
+                    scaled_pixel_size = max(4, int(base_font_size / self.zoom_level)) # base_font_size is now in pixels
+                    predict_font.setPixelSize(scaled_pixel_size)
                     
                     predict_fm = QFontMetricsF(predict_font)
                     predict_line_rect = predict_fm.boundingRect(line_symbol)
@@ -4004,7 +4004,7 @@ if __name__ == "__main__":
 
                 if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
                     lane_font_size = 10
-                    lane_font = QFont("Arial", int(lane_font_size / self.zoom_level if self.zoom_level > 0 else lane_font_size)); lane_font.setBold(True)
+                    lane_font = QFont("Arial"); lane_font.setPixelSize(int(lane_font_size / self.zoom_level if self.zoom_level > 0 else lane_font_size)); lane_font.setBold(True)
                     for i, lane_def in enumerate(self.app_instance.multi_lane_definitions):
                         lane_id_str = str(lane_def['id']); center_point = QPointF()
                         is_selected_for_move_or_resize = (self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.app_instance.moving_multi_lane_index == i)
@@ -4271,7 +4271,7 @@ if __name__ == "__main__":
                 self.font_color = QColor(0, 0, 0)  # Default to black
                 self.custom_marker_color = QColor(0, 0, 0)  # Default to black
                 self.font_family = "Arial"  # Default font family
-                self.font_size = 12  # Default font size
+                self.font_size = 16  # Default font size
                 self.image_array_backup= None
                 self.run_predict_MW=False
                 
@@ -9789,7 +9789,7 @@ if __name__ == "__main__":
                 self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
                 self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
                 self.custom_font_type_dropdown = QFontComboBox(); self.custom_font_type_dropdown.setCurrentFont(QFont("Arial")); self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
-                self.custom_font_size_spinbox = QSpinBox(); self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12); self.custom_font_size_spinbox.setPrefix("Size: ")
+                self.custom_font_size_spinbox = QSpinBox(); self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12); self.custom_font_size_spinbox.setPrefix("Size (px): ")
                 self.custom_marker_color_button = QPushButton("Color"); self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
                 if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
                 self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
@@ -9949,7 +9949,7 @@ if __name__ == "__main__":
                             str(marker_conf.get("text", "")),
                             qcolor,
                             str(marker_conf.get("font_family", "Arial")),
-                            int(marker_conf.get("font_size", 12)),
+                            int(marker_conf.get("font_size", 16)),
                             bool(marker_conf.get("bold", False)),
                             bool(marker_conf.get("italic", False))
                         ])
