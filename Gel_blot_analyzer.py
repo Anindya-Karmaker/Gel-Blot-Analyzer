@@ -161,6 +161,274 @@ if __name__ == "__main__":
         else:
             print("INFO: Using existing QApplication instance.")
 
+        light_stylesheet = """
+            /* 
+            ================================================================================
+            POLISHED COMPACT STYLESHEET for Gel Blot Analyzer (LIGHT THEME)
+            ================================================================================
+            */
+            QMainWindow, QDialog { background-color: #F0F2F5; }
+            QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #333333; }
+            QGroupBox { background-color: #FBFCFD; border: 1px solid #D0D5DB; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #FFFFFF; background-color: #5D98D4; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
+            QPushButton { background-color: #FFFFFF; border: 1px solid #C0C5CB; border-radius: 3px; padding: 4px 8px; min-height: 18px; }
+            QPushButton:hover { background-color: #E6F0F9; border-color: #5D98D4; }
+            QPushButton:pressed { background-color: #D0E0EF; }
+            QPushButton:checked { background-color: #D4EDDA; border: 1px solid #74B882; }
+            QPushButton:disabled { background-color: #F0F2F5; color: #AAAAAA; }
+            QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; }
+            QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
+            QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
+            QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+            QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+            QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
+            QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #5D98D4; border: 1px solid #4A78A9; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
+            QTabWidget::pane { border-top: 1px solid #D0D5DB; }
+            QTabBar::tab { background-color: #E4E7EB; border: 1px solid #D0D5DB; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #FBFCFD; border-bottom-color: #FBFCFD; font-weight: bold; }
+            QTabBar::tab:!selected:hover { background: #EFF2F5; }
+            QToolBar { background-color: #E4E7EB; border: none; padding: 1px; }
+            QToolBar QToolButton {
+                border: 1px solid transparent;
+                border-radius: 3px;
+                padding: 2px;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #E6F0F9;
+                border: 1px solid #5D98D4;
+            }
+            QToolBar QToolButton:pressed {
+                background-color: #D0E0EF;
+            }
+            QToolBar QToolButton:checked { background-color: #A0D0A0; }
+            QStatusBar { background-color: #E4E7EB; }
+            #LiveViewLabel { background-color: white; border: 1px solid #AAAAAA; }
+
+            /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
+            QTableView, QTableWidget, QListView, QListWidget {
+                border: 1px solid #D0D5DB;
+                gridline-color: #EAEAEA;
+                color: #333333;
+                selection-background-color: #5D98D4;
+                selection-color: white;
+            }
+            
+            QTableView QAbstractItemView, QTableWidget QAbstractItemView {
+                background-color: #FFFFFF; 
+            }
+
+            QHeaderView {
+                background-color: #F0F2F5;
+            }
+
+            QHeaderView::section {
+                background-color: #E4E7EB;
+                color: #333333;
+                padding: 4px;
+                border-top: 0px;
+                border-left: 0px;
+                border-right: 1px solid #D0D5DB;
+                border-bottom: 2px solid #C0C5CB;
+                font-weight: bold;
+            }
+
+            QTableCornerButton::section {
+                background-color: #E4E7EB;
+                border-right: 1px solid #D0D5DB;
+                border-bottom: 2px solid #C0C5CB;
+            }
+
+            /* --- Light Scrollbars --- */
+            QScrollBar:vertical {
+                border: none;
+                background-color: #F0F2F5;
+                width: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #C0C5CB;
+                min-height: 25px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #A8B0B6;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+
+            QScrollBar:horizontal {
+                border: none;
+                background-color: #F0F2F5;
+                height: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #C0C5CB;
+                min-width: 25px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #A8B0B6;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """
+        
+        dark_stylesheet = """
+            /* 
+            ================================================================================
+            POLISHED COMPACT STYLESHEET for Gel Blot Analyzer (DARK THEME - FINAL)
+            ================================================================================
+            */
+            QMainWindow, QDialog { background-color: #2D2D30; }
+            QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #F1F1F1; }
+            
+            QGroupBox { background-color: #38383C; border: 1px solid #505055; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #F1F1F1; background-color: #007ACC; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
+            
+            QPushButton { background-color: #4A4A4F; border: 1px solid #606065; border-radius: 3px; padding: 4px 8px; min-height: 18px; color: #F1F1F1; }
+            QPushButton:hover { background-color: #5A5A60; border-color: #007ACC; }
+            QPushButton:pressed { background-color: #6A6A70; }
+            QPushButton:checked { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }
+            QPushButton:disabled { background-color: #3A3A3D; color: #707070; border-color: #4A4A4F; }
+            
+            QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
+            QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
+            QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
+            
+            QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+            QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjRjFGNEYxIiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+            QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #3C3C3F; border: 1px solid #505055; selection-background-color: #007ACC; }
+            
+            QSlider::groove:horizontal { border: 1px solid #505055; background: #3C3C3F; height: 4px; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #007ACC; border: 1px solid #009AFF; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
+            
+            QTabWidget::pane { border-top: 1px solid #505055; }
+            QTabBar::tab { background-color: #38383C; border: 1px solid #505055; border-bottom: none; color: #A0A0A0; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #2D2D30; border-bottom-color: #2D2D30; font-weight: bold; color: #F1F1F1; }
+            QTabBar::tab:!selected:hover { background: #4A4A4F; color: #F1F1F1; }
+            QToolBar { background-color: #4F4F54; border: none; padding: 1px; }
+            QToolBar QToolButton {
+                border: 1px solid transparent;
+                border-radius: 3px;
+                padding: 2px;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #5A5A60;
+                border: 1px solid #009AFF;
+            }
+            QToolBar QToolButton:pressed {
+                background-color: #6A6A70;
+            }
+            QToolBar QToolButton:checked { 
+                background-color: #3D984E; 
+                border: 1px solid #5DBB6F;
+            }
+            QStatusBar { background-color: #007ACC; }
+            QStatusBar QLabel { color: white; }
+            
+            #LiveViewLabel {
+                background-color: #5A5A60;
+                border: 1px solid #404040;
+            }
+
+            /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
+            
+            /* THIS IS THE CRITICAL FIX: Style the viewport area BEHIND the items */
+            QAbstractItemView {
+                background-color: #3C3C3F;
+            }
+
+            QTableView, QTableWidget, QListView, QListWidget {
+                border: 1px solid #505055;
+                gridline-color: #505055;
+                color: #F1F1F1;
+                selection-background-color: #007ACC;
+                selection-color: white;
+            }
+
+            /* Style the entire header widget background */
+            QHeaderView {
+                background-color: #38383C;
+            }
+
+            /* Styles individual header sections (horizontal and vertical) */
+            QHeaderView::section {
+                background-color: #4A4A4F;
+                color: #F1F1F1;
+                padding: 4px;
+                border-top: 0px;
+                border-left: 0px;
+                border-right: 1px solid #606065;
+                border-bottom: 2px solid #606065;
+                font-weight: bold;
+            }
+            
+            /* Style the top-left corner button */
+            QTableCornerButton::section {
+                background-color: #4A4A4F;
+                border-right: 1px solid #606065;
+                border-bottom: 2px solid #606065;
+            }
+            
+            /* --- Dark Scrollbars --- */
+            QScrollBar:vertical {
+                border: none;
+                background-color: #2D2D30;
+                width: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #5A5A60;
+                min-height: 25px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #6A6A70;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+
+            QScrollBar:horizontal {
+                border: none;
+                background-color: #2D2D30;
+                height: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #5A5A60;
+                min-width: 25px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #6A6A70;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """
+        
+        # 2. Set the global font and apply the stylesheet
+        app.setFont(QFont("Segoe UI", 10))
+
+        #background-color: white; border: 1px solid #CCCCCC;
+
         # --- Create and Show Minimal Loading Screen IMMEDIATELY ---
         try:
             loading_dialog = MinimalLoadingDialog()
@@ -259,24 +527,7 @@ if __name__ == "__main__":
             return QIcon(pixmap)
 
         # Set Style (can be done after app exists)
-        app.setStyle("Fusion")
-        app.setStyleSheet("""
-            /* ... Your existing stylesheet ... */
-            QSlider::handle:horizontal { /* Example */
-                width: 10px; /* Example adjustment if needed */
-                height: 20px;
-                margin: -5px 0;
-                background: #DDDDDD;
-                border: 1px solid #555;
-                border-radius: 5px;
-            }
-            QStatusBar QLabel {
-                margin-left: 2px; margin-right: 5px; padding: 0px 0px; border: none;
-            }
-            QPushButton:checked {
-                background-color: #a0d0a0; border: 1px solid #50a050;
-            }
-        """)
+
 
         class PredictionResultDialog(QDialog):
             """
@@ -401,7 +652,10 @@ if __name__ == "__main__":
             def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Protein Size Analysis")
-                self.setMinimumWidth(650) 
+                self.setMinimumSize(900, 700) 
+
+                if parent and hasattr(parent, 'styleSheet'):
+                    self.setStyleSheet(parent.styleSheet())
 
                 # Store initial values
                 self.sequence = sequence
@@ -410,64 +664,64 @@ if __name__ == "__main__":
                 self.num_glycosylation_sites = 0
                 self.num_oligomers_to_model = num_oligomers
 
-                # --- Setup UI ---
-                main_layout = QVBoxLayout(self)
-                readable_font = QFont("Courier New", 12)
-
-                # --- Group 1: Sequence Input ---
+                # --- UI Setup --- (Layout remains the same as the improved two-column version)
+                main_dialog_layout = QVBoxLayout(self)
+                main_columns_layout = QHBoxLayout()
+                left_column_layout = QVBoxLayout()
+                right_column_layout = QVBoxLayout()
+                readable_font = QFont("Courier New", 10)
                 input_group = QGroupBox("Protein Sequence Input")
-                input_layout = QGridLayout(input_group)
+                input_layout = QVBoxLayout(input_group)
                 self.sequence_entry = QTextEdit(self.sequence)
                 self.sequence_entry.setPlaceholderText("Paste your protein sequence here (e.g., MNAEFGT...).")
-                self.sequence_entry.setFixedHeight(80)
+                self.sequence_entry.setMinimumHeight(80)
                 self.sequence_entry.setFont(readable_font)
                 self.analyze_sequence_button = QPushButton("Analyze Sequence")
                 self.analyze_sequence_button.setToolTip("Calculates all physicochemical properties and potential modifications from the sequence.")
                 self.analyze_sequence_button.clicked.connect(self._analyze_sequence)
-                input_layout.addWidget(self.sequence_entry, 0, 0)
-                input_layout.addWidget(self.analyze_sequence_button, 1, 0, alignment=Qt.AlignRight)
-                main_layout.addWidget(input_group)
-
-                # --- Group 2: Analysis Results (Read-Only) ---
+                input_layout.addWidget(self.sequence_entry)
+                input_layout.addWidget(self.analyze_sequence_button, 0, Qt.AlignRight)
+                left_column_layout.addWidget(input_group)
                 analysis_group = QGroupBox("Sequence Analysis Results")
                 analysis_layout = QVBoxLayout(analysis_group)
                 self.sequence_analysis_text = QTextEdit()
                 self.sequence_analysis_text.setReadOnly(True)
                 self.sequence_analysis_text.setFont(readable_font)
                 self.sequence_analysis_text.setLineWrapMode(QTextEdit.NoWrap)
-                self.sequence_analysis_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 analysis_layout.addWidget(self.sequence_analysis_text)
-                
-                props_layout = QGridLayout()
-                props_layout.addWidget(QLabel("<b>Sequence Length:</b>"), 0, 0)
+                left_column_layout.addWidget(analysis_group, 1)
+                output_group = QGroupBox("Calculated Potential Fragments")
+                output_layout = QVBoxLayout(output_group)
+                self.potential_fragments_text = QTextEdit(); self.potential_fragments_text.setReadOnly(True)
+                self.potential_fragments_text.setFont(readable_font)
+                output_layout.addWidget(self.potential_fragments_text)
+                left_column_layout.addWidget(output_group, 1)
+                physicochem_group = QGroupBox("Physicochemical Properties")
+                props_layout = QGridLayout(physicochem_group)
+                props_layout.addWidget(QLabel("<b>Isoelectric Point (pI):</b>"), 0, 0)
+                self.pi_display = QLineEdit(); self.pi_display.setReadOnly(True)
+                self.pi_display.setToolTip("Calculated isoelectric point based on provided pK values.")
+                props_layout.addWidget(self.pi_display, 0, 1)
+                props_layout.addWidget(QLabel("<b>Sequence Length:</b>"), 1, 0)
                 self.sequence_length_display = QLineEdit(); self.sequence_length_display.setReadOnly(True)
-                props_layout.addWidget(self.sequence_length_display, 0, 1)
-
-                props_layout.addWidget(QLabel("<b>Ext. Coeff. (Reduced):</b>"), 1, 0)
+                props_layout.addWidget(self.sequence_length_display, 1, 1)
+                props_layout.addWidget(QLabel("<b>Ext. Coeff. (Reduced):</b>"), 2, 0)
                 self.ext_coeff_reduced_display = QLineEdit(); self.ext_coeff_reduced_display.setReadOnly(True)
                 self.ext_coeff_reduced_display.setToolTip("Assumes all Cysteine residues are reduced (free -SH groups).")
-                props_layout.addWidget(self.ext_coeff_reduced_display, 1, 1)
-                
-                props_layout.addWidget(QLabel("<b>Absorbance (Reduced, 0.1%):</b>"), 1, 2)
+                props_layout.addWidget(self.ext_coeff_reduced_display, 2, 1)
+                props_layout.addWidget(QLabel("<b>Absorbance (Reduced, 0.1%):</b>"), 3, 0)
                 self.absorbance_reduced_display = QLineEdit(); self.absorbance_reduced_display.setReadOnly(True)
                 self.absorbance_reduced_display.setToolTip("Calculated as (Ext. Coeff. Reduced) / (Molecular Weight).")
-                props_layout.addWidget(self.absorbance_reduced_display, 1, 3)
-
-                props_layout.addWidget(QLabel("<b>Ext. Coeff. (Oxidized):</b>"), 2, 0)
+                props_layout.addWidget(self.absorbance_reduced_display, 3, 1)
+                props_layout.addWidget(QLabel("<b>Ext. Coeff. (Oxidized):</b>"), 4, 0)
                 self.ext_coeff_oxidized_display = QLineEdit(); self.ext_coeff_oxidized_display.setReadOnly(True)
                 self.ext_coeff_oxidized_display.setToolTip("Assumes all Cysteine pairs form disulfide bonds.")
-                props_layout.addWidget(self.ext_coeff_oxidized_display, 2, 1)
-                
-                props_layout.addWidget(QLabel("<b>Absorbance (Oxidized, 0.1%):</b>"), 2, 2)
+                props_layout.addWidget(self.ext_coeff_oxidized_display, 4, 1)
+                props_layout.addWidget(QLabel("<b>Absorbance (Oxidized, 0.1%):</b>"), 5, 0)
                 self.absorbance_oxidized_display = QLineEdit(); self.absorbance_oxidized_display.setReadOnly(True)
                 self.absorbance_oxidized_display.setToolTip("Calculated as (Ext. Coeff. Oxidized) / (Molecular Weight).")
-                props_layout.addWidget(self.absorbance_oxidized_display, 2, 3)
-
-                props_layout.setColumnStretch(1, 1); props_layout.setColumnStretch(3, 1)
-                analysis_layout.addLayout(props_layout)
-                main_layout.addWidget(analysis_group, 1)
-
-                # --- Group 3: Fragment Modeling Parameters (Interactive) ---
+                props_layout.addWidget(self.absorbance_oxidized_display, 5, 1)
+                right_column_layout.addWidget(physicochem_group)
                 params_group = QGroupBox("Fragment Modeling Parameters")
                 params_layout = QGridLayout(params_group)
                 params_layout.addWidget(QLabel("Base Protein MW (Da):"), 0, 0)
@@ -476,58 +730,111 @@ if __name__ == "__main__":
                 self.base_protein_mw_input_da.setPlaceholderText("e.g., 44324.55 (Editable)")
                 self.base_protein_mw_input_da.textChanged.connect(self._on_mw_da_changed)
                 params_layout.addWidget(self.base_protein_mw_input_da, 0, 1, 1, 3)
-                
                 params_layout.addWidget(QLabel("Avg. Glycan Mass (kDa):"), 1, 0)
                 glycan_layout = QHBoxLayout(); self.glycan_type_combo = QComboBox(); self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
                 self.glycan_type_combo.currentTextChanged.connect(self._on_glycan_type_selected)
                 self.glycan_mass_input = QLineEdit(str(self.glycan_mass) if self.glycan_mass > 0 else "")
-                self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self)); self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
+                self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self)); self.glycan_mass_input.setPlaceholderText("e.g., 2.5");
                 self.glycan_mass_input.textChanged.connect(self.update_potential_fragments); self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
                 glycan_layout.addWidget(self.glycan_type_combo, 1); glycan_layout.addWidget(self.glycan_mass_input, 1)
                 params_layout.addLayout(glycan_layout, 1, 1, 1, 3)
-                
                 params_layout.addWidget(QLabel("Number of Glycans:"), 2, 0)
                 self.num_glycans_spinbox = QSpinBox(); self.num_glycans_spinbox.setRange(0, 50)
                 self.num_glycans_spinbox.valueChanged.connect(self.update_potential_fragments)
                 params_layout.addWidget(self.num_glycans_spinbox, 2, 1)
-
                 params_layout.addWidget(QLabel("Number of Oligomers:"), 2, 2)
                 self.num_oligomers_spinbox = QSpinBox(); self.num_oligomers_spinbox.setRange(1, 10); self.num_oligomers_spinbox.setValue(self.num_oligomers_to_model)
                 self.num_oligomers_spinbox.valueChanged.connect(self.update_potential_fragments)
                 params_layout.addWidget(self.num_oligomers_spinbox, 2, 3)
-                main_layout.addWidget(params_group)
-
-                output_group = QGroupBox("Calculated Potential Fragments")
-                output_layout = QVBoxLayout(output_group)
-                self.potential_fragments_text = QTextEdit(); self.potential_fragments_text.setReadOnly(True); self.potential_fragments_text.setFixedHeight(120)
-                self.potential_fragments_text.setFont(readable_font)
-                output_layout.addWidget(self.potential_fragments_text)
-                main_layout.addWidget(output_group)
-                
+                right_column_layout.addWidget(params_group)
+                right_column_layout.addStretch(1)
+                main_columns_layout.addLayout(left_column_layout, 1)
+                main_columns_layout.addLayout(right_column_layout, 1)
+                main_dialog_layout.addLayout(main_columns_layout)
                 io_layout = QHBoxLayout()
                 self.export_button = QPushButton("Export Analysis"); self.export_button.clicked.connect(self._export_data)
                 self.load_button = QPushButton("Load Analysis"); self.load_button.clicked.connect(self._load_data)
                 io_layout.addWidget(self.load_button); io_layout.addWidget(self.export_button); io_layout.addStretch()
-                main_layout.addLayout(io_layout)
+                main_dialog_layout.addLayout(io_layout)
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 button_box.accepted.connect(self.accept); button_box.rejected.connect(self.reject)
-                main_layout.addWidget(button_box)
+                main_dialog_layout.addWidget(button_box)
 
                 if self.sequence: self._analyze_sequence()
                 if self.base_mw > 0: self.base_protein_mw_input_da.setText(f"{(self.base_mw * 1000):.2f}")
+
+            # --- START MODIFICATION: pI Calculation using user-provided table ---
+            def _calculate_isoelectric_point(self, sequence):
+                if not sequence or len(sequence) < 2:
+                    return None
+
+                # pKa values from the user-provided table 
+                # REFERENCE: https://www.peptideweb.com/images/pdf/pKa-and-pI-values-of-amino-acids.pdf
+                PK_DATA = {
+                    'COOH': { 'A': 2.34, 'R': 2.17, 'N': 2.02, 'D': 2.09, 'C': 1.71, 'E': 2.19, 'Q': 2.17, 'G': 2.34, 'H': 1.82, 'I': 2.36, 'L': 2.36, 'K': 2.18, 'M': 2.28, 'F': 1.83, 'P': 1.99, 'S': 2.21, 'T': 2.09, 'W': 2.43, 'Y': 2.20, 'V': 2.32 },
+                    'NH3':  { 'A': 9.69, 'R': 9.04, 'N': 8.80, 'D': 9.82, 'C': 10.78, 'E': 9.67, 'Q': 9.13, 'G': 9.60, 'H': 9.17, 'I': 9.60, 'L': 9.60, 'K': 8.95, 'M': 9.21, 'F': 9.13, 'P': 10.60, 'S': 9.15, 'T': 9.10, 'W': 9.44, 'Y': 9.11, 'V': 9.62 },
+                    'Side': { 'R': 12.48, 'D': 3.86, 'C': 8.33, 'E': 4.25, 'H': 6.00, 'K': 10.79, 'Y': 10.07 }
+                }
+                
+                n_term_aa = sequence[0]
+                c_term_aa = sequence[-1]
+
+                pk_n_term = PK_DATA['NH3'].get(n_term_aa, 9.6) # Default if not found
+                pk_c_term = PK_DATA['COOH'].get(c_term_aa, 2.3) # Default if not found
+
+                aa_counts = {aa: sequence.count(aa) for aa in PK_DATA['Side']}
+
+                min_ph, max_ph = 0.0, 14.0
+                current_ph = 7.0 
+                
+                for _ in range(100):
+                    # Calculate charge contributions
+                    charge_n = 1.0 / (1.0 + 10**(current_ph - pk_n_term))
+                    charge_c = -1.0 / (1.0 + 10**(pk_c_term - current_ph))
+                    
+                    charge_k = aa_counts.get('K', 0) / (1.0 + 10**(current_ph - PK_DATA['Side']['K']))
+                    charge_r = aa_counts.get('R', 0) / (1.0 + 10**(current_ph - PK_DATA['Side']['R']))
+                    charge_h = aa_counts.get('H', 0) / (1.0 + 10**(current_ph - PK_DATA['Side']['H']))
+                    
+                    charge_d = -aa_counts.get('D', 0) / (1.0 + 10**(PK_DATA['Side']['D'] - current_ph))
+                    charge_e = -aa_counts.get('E', 0) / (1.0 + 10**(PK_DATA['Side']['E'] - current_ph))
+                    charge_c = -aa_counts.get('C', 0) / (1.0 + 10**(PK_DATA['Side']['C'] - current_ph))
+                    charge_y = -aa_counts.get('Y', 0) / (1.0 + 10**(PK_DATA['Side']['Y'] - current_ph))
+                    
+                    net_charge = charge_n + charge_c + charge_k + charge_r + charge_h + charge_d + charge_e + charge_c + charge_y
+
+                    if abs(net_charge) < 1e-4:
+                        break
+
+                    if net_charge > 0:
+                        min_ph = current_ph
+                    else:
+                        max_ph = current_ph
+                    
+                    current_ph = (min_ph + max_ph) / 2.0
+
+                return current_ph
 
             def _on_mw_da_changed(self, text):
                 if self.base_protein_mw_input_da.signalsBlocked(): return
                 self.update_potential_fragments()
 
-            def _format_sequence_with_numbers(self, sequence, line_length=50):
-                output = []; i = 0
-                while i < len(sequence):
-                    chunk = sequence[i:i+line_length]
-                    start_pos = i + 1; end_pos = i + len(chunk)
-                    grouped_chunk = " ".join(chunk[j:j+10] for j in range(0, len(chunk), 10))
-                    line = f"{str(start_pos):>6}  {grouped_chunk:<59}  {end_pos:<6}"
-                    output.append(line); i += line_length
+            def _format_sequence_with_numbers(self, sequence, line_length=10):
+                output = []
+                # Iterate through the sequence in steps of line_length (e.g., 10)
+                for i in range(0, len(sequence), line_length):
+                    # Get the chunk of the sequence for the current line
+                    chunk = sequence[i : i + line_length]
+                    
+                    # Define start and end residue numbers for this line
+                    start_num = i + 1
+                    end_num = i + len(chunk)
+                    
+                    # Format the line with padding for alignment
+                    # Format: [6 spaces for start #] [2 spaces] [sequence chunk] [2 spaces] [end #]
+                    line = f"{str(start_num):>6}  {chunk}  {end_num}"
+                    output.append(line)
+                
                 return "\n".join(output)
 
             def _analyze_sequence(self):
@@ -535,48 +842,49 @@ if __name__ == "__main__":
                 if not self.sequence:
                     for widget in [self.sequence_analysis_text, self.base_protein_mw_input_da, self.ext_coeff_reduced_display,
                                    self.ext_coeff_oxidized_display, self.sequence_length_display, self.absorbance_reduced_display,
-                                   self.absorbance_oxidized_display]:
+                                   self.absorbance_oxidized_display, self.pi_display]:
                         widget.clear()
                     self.num_glycosylation_sites = 0; self.num_glycans_spinbox.setValue(0); self.update_potential_fragments()
                     return
 
-                total_mass = 18.01528 # Water
+                calculated_pi = self._calculate_isoelectric_point(self.sequence)
+                if calculated_pi is not None:
+                    self.pi_display.setText(f"{calculated_pi:.2f}")
+                else:
+                    self.pi_display.clear()
+
+                total_mass = 18.01528
                 num_W = self.sequence.count('W'); num_Y = self.sequence.count('Y'); num_C = self.sequence.count('C')
                 for aa in self.sequence: total_mass += AMINO_ACID_RESIDUE_WEIGHTS.get(aa, 0)
-                
                 if self.sequence: self.sequence_length_display.setText(f"{len(self.sequence)} residues")
-                
                 self.base_protein_mw_input_da.blockSignals(True)
                 self.base_protein_mw_input_da.setText(f"{total_mass:.2f}" if total_mass > 18.1 else "")
                 self.base_protein_mw_input_da.blockSignals(False)
-
                 ext_coeff_reduced = (num_W * EXTINCTION_COEFFICIENTS['W']) + (num_Y * EXTINCTION_COEFFICIENTS['Y'])
                 ext_coeff_oxidized = ext_coeff_reduced + ((num_C // 2) * EXTINCTION_COEFFICIENTS['C'])
-                self.ext_coeff_reduced_display.setText(f"{ext_coeff_reduced} M⁻¹cm⁻¹")
-                self.ext_coeff_oxidized_display.setText(f"{ext_coeff_oxidized} M⁻¹cm⁻¹")
-                
+                self.ext_coeff_reduced_display.setText(f"{ext_coeff_reduced:,} M⁻¹cm⁻¹")
+                self.ext_coeff_oxidized_display.setText(f"{ext_coeff_oxidized:,} M⁻¹cm⁻¹")
                 if total_mass > 18.1:
-                    if ext_coeff_reduced > 0:
-                        self.absorbance_reduced_display.setText(f"{(ext_coeff_reduced / total_mass):.3f}")
+                    if ext_coeff_reduced > 0: self.absorbance_reduced_display.setText(f"{(ext_coeff_reduced / total_mass):.3f}")
                     else: self.absorbance_reduced_display.clear()
-                    if ext_coeff_oxidized > 0:
-                        self.absorbance_oxidized_display.setText(f"{(ext_coeff_oxidized / total_mass):.3f}")
+                    if ext_coeff_oxidized > 0: self.absorbance_oxidized_display.setText(f"{(ext_coeff_oxidized / total_mass):.3f}")
                     else: self.absorbance_oxidized_display.clear()
                 else:
                     self.absorbance_reduced_display.clear(); self.absorbance_oxidized_display.clear()
-                
                 try:
                     pattern = re.compile(r'N[^P][ST]')
                     matches = pattern.finditer(self.sequence)
                     locations = [(match.start(), match.group()) for match in matches]
                     self.num_glycosylation_sites = len(locations)
                     self.num_glycans_spinbox.blockSignals(True); self.num_glycans_spinbox.setValue(self.num_glycosylation_sites); self.num_glycans_spinbox.blockSignals(False)
-                    display_lines = ["<b>Formatted Sequence:</b>", self._format_sequence_with_numbers(self.sequence), "\n<b>Potential N-Glycosylation Sites:</b>"]
+                    display_html_parts = ["<pre>", self._format_sequence_with_numbers(self.sequence), "</pre>", "<b>Potential N-Glycosylation Sites:</b>"]
                     if self.num_glycosylation_sites > 0:
-                        display_lines.extend([f" - Site at position {loc + 1} (Sequence: {seq})" for loc, seq in locations])
-                        display_lines.append(f"\n<b>Total Potential Sites Found: {self.num_glycosylation_sites}</b>")
-                    else: display_lines.append(" - None found.")
-                    self.sequence_analysis_text.setHtml("<br>".join(display_lines))
+                        site_lines = [f" - Site at position {loc + 1} (Sequence: {seq})" for loc, seq in locations]
+                        display_html_parts.append("<ul><li>" + "</li><li>".join(site_lines) + "</li></ul>")
+                        display_html_parts.append(f"<b>Total Potential Sites Found: {self.num_glycosylation_sites}</b>")
+                    else: 
+                        display_html_parts.append("<p> - None found.</p>")
+                    self.sequence_analysis_text.setHtml("".join(display_html_parts))
                 except Exception as e: self.sequence_analysis_text.setPlainText(f"An error occurred: {e}")
                 self.update_potential_fragments()
 
@@ -626,6 +934,7 @@ if __name__ == "__main__":
                     content.extend(["--- SEQUENCE ANALYSIS ---", self.sequence_analysis_text.toPlainText() + "\n"])
                     content.extend(["--- PHYSICOCHEMICAL PROPERTIES ---",
                                     f"Sequence Length: {self.sequence_length_display.text()}",
+                                    f"Isoelectric Point (pI): {self.pi_display.text()}",
                                     f"Molecular Weight (Da): {self.base_protein_mw_input_da.text()}",
                                     f"Ext. Coeff. (Reduced): {self.ext_coeff_reduced_display.text()}",
                                     f"Ext. Coeff. (Oxidized): {self.ext_coeff_oxidized_display.text()}",
@@ -1661,8 +1970,7 @@ if __name__ == "__main__":
                          parent_app_instance=None, peak_details_data=None):
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
-                # Increased width to accommodate band numbers next to lane + font slider
-                self.setGeometry(50, 50, 600, 600) 
+                self.setGeometry(50, 50, 750, 700) 
                 self.temp_clipboard_file_path = None
                 self.parent_app = parent_app_instance
                 self.current_results_data = {} 
@@ -1670,13 +1978,10 @@ if __name__ == "__main__":
                 self.current_lane_pil_images = {}
                 self.current_peak_details_data = peak_details_data if peak_details_data else {}
 
-                # --- NEW: Attribute for band number font size ---
-                self.band_number_font_size = 12 # Default
-                self.band_number_font_slider = None # Will be created in UI
+                # --- REMOVED Font size attributes and slider ---
 
-                # ... (rest of __init__ as before, populating self.current_results_data and self.current_lane_pil_images) ...
                 if self.is_current_data_multi_lane:
-                    for lane_id_key in current_peak_areas_data.keys(): # Iterate through keys of areas dict
+                    for lane_id_key in current_peak_areas_data.keys():
                         self.current_results_data[lane_id_key] = {
                             'areas': current_peak_areas_data.get(lane_id_key, []),
                             'quantities': current_calculated_quantities_data.get(lane_id_key, []) if current_calculated_quantities_data else [],
@@ -1736,12 +2041,8 @@ if __name__ == "__main__":
 
             def _create_lane_data_display_widget(self, lane_id, peak_areas, calculated_quantities, is_std_mode,
                                                  pil_lane_image=None, peak_details_for_lane=None, is_for_history=False):
-
                 lane_widget = QWidget()
-                if is_for_history or not pil_lane_image:
-                    lane_layout = QVBoxLayout(lane_widget)
-                else:
-                    lane_layout = QHBoxLayout(lane_widget)
+                lane_layout = QHBoxLayout(lane_widget)
 
                 table_scroll_area = QScrollArea(); table_scroll_area.setWidgetResizable(True)
                 table_for_lane = QTableWidget(); table_for_lane.setColumnCount(4)
@@ -1750,59 +2051,44 @@ if __name__ == "__main__":
                 single_lane_data_for_populator = {1: {'areas': peak_areas, 'quantities': calculated_quantities}}
                 self._populate_table_generic(table_for_lane, single_lane_data_for_populator, is_std_mode, is_multi_lane_data=False)
                 table_scroll_area.setWidget(table_for_lane)
-                # Give table more stretch factor if image is present
-                lane_layout.addWidget(table_scroll_area, 3 if pil_lane_image and not is_for_history else 1) 
+                lane_layout.addWidget(table_scroll_area, 3)
 
                 if pil_lane_image and not is_for_history:
-                    image_preview_group = QGroupBox(f"Lane {lane_id} Preview")
-                    image_preview_layout = QVBoxLayout(image_preview_group)
-                    
-                    lane_image_label = QLabel("Image preview not available.")
-                    lane_image_label.setMinimumSize(100, 200) # Keep a reasonable minimum
-                    # Allow label to expand vertically, and take preferred width
+                    # Create the label directly, no QGroupBox
+                    lane_image_label = QLabel(f"Lane {lane_id} Preview")
+                    lane_image_label.setMinimumSize(150, 200)
                     lane_image_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding) 
                     lane_image_label.setAlignment(Qt.AlignCenter)
-                    lane_image_label.setStyleSheet("border: 1px solid grey; background-color: #333;")
-                    # Crucial for making the pixmap scale with the label:
-                    lane_image_label.setScaledContents(True) 
-                    lane_widget.setProperty("lane_image_label_ref", lane_image_label)
+                    lane_image_label.setStyleSheet("border: 1px solid #C0C5CB; background-color: #333; border-radius: 4px;")
+                    lane_image_label.setScaledContents(True)
 
                     try:
-                        if pil_lane_image.width > pil_lane_image.height:
-                             display_pil_image_oriented = pil_lane_image.rotate(0, expand=True)
-                        else:
-                             display_pil_image_oriented = pil_lane_image.copy()
+                        display_pil_image_oriented = pil_lane_image.copy()
                         
                         display_pil_image_rgba = None
-                        # ... (Normalization logic as before) ...
                         if display_pil_image_oriented.mode in ['I', 'I;16'] or display_pil_image_oriented.mode.startswith("I;16"):
                             img_array = np.array(display_pil_image_oriented, dtype=np.float32); 
-                            min_val, max_val = np.percentile(img_array, 1), np.percentile(img_array, 99) # Wider percentiles for contrast
+                            min_val, max_val = np.percentile(img_array, 1), np.percentile(img_array, 99)
                             if max_val <= min_val: min_val, max_val = np.min(img_array), np.max(img_array)
                             normalized_array = (img_array - min_val) / (max_val - min_val + 1e-9) 
                             normalized_array = np.clip(normalized_array, 0.0, 1.0)
-                            img_8bit_gray = (normalized_array * 255).astype(np.uint8); display_pil_image_rgba = Image.fromarray(img_8bit_gray, mode='L').convert("RGBA")
-                        elif display_pil_image_oriented.mode == 'L': display_pil_image_rgba = ImageOps.autocontrast(display_pil_image_oriented, cutoff=1).convert("RGBA") # cutoff for autocontrast
-                        elif display_pil_image_oriented.mode == 'F':
-                            img_array = np.array(display_pil_image_oriented, dtype=np.float32); min_val, max_val = np.percentile(img_array, 1), np.percentile(img_array, 99)
-                            if max_val <= min_val: min_val, max_val = np.min(img_array), np.max(img_array)
-                            normalized_array = (img_array - min_val) / (max_val - min_val + 1e-9)
-                            normalized_array = np.clip(normalized_array, 0.0, 1.0)
-                            img_8bit_gray = (normalized_array * 255).astype(np.uint8); display_pil_image_rgba = Image.fromarray(img_8bit_gray, mode='L').convert("RGBA")
-                        else: display_pil_image_rgba = display_pil_image_oriented.convert("RGBA")
+                            img_8bit_gray = (normalized_array * 255).astype(np.uint8)
+                            display_pil_image_rgba = Image.fromarray(img_8bit_gray).convert("RGBA")
+                        elif display_pil_image_oriented.mode == 'L':
+                            display_pil_image_rgba = ImageOps.autocontrast(display_pil_image_oriented, cutoff=1).convert("RGBA")
+                        else:
+                            display_pil_image_rgba = display_pil_image_oriented.convert("RGBA")
 
                         if display_pil_image_rgba:
-                            
                             draw = ImageDraw.Draw(display_pil_image_rgba)
                             
-                            # --- INCREASED FONT SIZE for Band Numbers ---
-                            # This size is relative to the full-resolution display_pil_image_rgba
-                            band_number_pil_font_size = 24 # Try a larger size (e.g., 24, 28, 32)
-                                                            # This will be scaled down by the QLabel if needed.
-                            try: font_pil = ImageFont.truetype("arialbd.ttf", band_number_pil_font_size)
+                            # --- FIX: Use a fixed, large pixel font size for cross-platform consistency ---
+                            band_number_pil_font_size = 28 # Fixed pixel size
+                            try:
+                                font_pil = ImageFont.truetype("arialbd.ttf", band_number_pil_font_size)
                             except IOError: 
                                 try: font_pil = ImageFont.truetype("arial.ttf", band_number_pil_font_size)
-                                except: font_pil = ImageFont.load_default() # Will be small
+                                except: font_pil = ImageFont.load_default()
                             
                             text_color = (255, 0, 0, 255) # Bright Red
 
@@ -1815,38 +2101,29 @@ if __name__ == "__main__":
                                     text_width = text_bbox[2] - text_bbox[0]
                                     text_height = text_bbox[3] - text_bbox[1]
                                     
-                                    # Position text to the very left of the lane image strip
-                                    x_text_pos = 3 # Small padding from the left edge
+                                    x_text_pos = 5 # Small padding from the left edge
                                     actual_y_draw_pos = y_pixel_on_oriented_image - (text_height // 2) - text_bbox[1] 
-                                    
                                     draw.text((x_text_pos, actual_y_draw_pos), band_num_str, fill=text_color, font=font_pil)
                                     
-                                    # Optional guide line
-                                    line_start_x = x_text_pos + text_width + 2 
-                                    line_end_x = x_text_pos + text_width + 10 # Make line a bit longer
+                                    line_start_x = x_text_pos + text_width + 4
+                                    line_end_x = x_text_pos + text_width + 12
                                     line_y = y_pixel_on_oriented_image 
-                                    draw.line([(line_start_x, line_y), (line_end_x, line_y)], fill=(0,255,0,180), width=2) # Thicker, more visible guide
+                                    draw.line([(line_start_x, line_y), (line_end_x, line_y)], fill=(0,255,0,180), width=2)
 
                             q_image_lane = ImageQt.ImageQt(display_pil_image_rgba)
                             if not q_image_lane.isNull():
                                 pixmap_lane = QPixmap.fromImage(q_image_lane)
-                                # Set the pixmap directly. QLabel with setScaledContents(True) will handle scaling.
-                                lane_image_label.setPixmap(pixmap_lane) 
+                                lane_image_label.setPixmap(pixmap_lane)
                         else:
-                             lane_image_label.setText(f"Cannot display Lane {lane_id} (format error).")
+                             lane_image_label.setText(f"Cannot display Lane {lane_id}\n(format error)")
                     except Exception as e_img: 
-                        print(f"Error creating current lane image preview for lane {lane_id}: {e_img}"); traceback.print_exc()
-                        lane_image_label.setText(f"Error displaying lane {lane_id} preview.")
+                        print(f"Error creating lane preview for lane {lane_id}: {e_img}"); traceback.print_exc()
+                        lane_image_label.setText(f"Error displaying\nlane {lane_id} preview")
                 
-                    image_preview_layout.addWidget(lane_image_label)
-                    image_preview_group.setMinimumWidth(150) # Maintain a minimum width
-                    image_preview_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding) # Allow vertical expansion
-                    lane_layout.addWidget(image_preview_group, 1) # Image group takes less horizontal stretch
+                    lane_layout.addWidget(lane_image_label, 1) # Image takes less horizontal stretch
                 return lane_widget
-                
 
             def _get_config_dir(self):
-                """Determines the directory for storing configuration/history files."""
                 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
                     application_path = os.path.dirname(sys.executable)
                 elif getattr(sys, 'frozen', False):
@@ -1857,7 +2134,6 @@ if __name__ == "__main__":
                 return application_path
 
             def _load_history(self):
-                """Loads analysis history from the JSON file."""
                 history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
                 if os.path.exists(history_file_path):
                     try:
@@ -1873,7 +2149,6 @@ if __name__ == "__main__":
                     self.analysis_history = []
 
             def _save_history(self):
-                """Saves the current analysis_history list to the JSON file."""
                 history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
                 try:
                     with open(history_file_path, "w", encoding='utf-8') as f:
@@ -1889,13 +2164,12 @@ if __name__ == "__main__":
                     user_defined_analysis_name = self.analysis_name_input_widget.text().strip() if self.analysis_name_input_widget else ""
                     display_name_for_history = user_defined_analysis_name if user_defined_analysis_name else self.source_image_name_current
                     
-                    # self.current_results_data already contains 'areas', 'quantities', and 'details' per lane
                     new_entry = {
                         "timestamp": datetime.datetime.now().isoformat(),
                         "user_defined_name": display_name_for_history,
                         "source_image_name": self.source_image_name_current,
                         "is_multi_lane": self.is_current_data_multi_lane,
-                        "results_data": self.current_results_data, # This now includes 'details'
+                        "results_data": self.current_results_data,
                         "standard_dictionary": self.current_standard_dictionary,
                         "analysis_settings": peak_dialog_settings_current
                     }
@@ -1905,102 +2179,95 @@ if __name__ == "__main__":
                 self.accept()
 
             def _create_current_results_tab(self):
+                """Creates the 'Current Analysis' tab with a polished, grouped layout."""
                 current_tab_widget = QWidget()
-                current_main_layout = QVBoxLayout(current_tab_widget) 
+                current_main_layout = QVBoxLayout(current_tab_widget)
+                current_main_layout.setSpacing(10)
 
-                name_layout = QHBoxLayout()
+                # --- Group 1: Analysis Identification ---
+                name_group = QGroupBox("Analysis Identification")
+                name_layout = QHBoxLayout(name_group)
                 name_label = QLabel("Analysis Name:")
                 self.analysis_name_input_widget = QLineEdit(self.current_analysis_custom_name)
                 self.analysis_name_input_widget.setPlaceholderText("Enter a name for this analysis...")
                 self.analysis_name_input_widget.setToolTip("Used for history and export filenames.")
-                name_layout.addWidget(name_label); name_layout.addWidget(self.analysis_name_input_widget)
-                current_main_layout.addLayout(name_layout)
+                name_layout.addWidget(name_label)
+                name_layout.addWidget(self.analysis_name_input_widget)
+                current_main_layout.addWidget(name_group)
 
-                # --- FONT SLIDER REMOVED ---
-                # font_control_layout = QHBoxLayout()
-                # ... (slider and label creation removed)
-                # current_main_layout.addLayout(font_control_layout) 
-
+                # --- Group 2: Standard Curve ---
+                plot_group_current = QGroupBox("Standard Curve (Current Analysis)")
+                plot_layout_current = QVBoxLayout(plot_group_current)
                 current_plot_widget = self._create_standard_curve_plot_generic(
                     self.current_standard_dictionary, self.current_is_standard_mode, for_history=False
                 )
                 if current_plot_widget:
-                    plot_group_current = QGroupBox("Standard Curve (Current Analysis)")
-                    plot_layout_current = QVBoxLayout(plot_group_current)
                     plot_layout_current.addWidget(current_plot_widget)
-                    plot_group_current.setMaximumHeight(250) 
-                    plot_group_current.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                    current_main_layout.addWidget(plot_group_current)
+                plot_group_current.setMaximumHeight(250)
+                plot_group_current.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                current_main_layout.addWidget(plot_group_current)
+                
+                # --- Group 3: Band Analysis (contains results table and lane preview) ---
+                results_group = QGroupBox("Band Analysis")
+                results_layout = QVBoxLayout(results_group)
 
                 results_display_area = QWidget()
-                results_display_layout = QVBoxLayout(results_display_area); results_display_layout.setContentsMargins(0,0,0,0)
+                results_display_layout = QVBoxLayout(results_display_area)
+                results_display_layout.setContentsMargins(0,0,0,0)
 
                 if self.is_current_data_multi_lane and len(self.current_results_data) > 0:
-                    self.current_lanes_tab_widget = QTabWidget() 
+                    self.current_lanes_tab_widget = QTabWidget()
                     for lane_id_sorted in sorted(self.current_results_data.keys()):
                         lane_data = self.current_results_data[lane_id_sorted]
                         pil_image_for_lane = self.current_lane_pil_images.get(lane_id_sorted)
-                        peak_details_for_this_lane = lane_data.get('details', []) 
+                        peak_details_for_this_lane = lane_data.get('details', [])
                         lane_content_widget = self._create_lane_data_display_widget(
-                            lane_id_sorted, lane_data['areas'], lane_data['quantities'], 
+                            lane_id_sorted, lane_data['areas'], lane_data['quantities'],
                             self.current_is_standard_mode, pil_image_for_lane, peak_details_for_this_lane,
-                            is_for_history=False # Explicitly for current
+                            is_for_history=False
                         )
                         self.current_lanes_tab_widget.addTab(lane_content_widget, f"Lane {lane_id_sorted}")
                     results_display_layout.addWidget(self.current_lanes_tab_widget)
-                    # No need to connect currentChanged to font refresh anymore
-                elif 1 in self.current_results_data: 
+                elif 1 in self.current_results_data:
                     lane_data = self.current_results_data[1]; pil_image_for_lane = self.current_lane_pil_images.get(1); peak_details_for_this_lane = lane_data.get('details', [])
                     self.single_lane_content_widget_ref = self._create_lane_data_display_widget(
-                        1, lane_data['areas'], lane_data['quantities'], self.current_is_standard_mode, 
+                        1, lane_data['areas'], lane_data['quantities'], self.current_is_standard_mode,
                         pil_image_for_lane, peak_details_for_this_lane, is_for_history=False
                     )
                     results_display_layout.addWidget(self.single_lane_content_widget_ref)
-                else: 
-                    no_data_label = QLabel("No current analysis data to display."); no_data_label.setAlignment(Qt.AlignCenter); results_display_layout.addWidget(no_data_label)
-                current_main_layout.addWidget(results_display_area)
+                else:
+                    no_data_label = QLabel("No current analysis data to display."); no_data_label.setAlignment(Qt.AlignCenter)
+                    results_display_layout.addWidget(no_data_label)
                 
-                current_buttons_layout = QHBoxLayout(); copy_current_button = QPushButton("Copy Active Lane Table"); copy_current_button.clicked.connect(self._copy_active_lane_table_data)
+                results_layout.addWidget(results_display_area)
+                current_main_layout.addWidget(results_group)
+
+                # --- Bottom Buttons (Copy/Export) ---
+                current_buttons_layout = QHBoxLayout()
+                copy_current_button = QPushButton("Copy Active Lane Table")
+                copy_current_button.clicked.connect(self._copy_active_lane_table_data)
                 export_current_button = QPushButton("Export All Lanes to Excel")
-                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(self.current_results_data, self.analysis_name_input_widget.text() or self.source_image_name_current, self.current_standard_dictionary, is_multi_lane_data=self.is_current_data_multi_lane ))
-                current_buttons_layout.addWidget(copy_current_button); current_buttons_layout.addStretch(); current_buttons_layout.addWidget(export_current_button); current_main_layout.addLayout(current_buttons_layout)
-                self.tab_widget.addTab(current_tab_widget, "Current Analysis")
+                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(self.current_results_data, self.analysis_name_input_widget.text() or self.source_image_name_current, self.current_standard_dictionary, is_multi_lane_data=self.is_current_data_multi_lane))
+                current_buttons_layout.addWidget(copy_current_button)
+                current_buttons_layout.addStretch()
+                current_buttons_layout.addWidget(export_current_button)
+                current_main_layout.addLayout(current_buttons_layout)
                 
+                current_main_layout.addStretch(1)
+                self.tab_widget.addTab(current_tab_widget, "Current Analysis")
                        
             def _copy_active_lane_table_data(self):
-                """Copies data from the table of the currently active lane tab (if multi-lane)."""
                 table_to_copy = None
+                current_lane_widget = None
                 if self.is_current_data_multi_lane and hasattr(self, 'current_lanes_tab_widget'):
                     current_lane_widget = self.current_lanes_tab_widget.currentWidget()
-                    if current_lane_widget:
-                        # Find the QTableWidget within the current lane's content widget
-                        # This assumes _create_lane_data_display_widget places table in a predictable way
-                        table_widgets_in_lane = current_lane_widget.findChildren(QTableWidget)
-                        if table_widgets_in_lane:
-                            table_to_copy = table_widgets_in_lane[0]
-                elif hasattr(self, 'current_results_table_single_lane_ref'): # Fallback to old single table if it existed
-                    # This assumes that if it's single lane, the table is directly accessible
-                    # We might need a direct reference if _create_lane_data_display_widget is the only table creator
-                    # For now, let's assume the single lane case also creates its table inside a widget
-                    # that can be found similarly or by direct reference if we store it.
-                    # For simplicity, if not multi-lane, let's assume there's a main table.
-                    # The logic in _create_current_results_tab needs to ensure self.current_results_table
-                    # refers to the single lane's table if not multi-lane.
-                    # The previous version had self.current_results_table.
-                    # If _create_lane_data_display_widget is used for single lanes too, that single table is the target.
-                    # Let's find it generically.
-                    current_tab_content = self.tab_widget.widget(0) # "Current Analysis" tab
-                    if current_tab_content:
-                         # If it's single lane, the table might be directly in current_main_layout or wrapped.
-                         # Assuming _create_lane_data_display_widget is used, find it.
-                         lane_widgets = current_tab_content.findChildren(QWidget) # Find the lane_widget
-                         for lw in lane_widgets:
-                             # A bit hacky way to identify our lane widget; could add objectName
-                             if lw.layout() and isinstance(lw.layout(), QHBoxLayout) and lw.findChild(QScrollArea):
-                                 table_widgets_in_lw = lw.findChildren(QTableWidget)
-                                 if table_widgets_in_lw:
-                                     table_to_copy = table_widgets_in_lw[0]
-                                     break
+                elif hasattr(self, 'single_lane_content_widget_ref'):
+                    current_lane_widget = self.single_lane_content_widget_ref
+                
+                if current_lane_widget:
+                    table_widgets_in_lane = current_lane_widget.findChildren(QTableWidget)
+                    if table_widgets_in_lane:
+                        table_to_copy = table_widgets_in_lane[0]
                 
                 if table_to_copy:
                     self._copy_table_data_generic(table_to_copy)
@@ -2010,8 +2277,6 @@ if __name__ == "__main__":
             def _create_previous_results_tab(self):
                 previous_tab_widget = QWidget()
                 previous_main_layout = QHBoxLayout(previous_tab_widget)
-
-                # --- Left Pane (History List) ---
                 left_pane_widget = QWidget()
                 left_layout = QVBoxLayout(left_pane_widget); left_layout.setContentsMargins(0, 0, 5, 0)
                 left_layout.addWidget(QLabel("Saved Analyses:"))
@@ -2025,58 +2290,49 @@ if __name__ == "__main__":
                 history_buttons_layout.addWidget(self.clear_history_button); left_layout.addLayout(history_buttons_layout)
                 previous_main_layout.addWidget(left_pane_widget, 1)
 
-                # --- Right Pane (Details of selected history) ---
-                self.right_pane_history_widget = QWidget() # Main container for right side
-                right_layout = QVBoxLayout(self.right_pane_history_widget) # Layout for this container
-
+                self.right_pane_history_widget = QWidget()
+                right_layout = QVBoxLayout(self.right_pane_history_widget)
                 self.previous_plot_groupbox = QGroupBox("Standard Curve (Selected History)")
                 self.previous_plot_groupbox_layout = QVBoxLayout(self.previous_plot_groupbox)
                 self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details.")
                 self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
                 self.previous_plot_groupbox_layout.addWidget(self.previous_plot_placeholder_label)
-                self.previous_plot_groupbox.setMaximumHeight(250) # Consistent height
+                self.previous_plot_groupbox.setMaximumHeight(250)
                 self.previous_plot_groupbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 right_layout.addWidget(self.previous_plot_groupbox)
-
-                # This widget will hold the lane tabs or single lane data for history
                 self.history_results_display_container = QWidget() 
                 self.history_results_display_layout = QVBoxLayout(self.history_results_display_container)
                 self.history_results_display_layout.setContentsMargins(0,0,0,0)
-                # Add a placeholder initially for the table/tabs area
                 initial_hist_table_placeholder = QLabel("Lane data will appear here.")
                 initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
                 self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
-                right_layout.addWidget(self.history_results_display_container, 1) # Give it stretch factor 1
+                right_layout.addWidget(self.history_results_display_container, 1)
 
                 previous_table_buttons_layout = QHBoxLayout()
-                copy_previous_button = QPushButton("Copy Active History Lane Table") # Changed text
+                copy_previous_button = QPushButton("Copy Active History Lane Table")
                 copy_previous_button.clicked.connect(self._copy_active_history_lane_table_data)
-                self.export_previous_button = QPushButton("Export Selected History to Excel") # Changed text
+                self.export_previous_button = QPushButton("Export Selected History to Excel")
                 self.export_previous_button.clicked.connect(self._export_selected_history_to_excel)
                 self.export_previous_button.setEnabled(False)
                 previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch()
                 previous_table_buttons_layout.addWidget(self.export_previous_button)
                 right_layout.addLayout(previous_table_buttons_layout)
-
-                previous_main_layout.addWidget(self.right_pane_history_widget, 2) # right_pane takes more space
+                previous_main_layout.addWidget(self.right_pane_history_widget, 2)
                 self.tab_widget.addTab(previous_tab_widget, "Analysis History")
                 self._populate_previous_sessions_list()
                 
             def _copy_active_history_lane_table_data(self):
-                """Copies data from the table of the currently active historical lane tab."""
                 table_to_copy = None
-                # Check if the active widget in history_results_display_container is a QTabWidget
                 if hasattr(self, 'history_results_display_container'):
-                    # The direct child should be the QTabWidget or the single_lane_display_widget
                     active_content_widget = self.history_results_display_layout.itemAt(0).widget() if self.history_results_display_layout.count() > 0 else None
 
-                    if isinstance(active_content_widget, QTabWidget): # It's multi-lane history
+                    if isinstance(active_content_widget, QTabWidget):
                         current_lane_hist_widget = active_content_widget.currentWidget()
                         if current_lane_hist_widget:
                             table_widgets_in_lane = current_lane_hist_widget.findChildren(QTableWidget)
                             if table_widgets_in_lane:
                                 table_to_copy = table_widgets_in_lane[0]
-                    elif isinstance(active_content_widget, QWidget): # It's single-lane history widget
+                    elif isinstance(active_content_widget, QWidget):
                          table_widgets_in_lane = active_content_widget.findChildren(QTableWidget)
                          if table_widgets_in_lane:
                              table_to_copy = table_widgets_in_lane[0]
@@ -2096,38 +2352,30 @@ if __name__ == "__main__":
 
                 for i, entry in enumerate(self.analysis_history):
                     ts_str = entry.get("timestamp", f"Entry {len(self.analysis_history) - i}")
-                    
-                    # --- Use user_defined_name if available, otherwise fallback ---
                     entry_display_name = entry.get("user_defined_name", "").strip()
                     source_img_name = entry.get("source_image_name", "Unknown Image")
                     
-                    if not entry_display_name: # If user_defined_name is empty or missing
-                        entry_display_name = source_img_name # Fallback to source image name
-
+                    if not entry_display_name:
+                        entry_display_name = source_img_name
                     try:
                         dt_obj = datetime.datetime.fromisoformat(ts_str.split('.')[0])
-                        # Display format: "YYYY-MM-DD HH:MM:SS (User Defined Name OR Source Image Name)"
                         final_display_string = f"{dt_obj.strftime('%Y-%m-%d %H:%M:%S')} ({entry_display_name})"
                     except ValueError:
                         final_display_string = f"{ts_str} ({entry_display_name})"
-                    # --- End Name Logic ---
                     self.previous_sessions_listwidget.addItem(final_display_string)
                 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
 
             def _clear_previous_details_view(self):
-                # Clear content of history_results_display_layout
                 if hasattr(self, 'history_results_display_layout'):
                     while self.history_results_display_layout.count() > 0:
                         item = self.history_results_display_layout.takeAt(0)
                         widget = item.widget()
                         if widget: widget.deleteLater()
-                    # Add back a placeholder
                     initial_hist_table_placeholder = QLabel("Select an analysis to view details.")
                     initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
                     self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
-
 
                 if hasattr(self, 'previous_plot_canvas_widget') and self.previous_plot_canvas_widget:
                     if self.previous_plot_groupbox_layout: self.previous_plot_groupbox_layout.removeWidget(self.previous_plot_canvas_widget)
@@ -2168,7 +2416,7 @@ if __name__ == "__main__":
                                 'quantities': lane_content.get('quantities', []),
                                 'details': lane_content.get('details', []) 
                             }
-                        except (ValueError, TypeError): pass # Skip invalid
+                        except (ValueError, TypeError): pass
                     if len(processed_hist_results) > 1: hist_is_multi_lane_from_flag = True 
                     elif len(processed_hist_results) == 1: hist_is_multi_lane_from_flag = False
                 elif isinstance(entry.get("peak_areas"), list):
@@ -2178,19 +2426,18 @@ if __name__ == "__main__":
                     elif isinstance(legacy_details_raw, list): legacy_details_list = legacy_details_raw
                     if legacy_areas: processed_hist_results[1] = {'areas': legacy_areas, 'quantities': legacy_quantities, 'details': legacy_details_list}
                     hist_is_multi_lane_from_flag = False
-                else: pass # processed_hist_results remains empty
+                else: pass
 
                 hist_std_dict = entry.get("standard_dictionary", {})
                 hist_is_std_mode = bool(hist_std_dict)
 
-                # --- Clear and Repopulate the History Details Pane ---
                 if hasattr(self, 'previous_plot_canvas_widget') and self.previous_plot_canvas_widget:
                     if self.previous_plot_groupbox_layout: self.previous_plot_groupbox_layout.removeWidget(self.previous_plot_canvas_widget)
                     self.previous_plot_canvas_widget.deleteLater(); self.previous_plot_canvas_widget = None
                 if self.previous_plot_placeholder_label and not self.previous_plot_placeholder_label.isHidden():
                     self.previous_plot_placeholder_label.hide()
                 
-                while self.history_results_display_layout.count() > 0: # Clear previous content
+                while self.history_results_display_layout.count() > 0:
                     item = self.history_results_display_layout.takeAt(0)
                     widget = item.widget()
                     if widget: widget.deleteLater()
@@ -2202,11 +2449,9 @@ if __name__ == "__main__":
                     hist_lane_tabs = QTabWidget()
                     for lane_id_hist_sorted in sorted(processed_hist_results.keys()):
                         lane_data_hist = processed_hist_results[lane_id_hist_sorted]
-                        # Call _create_lane_data_display_widget with is_for_history=True
-                        # It will only create the table part.
                         lane_content_hist_widget = self._create_lane_data_display_widget(
                             lane_id_hist_sorted, lane_data_hist.get('areas', []), lane_data_hist.get('quantities', []),
-                            hist_is_std_mode, pil_lane_image=None, # No image for history
+                            hist_is_std_mode, pil_lane_image=None,
                             peak_details_for_lane=lane_data_hist.get('details', []), 
                             is_for_history=True
                         )
@@ -2230,7 +2475,6 @@ if __name__ == "__main__":
                 self.previous_plot_canvas_widget = hist_plot_widget
                 if self.previous_plot_groupbox_layout: self.previous_plot_groupbox_layout.addWidget(self.previous_plot_canvas_widget)
 
-
             def _delete_selected_history_entry(self):
                 if not self.previous_sessions_listwidget: return
                 current_row = self.previous_sessions_listwidget.currentRow()
@@ -2253,7 +2497,7 @@ if __name__ == "__main__":
                 if reply == QMessageBox.Yes:
                     self.analysis_history = []
                     self._save_history()
-                    self._populate_previous_sessions_list() # This will show "No history available."
+                    self._populate_previous_sessions_list()
                     self._clear_previous_details_view()
 
             def _export_selected_history_to_excel(self):
@@ -2261,7 +2505,6 @@ if __name__ == "__main__":
                 current_row = self.previous_sessions_listwidget.currentRow()
                 if current_row >= 0 and current_row < len(self.analysis_history):
                     entry = self.analysis_history[current_row]
-                    # ... (filename generation logic remains similar) ...
                     ts_str_raw = entry.get("timestamp", f"History_Entry_{current_row+1}")
                     try: dt_obj_export = datetime.datetime.fromisoformat(ts_str_raw.split('.')[0]); timestamp_str_for_file = dt_obj_export.strftime("%Y%m%d_%H%M%S")
                     except ValueError: timestamp_str_for_file = ts_str_raw.replace(":", "-").replace("T", "_").split('.')[0]
@@ -2276,7 +2519,7 @@ if __name__ == "__main__":
                     hist_results_data = entry.get("results_data", {})
                     
                     self._export_to_excel_generic(
-                        hist_results_data, # Pass the raw data dict/list
+                        hist_results_data,
                         default_filename_base,
                         entry.get("standard_dictionary", {}),
                         is_multi_lane_data=hist_is_multi_lane
@@ -2284,7 +2527,6 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.information(self, "No Selection", "Please select a history entry to export.")
 
-            # --- Generic Helper Methods (Keep these as they were, they are fine) ---
             def _create_standard_curve_plot_generic(self, standard_dictionary, is_standard_mode, for_history=False):
                 if not is_standard_mode or not standard_dictionary or len(standard_dictionary) < 2:
                     no_curve_label = QLabel("Standard curve requires at least 2 standard points." if not for_history else "No standard data for this historical entry.")
@@ -2293,7 +2535,7 @@ if __name__ == "__main__":
                 try:
                     quantities = np.array(list(standard_dictionary.keys()), dtype=float)
                     areas = np.array(list(standard_dictionary.values()), dtype=float)
-                    if len(quantities) < 2: # Double check after potential type conversion
+                    if len(quantities) < 2:
                          no_curve_label = QLabel("Insufficient valid standard points (less than 2).")
                          no_curve_label.setAlignment(Qt.AlignCenter)
                          return no_curve_label
@@ -2301,57 +2543,50 @@ if __name__ == "__main__":
                     coeffs = np.polyfit(areas, quantities, 1); slope, intercept = coeffs
                     predicted_quantities = np.polyval(coeffs, areas); residuals = quantities - predicted_quantities
                     ss_res = np.sum(residuals**2); ss_tot = np.sum((quantities - np.mean(quantities))**2)
-                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0 # Avoid division by zero if all quantities are same
+                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
                     
-                    fig, ax = plt.subplots(figsize=(4.5, 3.2)) # Slightly adjusted for dialog
-                    fig.set_dpi(90)
+                    fig, ax = plt.subplots(figsize=(4.5, 3.2)); fig.set_dpi(90)
 
-                    ax.scatter(areas, quantities, label='Standard Points', color='red', zorder=5, s=30)
-                    
-                    # Ensure x_line covers the range of areas, handle empty/single point arrays
+                    is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
+                    if is_dark_theme:
+                        fig.patch.set_facecolor('#2D2D30'); ax.patch.set_facecolor('#38383C')
+                        text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
+                        scatter_color, line_color = '#FF8A65', '#42A5F5' # Light Orange, Light Blue
+                        for spine in ax.spines.values(): spine.set_color(spine_color)
+                        ax.tick_params(axis='x', colors=text_color); ax.tick_params(axis='y', colors=text_color)
+                        ax.yaxis.label.set_color(text_color); ax.xaxis.label.set_color(text_color); ax.title.set_color(text_color)
+                    else:
+                        scatter_color, line_color, grid_color, text_color = 'red', 'blue', '#DDDDDD', 'black'
+
+                    ax.scatter(areas, quantities, label='Standard Points', color=scatter_color, zorder=5, s=30)
                     x_min_plot = np.min(areas) * 0.9 if areas.size > 0 else 0
                     x_max_plot = np.max(areas) * 1.1 if areas.size > 0 else 1
-                    if x_min_plot == x_max_plot: # Handle case where all areas are the same
-                        x_min_plot -= 0.5
-                        x_max_plot += 0.5
-
-                    x_line = np.linspace(x_min_plot, x_max_plot, 100)
-                    y_line = slope * x_line + intercept
-                    
+                    if x_min_plot == x_max_plot: x_min_plot -= 0.5; x_max_plot += 0.5
+                    x_line = np.linspace(x_min_plot, x_max_plot, 100); y_line = slope * x_line + intercept
                     fit_label = (f'Qty = {slope:.3g}*Area + {intercept:.3g}\nR² = {r_squared:.3f}')
-                    ax.plot(x_line, y_line, label=fit_label, color='blue', linewidth=1.2)
-                    
-                    ax.set_xlabel('Total Peak Area', fontsize=8)
-                    ax.set_ylabel('Known Quantity', fontsize=8)
-                    title_prefix = "Historical " if for_history else "" # Removed "Current" as it's implied
-                    ax.set_title(f'{title_prefix}Standard Curve', fontsize=9, fontweight='bold')
-                    
-                    ax.legend(fontsize='xx-small', loc='best'); ax.grid(True, linestyle=':', alpha=0.7, linewidth=0.5)
+                    ax.plot(x_line, y_line, label=fit_label, color=line_color, linewidth=1.2)
+                    ax.set_xlabel('Total Peak Area', fontsize=8); ax.set_ylabel('Known Quantity', fontsize=8)
+                    title_prefix = "Historical " if for_history else ""; ax.set_title(f'{title_prefix}Standard Curve', fontsize=9, fontweight='bold')
+                    leg = ax.legend(fontsize='xx-small', loc='best'); leg.get_frame().set_facecolor(ax.get_facecolor())
+                    for text in leg.get_texts(): text.set_color(text_color)
+                    ax.grid(True, linestyle=':', alpha=0.7, linewidth=0.5, color=grid_color)
                     ax.tick_params(axis='both', which='major', labelsize=7)
-                    
                     if np.any(areas > 1e4) or (np.any(areas < 1e-2) and np.any(areas != 0)): ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
                     if np.any(quantities > 1e4) or (np.any(quantities < 1e-2) and np.any(quantities != 0)): ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
-                    
                     try: fig.set_constrained_layout(True)
                     except AttributeError: plt.tight_layout(pad=0.3)
-                    
-                    canvas = FigureCanvas(fig)
-                    canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
+                    canvas = FigureCanvas(fig); canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
                     plt.close(fig)
-
                     return canvas
                 except Exception as e:
                     traceback.print_exc()
-                    error_label = QLabel(f"Error generating plot:\n{str(e)[:100]}...") # Show truncated error
-                    error_label.setAlignment(Qt.AlignCenter); error_label.setStyleSheet("color: red;")
+                    error_label = QLabel(f"Error generating plot:\n{str(e)[:100]}..."); error_label.setAlignment(Qt.AlignCenter); error_label.setStyleSheet("color: red;")
                     return error_label
 
             def _populate_table_generic(self, table_widget, results_data, is_standard_mode, is_multi_lane_data):
                 table_widget.clearContents()
-                table_widget.setRowCount(0) # Clear rows
-                
-                total_rows_to_add = 0
-                if not results_data: # Empty dict or list
+                table_widget.setRowCount(0)
+                if not results_data:
                     placeholder_text = "No data to display in table."
                     row_span = 1
                     col_span = table_widget.columnCount()
@@ -2364,47 +2599,37 @@ if __name__ == "__main__":
                     return
 
                 current_row_idx = 0
-                # results_data is dict {lane_id: {'areas': [], 'quantities': []}}
                 for lane_id_sorted in sorted(results_data.keys()): 
                     lane_data = results_data[lane_id_sorted]
                     peak_areas = lane_data.get('areas', [])
                     calculated_quantities = lane_data.get('quantities', [])
-
-                    if not peak_areas: continue # Skip empty lanes
-
+                    if not peak_areas: continue
                     total_area_this_lane = sum(peak_areas) if peak_areas else 0.0
-                    
-                    table_widget.setRowCount(current_row_idx + len(peak_areas)) # Ensure enough rows
-
+                    table_widget.setRowCount(current_row_idx + len(peak_areas))
                     for band_idx, area in enumerate(peak_areas):
                         col_offset = 0
                         if is_multi_lane_data:
                             table_widget.setItem(current_row_idx, 0, QTableWidgetItem(str(lane_id_sorted)))
                             col_offset = 1
-                        
                         band_label = f"Band {band_idx + 1}"
                         table_widget.setItem(current_row_idx, col_offset + 0, QTableWidgetItem(band_label))
                         table_widget.setItem(current_row_idx, col_offset + 1, QTableWidgetItem(f"{area:.3f}"))
                         percentage_str = f"{(area / total_area_this_lane * 100):.2f}%" if total_area_this_lane != 0 else "0.00%"
                         table_widget.setItem(current_row_idx, col_offset + 2, QTableWidgetItem(percentage_str))
-                        
                         quantity_str = ""
                         if is_standard_mode and calculated_quantities and band_idx < len(calculated_quantities):
                             quantity_str = f"{calculated_quantities[band_idx]:.2f}"
                         table_widget.setItem(current_row_idx, col_offset + 3, QTableWidgetItem(quantity_str))
                         current_row_idx += 1
-                
-                if current_row_idx == 0: # If all lanes were empty
-                    self._populate_table_generic(table_widget, None, False, False) # Call with None to show placeholder
+                if current_row_idx == 0:
+                    self._populate_table_generic(table_widget, None, False, False)
                 else:
                     table_widget.resizeColumnsToContents()
-
 
             def _copy_table_data_generic(self, table_widget_source):
                 if not table_widget_source: return
                 selected_ranges = table_widget_source.selectedRanges()
                 if not selected_ranges: return
-                # ... (rest of copy logic is fine)
                 selected_range = selected_ranges[0]
                 start_row, end_row = selected_range.topRow(), selected_range.bottomRow()
                 start_col, end_col = selected_range.leftColumn(), selected_range.rightColumn()
@@ -2413,20 +2638,16 @@ if __name__ == "__main__":
                     row_data = []
                     for c in range(start_col, end_col + 1):
                         item = table_widget_source.item(r, c)
-                        # Check if item is the placeholder span
                         if table_widget_source.rowSpan(r,c) > 1 or table_widget_source.columnSpan(r,c) > 1:
                             if "No data" in item.text() or "Select an analysis" in item.text():
-                                row_data.append("") # Add empty string for placeholder cells
-                                continue
+                                row_data.append(""); continue
                         row_data.append(item.text() if item else "")
-                    if any(cell_text for cell_text in row_data): # Only add row if not all empty
+                    if any(cell_text for cell_text in row_data):
                         clipboard_string += "\t".join(row_data) + "\n"
                 QApplication.clipboard().setText(clipboard_string.strip())
 
-
             def _export_to_excel_generic(self, results_data_for_export, analysis_name_for_filename_base="Analysis_Results", 
                                          standard_dict_for_export=None, is_multi_lane_data=False):
-                # ... (filename generation logic remains similar) ...
                 safe_analysis_name = str(analysis_name_for_filename_base).replace('.', '_').replace(' ', '_').replace(':', '-')
                 current_timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 final_default_filename = ""
@@ -2439,16 +2660,12 @@ if __name__ == "__main__":
                 if not file_path: return
                 
                 workbook = openpyxl.Workbook()
-                # Remove default sheet, we will create our own
                 if "Sheet" in workbook.sheetnames: workbook.remove(workbook["Sheet"])
-
-                # --- Main Data Sheet ---
-                if is_multi_lane_data and results_data_for_export: # results_data_for_export is a dict
+                if is_multi_lane_data and results_data_for_export:
                     worksheet_data = workbook.create_sheet("Multi-Lane Analysis")
                     headers = ["Lane ID", "Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"]
                     for col, header in enumerate(headers, start=1):
                         cell = worksheet_data.cell(row=1, column=col, value=header); cell.font = Font(bold=True)
-                    
                     current_excel_row = 2
                     for lane_id_sorted in sorted(results_data_for_export.keys()):
                         lane_data = results_data_for_export[lane_id_sorted]
@@ -2462,23 +2679,18 @@ if __name__ == "__main__":
                             worksheet_data.cell(row=current_excel_row, column=2, value=f"Band {band_idx + 1}")
                             worksheet_data.cell(row=current_excel_row, column=3, value=float(f"{area_val:.3f}"))
                             perc_val_str = f"{(area_val / total_area_this_lane * 100):.2f}%" if total_area_this_lane != 0 else "0.00%"
-                            try: # Store as number with % format
+                            try:
                                 perc_num = float(perc_val_str.replace('%','')) / 100.0
                                 cell_perc = worksheet_data.cell(row=current_excel_row, column=4, value=perc_num)
                                 cell_perc.number_format = '0.00%'
-                            except ValueError:
-                                worksheet_data.cell(row=current_excel_row, column=4, value=perc_val_str)
-                            
+                            except ValueError: worksheet_data.cell(row=current_excel_row, column=4, value=perc_val_str)
                             qty_str_val = ""
                             if self.current_is_standard_mode and calculated_quantities and band_idx < len(calculated_quantities):
                                 qty_str_val = f"{calculated_quantities[band_idx]:.2f}"
                                 try: worksheet_data.cell(row=current_excel_row, column=5, value=float(qty_str_val))
                                 except ValueError: worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
-                            else:
-                                worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
+                            else: worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
                             current_excel_row += 1
-                    
-                    # Auto-size columns
                     for col_idx_letter in range(1, worksheet_data.max_column + 1):
                         column_letter = openpyxl.utils.get_column_letter(col_idx_letter)
                         max_length = 0; header_len = len(headers[col_idx_letter-1])
@@ -2489,14 +2701,12 @@ if __name__ == "__main__":
                         adjusted_width = (max(max_length, header_len) + 2) * 1.1 
                         worksheet_data.column_dimensions[column_letter].width = min(max(adjusted_width, 10), 50)
 
-
-                elif not is_multi_lane_data and results_data_for_export and 1 in results_data_for_export: # Single lane data
+                elif not is_multi_lane_data and results_data_for_export and 1 in results_data_for_export:
                     worksheet_data_single = workbook.create_sheet("Single Lane Analysis")
                     headers_single = ["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"]
                     for col, header in enumerate(headers_single, start=1):
                         cell = worksheet_data_single.cell(row=1, column=col, value=header); cell.font = Font(bold=True)
-                    
-                    single_lane_actual_data = results_data_for_export[1] # Access the data for lane 1
+                    single_lane_actual_data = results_data_for_export[1]
                     peak_areas_single = single_lane_actual_data.get('areas', [])
                     calculated_quantities_single = single_lane_actual_data.get('quantities', [])
                     total_area_single = sum(peak_areas_single) if peak_areas_single else 0.0
@@ -2511,14 +2721,12 @@ if __name__ == "__main__":
                             cell_perc = worksheet_data_single.cell(row=excel_r, column=3, value=perc_num)
                             cell_perc.number_format = '0.00%'
                         except ValueError: worksheet_data_single.cell(row=excel_r, column=3, value=perc_val_str)
-                        
                         qty_str_val = ""
                         if self.current_is_standard_mode and calculated_quantities_single and r_idx < len(calculated_quantities_single):
                             qty_str_val = f"{calculated_quantities_single[r_idx]:.2f}"
                             try: worksheet_data_single.cell(row=excel_r, column=4, value=float(qty_str_val))
                             except ValueError: worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
-                        else:
-                            worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
+                        else: worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
 
                     for col_idx_letter in range(1, worksheet_data_single.max_column + 1):
                         column_letter = openpyxl.utils.get_column_letter(col_idx_letter)
@@ -2529,12 +2737,10 @@ if __name__ == "__main__":
                             except: pass
                         adjusted_width = (max(max_length, header_len) + 2) * 1.1
                         worksheet_data_single.column_dimensions[column_letter].width = min(max(adjusted_width, 10), 50)
-                else: # No data to export
+                else:
                     no_data_sheet = workbook.create_sheet("No Analysis Data")
                     no_data_sheet.cell(row=1, column=1, value="No analysis data was available for export.")
 
-
-                # --- Standard Curve Data Sheet (remains the same) ---
                 if standard_dict_for_export and len(standard_dict_for_export) >= 2:
                     worksheet_std = workbook.create_sheet("Standard Curve Data")
                     worksheet_std.cell(row=1, column=1, value="Known Quantity").font = Font(bold=True)
@@ -2569,7 +2775,7 @@ if __name__ == "__main__":
                 super().__init__(parent)
                 self.parent_app = parent
                 self.setWindowTitle("Adjust Peak Regions and Calculate Areas")
-                self.setGeometry(50, 50, 900, 700)
+                self.setGeometry(50, 50, 900, 900)
 
                 if not isinstance(cropped_data, Image.Image):
                      raise TypeError("Input 'cropped_data' must be a PIL Image object")
@@ -2840,29 +3046,69 @@ if __name__ == "__main__":
             def update_plot(self):
                 if self.canvas is None: return
                 profile_to_plot_and_calc = self.profile_original_inverted
-                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
-                     self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax); self.ax_image.set_xlabel("Pixel Index"); self.ax.tick_params(axis='x', labelbottom=False); self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', transform=self.ax_image.transAxes); self.canvas.draw_idle(); return
                 
-                # The background is now assumed to be calculated and correct before calling update_plot.
+                # --- START: THEME-AWARE COLOR DEFINITIONS ---
+                is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
+                if is_dark_theme:
+                    bg_color = '#2D2D30'
+                    ax_bg_color = '#38383C'
+                    text_color = '#F1F1F1'
+                    spine_color = '#707070'
+                    grid_color = '#5A5A60'
+                    profile_color = '#4DB6AC'  # Teal
+                    peak_marker_color = '#FF8A65'  # Light Orange
+                    focused_peak_color = '#FFCA28' # Amber
+                    selected_peak_color = '#42A5F5' # Light Blue
+                    bg_line_color = '#7E57C2'  # Deep Purple
+                    sl_line_color = '#5C6BC0'  # Indigo
+                    vv_line_color = '#FFEE58'  # Lime Yellow
+                else:
+                    bg_color = 'white'
+                    ax_bg_color = 'white'
+                    text_color = 'black'
+                    spine_color = 'black'
+                    grid_color = '#DDDDDD'
+                    profile_color = 'black'
+                    peak_marker_color = 'red'
+                    focused_peak_color = 'orange'
+                    selected_peak_color = 'blue'
+                    bg_line_color = 'green'
+                    sl_line_color = 'purple'
+                    vv_line_color = 'orange'
+                # --- END: THEME-AWARE COLOR DEFINITIONS ---
+
+                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
+                     self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
+                     self.fig.patch.set_facecolor(bg_color); self.ax.patch.set_facecolor(ax_bg_color); self.ax_image.patch.set_facecolor(ax_bg_color)
+                     self.ax_image.set_xlabel("Pixel Index", color=text_color); self.ax.tick_params(axis='x', labelbottom=False)
+                     self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes); self.canvas.draw_idle(); return
+                
                 if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
                     self.background = np.zeros_like(profile_to_plot_and_calc)
                 
-                self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
+                self.fig.clf(); self.fig.patch.set_facecolor(bg_color)
+                gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
                 self.interactive_artists.clear()
                 
+                for axis in [self.ax, self.ax_image]:
+                    axis.patch.set_facecolor(ax_bg_color)
+                    for spine in axis.spines.values(): spine.set_color(spine_color)
+                    axis.tick_params(axis='x', colors=text_color); axis.tick_params(axis='y', colors=text_color)
+                    axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
+
                 plot_label_with_denoise = f"Profile (Denoise σ={self.denoise_sigma:.1f}, Smooth σ={self.smoothing_sigma:.1f})"
-                self.ax.plot(profile_to_plot_and_calc, label=plot_label_with_denoise, color="black", lw=1.2)
+                self.ax.plot(profile_to_plot_and_calc, label=plot_label_with_denoise, color=profile_color, lw=1.2)
                 
                 if len(self.peaks) > 0:
                      valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
                      if len(valid_peaks_indices) > 0:
                          peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks_indices]
-                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color="red", marker='x', s=50, label="Peaks", zorder=5) 
+                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color=peak_marker_color, marker='x', s=50, label="Peaks", zorder=5) 
                          if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
                              focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]
-                             self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor='orange', markerfacecolor='none', label='Focused', zorder=6)
+                             self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=6)
                          if self.selected_peak_index_for_delete != -1:
-                             self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor='blue', markerfacecolor='none', label='Selected for Delete', zorder=7)
+                             self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=7)
                 
                 self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
                 
@@ -2890,23 +3136,25 @@ if __name__ == "__main__":
                     if self.method == "Rolling Ball":
                         x_region = np.arange(start_calc_rb, end_calc_rb + 1)
                         self.ax.fill_between(x_region, baseline_rb[x_region], profile_to_plot_and_calc[x_region], color="yellow", alpha=0.4, interpolate=True)
-                        if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color="green", ls="--", lw=1, label="Rolling Ball BG")
+                        if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG")
                         area_text = area_rb
                     elif self.method == "Straight Line":
                         x_region = np.arange(start_calc_sl, end_calc_sl + 1)
                         self.ax.fill_between(x_region, baseline_sl[x_region], profile_to_plot_and_calc[x_region], color="cyan", alpha=0.4, interpolate=True)
-                        self.ax.plot([start_handle, end_handle], y_baseline_sl_points, color="purple", ls="--", lw=1, label="SL BG" if i == 0 else "")
+                        self.ax.plot([start_handle, end_handle], y_baseline_sl_points, color=sl_line_color, ls="--", lw=1, label="SL BG" if i == 0 else "")
                         area_text = area_sl
                     elif self.method == "Valley-to-Valley":
                         x_region = np.arange(start_calc_vv, end_calc_vv + 1)
                         self.ax.fill_between(x_region, baseline_vv[x_region], profile_to_plot_and_calc[x_region], color="lightblue", alpha=0.4, interpolate=True)
-                        self.ax.plot([start_handle, end_handle], [y_baseline_vv_level, y_baseline_vv_level], color="orange", ls="--", lw=1, label="Valley BG" if i == 0 else "")
+                        self.ax.plot([start_handle, end_handle], [y_baseline_vv_level, y_baseline_vv_level], color=vv_line_color, ls="--", lw=1, label="Valley BG" if i == 0 else "")
                         area_text = area_vv
                     text_x_pos = peak_x; text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
-                    self.ax.text(text_x_pos, text_y_pos, f"{area_text:.0f}", ha="center", va="bottom", fontsize=7, color='black', bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7))
+                    self.ax.text(text_x_pos, text_y_pos, f"{area_text:.0f}", ha="center", va="bottom", fontsize=7, color=text_color, bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8))
                     max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
 
-                self.ax.set_ylabel("Intensity"); self.ax.legend(fontsize='small', loc='upper right'); self.ax.set_title(f"Profile & Peak Regions"); self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+                leg = self.ax.legend(fontsize='small', loc='upper right'); leg.get_frame().set_facecolor(ax_bg_color)
+                for text in leg.get_texts(): text.set_color(text_color)
+                self.ax.set_ylabel("Intensity"); self.ax.set_title(f"Profile & Peak Regions"); self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
                 if len(profile_to_plot_and_calc) > 1: self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1); self.ax.set_ylim(bottom=min(0, np.min(profile_to_plot_and_calc)), top=max_y_for_plot_limit * 1.05)
                 if np.max(profile_to_plot_and_calc) > 10000: self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
                 
@@ -2918,7 +3166,7 @@ if __name__ == "__main__":
                     
                     self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize='small'); self.ax_image.set_xlabel("Pixel Index", fontsize='small')
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
-                        line_color, zorder_val, lw = ('orange', 11, 2.0) if peak_idx == self.selected_peak_for_ui_focus else ('blue', 10, 1.5)
+                        line_color, zorder_val, lw = (focused_peak_color, 11, 2.0) if peak_idx == self.selected_peak_for_ui_focus else (selected_peak_color, 10, 1.5)
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
@@ -3219,6 +3467,8 @@ if __name__ == "__main__":
                 self.crop_rect_start_view = None
                 self.crop_rect_end_view = None
                 self.crop_rect_final_view = None
+                self.drag_preview_quad_points = None # For previewing a dragged/duplicated quad
+                self.drag_preview_rect = None
 
                 # Custom hooks for CombinedSDSApp
                 self._custom_left_click_handler_from_app = None
@@ -4052,7 +4302,22 @@ if __name__ == "__main__":
                             bg_rect_lane = QRectF(draw_x_lane - 2, draw_y_lane - 2 + text_rect_lane.top(), text_rect_lane.width() + 4, text_rect_lane.height() + 4)
                             painter.save(); painter.setBrush(QColor(255, 255, 255, 220 if is_selected_for_move_or_resize else 180)); painter.setPen(Qt.NoPen); painter.drawRoundedRect(bg_rect_lane, 3, 3); painter.restore()
                             painter.setPen(Qt.red if is_selected_for_move_or_resize else Qt.black); painter.drawText(QPointF(draw_x_lane, draw_y_lane), lane_id_str)
-                
+
+                if self.drag_preview_rect or self.drag_preview_quad_points:
+                    painter.save()
+                    # Use a semi-transparent brush and a dashed pen for the preview
+                    preview_brush = QBrush(QColor(70, 130, 180, 80)) # SteelBlue, semi-transparent
+                    preview_pen = QPen(QColor(70, 130, 180), preview_pen_width, Qt.DashLine)
+                    painter.setPen(preview_pen)
+                    painter.setBrush(preview_brush)
+
+                    if self.drag_preview_rect and not self.drag_preview_rect.isNull():
+                        painter.drawRect(self.drag_preview_rect)
+                    elif self.drag_preview_quad_points:
+                        painter.drawPolygon(QPolygonF(self.drag_preview_quad_points))
+                    
+                    painter.restore()
+
                  # --- Draw Grid Lines (as before) ---
                 if self.app_instance and hasattr(self.app_instance, 'grid_size_input') and \
                    hasattr(self.app_instance, 'show_grid_checkbox_x') and hasattr(self.app_instance, 'show_grid_checkbox_y'):
@@ -4106,6 +4371,10 @@ if __name__ == "__main__":
             MIME_TYPE_CUSTOM_ITEMS = "application/x-Gel-Blot-Analyzer.customitems+json"
             def __init__(self):
                 super().__init__()
+                # --- ADD THIS LINE AT THE START OF __init__ ---
+                self.current_theme = "light" # Default theme
+                # --- (The rest of your __init__ method continues as before) ---
+                
                 primary_screen_obj = QApplication.primaryScreen()
                 if primary_screen_obj:
                     self.screen = primary_screen_obj.geometry() # Or .availableGeometry()
@@ -4176,6 +4445,8 @@ if __name__ == "__main__":
                 self.moving_custom_item_info = None # Will be {'type': 'marker'/'shape', 'index': int}
                 self.current_selection_mode = None # None, "select_for_move", "dragging_shape", "resizing_corner", "select_custom_item", ...
                 self.resizing_corner_index = -1 # Index of the corner (0-3) being resized
+                self.is_duplicating_shape = False 
+                self.duplication_source_info = None 
                 self.overlay_mode_active = False
                 self.selected_overlay_index = 0  # 0 for none, 1 for image1, 2 for image2
                 self.overlay_interaction_mode = None  # None, 'moving', or 'resizing'
@@ -4306,7 +4577,7 @@ if __name__ == "__main__":
                     app_instance=self, # Pass the CombinedSDSApp instance
                     parent=self,
                 )
-                self.live_view_label.setStyleSheet("background-color: white; border: 1px solid #CCCCCC;")
+                self.live_view_label.setObjectName("LiveViewLabel")
                 self.live_view_label.setAlignment(Qt.AlignCenter) # This centers the image within the label
                 
                 self.live_view_label.mouseMovedInLabel.connect(self.update_mouse_coords_in_statusbar)
@@ -4320,7 +4591,6 @@ if __name__ == "__main__":
                 self.tab_widget = QTabWidget()
                 self.tab_widget.addTab(self.font_and_image_tab(), "Image and Contrast")
                 self.tab_widget.addTab(self.create_cropping_tab(), "Transform")
-                self.tab_widget.addTab(self.create_white_space_tab(), "Padding")
                 self.tab_widget.addTab(self.create_markers_tab(), "Markers")
                 self.tab_widget.addTab(self.combine_image_tab(), "Overlap Images")
                 self.tab_widget.addTab(self.analysis_tab(), "Analysis")
@@ -4463,15 +4733,63 @@ if __name__ == "__main__":
                 elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
 
 
+            # --- ADD THIS NEW METHOD ---
+            def _toggle_theme(self, checked):
+                """Switches the application stylesheet between light and dark modes."""
+                app = QApplication.instance()
+                if not app: return
+
+                if checked:
+                    app.setStyleSheet(self.dark_stylesheet)
+                    self.current_theme = "dark"
+                else:
+                    app.setStyleSheet(self.light_stylesheet)
+                    self.current_theme = "light"
+                
+                # --- FIX: Add this line to refresh the histogram ---
+                self._update_levels_histogram()
+
+            # --- ADD THIS NEW METHOD ---
+            def save_app_settings(self):
+                """Saves non-preset global settings like theme and layout to the config file."""
+                config_filepath = os.path.join(
+                    os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__)),
+                    self.CONFIG_PRESET_FILE_NAME
+                )
+                
+                config_data = {}
+                try:
+                    if os.path.exists(config_filepath):
+                        with open(config_filepath, "r", encoding='utf-8') as f:
+                            config_data = json.load(f)
+                    if not isinstance(config_data, dict): # Ensure it's a dict
+                        config_data = {}
+                except (json.JSONDecodeError, IOError):
+                    config_data = {} # Start fresh on parsing error
+                
+                # Update the settings we want to save
+                config_data["theme"] = self.current_theme
+                config_data["viewer_position"] = self.viewer_position
+                
+                # Ensure presets data is not lost
+                if "presets" not in config_data:
+                    config_data["presets"] = self.presets_data
+
+                try:
+                    with open(config_filepath, "w", encoding='utf-8') as f:
+                        json.dump(config_data, f, indent=4)
+                except Exception as e:
+                    print(f"Warning: Could not save global app settings: {e}")
+
+
             def _update_levels_histogram(self):
                 """Draws or updates the intensity histogram for the currently selected adjustment context."""
-                # --- START FIX: Correctly select the source image and apply pre-level adjustments ---
+                # Get the base image and settings for the current context
                 source_image = None
                 settings_dict = {}
             
-                # 1. Get the base image and settings for the current context
                 if self.adjustment_context == "Main Image":
-                    source_image = self.image_before_contrast
+                    source_image = self.image_master # Use the high-bit-depth master for accuracy
                     settings_dict = {
                         'is_inverted': self.main_image_is_inverted,
                         'channel_mixer': self.channel_mixer_data,
@@ -4485,17 +4803,16 @@ if __name__ == "__main__":
                     source_image = getattr(self, 'image2_original', None)
                     settings_dict = self.image2_adjustments
             
-                # 2. Generate the pre-levels image for the histogram by replicating the adjustment pipeline
+                # Generate the pre-levels image for the histogram by replicating the adjustment pipeline
                 source_image_for_hist = None
                 if source_image and not source_image.isNull():
-                    # This logic mirrors the first part of _apply_all_adjustments_to_image
                     temp_image = source_image.copy()
                     if settings_dict.get('is_inverted', False):
                         temp_image.invertPixels()
             
                     np_img_full = self.qimage_to_numpy(temp_image)
                     if np_img_full is not None:
-                        np_content = np_img_full # Process the full image for histogram
+                        np_content = np_img_full
             
                         # Apply Channel Mixer
                         cm_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
@@ -4505,10 +4822,12 @@ if __name__ == "__main__":
                             np_float = np_content.astype(np.float32)
                             if is_mono:
                                 gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
-                                np_content = np.clip(gray, 0, 255).astype(np.uint8)
+                                max_val = 65535 if np_content.dtype == np.uint16 else 255
+                                np_content = np.clip(gray, 0, max_val).astype(np_content.dtype)
                             else:
                                 np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
-                                np_content = np.clip(np_float, 0, 255).astype(np.uint8)
+                                max_val = 65535 if np_content.dtype == np.uint16 else 255
+                                np_content = np.clip(np_float, 0, max_val).astype(np_content.dtype)
             
                         # Apply CLAHE
                         clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
@@ -4516,7 +4835,6 @@ if __name__ == "__main__":
                             clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
                             if np_content.ndim == 2: np_content = clahe.apply(np_content)
                             elif np_content.ndim == 3:
-                                # Simplified for brevity, same as in original
                                 if np_content.shape[2] == 4:
                                     bgr = np_content[...,:3]; lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
                                     lab[..., 0] = clahe.apply(lab[..., 0]); np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
@@ -4533,26 +4851,30 @@ if __name__ == "__main__":
                         
                         source_image_for_hist = self.numpy_to_qimage(np_content)
                     else:
-                        source_image_for_hist = temp_image # Fallback if numpy fails
-                # --- END FIX ---
-
+                        source_image_for_hist = temp_image
+                
                 # Ensure the plot canvas exists and there's an image to analyze.
                 if not self.hist_ax or not source_image_for_hist or source_image_for_hist.isNull():
                     if self.hist_ax:
                         self.hist_ax.clear()
-                        self.hist_ax.text(0.5, 0.5, 'No Image Selected', transform=self.hist_ax.transAxes, ha='center', va='center', fontsize=9, color='gray')
+                        # Set background color based on theme
+                        bg_color = '#38383C' if self.current_theme == 'dark' else 'white'
+                        self.hist_fig.patch.set_facecolor(bg_color)
+                        self.hist_ax.patch.set_facecolor(bg_color)
+                        text_color = '#A0A0A0' if self.current_theme == 'dark' else 'gray'
+                        
+                        self.hist_ax.text(0.5, 0.5, 'No Image Selected', transform=self.hist_ax.transAxes, ha='center', va='center', fontsize=9, color=text_color)
                         self.hist_ax.set_xticks([]); self.hist_ax.set_yticks([])
                         self.hist_fig.tight_layout(pad=0.2)
                         self.hist_canvas.draw_idle()
                     return
 
                 try:
-                    # The rest of the histogram logic remains the same, but now operates on the correct source image.
                     np_img = self.qimage_to_numpy(source_image_for_hist)
                     if np_img is None: return
 
                     if np_img.ndim == 3:
-                        gray_np = cv2.cvtColor(np_img[:,:,:3], cv2.COLOR_BGR2GRAY)
+                        gray_np = cv2.cvtColor(np_img[:,:,:3], cv2.COLOR_BGR2GRAY) if np_img.shape[2] >= 3 else np_img[:,:,0]
                     else:
                         gray_np = np_img
                     
@@ -4565,22 +4887,40 @@ if __name__ == "__main__":
                     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
                     self.hist_ax.clear()
-                    self.hist_ax.plot(bin_centers, log_hist, color='black', linewidth=1.0)
-                    self.hist_ax.fill_between(bin_centers, 0, log_hist, color='#cccccc', alpha=1.0)
+
+                    # Set colors based on the current theme
+                    if self.current_theme == 'dark':
+                        bg_color = '#38383C'
+                        line_color = '#E0E0E0'
+                        fill_color = '#5A5A60'
+                        text_color = '#F1F1F1'
+                        spine_color = '#707070'
+                        marker_color = '#E53935' # A brighter red
+                    else:
+                        bg_color = 'white'
+                        line_color = 'black'
+                        fill_color = '#cccccc'
+                        text_color = 'black'
+                        spine_color = '#555555'
+                        marker_color = 'red'
+
+                    self.hist_fig.patch.set_facecolor(bg_color)
+                    self.hist_ax.patch.set_facecolor(bg_color)
+                    
+                    self.hist_ax.plot(bin_centers, log_hist, color=line_color, linewidth=1.0)
+                    self.hist_ax.fill_between(bin_centers, 0, log_hist, color=fill_color, alpha=1.0)
                     
                     self.hist_ax.set_yticks([]); self.hist_ax.set_xticks([])
-                    self.hist_ax.text(0.02, 0.95, 'Histogram (log)', transform=self.hist_ax.transAxes, fontsize=9, verticalalignment='top', horizontalalignment='left', weight='bold')
+                    self.hist_ax.text(0.02, 0.95, 'Histogram (log)', transform=self.hist_ax.transAxes, fontsize=9, verticalalignment='top', horizontalalignment='left', weight='bold', color=text_color)
                     
-                    # FIX 3: Make plot cleaner by hiding unnecessary spines
                     self.hist_ax.spines['top'].set_visible(False)
                     self.hist_ax.spines['right'].set_visible(False)
-                    self.hist_ax.spines['left'].set_visible(False) # Hide left spine
-                    self.hist_ax.spines['bottom'].set_linewidth(1.5) # Make bottom line a bit stronger
-                    self.hist_ax.spines['bottom'].set_color('#555555') # Dark gray
+                    self.hist_ax.spines['left'].set_visible(False)
+                    self.hist_ax.spines['bottom'].set_linewidth(1.5)
+                    self.hist_ax.spines['bottom'].set_color(spine_color)
 
                     self.hist_ax.set_xlim(hist_range[0], hist_range[1])
                     self.hist_ax.set_ylim(bottom=0)
-                    # The groupbox title "Levels and Gamma" is enough; remove the text inside the plot.
                     
                     black_point_slider_val = self.black_point_slider.value()
                     white_point_slider_val = self.white_point_slider.value()
@@ -4588,17 +4928,16 @@ if __name__ == "__main__":
                     black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
                     white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
                     
-                    self.hist_ax.axvline(black_point_pos, color='red', lw=1.0) # Thinner line
-                    self.hist_ax.axvline(white_point_pos, color='red', lw=1.0)
-                    # Make markers a bit smaller and sit nicely on the bottom spine
-                    self.hist_ax.plot(black_point_pos, 0, marker='^', color='red', markersize=6, clip_on=False)
-                    self.hist_ax.plot(white_point_pos, 0, marker='^', color='red', markersize=6, clip_on=False)
+                    self.hist_ax.axvline(black_point_pos, color=marker_color, lw=1.0)
+                    self.hist_ax.axvline(white_point_pos, color=marker_color, lw=1.0)
+                    self.hist_ax.plot(black_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)
+                    self.hist_ax.plot(white_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)
                     
-                    # FIX 4: Use subplots_adjust for precise padding control instead of tight_layout
                     self.hist_fig.subplots_adjust(left=0.01, right=0.99, top=1.0, bottom=0.15)
                     self.hist_canvas.draw_idle()
                 except Exception as e:
                     print(f"Error updating levels histogram: {e}")
+                    traceback.print_exc()
                 
             def update_mouse_coords_in_statusbar(self, label_pos: QPointF, image_pos: QPointF = None):
                 if image_pos is not None:
@@ -4670,31 +5009,11 @@ if __name__ == "__main__":
             
             def _create_actions(self):
                 """Create QAction objects for menus and toolbars."""
-                style = self.style() # Still useful for other icons
-                icon_size = QSize(30, 30) # Match your toolbar size
-                text_color = self.palette().color(QPalette.ButtonText) # Use theme color
+                style = self.style() 
+                icon_size = QSize(30, 30) 
+                text_color = self.palette().color(QPalette.ButtonText) 
 
-                # # --- Create Zoom Icons (using previous method) ---
-                # zoom_in_pixmap = QPixmap(icon_size)
-                # zoom_in_pixmap.fill(Qt.transparent)
-                # painter_in = QPainter(zoom_in_pixmap)
-                # # ... (painter setup as before) ...
-                # painter_in.drawText(zoom_in_pixmap.rect(), Qt.AlignCenter, "+")
-                # painter_in.end()
-                # zoom_in_icon = QIcon(zoom_in_pixmap)
-
-                # zoom_out_pixmap = QPixmap(icon_size)
-                # zoom_out_pixmap.fill(Qt.transparent)
-                # painter_out = QPainter(zoom_out_pixmap)
-                # # ... (painter setup as before) ...
-                # painter_out.drawText(zoom_out_pixmap.rect(), Qt.AlignCenter, "-")
-                # painter_out.end()
-                # zoom_out_icon = QIcon(zoom_out_pixmap)
-                # --- End Zoom Icons ---
-
-
-                # --- Create Icons using the helper ---
-                open_icon = create_text_icon("Wingdings",icon_size, text_color, "1") # Unicode Right Arrow
+                open_icon = create_text_icon("Wingdings",icon_size, text_color, "1") 
                 save_icon = create_text_icon("Wingdings",icon_size, text_color, "=")
                 save_svg_icon = create_text_icon("Wingdings",icon_size, text_color, "3")
                 undo_icon = create_text_icon("Wingdings 3",icon_size, text_color, "O")
@@ -4706,19 +5025,27 @@ if __name__ == "__main__":
                 
                 zoom_in_icon = create_text_icon("Arial",icon_size, text_color, "+")
                 zoom_out_icon = create_text_icon("Arial",icon_size, text_color, "-")
-                pan_up_icon = create_text_icon("Arial",icon_size, text_color, "↑") # Unicode Up Arrow
-                pan_down_icon = create_text_icon("Arial",icon_size, text_color, "↓") # Unicode Down Arrow
-                pan_left_icon = create_text_icon("Arial",icon_size, text_color, "←") # Unicode Left Arrow
-                pan_right_icon = create_text_icon("Arial",icon_size, text_color, "→") # Unicode Right Arrow
+                pan_up_icon = create_text_icon("Arial",icon_size, text_color, "↑") 
+                pan_down_icon = create_text_icon("Arial",icon_size, text_color, "↓") 
+                pan_left_icon = create_text_icon("Arial",icon_size, text_color, "←") 
+                pan_right_icon = create_text_icon("Arial",icon_size, text_color, "→") 
                 bounding_box_icon = create_text_icon("Wingdings 2", icon_size, text_color, "0")
                 draw_line_icon = create_text_icon("Arial", icon_size, text_color, "__")
                 info_icon = create_text_icon("Wingdings", icon_size, text_color, "'")
-                copy_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "B") # Page with arrow out
-                paste_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "A") # Page with arrow in
+                copy_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "B")
+                paste_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "A")
                 layout_top_icon = create_text_icon("Webdings", icon_size, text_color, "5")
                 layout_bottom_icon = create_text_icon("Webdings", icon_size, text_color, "6")
                 layout_left_icon = create_text_icon("Webdings", icon_size, text_color, "7")
                 layout_right_icon = create_text_icon("Webdings", icon_size, text_color, "8")
+                
+                # --- ADD THIS ACTION ---
+                theme_icon = create_text_icon("Webdings", icon_size, text_color, "N")
+                self.theme_action = QAction(theme_icon, "Toggle Dark/Light Mode", self)
+                self.theme_action.setCheckable(True)
+                self.theme_action.setToolTip("Switch between light and dark themes.")
+                self.theme_action.triggered.connect(self._toggle_theme)
+                # --- END ADD ---
 
 
                 # --- File Actions ---
@@ -4852,6 +5179,7 @@ if __name__ == "__main__":
                 self.pan_right_action.setEnabled(False)
                 self.pan_up_action.setEnabled(False)
                 self.pan_down_action.setEnabled(False)
+
             def _update_main_layout(self, position: str):
                 """
                 Rebuilds the main window's layout by replacing the central widget
@@ -5203,9 +5531,9 @@ if __name__ == "__main__":
                     return False # Abort the current action (close/load)
 
             def closeEvent(self, event):
-                """Overrides the default close event to prompt for saving."""
+                """Overrides the default close event to prompt for saving and save app settings."""
                 if self.prompt_save_if_needed():
-
+                    self.save_app_settings() # Save theme and layout choice on exit
                     event.accept() # Proceed with closing
                 else:
                     event.ignore() # Abort closing
@@ -5716,7 +6044,7 @@ if __name__ == "__main__":
             def create_tool_bar(self):
                 """Create the main application toolbar."""
                 self.tool_bar = QToolBar("Main Toolbar")
-                self.tool_bar.setIconSize(QSize(30, 30))
+                self.tool_bar.setIconSize(QSize(25, 25))
                 self.tool_bar.setMovable(False)
                 self.tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
@@ -5730,44 +6058,34 @@ if __name__ == "__main__":
                 self.tool_bar.addAction(self.undo_action)
                 self.tool_bar.addAction(self.redo_action)
                 self.tool_bar.addSeparator()
-
-                # --- Add Zoom and Pan Buttons ---
                 self.tool_bar.addAction(self.zoom_in_action)
                 self.tool_bar.addAction(self.zoom_out_action)
-                self.tool_bar.addSeparator() # Optional separator
-
+                self.tool_bar.addSeparator() 
                 self.tool_bar.addAction(self.pan_left_action)
-                self.tool_bar.addAction(self.pan_up_action)   # Group visually
+                self.tool_bar.addAction(self.pan_up_action)
                 self.tool_bar.addAction(self.pan_down_action)
                 self.tool_bar.addAction(self.pan_right_action)
-                # --- End Adding Pan Buttons ---
-
                 self.tool_bar.addSeparator()
-                self.tool_bar.addAction(self.auto_lane_action) # Add new button
-                
+                self.tool_bar.addAction(self.auto_lane_action)
                 self.tool_bar.addSeparator() 
-                self.tool_bar.addAction(self.draw_line_action) # Add the new action
-                self.tool_bar.addAction(self.draw_bounding_box_action) # Add the new action
-     
-                
-                # --- NEW: Add Copy/Paste Custom Items to Toolbar ---
+                self.tool_bar.addAction(self.draw_line_action) 
+                self.tool_bar.addAction(self.draw_bounding_box_action) 
                 self.tool_bar.addSeparator() 
                 self.tool_bar.addAction(self.copy_custom_items_action)
                 self.tool_bar.addAction(self.paste_custom_items_action)
-                # --- END NEW ---
-                
                 self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.reset_action)
-                
                 self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.layout_top_action)
                 self.tool_bar.addAction(self.layout_bottom_action)
                 self.tool_bar.addAction(self.layout_left_action)
                 self.tool_bar.addAction(self.layout_right_action)
                 self.tool_bar.addSeparator()
+                # --- ADD THIS ACTION TO THE TOOLBAR ---
+                self.tool_bar.addAction(self.theme_action)
+                # --- END ADD ---
                 self.tool_bar.addAction(self.info_action)
 
-                # Add the toolbar to the main window
                 self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
                 self.tool_bar.setContextMenuPolicy(Qt.PreventContextMenu)
 
@@ -6930,287 +7248,170 @@ if __name__ == "__main__":
                 
             def handle_area_selection_click(self, event):
                 if self.current_selection_mode != "select_for_move" or event.button() != Qt.LeftButton:
-                    if hasattr(self.live_view_label, '_original_mousePressEvent') and self.live_view_label._original_mousePressEvent:
-                        self.live_view_label._original_mousePressEvent(event)
-                    elif isinstance(self.live_view_label, QLabel):
-                        QLabel.mousePressEvent(self.live_view_label, event)
                     return
 
-                clicked_point_label_space = self.live_view_label.transform_point(event.position())
-                
+                clicked_point_ls = self.live_view_label.transform_point(event.position())
                 self.moving_multi_lane_index = -1
                 self.resizing_corner_index = -1
-                selected_shape_for_interaction = False # Flag if any interaction (move or resize) is initiated
-
-                # Click threshold for corners
-                click_radius_threshold = LiveViewLabel.CORNER_HANDLE_BASE_RADIUS * 1.5
+                selected_shape_for_interaction = False
+                click_radius_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 1.5 / self.live_view_label.zoom_level
 
                 # --- Stage 1: Check for Corner Clicks to Initiate RESIZE ---
-                # Priority: Multi-lanes, then single quad, then single rect for corner clicks
-                
-                # Check Multi-Lane Corners
                 if self.multi_lane_definitions:
                     for i, lane_def in reversed(list(enumerate(self.multi_lane_definitions))):
-                        current_lane_corners_label = []
-                        if lane_def['type'] == 'rectangle':
-                            rect_ls = lane_def['points_label'][0]
-                            current_lane_corners_label = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
-                        elif lane_def['type'] == 'quad':
-                            current_lane_corners_label = lane_def['points_label']
-                        
-                        for corner_idx, corner_pt in enumerate(current_lane_corners_label):
-                            if (clicked_point_label_space - corner_pt).manhattanLength() < click_radius_threshold:
-                                self.moving_multi_lane_index = i
-                                self.resizing_corner_index = corner_idx
-                                self.shape_points_at_drag_start_label = [QPointF(p) for p in current_lane_corners_label]
-                                selected_shape_for_interaction = True
-                                break
+                        corners = []
+                        if lane_def['type'] == 'rectangle': r = lane_def['points_label'][0]; corners = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
+                        elif lane_def['type'] == 'quad': corners = lane_def['points_label']
+                        for corner_idx, corner_pt in enumerate(corners):
+                            if (clicked_point_ls - corner_pt).manhattanLength() < click_radius_threshold:
+                                self.moving_multi_lane_index = i; self.resizing_corner_index = corner_idx; self.shape_points_at_drag_start_label = [QPointF(p) for p in corners]; selected_shape_for_interaction = True; break
                         if selected_shape_for_interaction: break
                 
-                # Check Single Quad Corners (if no multi-lane corner selected)
                 if not selected_shape_for_interaction and self.live_view_label.quad_points:
                     for corner_idx, corner_pt in enumerate(self.live_view_label.quad_points):
-                        if (clicked_point_label_space - corner_pt).manhattanLength() < click_radius_threshold:
-                            self.moving_multi_lane_index = -2 # Single quad
-                            self.resizing_corner_index = corner_idx
-                            self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]
-                            selected_shape_for_interaction = True
-                            break
+                        if (clicked_point_ls - corner_pt).manhattanLength() < click_radius_threshold:
+                            self.moving_multi_lane_index = -2; self.resizing_corner_index = corner_idx; self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]; selected_shape_for_interaction = True; break
                 
-                # Check Single Rectangle Corners (if nothing else selected)
                 if not selected_shape_for_interaction and self.live_view_label.bounding_box_preview:
-                    x1, y1, x2, y2 = self.live_view_label.bounding_box_preview
-                    rect_single = QRectF(QPointF(x1,y1), QPointF(x2,y2)).normalized()
-                    single_rect_corners = [rect_single.topLeft(), rect_single.topRight(), rect_single.bottomRight(), rect_single.bottomLeft()]
-                    for corner_idx, corner_pt in enumerate(single_rect_corners):
-                        if (clicked_point_label_space - corner_pt).manhattanLength() < click_radius_threshold:
-                            self.moving_multi_lane_index = -3 # Single rect
-                            self.resizing_corner_index = corner_idx
-                            self.shape_points_at_drag_start_label = [QPointF(p) for p in single_rect_corners]
-                            selected_shape_for_interaction = True
-                            break
+                    rect_single = QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized()
+                    corners = [rect_single.topLeft(), rect_single.topRight(), rect_single.bottomRight(), rect_single.bottomLeft()]
+                    for corner_idx, corner_pt in enumerate(corners):
+                        if (clicked_point_ls - corner_pt).manhattanLength() < click_radius_threshold:
+                            self.moving_multi_lane_index = -3; self.resizing_corner_index = corner_idx; self.shape_points_at_drag_start_label = [QPointF(p) for p in corners]; selected_shape_for_interaction = True; break
 
-                # --- Stage 2: If no corner was clicked, check for Whole Shape Click to Initiate MOVE ---
+                # --- Stage 2: If no corner, check for Body Click to Initiate MOVE/DUPLICATE ---
                 if not selected_shape_for_interaction:
-                    # Check Multi-Lane Bodies
                     if self.multi_lane_definitions:
                         for i, lane_def in reversed(list(enumerate(self.multi_lane_definitions))):
-                            is_inside = False
-                            current_lane_points_for_body_check = []
+                            is_inside = False; points_for_body_check = []
                             if lane_def['type'] == 'rectangle':
-                                rect_ls = lane_def['points_label'][0]
-                                if rect_ls.contains(clicked_point_label_space): is_inside = True
-                                current_lane_points_for_body_check = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
+                                if lane_def['points_label'][0].contains(clicked_point_ls): is_inside = True
+                                r = lane_def['points_label'][0]; points_for_body_check = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
                             elif lane_def['type'] == 'quad':
-                                poly_ls = QPolygonF(lane_def['points_label'])
-                                if poly_ls.containsPoint(clicked_point_label_space, Qt.OddEvenFill): is_inside = True
-                                current_lane_points_for_body_check = lane_def['points_label']
-                            
-                            if is_inside:
-                                self.moving_multi_lane_index = i
-                                self.shape_points_at_drag_start_label = [QPointF(p) for p in current_lane_points_for_body_check]
-                                selected_shape_for_interaction = True
-                                break
+                                if QPolygonF(lane_def['points_label']).containsPoint(clicked_point_ls, Qt.OddEvenFill): is_inside = True
+                                points_for_body_check = lane_def['points_label']
+                            if is_inside: self.moving_multi_lane_index = i; self.shape_points_at_drag_start_label = [QPointF(p) for p in points_for_body_check]; selected_shape_for_interaction = True; break
                     
-                    # Check Single Quad Body
-                    if not selected_shape_for_interaction and self.live_view_label.quad_points:
-                        poly_single_quad = QPolygonF(self.live_view_label.quad_points)
-                        if poly_single_quad.containsPoint(clicked_point_label_space, Qt.OddEvenFill):
-                            self.moving_multi_lane_index = -2
-                            self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]
-                            selected_shape_for_interaction = True
+                    if not selected_shape_for_interaction and self.live_view_label.quad_points and QPolygonF(self.live_view_label.quad_points).containsPoint(clicked_point_ls, Qt.OddEvenFill):
+                        self.moving_multi_lane_index = -2; self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]; selected_shape_for_interaction = True
                     
-                    # Check Single Rectangle Body
-                    if not selected_shape_for_interaction and self.live_view_label.bounding_box_preview:
-                        x1, y1, x2, y2 = self.live_view_label.bounding_box_preview
-                        rect_single = QRectF(QPointF(x1,y1), QPointF(x2,y2)).normalized()
-                        if rect_single.contains(clicked_point_label_space):
-                            self.moving_multi_lane_index = -3
-                            self.shape_points_at_drag_start_label = [rect_single.topLeft(), rect_single.topRight(), rect_single.bottomRight(), rect_single.bottomLeft()]
-                            selected_shape_for_interaction = True
+                    if not selected_shape_for_interaction and self.live_view_label.bounding_box_preview and QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized().contains(clicked_point_ls):
+                        r = QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized()
+                        self.moving_multi_lane_index = -3; self.shape_points_at_drag_start_label = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]; selected_shape_for_interaction = True
 
-                # --- Setup for Dragging/Resizing if a shape was selected ---
+                # --- Setup for Dragging/Resizing/Duplicating if a shape was selected ---
                 if selected_shape_for_interaction:
-                    self.initial_mouse_pos_for_shape_drag_label = clicked_point_label_space
+                    self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
+                    modifiers = QApplication.keyboardModifiers()
+                    
+                    is_duplicate_combo_pressed = (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) == (Qt.ControlModifier | Qt.ShiftModifier)
+                    self.is_duplicating_shape = (self.resizing_corner_index == -1 and is_duplicate_combo_pressed)
+                    
+                    if self.resizing_corner_index != -1: self.current_selection_mode = "resizing_corner"; self.live_view_label.mode = "resizing_corner"; self.live_view_label.setCursor(Qt.CrossCursor)
+                    else: self.current_selection_mode = "dragging_shape"; self.live_view_label.mode = "dragging_shape"; self.live_view_label.setCursor(Qt.CrossCursor if self.is_duplicating_shape else Qt.SizeAllCursor)
 
-                    if self.resizing_corner_index != -1: # A corner was hit in Stage 1
-                        self.current_selection_mode = "resizing_corner"
-                        self.live_view_label.mode = "resizing_corner"
-                        self.live_view_label.setCursor(Qt.CrossCursor)
-                    else: # A body was hit in Stage 2
-                        self.current_selection_mode = "dragging_shape"
-                        self.live_view_label.mode = "dragging_shape"
-                        self.live_view_label.setCursor(Qt.CrossCursor)
-
-                    self.live_view_label.draw_edges = False 
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_drag_operation 
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_drag_release
                 else:
-                    # Click was outside any known shape or its corners
-                    self.moving_multi_lane_index = -1 
-                    self.resizing_corner_index = -1
-                    # current_selection_mode remains "select_for_move"
-                
-                self.update_live_view() # To show selection highlight
-                
-            def handle_drag_operation(self, event): # Renamed from move_selection
-                if self.current_selection_mode not in ["dragging_shape", "resizing_corner"] or \
-                   not self.shape_points_at_drag_start_label or \
-                   not (event.buttons() & Qt.LeftButton):
-                    if hasattr(self.live_view_label, '_original_mouseMoveEvent') and self.live_view_label._original_mouseMoveEvent:
-                        self.live_view_label._original_mouseMoveEvent(event)
-                    elif isinstance(self.live_view_label, QLabel):
-                        QLabel.mouseMoveEvent(self.live_view_label, event)
-                    return
-
-                current_mouse_pos_label = self.live_view_label.transform_point(event.position())
-                new_shape_points_label = [] # This will hold the 4 QPointF for the updated shape
-
-                # Determine the type of the shape being manipulated
-                is_multi_rect_resize = False
-                is_single_rect_resize = False
-
-                if self.moving_multi_lane_index >= 0 and \
-                   self.multi_lane_definitions[self.moving_multi_lane_index]['type'] == 'rectangle' and \
-                   self.current_selection_mode == "resizing_corner":
-                    is_multi_rect_resize = True
-                elif self.moving_multi_lane_index == -3 and \
-                     self.current_selection_mode == "resizing_corner":
-                    is_single_rect_resize = True
-
-                is_rect_resize_mode = is_multi_rect_resize or is_single_rect_resize
-
-                if self.current_selection_mode == "dragging_shape":
-                    # --- Logic for dragging the whole shape ---
-                    # 1. Calculate the raw mouse movement delta
-                    raw_delta_ls = current_mouse_pos_label - self.initial_mouse_pos_for_shape_drag_label
-                    
-                    # --- THE FIX ---
-                    # 2. If Shift is pressed, constrain this delta to be orthogonal
-                    if QApplication.keyboardModifiers() == Qt.ShiftModifier:
-                        if abs(raw_delta_ls.x()) > abs(raw_delta_ls.y()):
-                            raw_delta_ls.setY(0)  # Lock to horizontal
-                        else:
-                            raw_delta_ls.setX(0)  # Lock to vertical
-                    
-                    # 3. Calculate the target position of the shape's reference point
-                    reference_point_orig_label = self.shape_points_at_drag_start_label[0]
-                    target_ref_point_ls = reference_point_orig_label + raw_delta_ls
-
-                    # 4. Apply grid snapping to the final target position
-                    snapped_target_ref_point_ls = self.snap_point_to_grid(target_ref_point_ls)
-
-                    # 5. The final, effective delta is the difference between the snapped final position and the original
-                    effective_delta_ls = snapped_target_ref_point_ls - reference_point_orig_label
-                    # --- END FIX ---
-
-                    # 6. Apply this final, correct delta to all points of the shape
-                    new_shape_points_label = [p_orig_label + effective_delta_ls for p_orig_label in self.shape_points_at_drag_start_label]
-                    # --- End whole shape drag logic ---
-
-                elif self.current_selection_mode == "resizing_corner" and self.resizing_corner_index != -1:
-                    snapped_mouse_pos_label = self.snap_point_to_grid(current_mouse_pos_label)
-                    
-                    if is_rect_resize_mode:
-                        # --- Rectangle Resizing Logic ---
-                        moved_corner_idx = self.resizing_corner_index
-                        fixed_opposite_corner_idx = (moved_corner_idx + 2) % 4 # Diagonal opposite
-                        
-                        # Constrain to square if Shift is pressed
-                        if QApplication.keyboardModifiers() == Qt.ShiftModifier:
-                            fixed_corner = self.shape_points_at_drag_start_label[fixed_opposite_corner_idx]
-                            delta_x = snapped_mouse_pos_label.x() - fixed_corner.x()
-                            delta_y = snapped_mouse_pos_label.y() - fixed_corner.y()
-                            max_delta = max(abs(delta_x), abs(delta_y))
-                            
-                            new_x = fixed_corner.x() + (max_delta if delta_x > 0 else -max_delta)
-                            new_y = fixed_corner.y() + (max_delta if delta_y > 0 else -max_delta)
-                            snapped_mouse_pos_label = QPointF(new_x, new_y)
-                        
-                        current_points = list(self.shape_points_at_drag_start_label) # Work with a copy
-                        
-                        # The corner being dragged moves to the snapped mouse position
-                        current_points[moved_corner_idx] = snapped_mouse_pos_label
-                        
-                        # The diagonally opposite corner remains fixed from its start_drag position
-                        fixed_corner = self.shape_points_at_drag_start_label[fixed_opposite_corner_idx]
-                        current_points[fixed_opposite_corner_idx] = fixed_corner
-
-                        # Determine the new X and Y for the other two corners
-                        # to maintain the rectangle
-                        new_x_coords = sorted([snapped_mouse_pos_label.x(), fixed_corner.x()])
-                        new_y_coords = sorted([snapped_mouse_pos_label.y(), fixed_corner.y()])
-                        
-                        min_x, max_x = new_x_coords[0], new_x_coords[1]
-                        min_y, max_y = new_y_coords[0], new_y_coords[1]
-
-                        # Reconstruct all 4 corners for the new rectangle
-                        new_shape_points_label = [
-                            QPointF(min_x, min_y), # TopLeft
-                            QPointF(max_x, min_y), # TopRight
-                            QPointF(max_x, max_y), # BottomRight
-                            QPointF(min_x, max_y)  # BottomLeft
-                        ]
-                        # --- End Rectangle Resizing ---
-                    else: # Quadrilateral resizing (or other shape type if added later)
-                        new_shape_points_label = list(self.shape_points_at_drag_start_label) 
-                        new_shape_points_label[self.resizing_corner_index] = snapped_mouse_pos_label
-                
-                if not new_shape_points_label: return
-
-                self.live_view_label.quad_points = [] 
-                self.live_view_label.bounding_box_preview = None
-
-                if self.moving_multi_lane_index >= 0: 
-                    lane_to_update = self.multi_lane_definitions[self.moving_multi_lane_index]
-                    if lane_to_update['type'] == 'quad': # Quads always store 4 points
-                        lane_to_update['points_label'] = new_shape_points_label
-                        self.live_view_label.quad_points = new_shape_points_label[:] # For paintEvent
-                    elif lane_to_update['type'] == 'rectangle':
-                        # After resize (or move), it's stored as a QRectF
-                        all_x = [p.x() for p in new_shape_points_label]; all_y = [p.y() for p in new_shape_points_label]
-                        min_x, max_x = min(all_x), max(all_x); min_y, max_y = min(all_y), max(all_y)
-                        lane_to_update['points_label'] = [QRectF(QPointF(min_x, min_y), QPointF(max_x, max_y))]
-                        rect_f = lane_to_update['points_label'][0]
-                        self.live_view_label.bounding_box_preview = (rect_f.left(), rect_f.top(), rect_f.right(), rect_f.bottom())
-
-
-                elif self.moving_multi_lane_index == -2: # Single Quad
-                    self.live_view_label.quad_points = new_shape_points_label
-                elif self.moving_multi_lane_index == -3: # Single Rect
-                    # After resize or move, it's a rectangle
-                    all_x = [p.x() for p in new_shape_points_label]; all_y = [p.y() for p in new_shape_points_label]
-                    min_x, max_x = min(all_x), max(all_x); min_y, max_y = min(all_y), max(all_y)
-                    self.live_view_label.bounding_box_preview = (min_x, min_y, max_x, max_y)
-                    self.live_view_label.quad_points = [] # Clear quad representation if it was a rect
+                    self.moving_multi_lane_index = -1; self.resizing_corner_index = -1
                 
                 self.update_live_view()
-
             
-            def handle_drag_release(self, event): # Renamed from end_move_selection
+            def handle_drag_operation(self, event):
+                if self.current_selection_mode not in ["dragging_shape", "resizing_corner"] or not self.shape_points_at_drag_start_label or not (event.buttons() & Qt.LeftButton): return
+
+                current_mouse_pos_label = self.live_view_label.transform_point(event.position())
+                new_shape_points_label = []
+
+                if self.current_selection_mode == "dragging_shape":
+                    raw_delta_ls = current_mouse_pos_label - self.initial_mouse_pos_for_shape_drag_label
+                    
+                    # --- CORRECTED ORTHOGONAL DRAG LOGIC ---
+                    if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+                        if abs(raw_delta_ls.x()) > abs(raw_delta_ls.y()): raw_delta_ls.setY(0)
+                        else: raw_delta_ls.setX(0)
+                    
+                    target_ref_point_ls = self.shape_points_at_drag_start_label[0] + raw_delta_ls
+                    snapped_target_ref_point_ls = self.snap_point_to_grid(target_ref_point_ls)
+                    effective_delta_ls = snapped_target_ref_point_ls - self.shape_points_at_drag_start_label[0]
+                    new_shape_points_label = [p_orig_label + effective_delta_ls for p_orig_label in self.shape_points_at_drag_start_label]
+                
+                elif self.current_selection_mode == "resizing_corner":
+                    is_rect_resize = (self.moving_multi_lane_index >= 0 and self.multi_lane_definitions[self.moving_multi_lane_index]['type'] == 'rectangle') or self.moving_multi_lane_index == -3
+                    snapped_mouse_pos_label = self.snap_point_to_grid(current_mouse_pos_label)
+                    if is_rect_resize:
+                        moved_idx = self.resizing_corner_index; fixed_idx = (moved_idx + 2) % 4
+                        fixed_corner = self.shape_points_at_drag_start_label[fixed_idx]
+                        if QApplication.keyboardModifiers() & Qt.ShiftModifier: # Square constraint
+                            delta_x = snapped_mouse_pos_label.x() - fixed_corner.x(); delta_y = snapped_mouse_pos_label.y() - fixed_corner.y()
+                            max_d = max(abs(delta_x), abs(delta_y))
+                            snapped_mouse_pos_label = QPointF(fixed_corner.x() + (max_d if delta_x > 0 else -max_d), fixed_corner.y() + (max_d if delta_y > 0 else -max_d))
+                        xs = sorted([snapped_mouse_pos_label.x(), fixed_corner.x()]); ys = sorted([snapped_mouse_pos_label.y(), fixed_corner.y()])
+                        new_shape_points_label = [QPointF(xs[0], ys[0]), QPointF(xs[1], ys[0]), QPointF(xs[1], ys[1]), QPointF(xs[0], ys[1])]
+                    else: # Quad resize
+                        new_shape_points_label = list(self.shape_points_at_drag_start_label); new_shape_points_label[self.resizing_corner_index] = snapped_mouse_pos_label
+
+                if not new_shape_points_label: return
+                
+                is_quad = False
+                if self.current_selection_mode == "resizing_corner": is_quad = not is_rect_resize
+                else: # Dragging
+                    idx = self.moving_multi_lane_index
+                    if idx >= 0: is_quad = self.multi_lane_definitions[idx]['type'] == 'quad'
+                    elif idx == -2: is_quad = True
+                
+                if is_quad: self.live_view_label.drag_preview_quad_points = new_shape_points_label
+                else: self.live_view_label.drag_preview_rect = QRectF(new_shape_points_label[0], new_shape_points_label[2])
+                self.update_live_view()
+
+            def handle_drag_release(self, event):
                 if self.current_selection_mode in ["dragging_shape", "resizing_corner"] and event.button() == Qt.LeftButton:
                     self.live_view_label.draw_edges = True
                     
-                    # If a single rectangle was resized, its updated points were used to form
-                    # self.live_view_label.bounding_box_preview in handle_drag_operation.
-                    # If a multi-lane rectangle was resized, its 'points_label' (a QRectF) was updated.
-                    # If a quad was resized, its 'points_label' or self.live_view_label.quad_points was updated.
-
-                    if self.shape_points_at_drag_start_label: # Check if a drag actually happened
-                        self.save_state()
-                        self.is_modified = True
-
-                    self.shape_points_at_drag_start_label = []
-                    self.initial_mouse_pos_for_shape_drag_label = QPointF()
-                    self.resizing_corner_index = -1 
+                    final_points = self.live_view_label.drag_preview_quad_points
+                    final_rect = self.live_view_label.drag_preview_rect
                     
-                    self.current_selection_mode = "select_for_move"
-                    self.live_view_label.mode = "select_for_move"
+                    if not (final_points or final_rect): return
+
+                    self.save_state()
+
+                    if self.is_duplicating_shape:
+                        source_index = self.moving_multi_lane_index
+                        source_is_single_shape = source_index < 0
+                        
+                        if source_is_single_shape:
+                            if source_index == -2: # Single quad
+                                original_def = {'type': 'quad', 'points_label': self.live_view_label.quad_points, 'id': 1}
+                            else: # Single rect
+                                r_orig = QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized()
+                                original_def = {'type': 'rectangle', 'points_label': [r_orig], 'id': 1}
+                            self.multi_lane_definitions.append(original_def)
+                            self.live_view_label.quad_points = []; self.live_view_label.bounding_box_preview = None
+
+                        new_lane_id = len(self.multi_lane_definitions) + 1
+                        if final_points: new_def = {'type': 'quad', 'points_label': final_points, 'id': new_lane_id}
+                        else: new_def = {'type': 'rectangle', 'points_label': [final_rect], 'id': new_lane_id}
+                        self.multi_lane_definitions.append(new_def)
+                        self.multi_lane_processing_finished = True
+
+                    else: # Finalize a normal move or resize
+                        if self.moving_multi_lane_index >= 0:
+                            lane = self.multi_lane_definitions[self.moving_multi_lane_index]
+                            if final_points: lane['points_label'] = final_points
+                            else: lane['points_label'] = [final_rect]
+                        elif self.moving_multi_lane_index == -2: self.live_view_label.quad_points = final_points
+                        elif self.moving_multi_lane_index == -3: self.live_view_label.bounding_box_preview = (final_rect.left(), final_rect.top(), final_rect.right(), final_rect.bottom())
                     
-                    self.live_view_label._custom_mouseMoveEvent_from_app = None
-                    self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                    self.is_modified = True
+
+                    # Cleanup and reset mode
+                    self.live_view_label.drag_preview_quad_points = None; self.live_view_label.drag_preview_rect = None
+                    self.shape_points_at_drag_start_label = []; self.initial_mouse_pos_for_shape_drag_label = QPointF()
+                    self.resizing_corner_index = -1; self.is_duplicating_shape = False; self.duplication_source_info = None
+                    self.current_selection_mode = "select_for_move"; self.live_view_label.mode = "select_for_move"
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.live_view_label._custom_mouseMoveEvent_from_app = None; self.live_view_label._custom_mouseReleaseEvent_from_app = None
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_area_selection_click
-                    
                     self.update_live_view()
             
             def cancel_selection_or_move_mode(self):
@@ -7749,148 +7950,139 @@ if __name__ == "__main__":
                     
             def combine_image_tab(self):
                 tab = QWidget()
-                layout = QVBoxLayout(tab)
-                layout.setSpacing(10)
+                main_layout = QVBoxLayout(tab)
+                main_layout.setSpacing(10)
 
-                # --- Group 1: Image Sources & Blending (from v3.0) ---
-                source_group = QGroupBox("Image Sources & Blending")
-                source_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                source_layout = QGridLayout(source_group)
-                source_layout.setSpacing(10)
-
-                set_base_button = QPushButton("Set Current as Base Image (Image 1)")
-                set_base_button.setToolTip("Copies the main image to the 'Image 1' buffer and places it as the bottom layer.")
-                set_base_button.clicked.connect(self.set_overlay_base)
-
-                self.load_overlay_button = QPushButton("Load Overlay Image (Image 2)")
-                self.load_overlay_button.setToolTip("Loads a second image from a file into the 'Image 2' buffer and places it as the top layer.")
-                self.load_overlay_button.clicked.connect(self.load_overlay_image)
-                self.load_overlay_button.setEnabled(False)
-
-                source_layout.addWidget(set_base_button, 0, 0)
-                source_layout.addWidget(self.load_overlay_button, 0, 1)
-
-                source_layout.addWidget(QLabel("Blend (Base ↔ Overlay):"), 1, 0)
-                self.blend_slider = QSlider(Qt.Horizontal)
-                self.blend_slider.setRange(0, 100)
-                self.blend_slider.setValue(50)
-                self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
-                self.blend_slider.valueChanged.connect(self.update_live_view)
-                source_layout.addWidget(self.blend_slider, 1, 1)
-                layout.addWidget(source_group)
-
-                # --- Group 2: Advanced Positioning (Hybrid of v1.0 and v3.0) ---
-                position_group = QGroupBox("Advanced Positioning")
-                position_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                position_layout = QVBoxLayout(position_group)
+                # --- Top Row: Side-by-Side Overlay Controls ---
+                top_row_layout = QHBoxLayout()
                 
-                # Image 1 (Base) Controls
-                image1_subgroup = QGroupBox("Base Image (Image 1)")
-                image1_layout = QGridLayout(image1_subgroup)
-                copy_image1_button = QPushButton("Copy Current to Buffer 1"); copy_image1_button.clicked.connect(self.save_image1)
-                place_image1_button = QPushButton("Place Buffer 1"); place_image1_button.setToolTip("Make the buffered Image 1 visible on the canvas."); place_image1_button.clicked.connect(self.place_image1)
+                # --- Image 1 (Base) Controls ---
+                image1_group = QGroupBox("Image 1 (Base)")
+                image1_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                image1_layout = QGridLayout(image1_group)
+
+                copy_image1_button = QPushButton("Copy Current"); copy_image1_button.clicked.connect(self.save_image1)
+                place_image1_button = QPushButton("Place"); place_image1_button.clicked.connect(self.place_image1)
                 remove_image1_button = QPushButton("Remove"); remove_image1_button.clicked.connect(lambda: (self.remove_image1(), self.update_live_view()))
-                reset_overlay1_button = QPushButton("Reset Position"); reset_overlay1_button.setToolTip("Reset the position, size, and rotation of Image 1."); reset_overlay1_button.clicked.connect(self.reset_overlay1_transform)
+                reset_overlay1_button = QPushButton("Reset"); reset_overlay1_button.clicked.connect(self.reset_overlay1_transform)
 
                 image1_layout.addWidget(copy_image1_button, 0, 0, 1, 1)
                 image1_layout.addWidget(place_image1_button, 0, 1, 1, 1)
-                image1_layout.addWidget(remove_image1_button, 0, 2, 1, 1)
-                image1_layout.addWidget(reset_overlay1_button, 0, 3, 1, 2)
+                image1_layout.addWidget(remove_image1_button, 1, 0, 1, 1)
+                image1_layout.addWidget(reset_overlay1_button, 1, 1, 1, 1)
 
-                # Position X slider with value label
-                image1_layout.addWidget(QLabel("Pos X:"), 1, 0)
+                image1_layout.addWidget(QLabel("X:"), 2, 0)
                 self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                self.image1_pos_x_label = QLabel("0"); self.image1_pos_x_label.setFixedWidth(50)
+                image1_layout.addWidget(self.image1_left_slider, 2, 1)
+                self.image1_pos_x_label = QLabel("0"); self.image1_pos_x_label.setFixedWidth(40)
                 self.image1_left_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_x_label: lbl.setText(str(val)))
-                image1_layout.addWidget(self.image1_left_slider, 1, 1, 1, 3)
-                image1_layout.addWidget(self.image1_pos_x_label, 1, 4)
-
-                # Position Y slider with value label
-                image1_layout.addWidget(QLabel("Pos Y:"), 2, 0)
+                image1_layout.addWidget(self.image1_pos_x_label, 2, 2)
+                
+                image1_layout.addWidget(QLabel("Y:"), 3, 0)
                 self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                self.image1_pos_y_label = QLabel("0"); self.image1_pos_y_label.setFixedWidth(50)
+                image1_layout.addWidget(self.image1_top_slider, 3, 1)
+                self.image1_pos_y_label = QLabel("0"); self.image1_pos_y_label.setFixedWidth(40)
                 self.image1_top_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_y_label: lbl.setText(str(val)))
-                image1_layout.addWidget(self.image1_top_slider, 2, 1, 1, 3)
-                image1_layout.addWidget(self.image1_pos_y_label, 2, 4)
+                image1_layout.addWidget(self.image1_pos_y_label, 3, 2)
 
-                # Resize slider with value label
-                image1_layout.addWidget(QLabel("Resize:"), 3, 0)
+                image1_layout.addWidget(QLabel("Resize:"), 4, 0)
                 self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(self.update_live_view)
-                self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(50)
+                image1_layout.addWidget(self.image1_resize_slider, 4, 1)
+                self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(40)
                 self.image1_resize_slider.valueChanged.connect(lambda val, lbl=self.image1_resize_label: lbl.setText(f"{val}%"))
-                image1_layout.addWidget(self.image1_resize_slider, 3, 1, 1, 3)
-                image1_layout.addWidget(self.image1_resize_label, 3, 4)
+                image1_layout.addWidget(self.image1_resize_label, 4, 2)
 
-                # Rotation slider with value label
-                image1_layout.addWidget(QLabel("Rotation:"), 4, 0)
+                image1_layout.addWidget(QLabel("Rotate:"), 5, 0)
                 self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(self.update_live_view)
-                self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(50)
+                image1_layout.addWidget(self.image1_rotation_slider, 5, 1)
+                self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(40)
                 self.image1_rotation_slider.valueChanged.connect(lambda val, lbl=self.image1_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
-                image1_layout.addWidget(self.image1_rotation_slider, 4, 1, 1, 3)
-                image1_layout.addWidget(self.image1_rotation_label, 4, 4)
+                image1_layout.addWidget(self.image1_rotation_label, 5, 2)
+                
+                image1_layout.setColumnStretch(1, 1)
+                top_row_layout.addWidget(image1_group)
 
-                position_layout.addWidget(image1_subgroup)
+                # --- Image 2 (Overlay) Controls ---
+                image2_group = QGroupBox("Image 2 (Overlay)")
+                image2_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                image2_layout = QGridLayout(image2_group)
 
-                # Image 2 (Overlay) Controls
-                image2_subgroup = QGroupBox("Overlay Image (Image 2)")
-                image2_layout = QGridLayout(image2_subgroup)
-                copy_image2_button = QPushButton("Copy Current to Buffer 2"); copy_image2_button.clicked.connect(self.save_image2)
-                place_image2_button = QPushButton("Place Buffer 2"); place_image2_button.setToolTip("Make the buffered Image 2 visible on the canvas."); place_image2_button.clicked.connect(self.place_image2)
+                copy_image2_button = QPushButton("Copy Current"); copy_image2_button.clicked.connect(self.save_image2)
+                place_image2_button = QPushButton("Place"); place_image2_button.clicked.connect(self.place_image2)
                 remove_image2_button = QPushButton("Remove"); remove_image2_button.clicked.connect(lambda: (self.remove_image2(), self.update_live_view()))
-                reset_overlay2_button = QPushButton("Reset Position"); reset_overlay2_button.setToolTip("Reset the position, size, and rotation of Image 2."); reset_overlay2_button.clicked.connect(self.reset_overlay2_transform)
+                reset_overlay2_button = QPushButton("Reset"); reset_overlay2_button.clicked.connect(self.reset_overlay2_transform)
 
                 image2_layout.addWidget(copy_image2_button, 0, 0, 1, 1)
                 image2_layout.addWidget(place_image2_button, 0, 1, 1, 1)
-                image2_layout.addWidget(remove_image2_button, 0, 2, 1, 1)
-                image2_layout.addWidget(reset_overlay2_button, 0, 3, 1, 2)
+                image2_layout.addWidget(remove_image2_button, 1, 0, 1, 1)
+                image2_layout.addWidget(reset_overlay2_button, 1, 1, 1, 1)
 
-                # Position X slider with value label
-                image2_layout.addWidget(QLabel("Pos X:"), 1, 0)
+                image2_layout.addWidget(QLabel("X:"), 2, 0)
                 self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                self.image2_pos_x_label = QLabel("0"); self.image2_pos_x_label.setFixedWidth(50)
+                image2_layout.addWidget(self.image2_left_slider, 2, 1)
+                self.image2_pos_x_label = QLabel("0"); self.image2_pos_x_label.setFixedWidth(40)
                 self.image2_left_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_x_label: lbl.setText(str(val)))
-                image2_layout.addWidget(self.image2_left_slider, 1, 1, 1, 3)
-                image2_layout.addWidget(self.image2_pos_x_label, 1, 4)
+                image2_layout.addWidget(self.image2_pos_x_label, 2, 2)
 
-                # Position Y slider with value label
-                image2_layout.addWidget(QLabel("Pos Y:"), 2, 0)
+                image2_layout.addWidget(QLabel("Y:"), 3, 0)
                 self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
-                self.image2_pos_y_label = QLabel("0"); self.image2_pos_y_label.setFixedWidth(50)
+                image2_layout.addWidget(self.image2_top_slider, 3, 1)
+                self.image2_pos_y_label = QLabel("0"); self.image2_pos_y_label.setFixedWidth(40)
                 self.image2_top_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_y_label: lbl.setText(str(val)))
-                image2_layout.addWidget(self.image2_top_slider, 2, 1, 1, 3)
-                image2_layout.addWidget(self.image2_pos_y_label, 2, 4)
-
-                # Resize slider with value label
-                image2_layout.addWidget(QLabel("Resize:"), 3, 0)
-                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(self.update_live_view)
-                self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(50)
-                self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
-                image2_layout.addWidget(self.image2_resize_slider, 3, 1, 1, 3)
-                image2_layout.addWidget(self.image2_resize_label, 3, 4)
-
-                # Rotation slider with value label
-                image2_layout.addWidget(QLabel("Rotation:"), 4, 0)
-                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(self.update_live_view)
-                self.image2_rotation_label = QLabel("0.0°"); self.image2_rotation_label.setFixedWidth(50)
-                self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
-                image2_layout.addWidget(self.image2_rotation_slider, 4, 1, 1, 3)
-                image2_layout.addWidget(self.image2_rotation_label, 4, 4)
+                image2_layout.addWidget(self.image2_pos_y_label, 3, 2)
                 
-                position_layout.addWidget(image2_subgroup)
-                layout.addWidget(position_group)
+                image2_layout.addWidget(QLabel("Resize:"), 4, 0)
+                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(self.update_live_view)
+                image2_layout.addWidget(self.image2_resize_slider, 4, 1)
+                self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(40)
+                self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
+                image2_layout.addWidget(self.image2_resize_label, 4, 2)
 
-                # --- Group 3: Actions ---
-                actions_group = QGroupBox("Actions")
-                actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                actions_layout = QHBoxLayout(actions_group)
+                image2_layout.addWidget(QLabel("Rotate:"), 5, 0)
+                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(self.update_live_view)
+                image2_layout.addWidget(self.image2_rotation_slider, 5, 1)
+                self.image2_rotation_label = QLabel("0.0°"); self.image2_rotation_label.setFixedWidth(40)
+                self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
+                image2_layout.addWidget(self.image2_rotation_label, 5, 2)
+
+                image2_layout.setColumnStretch(1, 1)
+                top_row_layout.addWidget(image2_group)
+                main_layout.addLayout(top_row_layout)
+
+                # --- Middle Section: Global Controls ---
+                global_controls_group = QGroupBox("Global Overlay Controls")
+                global_controls_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                global_controls_layout = QGridLayout(global_controls_group)
+                
+                global_controls_layout.addWidget(QLabel("Set Base:"), 0, 0)
+                set_base_button = QPushButton("Set Current as Base (Image 1)")
+                set_base_button.setToolTip("Copies the main image to the 'Image 1' buffer and places it as the bottom layer.")
+                set_base_button.clicked.connect(self.set_overlay_base)
+                global_controls_layout.addWidget(set_base_button, 0, 1, 1, 2)
+
+                self.load_overlay_button = QPushButton("Load Overlay (Image 2)")
+                self.load_overlay_button.setToolTip("Loads a second image from a file into the 'Image 2' buffer and places it as the top layer.")
+                self.load_overlay_button.clicked.connect(self.load_overlay_image)
+                self.load_overlay_button.setEnabled(False) # Still disabled until a base is set
+                global_controls_layout.addWidget(self.load_overlay_button, 0, 3, 1, 2)
+                
+                global_controls_layout.addWidget(QLabel("Blend:"), 1, 0)
+                self.blend_slider = QSlider(Qt.Horizontal)
+                self.blend_slider.setRange(0, 100); self.blend_slider.setValue(50)
+                self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
+                self.blend_slider.valueChanged.connect(self.update_live_view)
+                global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 4)
+
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
                 finalize_button = QPushButton("Rasterize Image"); finalize_button.clicked.connect(self.finalize_combined_image)
-                actions_layout.addWidget(self.interactive_overlay_button, 1)
-                actions_layout.addWidget(finalize_button, 1)
-                layout.addWidget(actions_group)
+                global_controls_layout.addWidget(self.interactive_overlay_button, 2, 1, 1, 2)
+                global_controls_layout.addWidget(finalize_button, 2, 3, 1, 2)
 
-                layout.addStretch()
-                self._update_overlay_slider_ranges() # Initialize slider ranges
+                global_controls_layout.setColumnStretch(1, 1); global_controls_layout.setColumnStretch(3, 1)
+                main_layout.addWidget(global_controls_group)
+
+                main_layout.addStretch()
+                self._update_overlay_slider_ranges()
                 return tab
             
             def set_overlay_base(self):
@@ -9096,223 +9288,148 @@ if __name__ == "__main__":
             
             
             def create_cropping_tab(self):
-                """Create the Cropping tab with Rectangle Draw and Slider options."""
+                """
+                Creates a polished and user-friendly tab for all image transformations:
+                Alignment, Skew, Cropping, and Padding, arranged in a balanced two-column layout.
+                """
                 tab = QWidget()
-                layout = QVBoxLayout(tab)
+                main_layout = QHBoxLayout(tab)
+                main_layout.setSpacing(15)
 
+                # ======================================================================
+                # === LEFT COLUMN: Global Transformations (Alignment, Skew, Flip) ===
+                # ======================================================================
+                left_column_layout = QVBoxLayout()
+                left_column_layout.setSpacing(10)
 
-                # --- Alignment Group (Keep as is - assume it's defined elsewhere) ---
-                alignment_params_group = QGroupBox("Alignment Options")
-                alignment_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                # Use a QVBoxLayout for the main group layout
-                alignment_group_layout = QVBoxLayout(alignment_params_group)
-                alignment_group_layout.setSpacing(8) # Spacing between the two rows
-
-                # --- Row 1: Guides, Rotation Controls ---
-                rotation_controls_layout = QHBoxLayout()
-                rotation_controls_layout.setSpacing(6) # Spacing within the row
-
-                self.show_guides_label = QLabel("Show Guide Lines:")
-                self.show_guides_checkbox = QCheckBox("", self)
-                self.show_guides_checkbox.setChecked(False)
-                self.show_guides_checkbox.setToolTip("Show a center linter to align/rotate the image properly. Shortcut: CTRL+G or CMD+G")
-                self.show_guides_checkbox.stateChanged.connect(self.update_live_view)
-
-                self.orientation_label = QLabel("Rotation Angle (0.00°)")
-                # Make label width flexible but give it a minimum
-                self.orientation_label.setMinimumWidth(150)
-                # Allow label to shrink/grow slightly if needed:
-                self.orientation_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-
+                # --- Rotation & Orientation Group ---
+                rotation_group = QGroupBox("Rotation and Orientation")
+                rotation_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                rotation_layout = QGridLayout(rotation_group)
+                rotation_layout.setSpacing(8)
+                self.orientation_label = QLabel("Rotation Angle (+0.00°)")
+                self.orientation_label.setFixedWidth(150)
                 self.orientation_slider = QSlider(Qt.Horizontal)
                 self.orientation_slider.setRange(-3600, 3600)
                 self.orientation_slider.setValue(0)
-                self.orientation_slider.setSingleStep(1)
                 self.orientation_slider.valueChanged.connect(self._update_rotation_label)
-                # Update preview only when slider is released for performance
                 self.orientation_slider.valueChanged.connect(self.update_live_view)
-                self.orientation_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                self.align_button = QPushButton("Apply"); self.align_button.clicked.connect(self.align_image)
+                self.reset_align_button = QPushButton("Reset"); self.reset_align_button.clicked.connect(self.reset_align_image)
+                rotation_layout.addWidget(self.orientation_label, 0, 0)
+                rotation_layout.addWidget(self.orientation_slider, 0, 1)
+                rotation_layout.addWidget(self.align_button, 0, 2)
+                rotation_layout.addWidget(self.reset_align_button, 0, 3)
+                guides_flip_layout = QHBoxLayout()
+                guides_flip_layout.addWidget(QLabel("Show Guide Lines: "))
+                self.show_guides_checkbox = QCheckBox(""); self.show_guides_checkbox.setChecked(False)
+                self.show_guides_checkbox.setToolTip("Show a center line to align/rotate the image. Shortcut: CTRL+G")
+                self.show_guides_checkbox.stateChanged.connect(self.update_live_view)
+                guides_flip_layout.addWidget(self.show_guides_checkbox)
+                guides_flip_layout.addStretch()
+                self.flip_vertical_button = QPushButton("Flip Vertical"); self.flip_vertical_button.clicked.connect(self.flip_vertical)
+                self.flip_horizontal_button = QPushButton("Flip Horizontal"); self.flip_horizontal_button.clicked.connect(self.flip_horizontal)
+                guides_flip_layout.addWidget(self.flip_vertical_button)
+                guides_flip_layout.addWidget(self.flip_horizontal_button)
+                rotation_layout.addLayout(guides_flip_layout, 1, 0, 1, 4)
+                rotation_layout.setColumnStretch(1, 1)
+                left_column_layout.addWidget(rotation_group)
 
-                self.align_button = QPushButton("Apply Rotation")
-                self.align_button.clicked.connect(self.align_image)
-
-                self.reset_align_button = QPushButton("Reset Rotation")
-                self.reset_align_button.clicked.connect(self.reset_align_image)
-
-                rotation_controls_layout.addWidget(self.show_guides_label)
-                rotation_controls_layout.addWidget(self.show_guides_checkbox)
-                rotation_controls_layout.addSpacing(10) # Add a small visual gap
-                rotation_controls_layout.addWidget(self.orientation_label)
-                rotation_controls_layout.addWidget(self.orientation_slider) # Let slider expand
-                rotation_controls_layout.addWidget(self.align_button)
-                rotation_controls_layout.addWidget(self.reset_align_button)
-
-                alignment_group_layout.addLayout(rotation_controls_layout)
-
-                flip_controls_layout = QHBoxLayout()
-                flip_controls_layout.setSpacing(6) # Spacing between flip buttons
-
-                self.flip_vertical_button = QPushButton("Flip Vertical")
-                self.flip_vertical_button.setToolTip("Flips the image in vertical direction")
-                self.flip_vertical_button.clicked.connect(self.flip_vertical)
-                self.flip_vertical_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-                self.flip_horizontal_button = QPushButton("Flip Horizontal")
-                self.flip_horizontal_button.setToolTip("Flips the image in horizontal direction")
-                self.flip_horizontal_button.clicked.connect(self.flip_horizontal)
-                self.flip_horizontal_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-                flip_controls_layout.addWidget(self.flip_vertical_button)
-                flip_controls_layout.addWidget(self.flip_horizontal_button)
-
-                alignment_group_layout.addLayout(flip_controls_layout)
-                
-                
-
-                alignment_params_group.setLayout(alignment_group_layout)
-                layout.addWidget(alignment_params_group)
-
-                taper_skew_group = QGroupBox("Skew Fix")
-                taper_skew_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                taper_skew_layout = QHBoxLayout()
-                self.taper_skew_label = QLabel("Tapering Skew (0.00)")
-                self.taper_skew_label.setToolTip("Can be used to fix gel distortion by adjusting the skewness/broadening of the gel at the top or bottom region")
+                # --- Skew Correction Group ---
+                skew_group = QGroupBox("Skew Correction")
+                skew_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                skew_layout = QGridLayout(skew_group)
+                skew_layout.setSpacing(8)
+                self.taper_skew_label = QLabel("Skew (+0.00)")
                 self.taper_skew_label.setFixedWidth(150)
                 self.taper_skew_slider = QSlider(Qt.Horizontal)
-                self.taper_skew_slider.setRange(-70, 70)
-                self.taper_skew_slider.setValue(0)
+                self.taper_skew_slider.setRange(-70, 70); self.taper_skew_slider.setValue(0)
+                self.taper_skew_slider.valueChanged.connect(lambda value: self.taper_skew_label.setText(f"Skew ({value / 100.0:+0.2f})"))
                 self.taper_skew_slider.valueChanged.connect(self.update_live_view)
+                self.skew_button = QPushButton("Apply"); self.skew_button.clicked.connect(self.update_skew)
+                self.reset_skew_button = QPushButton("Reset"); self.reset_skew_button.clicked.connect(lambda: self.taper_skew_slider.setValue(0))
+                skew_layout.addWidget(self.taper_skew_label, 0, 0)
+                skew_layout.addWidget(self.taper_skew_slider, 0, 1)
+                skew_layout.addWidget(self.skew_button, 0, 2)
+                skew_layout.addWidget(self.reset_skew_button, 0, 3)
+                skew_layout.setColumnStretch(1, 1)
+                left_column_layout.addWidget(skew_group)
+                left_column_layout.addStretch(1)
                 
-                self.skew_button = QPushButton("Apply Skew")
-                self.skew_button.clicked.connect(self.update_skew)
-                
-                self.reset_skew_button = QPushButton("Reset Skew")
-                self.reset_skew_button.clicked.connect(lambda: self.taper_skew_slider.setValue(0))
+                main_layout.addLayout(left_column_layout) # Add the completed left column layout
 
-                taper_skew_layout.addWidget(self.taper_skew_label)
-                taper_skew_layout.addWidget(self.taper_skew_slider)
-                taper_skew_layout.addWidget(self.skew_button)
-                taper_skew_layout.addWidget(self.reset_skew_button) # Add button to layout
-                taper_skew_group.setLayout(taper_skew_layout)
-                layout.addWidget(taper_skew_group)
+                # ======================================================================
+                # === RIGHT COLUMN: Destructive Edits (Crop & Pad) ===
+                # ======================================================================
+                right_column_layout = QVBoxLayout()
+                right_column_layout.setSpacing(10)
 
-
-                cropping_params_group = QGroupBox("Cropping Options")
-                cropping_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                cropping_layout = QVBoxLayout(cropping_params_group)      
-                
-
-                # --- Draw Rectangle Button ---
-                self.draw_crop_rect_button = QPushButton("Draw Crop Rectangle")
-                self.draw_crop_rect_button.setToolTip("Click and drag on the image to define the crop area.\nThis will enable the sliders below for fine-tuning.")
-                self.draw_crop_rect_button.setCheckable(True)
+                # --- Cropping Group ---
+                cropping_group = QGroupBox("Crop Image")
+                cropping_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                cropping_layout = QVBoxLayout(cropping_group)
+                crop_actions_layout = QHBoxLayout()
+                self.draw_crop_rect_button = QPushButton("Draw Crop Area"); self.draw_crop_rect_button.setCheckable(True)
                 self.draw_crop_rect_button.clicked.connect(self.toggle_rectangle_crop_mode)
-                self.apply_crop_button = QPushButton("Apply Crop")
-                self.apply_crop_button.setToolTip("Apply the defined crop (rectangle or sliders).")
-                self.apply_crop_button.clicked.connect(self.update_crop)
-                cropping_layout.addWidget(self.draw_crop_rect_button)
-                cropping_layout.addWidget(self.apply_crop_button)
-
-                # --- Separator ---
+                self.apply_crop_button = QPushButton("Apply Crop"); self.apply_crop_button.clicked.connect(self.update_crop)
+                crop_actions_layout.addWidget(self.draw_crop_rect_button, 1); crop_actions_layout.addStretch(); crop_actions_layout.addWidget(self.apply_crop_button)
+                cropping_layout.addLayout(crop_actions_layout)
                 cropping_layout.addWidget(self.create_separator())
-
-                # --- Sliders for Fine-Tuning ---
                 crop_slider_layout = QGridLayout()
-
-                # --- Define Slider Range and Precision ---
-                self.crop_slider_min = 0
-                self.crop_slider_max = 10000 # Represents 0.00% to 100.00%
-                self.crop_slider_precision_factor = 100.0 # Divide slider value by this
-
-                # Helper to create label for slider value display
+                self.crop_slider_min, self.crop_slider_max, self.crop_slider_precision_factor = 0, 10000, 100.0
                 def create_value_label(initial_value=0.0):
-                    # Format to 2 decimal places for hundredths of percent
-                    lbl = QLabel(f"{initial_value:.2f}%")
-                    lbl.setMinimumWidth(50) # Ensure space for "100.00%"
-                    lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    lbl = QLabel(f"{initial_value:.2f}%"); lbl.setMinimumWidth(55); lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     return lbl
-
-                # --- Left Crop Slider (X Start) ---
-                crop_x_start_label = QLabel("Crop Left:")
-                self.crop_x_start_slider = QSlider(Qt.Horizontal)
-                self.crop_x_start_slider.setRange(self.crop_slider_min, self.crop_slider_max)
-                self.crop_x_start_slider.setValue(self.crop_slider_min)      # Default: Start at 0.00%
-                self.crop_x_start_slider.setToolTip("Adjust the left edge of the crop area (enabled after drawing).")
-                self.crop_x_start_value_label = create_value_label(0.00)
-                self.crop_x_start_slider.valueChanged.connect(
-                    lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val / self.crop_slider_precision_factor:.2f}%")
-                )
-                self.crop_x_start_slider.valueChanged.connect(self._update_crop_from_sliders)
-                self.crop_x_start_slider.setEnabled(False) # Initially disabled
-                crop_slider_layout.addWidget(crop_x_start_label, 0, 0)
-                crop_slider_layout.addWidget(self.crop_x_start_slider, 0, 1)
-                crop_slider_layout.addWidget(self.crop_x_start_value_label, 0, 2)
-
-                # --- Right Crop Slider (X End) ---
-                crop_x_end_label = QLabel("Crop Right:")
-                self.crop_x_end_slider = QSlider(Qt.Horizontal)
-                self.crop_x_end_slider.setRange(self.crop_slider_min, self.crop_slider_max)
-                self.crop_x_end_slider.setValue(self.crop_slider_max)    # Default: End at 100.00%
-                self.crop_x_end_slider.setToolTip("Adjust the right edge of the crop area (enabled after drawing).")
-                self.crop_x_end_value_label = create_value_label(100.00)
-                self.crop_x_end_slider.valueChanged.connect(
-                    lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val / self.crop_slider_precision_factor:.2f}%")
-                )
-                self.crop_x_end_slider.valueChanged.connect(self._update_crop_from_sliders)
-                self.crop_x_end_slider.setEnabled(False) # Initially disabled
-                crop_slider_layout.addWidget(crop_x_end_label, 0, 3)
-                crop_slider_layout.addWidget(self.crop_x_end_slider, 0, 4)
-                crop_slider_layout.addWidget(self.crop_x_end_value_label, 0, 5)
-
-                # --- Top Crop Slider (Y Start) ---
-                crop_y_start_label = QLabel("Crop Top:")
-                self.crop_y_start_slider = QSlider(Qt.Horizontal)
-                self.crop_y_start_slider.setRange(self.crop_slider_min, self.crop_slider_max)
-                self.crop_y_start_slider.setValue(self.crop_slider_min)
-                self.crop_y_start_slider.setToolTip("Adjust the top edge of the crop area (enabled after drawing).")
-                self.crop_y_start_value_label = create_value_label(0.00)
-                self.crop_y_start_slider.valueChanged.connect(
-                    lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val / self.crop_slider_precision_factor:.2f}%")
-                )
-                self.crop_y_start_slider.valueChanged.connect(self._update_crop_from_sliders)
-                self.crop_y_start_slider.setEnabled(False) # Initially disabled
-                crop_slider_layout.addWidget(crop_y_start_label, 1, 0)
-                crop_slider_layout.addWidget(self.crop_y_start_slider, 1, 1)
-                crop_slider_layout.addWidget(self.crop_y_start_value_label, 1, 2)
-
-                # --- Bottom Crop Slider (Y End) ---
-                crop_y_end_label = QLabel("Crop Bottom:")
-                self.crop_y_end_slider = QSlider(Qt.Horizontal)
-                self.crop_y_end_slider.setRange(self.crop_slider_min, self.crop_slider_max)
-                self.crop_y_end_slider.setValue(self.crop_slider_max)
-                self.crop_y_end_slider.setToolTip("Adjust the bottom edge of the crop area (enabled after drawing).")
-                self.crop_y_end_value_label = create_value_label(100.00)
-                self.crop_y_end_slider.valueChanged.connect(
-                    lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val / self.crop_slider_precision_factor:.2f}%")
-                )
-                self.crop_y_end_slider.valueChanged.connect(self._update_crop_from_sliders)
-                self.crop_y_end_slider.setEnabled(False) # Initially disabled
-                crop_slider_layout.addWidget(crop_y_end_label, 1, 3)
-                crop_slider_layout.addWidget(self.crop_y_end_slider, 1, 4)
-                crop_slider_layout.addWidget(self.crop_y_end_value_label, 1, 5)
-
-                # Make sliders expand horizontally
-                crop_slider_layout.setColumnStretch(1, 1)
-                crop_slider_layout.setColumnStretch(4, 1)
+                self.crop_x_start_slider = QSlider(Qt.Horizontal); self.crop_x_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_start_slider.setValue(self.crop_slider_min); self.crop_x_start_slider.setEnabled(False)
+                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_x_end_slider = QSlider(Qt.Horizontal); self.crop_x_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_end_slider.setValue(self.crop_slider_max); self.crop_x_end_slider.setEnabled(False)
+                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_y_start_slider = QSlider(Qt.Horizontal); self.crop_y_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_start_slider.setValue(self.crop_slider_min); self.crop_y_start_slider.setEnabled(False)
+                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_y_end_slider = QSlider(Qt.Horizontal); self.crop_y_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_end_slider.setValue(self.crop_slider_max); self.crop_y_end_slider.setEnabled(False)
+                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(self._update_crop_from_sliders)
+                crop_slider_layout.addWidget(QLabel("Left:"), 0, 0); crop_slider_layout.addWidget(self.crop_x_start_slider, 0, 1); crop_slider_layout.addWidget(self.crop_x_start_value_label, 0, 2)
+                crop_slider_layout.addWidget(QLabel("Right:"), 0, 3); crop_slider_layout.addWidget(self.crop_x_end_slider, 0, 4); crop_slider_layout.addWidget(self.crop_x_end_value_label, 0, 5)
+                crop_slider_layout.addWidget(QLabel("Top:"), 1, 0); crop_slider_layout.addWidget(self.crop_y_start_slider, 1, 1); crop_slider_layout.addWidget(self.crop_y_start_value_label, 1, 2)
+                crop_slider_layout.addWidget(QLabel("Bottom:"), 1, 3); crop_slider_layout.addWidget(self.crop_y_end_slider, 1, 4); crop_slider_layout.addWidget(self.crop_y_end_value_label, 1, 5)
+                crop_slider_layout.setColumnStretch(1, 1); crop_slider_layout.setColumnStretch(4, 1)
                 cropping_layout.addLayout(crop_slider_layout)
+                right_column_layout.addWidget(cropping_group)
 
+                # --- Padding Group ---
+                padding_group = QGroupBox("Add White Space (Padding)")
+                padding_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                padding_layout = QGridLayout(padding_group)
+                int_validator = QIntValidator(0, 5000, self)
+                self.left_padding_input = QLineEdit("100"); self.left_padding_input.setValidator(int_validator)
+                self.right_padding_input = QLineEdit("100"); self.right_padding_input.setValidator(int_validator)
+                self.top_padding_input = QLineEdit("100"); self.top_padding_input.setValidator(int_validator)
+                self.bottom_padding_input = QLineEdit("0"); self.bottom_padding_input.setValidator(int_validator)
+                padding_layout.addWidget(QLabel("Left (px):"), 0, 0); padding_layout.addWidget(self.left_padding_input, 0, 1)
+                padding_layout.addWidget(QLabel("Right (px):"), 0, 2); padding_layout.addWidget(self.right_padding_input, 0, 3)
+                padding_layout.addWidget(QLabel("Top (px):"), 1, 0); padding_layout.addWidget(self.top_padding_input, 1, 1)
+                padding_layout.addWidget(QLabel("Bottom (px):"), 1, 2); padding_layout.addWidget(self.bottom_padding_input, 1, 3)
+                padding_actions_layout = QHBoxLayout()
+                self.recommend_button = QPushButton("Set Recommended Values"); self.recommend_button.clicked.connect(self.recommended_values)
+                self.clear_padding_button = QPushButton("Clear"); self.clear_padding_button.clicked.connect(self.clear_padding_values)
+                self.finalize_button = QPushButton("Apply Padding"); self.finalize_button.clicked.connect(self.finalize_image)
+                padding_actions_layout.addWidget(self.recommend_button); padding_actions_layout.addWidget(self.clear_padding_button); padding_actions_layout.addStretch()
+                padding_actions_layout.addWidget(self.finalize_button)
+                padding_layout.addLayout(padding_actions_layout, 2, 0, 1, 4)
+                right_column_layout.addWidget(padding_group)
+                right_column_layout.addStretch(1)
 
-                layout.addWidget(cropping_params_group)
-                # --- END: Modified Cropping Group ---
+                main_layout.addLayout(right_column_layout) # Add the completed right column layout
 
-                layout.addStretch()
                 return tab
             
             def _update_rotation_label(self, value):
-                """Updates the rotation label text."""
+                """Updates the rotation label text with consistent formatting."""
                 if hasattr(self, 'orientation_label'):
+                    # FIX: The divisor is 20.0 to match the slider range of -3600 to 3600, yielding -180.0 to +180.0
                     orientation = value / 20.0
-                    self.orientation_label.setText(f"Rotation Angle ({orientation:.2f}°)")
+                    # Use f-string formatting to always show the sign (+/-) and pad with zeros.
+                    self.orientation_label.setText(f"Rotation Angle ({orientation:+06.2f}°)")
 
             # def _update_skew_label(self, value):
             #     """Updates the skew label text."""
@@ -9594,78 +9711,6 @@ if __name__ == "__main__":
                     # Reset the temporary start point used for drawing
                     self.crop_rect_start_view = None
             
-            def create_white_space_tab(self):
-                tab = QWidget()
-                layout = QVBoxLayout(tab)
-                layout.setSpacing(15)
-
-                # --- Padding Group ---
-                padding_params_group = QGroupBox("Add White Space (Padding)")
-                padding_params_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                padding_layout = QGridLayout(padding_params_group)
-                padding_layout.setSpacing(8)
-
-
-                # Input fields with validation (optional but good)
-                int_validator = QIntValidator(0, 5000, self) # Allow padding up to 5000px
-
-                # Left Padding
-                left_padding_label = QLabel("Left Padding (px):")
-                self.left_padding_input = QLineEdit("100") # Default
-                self.left_padding_input.setValidator(int_validator)
-                self.left_padding_input.setToolTip("Pixels to add to the left.")
-                padding_layout.addWidget(left_padding_label, 0, 0)
-                padding_layout.addWidget(self.left_padding_input, 0, 1)
-
-                # Right Padding
-                right_padding_label = QLabel("Right Padding (px):")
-                self.right_padding_input = QLineEdit("100") # Default
-                self.right_padding_input.setValidator(int_validator)
-                self.right_padding_input.setToolTip("Pixels to add to the right.")
-                padding_layout.addWidget(right_padding_label, 0, 2)
-                padding_layout.addWidget(self.right_padding_input, 0, 3)
-
-                # Top Padding
-                top_padding_label = QLabel("Top Padding (px):")
-                self.top_padding_input = QLineEdit("100") # Default
-                self.top_padding_input.setValidator(int_validator)
-                self.top_padding_input.setToolTip("Pixels to add to the top.")
-                padding_layout.addWidget(top_padding_label, 1, 0)
-                padding_layout.addWidget(self.top_padding_input, 1, 1)
-
-                # Bottom Padding
-                bottom_padding_label = QLabel("Bottom Padding (px):")
-                self.bottom_padding_input = QLineEdit("0") # Default
-                self.bottom_padding_input.setValidator(int_validator)
-                self.bottom_padding_input.setToolTip("Pixels to add to the bottom.")
-                padding_layout.addWidget(bottom_padding_label, 1, 2)
-                padding_layout.addWidget(self.bottom_padding_input, 1, 3)
-
-                layout.addWidget(padding_params_group)
-
-                # --- Buttons Layout ---
-                button_layout = QHBoxLayout()
-                self.recommend_button = QPushButton("Set Recommended Values")
-                self.recommend_button.setToolTip("Auto-fill padding values based on image size (approx. 10-15%).")
-                self.recommend_button.clicked.connect(self.recommended_values)
-
-                self.clear_padding_button = QPushButton("Clear Values")
-                self.clear_padding_button.setToolTip("Set all padding values to 0.")
-                self.clear_padding_button.clicked.connect(self.clear_padding_values)
-
-                self.finalize_button = QPushButton("Apply Padding")
-                self.finalize_button.setToolTip("Permanently add the specified padding to the image.")
-                self.finalize_button.clicked.connect(self.finalize_image)
-
-                button_layout.addWidget(self.recommend_button)
-                button_layout.addWidget(self.clear_padding_button)
-                button_layout.addStretch()
-                button_layout.addWidget(self.finalize_button)
-
-                layout.addLayout(button_layout)
-                layout.addStretch() # Push content up
-
-                return tab
             def clear_padding_values(self):
                 self.bottom_padding_input.setText("0")
                 self.top_padding_input.setText("0")
@@ -10209,44 +10254,80 @@ if __name__ == "__main__":
             def keyPressEvent(self, event):
                 key = event.key()
 
-                # --- START MODIFICATION: Handle Delete/Backspace for all selected items ---
-                if key in (Qt.Key_Delete, Qt.Key_Backspace) and self.moving_custom_item_info:
-                    info = self.moving_custom_item_info
-                    item_type = info['type']
-                    item_index = info['index']
-                    
+                # --- Handle Deletion of Selected Items (Analysis Regions OR Custom Items) ---
+                if key in (Qt.Key_Delete, Qt.Key_Backspace):
                     item_deleted = False
-                    
-                    # Handle Custom Markers and Shapes
-                    if item_type == 'marker' and 0 <= item_index < len(self.custom_markers):
-                        self.save_state()
-                        del self.custom_markers[item_index]
-                        item_deleted = True
-                    elif item_type == 'shape' and 0 <= item_index < len(self.custom_shapes):
-                        self.save_state()
-                        del self.custom_shapes[item_index]
-                        item_deleted = True
-                    
-                    # Handle Standard Markers (Left, Right, Top)
-                    elif item_type in ['left_marker', 'right_marker', 'top_marker']:
-                        marker_list_to_modify = None
-                        if item_type == 'left_marker': marker_list_to_modify = self.left_markers
-                        elif item_type == 'right_marker': marker_list_to_modify = self.right_markers
-                        elif item_type == 'top_marker': marker_list_to_modify = self.top_markers
-                        
-                        if marker_list_to_modify is not None and 0 <= item_index < len(marker_list_to_modify):
+
+                    # Priority 1: Check if an ANALYSIS REGION is selected for deletion
+                    if self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"]:
+                        selected_index = self.moving_multi_lane_index
+
+                        if selected_index >= 0 and selected_index < len(self.multi_lane_definitions):
+                            # A multi-lane region is selected
                             self.save_state()
-                            del marker_list_to_modify[item_index]
-                            self._relabel_standard_markers(item_type) # Auto-recalculate labels
+                            del self.multi_lane_definitions[selected_index]
+                            # Re-index the IDs of the remaining lanes to be sequential
+                            for i in range(selected_index, len(self.multi_lane_definitions)):
+                                self.multi_lane_definitions[i]['id'] = i + 1
+                            item_deleted = True
+                        
+                        elif selected_index == -2 and self.live_view_label.quad_points:
+                            # The single quadrilateral region is selected
+                            self.save_state()
+                            self.live_view_label.quad_points = []
+                            item_deleted = True
+                        
+                        elif selected_index == -3 and self.live_view_label.bounding_box_preview:
+                            # The single rectangle region is selected
+                            self.save_state()
+                            self.live_view_label.bounding_box_preview = None
+                            self.live_view_label.rectangle_points = []
+                            self.live_view_label.rectangle_start = None
+                            self.live_view_label.rectangle_end = None
                             item_deleted = True
 
-                    if item_deleted:
-                        self.is_modified = True
-                        self.moving_custom_item_info = None # Clear selection
-                        self.update_live_view()
-                        event.accept()
-                        return
-                # --- END MODIFICATION ---
+                        if item_deleted:
+                            self.is_modified = True
+                            self.moving_multi_lane_index = -1 # Clear the selection
+                            self.resizing_corner_index = -1
+                            self.update_live_view()
+                            event.accept()
+                            return # Event handled
+
+                    # Priority 2: If no analysis region was deleted, check if a CUSTOM ITEM is selected
+                    if not item_deleted and self.moving_custom_item_info:
+                        info = self.moving_custom_item_info
+                        item_type = info['type']
+                        item_index = info['index']
+                        
+                        custom_item_deleted = False
+                        
+                        if item_type == 'marker' and 0 <= item_index < len(self.custom_markers):
+                            self.save_state()
+                            del self.custom_markers[item_index]
+                            custom_item_deleted = True
+                        elif item_type == 'shape' and 0 <= item_index < len(self.custom_shapes):
+                            self.save_state()
+                            del self.custom_shapes[item_index]
+                            custom_item_deleted = True
+                        elif item_type in ['left_marker', 'right_marker', 'top_marker']:
+                            marker_list_to_modify = None
+                            if item_type == 'left_marker': marker_list_to_modify = self.left_markers
+                            elif item_type == 'right_marker': marker_list_to_modify = self.right_markers
+                            elif item_type == 'top_marker': marker_list_to_modify = self.top_markers
+                            
+                            if marker_list_to_modify is not None and 0 <= item_index < len(marker_list_to_modify):
+                                self.save_state()
+                                del marker_list_to_modify[item_index]
+                                self._relabel_standard_markers(item_type)
+                                custom_item_deleted = True
+
+                        if custom_item_deleted:
+                            self.is_modified = True
+                            self.moving_custom_item_info = None # Clear selection
+                            self.update_live_view()
+                            event.accept()
+                            return # Event handled
 
                 # --- Escape Key Handling (Unchanged) ---
                 if key == Qt.Key_Escape:
@@ -14058,11 +14139,17 @@ if __name__ == "__main__":
                 self._update_status_bar()
                 
 
-        if app: # Ensure app exists before trying to set style
-            app.setStyle("Fusion")
-            # ... (your stylesheet) ...
 
         main_window = CombinedSDSApp()
+        main_window.light_stylesheet = light_stylesheet
+        main_window.dark_stylesheet = dark_stylesheet
+
+        if main_window.current_theme == "dark":
+            app.setStyleSheet(dark_stylesheet)
+            main_window.theme_action.setChecked(True)
+        else:
+            app.setStyleSheet(light_stylesheet)
+            main_window.theme_action.setChecked(False)
 
         # --- Close Loading Screen and Show Main Window ---
         if loading_dialog:
