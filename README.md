@@ -1,7 +1,7 @@
 # Gel Blot Analyzer 
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/639edac5-089e-4219-a3f5-6d7a06ad1932" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
+  <img src="https://github.com/user-attachments/assets/e3be180f-54aa-49d9-a649-74d98423d2cc" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
 </p>
 
 **Gel Blot Analyzer** is a comprehensive desktop application designed to streamline the annotation, analysis, and presentation of gel electrophoresis images. Built for researchers, students, and scientists, this tool simplifies the often tedious process of preparing gel images (SDS-PAGE, Western Blots, DNA gels, etc.) for lab notebooks, presentations, and publications.
