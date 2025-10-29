@@ -39,7 +39,7 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 </p>
 <p align="center">
   <em>Densitometric analysis plot for quantifying protein bands.</em><br>
-  <img src="https://github.com/user-attachments/assets/5157eead-bf64-4302-ba37-c979716825f6" width="700" alt="Densitometry Plot">
+  <img src="https://github.com/user-attachments/assets/dc3a4d5c-3ec3-4373-9167-cc2223a5f167" width="700" alt="Densitometry Plot">
 </p>
 
 ---
