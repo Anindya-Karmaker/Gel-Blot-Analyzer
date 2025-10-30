@@ -1530,7 +1530,7 @@ if __name__ == "__main__":
                     'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
                     'band_estimation_method': self.band_estimation_combobox.currentText(),
                     'rolling_ball_radius': self._final_settings.get('rolling_ball_radius', 50),
-                    'area_subtraction_method': self._final_settings.get('area_subtraction_method', "Rolling Ball"),
+                    'area_subtraction_method': self._final_settings.get('area_subtraction_method', "Rolling-valley"),
                 }
                 self.accept()
 
@@ -2801,9 +2801,8 @@ if __name__ == "__main__":
                 self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = current_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.00)
-                self.peak_broadening_pixels = current_settings.get('valley_offset_pixels', 0) 
                 self.band_estimation_method = current_settings.get('band_estimation_method', "Mean")
-                self.area_subtraction_method = current_settings.get('area_subtraction_method', "Rolling Ball")
+                self.area_subtraction_method = current_settings.get('area_subtraction_method', "Rolling-valley")
                 self.auto_adjust_rb_radius = current_settings.get('auto_adjust_rb_radius', False)
                 self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions = []
                 self.denoise_sigma = current_settings.get('denoise_sigma', 0.0)
@@ -2856,7 +2855,7 @@ if __name__ == "__main__":
                 global_settings_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2)
                 global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
                 self.method_combobox = QComboBox()
-                self.method_combobox.addItems(["Valley-to-Valley", "Rolling Ball", "Straight Line"])
+                self.method_combobox.addItems(["Rolling-valley", "Rolling Ball", "Straight Line"])
                 self.method_combobox.setCurrentText(self.area_subtraction_method)
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
                 global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
@@ -2866,7 +2865,6 @@ if __name__ == "__main__":
                 self.rolling_ball_slider = QSlider(Qt.Horizontal)
                 self.rolling_ball_slider.setRange(1, 500)
                 self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
-                # FIX: Connect to the new handler for real-time region updates
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
                 
@@ -2884,9 +2882,9 @@ if __name__ == "__main__":
                 peak_detect_group = QGroupBox("Peak Detection & Manipulation")
                 peak_detect_layout = QGridLayout(peak_detect_group)
                 peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(self.detect_peaks); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
-                self.broadening_label = QLabel(f"Peak Broadening ({'+' if self.peak_broadening_pixels>=0 else ''}{self.peak_broadening_pixels} px)"); self.broadening_slider = QSlider(Qt.Horizontal); self.broadening_slider.setRange(-50, 50); self.broadening_slider.setValue(self.peak_broadening_pixels); self.broadening_slider.valueChanged.connect(lambda value, lbl=self.broadening_label: lbl.setText(f"Peak Broadening ({'+' if value>=0 else ''}{value} px)")); self.broadening_slider.valueChanged.connect(self.apply_peak_broadening_on_release); peak_detect_layout.addWidget(self.broadening_label, 6, 0); peak_detect_layout.addWidget(self.broadening_slider, 6, 1, 1, 2); self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 7, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 7, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 7, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
+                self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 6, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 6, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 6, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
                 if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
-                peak_detect_layout.addWidget(self.copy_regions_button, 8,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 8,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
+                peak_detect_layout.addWidget(self.copy_regions_button, 7,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 7,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
                 self.update_rb_controls_enabled_state()
 
             def _on_method_changed(self):
@@ -2897,32 +2895,24 @@ if __name__ == "__main__":
             
             def _on_rb_slider_changed(self, value):
                 """Handles real-time updates when the rolling ball slider is moved."""
-                # This handler is only active when manual adjustment is possible.
-                if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() == "Rolling Ball":
-                    # Update the internal radius value from the slider.
+                if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
                     self.rolling_ball_radius = value
-                    
-                    # Recalculate the background and the regions based on it.
                     self._recalculate_all_regions()
-                    
-                    # Update the plot to show the new state.
                     self.update_plot()
 
             def update_rb_controls_enabled_state(self):
                 """Enables/disables controls based on the selected area method."""
-                is_rb_method = self.method_combobox.currentText() == "Rolling Ball"
-                is_valley_method = self.method_combobox.currentText() == "Valley-to-Valley"
+                is_rb_dependent_method = self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
                 
-                self.rolling_ball_slider.setEnabled(is_rb_method and not self.auto_adjust_checkbox.isChecked())
-                self.auto_adjust_checkbox.setEnabled(is_rb_method)
-                self.rolling_ball_label.setEnabled(is_rb_method)
-                self.broadening_slider.setEnabled(is_valley_method)
-                self.broadening_label.setEnabled(is_valley_method)
+                self.rolling_ball_slider.setEnabled(is_rb_dependent_method and not self.auto_adjust_checkbox.isChecked())
+                self.auto_adjust_checkbox.setEnabled(is_rb_dependent_method)
+                self.rolling_ball_label.setEnabled(is_rb_dependent_method)
 
             def toggle_auto_adjust_rb(self, state):
                 """Handles the 'Auto' checkbox state change for rolling ball radius."""
                 self.auto_adjust_rb_radius = bool(state)
-                self.rolling_ball_slider.setEnabled(not self.auto_adjust_rb_radius)
+                is_rb_dependent_method = self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
+                self.rolling_ball_slider.setEnabled(is_rb_dependent_method and not self.auto_adjust_rb_radius)
                 self.detect_peaks()
 
             def _calculate_optimal_rb_radius(self):
@@ -2951,20 +2941,24 @@ if __name__ == "__main__":
             def _recalculate_all_regions(self):
                 """The single source of truth for calculating peak_regions based on the current method."""
                 self.method = self.method_combobox.currentText()
-                if self.method == "Rolling Ball":
+
+                # Calculate rolling ball background if needed for the current method.
+                if self.method in ["Rolling Ball", "Rolling-valley"]:
                     if rolling_ball and self.profile_original_inverted is not None:
                         try:
                             profile_float = self.profile_original_inverted.astype(np.float64)
                             safe_radius = max(1, min(self.rolling_ball_radius, len(profile_float) // 2 - 1))
                             self.background = self._custom_rolling_ball(profile_float, safe_radius) if len(profile_float) > 1 else profile_float.copy()
                             self.background = np.maximum(self.background, 0)
-                        except:
+                        except Exception:
                             self.background = np.zeros_like(self.profile_original_inverted)
                     else:
                         self.background = np.zeros_like(self.profile_original_inverted) if self.profile_original_inverted is not None else np.array([])
-                    
+                
+                # Define peak region boundaries based on method.
+                if self.method == "Rolling Ball":
                     self._redefine_regions_from_background(self.background)
-                else: 
+                else: # "Straight Line" and "Rolling-valley" both use valley-to-valley boundaries.
                     self._redefine_all_valley_regions()
 
             def _redefine_regions_from_background(self, background):
@@ -3023,7 +3017,6 @@ if __name__ == "__main__":
                     'peak_height_factor': self.peak_height_slider.value() / 100.0,
                     'peak_distance': self.peak_distance_slider.value(),
                     'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
-                    'valley_offset_pixels': self.broadening_slider.value(),
                     'band_estimation_method': self.band_estimation_combobox.currentText(),
                     'area_subtraction_method': self.method_combobox.currentText(),
                     'smoothing_sigma': self.smoothing_slider.value() / 10.0,
@@ -3036,35 +3029,17 @@ if __name__ == "__main__":
                 if self.canvas is None: return
                 profile_to_plot_and_calc = self.profile_original_inverted
                 
-                # --- START: THEME-AWARE COLOR DEFINITIONS ---
                 is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
                 if is_dark_theme:
-                    bg_color = '#2D2D30'
-                    ax_bg_color = '#38383C'
-                    text_color = '#F1F1F1'
-                    spine_color = '#707070'
-                    grid_color = '#5A5A60'
-                    profile_color = '#4DB6AC'  # Teal
-                    peak_marker_color = '#FF8A65'  # Light Orange
-                    focused_peak_color = '#FFCA28' # Amber
-                    selected_peak_color = '#42A5F5' # Light Blue
-                    bg_line_color = '#7E57C2'  # Deep Purple
-                    sl_line_color = '#5C6BC0'  # Indigo
-                    vv_line_color = '#FFEE58'  # Lime Yellow
+                    bg_color, ax_bg_color = '#2D2D30', '#38383C'
+                    text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
+                    profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
+                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#EC407A'
                 else:
-                    bg_color = 'white'
-                    ax_bg_color = 'white'
-                    text_color = 'black'
-                    spine_color = 'black'
-                    grid_color = '#DDDDDD'
-                    profile_color = 'black'
-                    peak_marker_color = 'red'
-                    focused_peak_color = 'orange'
-                    selected_peak_color = 'blue'
-                    bg_line_color = 'green'
-                    sl_line_color = 'purple'
-                    vv_line_color = 'orange'
-                # --- END: THEME-AWARE COLOR DEFINITIONS ---
+                    bg_color, ax_bg_color = 'white', 'white'
+                    text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
+                    profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
+                    bg_line_color, sl_line_color, rv_line_color = 'green', 'purple', 'magenta'
 
                 if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
                      self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
@@ -3099,6 +3074,21 @@ if __name__ == "__main__":
                          if self.selected_peak_index_for_delete != -1:
                              self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=7)
                 
+                global_sl_baseline = None
+                if self.method == "Straight Line" and self.peak_regions:
+                    trough_x = []
+                    trough_y = []
+                    trough_x.append(self.peak_regions[0][0])
+                    trough_y.append(profile_to_plot_and_calc[self.peak_regions[0][0]])
+                    for start_handle, end_handle in self.peak_regions:
+                        trough_x.append(end_handle)
+                        trough_y.append(profile_to_plot_and_calc[end_handle])
+                    
+                    if len(trough_x) >= 2:
+                        x_all = np.arange(len(profile_to_plot_and_calc))
+                        global_sl_baseline = np.interp(x_all, trough_x, trough_y)
+                        self.ax.plot(x_all, global_sl_baseline, color=sl_line_color, ls="--", lw=1, label="SL BG")
+
                 self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
                 
                 profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0
@@ -3108,35 +3098,55 @@ if __name__ == "__main__":
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
                     if start_handle >= end_handle or i >= len(self.peaks): continue
                     peak_x = self.peaks[i]
+                    
                     baseline_rb = self.background
-                    y_baseline_sl_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
-                    baseline_sl = np.interp(np.arange(len(profile_to_plot_and_calc)), [start_handle, end_handle], y_baseline_sl_points)
-                    y_baseline_vv_level = max(profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle])
-                    baseline_vv = np.full_like(profile_to_plot_and_calc, y_baseline_vv_level)
                     start_calc_rb, end_calc_rb = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_rb, peak_x, start_handle, end_handle)
-                    start_calc_sl, end_calc_sl = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_sl, peak_x, start_handle, end_handle)
-                    start_calc_vv, end_calc_vv = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_vv, peak_x, start_handle, end_handle)
                     area_rb = np.trapz(profile_to_plot_and_calc[start_calc_rb:end_calc_rb+1] - baseline_rb[start_calc_rb:end_calc_rb+1]) if start_calc_rb < end_calc_rb else 0.0
                     self.peak_areas_rolling_ball.append(max(0, area_rb))
-                    area_sl = np.trapz(profile_to_plot_and_calc[start_calc_sl:end_calc_sl+1] - baseline_sl[start_calc_sl:end_calc_sl+1]) if start_calc_sl < end_calc_sl else 0.0
+                    
+                    if global_sl_baseline is not None:
+                        difference_sl = profile_to_plot_and_calc[start_handle:end_handle+1] - global_sl_baseline[start_handle:end_handle+1]
+                        area_sl = np.trapz(np.maximum(0, difference_sl))
+                    else:
+                        y_baseline_sl_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
+                        baseline_sl_local = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_sl_points)
+                        difference_sl_local = profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_sl_local
+                        area_sl = np.trapz(np.maximum(0, difference_sl_local))
                     self.peak_areas_straight_line.append(max(0, area_sl))
-                    area_vv = np.trapz(profile_to_plot_and_calc[start_calc_vv:end_calc_vv+1] - baseline_vv[start_calc_vv:end_calc_vv+1]) if start_calc_vv < end_calc_vv else 0.0
-                    self.peak_areas_valley.append(max(0, area_vv))
+
+                    # For "Rolling-valley", the calculation uses a local straight line baseline.
+                    y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
+                    baseline_rv_local = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
+                    
+                    if start_handle < end_handle:
+                        signal_in_region = profile_to_plot_and_calc[start_handle:end_handle+1]
+                        difference_rv = signal_in_region - baseline_rv_local
+                        # Integrate only where the signal is above the local baseline
+                        area_valley = np.trapz(np.maximum(0, difference_rv))
+                    else:
+                        area_valley = 0.0
+                    self.peak_areas_valley.append(area_valley)
+                    
                     if self.method == "Rolling Ball":
                         x_region = np.arange(start_calc_rb, end_calc_rb + 1)
                         self.ax.fill_between(x_region, baseline_rb[x_region], profile_to_plot_and_calc[x_region], color="yellow", alpha=0.4, interpolate=True)
                         if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG")
                         area_text = area_rb
                     elif self.method == "Straight Line":
-                        x_region = np.arange(start_calc_sl, end_calc_sl + 1)
-                        self.ax.fill_between(x_region, baseline_sl[x_region], profile_to_plot_and_calc[x_region], color="cyan", alpha=0.4, interpolate=True)
-                        self.ax.plot([start_handle, end_handle], y_baseline_sl_points, color=sl_line_color, ls="--", lw=1, label="SL BG" if i == 0 else "")
+                        if global_sl_baseline is not None:
+                            x_region = np.arange(start_handle, end_handle + 1)
+                            self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True)
                         area_text = area_sl
-                    elif self.method == "Valley-to-Valley":
-                        x_region = np.arange(start_calc_vv, end_calc_vv + 1)
-                        self.ax.fill_between(x_region, baseline_vv[x_region], profile_to_plot_and_calc[x_region], color="lightblue", alpha=0.4, interpolate=True)
-                        self.ax.plot([start_handle, end_handle], [y_baseline_vv_level, y_baseline_vv_level], color=vv_line_color, ls="--", lw=1, label="Valley BG" if i == 0 else "")
-                        area_text = area_vv
+                    elif self.method == "Rolling-valley":
+                        x_region_rv = np.arange(start_handle, end_handle + 1)
+                        # Fill area between signal and local straight line, ONLY where signal is higher
+                        self.ax.fill_between(x_region_rv, baseline_rv_local, profile_to_plot_and_calc[x_region_rv], where=(profile_to_plot_and_calc[x_region_rv] >= baseline_rv_local), color="yellow", alpha=0.7, interpolate=True)
+                        # Draw the thick orange line connecting the troughs for this peak
+                        self.ax.plot([start_handle, end_handle], y_baseline_rv_points, color='darkorange', lw=1.5, zorder=4)
+                        # Still show the rolling ball line for reference
+                        if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color=rv_line_color, ls="--", lw=1.2, label="RV BG")
+                        area_text = area_valley
+                    
                     text_x_pos = peak_x; text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
                     self.ax.text(text_x_pos, text_y_pos, f"{area_text:.0f}", ha="center", va="bottom", fontsize=7, color=text_color, bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8))
                     max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
@@ -3155,7 +3165,9 @@ if __name__ == "__main__":
                     
                     self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize='small'); self.ax_image.set_xlabel("Pixel Index", fontsize='small')
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
-                        line_color, zorder_val, lw = (focused_peak_color, 11, 2.0) if peak_idx == self.selected_peak_for_ui_focus else (selected_peak_color, 10, 1.5)
+                        is_focused = peak_idx == self.selected_peak_for_ui_focus
+                        line_color, zorder_val, lw = ('orange', 11, 2.0) if is_focused else ('blue', 10, 1.5)
+                        
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
@@ -3241,31 +3253,14 @@ if __name__ == "__main__":
                 end_calc = min(search_end, end_calc)
                 if start_calc >= end_calc: return search_start, search_end
                 return int(start_calc), int(end_calc)
-            def apply_peak_broadening(self, broadening_value):
-                self.peak_broadening_pixels = broadening_value
-                self.peak_regions = [] 
-                profile_len = len(self.profile_original_inverted) if self.profile_original_inverted is not None else 0
-                if profile_len == 0: return
-                for i in range(len(self.initial_valley_regions)):
-                    initial_start, initial_end = self.initial_valley_regions[i]
-                    new_start = initial_start - self.peak_broadening_pixels
-                    new_end = initial_end + self.peak_broadening_pixels
-                    new_start_clamped = max(0, new_start)
-                    new_end_clamped = min(profile_len - 1, new_end)
-                    if new_start_clamped > new_end_clamped:
-                        mid_valley = (initial_start + initial_end) // 2
-                        new_start_clamped, new_end_clamped = mid_valley, mid_valley
-                    self.peak_regions.append((new_start_clamped, new_end_clamped))
-            def apply_peak_broadening_on_release(self):
-                self.apply_peak_broadening(self.broadening_slider.value())
-                self.update_plot()
+
             def get_final_peak_info(self):
                 peak_info_list = []
                 num_valid_peaks = len(self.peak_regions)
                 current_area_list = []
                 if self.method == "Rolling Ball": current_area_list = self.peak_areas_rolling_ball
                 elif self.method == "Straight Line": current_area_list = self.peak_areas_straight_line
-                elif self.method == "Valley-to-Valley": current_area_list = self.peak_areas_valley
+                elif self.method == "Rolling-valley": current_area_list = self.peak_areas_valley
                 num_peaks_to_process = min(num_valid_peaks, len(self.peaks), len(current_area_list))
                 for i in range(num_peaks_to_process):
                     try:
@@ -3292,18 +3287,37 @@ if __name__ == "__main__":
                 self._recalculate_all_regions()
                 self.update_plot()
             def _redefine_all_valley_regions(self):
-                self.initial_valley_regions = []
-                profile_to_analyze = self.profile_original_inverted
-                if profile_to_analyze is None or len(profile_to_analyze) <= 1 or len(self.peaks) == 0:
-                    self.peak_regions = []; return
-                midpoints = (self.peaks[:-1] + self.peaks[1:]) // 2 if len(self.peaks) > 1 else []
-                search_boundaries_left = np.concatenate(([0], midpoints))
-                search_boundaries_right = np.concatenate((midpoints, [len(profile_to_analyze) - 1]))
-                for i, peak_idx in enumerate(self.peaks):
-                    left_bound = int(search_boundaries_left[i]); right_bound = int(search_boundaries_right[i])
-                    start, end = self._find_outward_troughs(profile_to_analyze, peak_idx, left_bound, right_bound)
-                    self.initial_valley_regions.append((start, end))
-                self.apply_peak_broadening(self.broadening_slider.value())
+                self.peak_regions = []
+                profile = self.profile_original_inverted
+                if profile is None or len(profile) == 0 or len(self.peaks) == 0:
+                    return
+
+                # For Rolling-valley and Straight Line, the boundaries are a mix of troughs and intersections
+                troughs = []
+                for i in range(len(self.peaks) - 1):
+                    start_search = self.peaks[i]
+                    end_search = self.peaks[i+1]
+                    if start_search >= end_search: continue
+                    valley_region = profile[start_search:end_search]
+                    if valley_region.size > 0:
+                        local_min_idx = np.argmin(valley_region)
+                        troughs.append(start_search + local_min_idx)
+
+                # Outermost boundaries are always the intersection with the rolling ball background
+                left_outer_bound, _ = self._find_intersection_boundaries(profile, self.background, self.peaks[0], 0, self.peaks[0])
+                _, right_outer_bound = self._find_intersection_boundaries(profile, self.background, self.peaks[-1], self.peaks[-1], len(profile) - 1)
+                
+                # Assemble the final boundary points list
+                all_boundaries = [left_outer_bound] + troughs + [right_outer_bound]
+                
+                # Create peak_regions from the final boundary points
+                for i in range(len(self.peaks)):
+                    # Handle case where there are not enough boundaries (e.g., single peak)
+                    if i + 1 < len(all_boundaries):
+                        start = all_boundaries[i]
+                        end = all_boundaries[i+1]
+                        self.peak_regions.append((start, end))
+
             def delete_selected_peak_action(self):
                 if self.selected_peak_index_for_delete == -1 or self.selected_peak_index_for_delete not in self.peaks: return
                 self.peaks = np.array([p for p in self.peaks if p != self.selected_peak_index_for_delete])
@@ -3347,7 +3361,6 @@ if __name__ == "__main__":
                 base_img = self.original_pil_cropped_data.copy()
                 if self.denoise_sigma > 0.01:
                     try:
-                        # FIX: Removed mode=base_img.mode parameter
                         base_img = Image.fromarray(cv2.GaussianBlur(np.array(base_img), (0,0), self.denoise_sigma).astype(np.array(base_img).dtype))
                     except: pass
                 if base_img.mode.startswith('I') or base_img.mode == 'F': self.enhanced_cropped_image_for_display = Image.fromarray((np.clip((np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) / (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9), 0.0, 1.0) * 255).astype(np.uint8), mode='L')
@@ -4507,7 +4520,7 @@ if __name__ == "__main__":
                     'peak_prominence_factor': 0.00,
                     'valley_offset_pixels': 0,  # Added to persist settings
                     'band_estimation_method': "Mean",
-                    'area_subtraction_method': "Rolling Ball",
+                    'area_subtraction_method': "Rolling-valley",
                     'smoothing_sigma': 0.0, # Added to persist settings
                 }
                 
@@ -7483,8 +7496,6 @@ if __name__ == "__main__":
             
             def enable_quad_mode(self):
                 """Enable mode to define a single quadrilateral area, clearing multi-lane definitions."""
-                # --- NEW: Clear multi-lane definitions if they exist ---
-                
                 if self.multi_lane_definitions:
                     print("INFO: Clearing existing multi-lane definitions to define a single quadrilateral.")
                     self.multi_lane_definitions.clear()
@@ -7494,11 +7505,14 @@ if __name__ == "__main__":
                     self.multi_lane_processing_finished = False
                     if hasattr(self, 'btn_finish_multi_lane_def'):
                         self.btn_finish_multi_lane_def.setEnabled(False)
-                    # No need to clear self.current_multi_lane_points or self.current_multi_lane_rect_start
-                    # as those are for the *current* multi-lane definition process, which is being superseded.
-                # --- END NEW ---
 
-                self.live_view_label.bounding_box_preview = [] # Clear single rect preview
+                # --- START FIX: Thoroughly reset all drawing state ---
+                self.live_view_label.bounding_box_preview = None 
+                self.live_view_label.rectangle_start = None
+                self.live_view_label.rectangle_end = None
+                self.live_view_label.rectangle_points = []
+                # --- END FIX ---
+                
                 self.live_view_label.quad_points = []          # Clear single quad points for a fresh start
                 self.live_view_label.bounding_box_complete = False
                 self.live_view_label.measure_quantity_mode = True # App flag
@@ -7506,13 +7520,11 @@ if __name__ == "__main__":
                 self._reset_live_view_label_custom_handlers() # Clear previous custom handlers
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 
-                # Clearing single-lane results as well, as we are defining a new single area
                 self.latest_peak_areas = []
                 self.latest_peak_details = []
                 self.latest_calculated_quantities = []
                 self.target_protein_areas_text.clear() 
 
-                # Ensure multi-lane UI elements are reset if they were active
                 if hasattr(self, 'btn_finish_multi_lane_def'):
                     self.btn_finish_multi_lane_def.setEnabled(False)
                 self.multi_lane_processing_finished = False
@@ -7522,7 +7534,6 @@ if __name__ == "__main__":
             
             def enable_rectangle_mode(self):
                 """Enable mode to define a single rectangle area, clearing multi-lane definitions."""
-                # --- NEW: Clear multi-lane definitions if they exist ---
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 if self.multi_lane_definitions:
                     print("INFO: Clearing existing multi-lane definitions to define a single rectangle.")
@@ -7533,9 +7544,14 @@ if __name__ == "__main__":
                     self.multi_lane_processing_finished = False
                     if hasattr(self, 'btn_finish_multi_lane_def'):
                         self.btn_finish_multi_lane_def.setEnabled(False)
-                # --- END NEW ---
 
-                self.live_view_label.bounding_box_preview = None # Clear single rect preview for a fresh start
+                # --- START FIX: Thoroughly reset all drawing state ---
+                self.live_view_label.bounding_box_preview = None 
+                self.live_view_label.rectangle_start = None
+                self.live_view_label.rectangle_end = None
+                self.live_view_label.rectangle_points = []
+                # --- END FIX ---
+
                 self.live_view_label.quad_points = []            # Clear single quad points
                 self.live_view_label.bounding_box_complete = False
                 self.live_view_label.measure_quantity_mode = True # App flag
@@ -7546,19 +7562,15 @@ if __name__ == "__main__":
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.update_rectangle_preview
                 self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_rectangle
 
-                # Clearing single-lane results as well
                 self.latest_peak_areas = []
                 self.latest_peak_details = []
                 self.latest_calculated_quantities = []
                 self.target_protein_areas_text.clear()
 
-                # Ensure multi-lane UI elements are reset
                 if hasattr(self, 'btn_finish_multi_lane_def'):
                     self.btn_finish_multi_lane_def.setEnabled(False)
                 self.multi_lane_processing_finished = False
                 self.multi_lane_mode_active = False # Ensure multi-lane mode is off
-                
-
                 
                 self.update_live_view()
             
@@ -11555,7 +11567,8 @@ if __name__ == "__main__":
                     "Spectra Multicolor Broad Range Protein Ladder (Thermo)": [260, 140, 100, 75, 60, 45, 35, 25, 15, 10],
                     # DNA (bp)
                     "1 kb DNA Ladder (NEB N3232)": [10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 500],
-                    "1 kb Plus DNA Ladder (Thermo 10787018)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 75],
+                    "1 kb Plus DNA Ladder (Invitrogen)": [15000, 10000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100],
+                    "1 kb Plus DNA Ladder (Thermo)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 75],
                     "TrackIt 1 Kb Plus DNA Ladder (Invitrogen 10488085)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100],
                     "Lambda DNA/HindIII Marker (NEB N3012)": [23130, 9416, 6557, 4361, 2322, 2027, 564],
                 }
