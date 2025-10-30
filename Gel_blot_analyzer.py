@@ -460,7 +460,7 @@ if __name__ == "__main__":
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
-            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal
+            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer
         )
         import json
         import os
@@ -731,12 +731,24 @@ if __name__ == "__main__":
                 self.base_protein_mw_input_da.textChanged.connect(self._on_mw_da_changed)
                 params_layout.addWidget(self.base_protein_mw_input_da, 0, 1, 1, 3)
                 params_layout.addWidget(QLabel("Avg. Glycan Mass (kDa):"), 1, 0)
-                glycan_layout = QHBoxLayout(); self.glycan_type_combo = QComboBox(); self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
+                
+                # --- THIS IS THE FIX ---
+                glycan_layout = QHBoxLayout()
+                self.glycan_type_combo = QComboBox()
+                self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
                 self.glycan_type_combo.currentTextChanged.connect(self._on_glycan_type_selected)
+                
                 self.glycan_mass_input = QLineEdit(str(self.glycan_mass) if self.glycan_mass > 0 else "")
-                self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self)); self.glycan_mass_input.setPlaceholderText("e.g., 2.5");
-                self.glycan_mass_input.textChanged.connect(self.update_potential_fragments); self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
-                glycan_layout.addWidget(self.glycan_type_combo, 1); glycan_layout.addWidget(self.glycan_mass_input, 1)
+                self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self))
+                self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
+                self.glycan_mass_input.setFixedWidth(80) # Give the input a fixed width
+                self.glycan_mass_input.textChanged.connect(self.update_potential_fragments)
+                self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
+                
+                glycan_layout.addWidget(self.glycan_type_combo, 1) # Let the combo box take most of the space
+                glycan_layout.addWidget(self.glycan_mass_input, 0) # Give the input field no stretch
+                # --- END OF FIX ---
+
                 params_layout.addLayout(glycan_layout, 1, 1, 1, 3)
                 params_layout.addWidget(QLabel("Number of Glycans:"), 2, 0)
                 self.num_glycans_spinbox = QSpinBox(); self.num_glycans_spinbox.setRange(0, 50)
@@ -1296,16 +1308,13 @@ if __name__ == "__main__":
 
             def run_peak_detection_and_plot(self):
                 """Generates profile, detects peaks, updates plot and image preview."""
-                # --- Reset deleted peaks if parameters change ---
                 self.deleted_peak_indices.clear()
                 self.selected_peak_index = -1
                 self.delete_peak_button.setEnabled(False)
-                # --- End Reset ---
 
                 if self.intensity_array_original_range is None: return
                 if find_peaks is None or gaussian_filter1d is None: return
 
-                # ... (Keep parameter updates and profile generation logic) ...
                 self.band_estimation_method = self.band_estimation_combobox.currentText()
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0
                 self.peak_height_factor = self.peak_height_slider.value() / 100.0
@@ -1326,20 +1335,17 @@ if __name__ == "__main__":
                     profile_temp = np.mean(self.intensity_array_original_range, axis=1)
 
                 if profile_temp is None or not np.all(np.isfinite(profile_temp)):
-                    print("AutoLaneTuneDialog: Profile calculation failed or resulted in NaN/Inf.")
                     profile_temp = np.zeros(self.intensity_array_original_range.shape[0])
 
                 profile_original_inv_raw = self.original_max_value - profile_temp.astype(np.float64)
                 min_inverted_raw = np.min(profile_original_inv_raw)
                 profile_original_inv_raw -= min_inverted_raw
-
                 self.profile_original_inverted = profile_original_inv_raw
                 try:
                     current_sigma = self.smoothing_sigma
                     if current_sigma > 0.1 and len(self.profile_original_inverted) > int(3 * current_sigma) * 2 + 1:
                         self.profile_original_inverted = gaussian_filter1d(self.profile_original_inverted, sigma=current_sigma)
-                except Exception as smooth_err:
-                    print(f"AutoLaneTuneDialog: Error smoothing profile: {smooth_err}")
+                except Exception as smooth_err: print(f"AutoLaneTuneDialog: Error smoothing profile: {smooth_err}")
 
                 prof_min_inv, prof_max_inv = np.min(self.profile_original_inverted), np.max(self.profile_original_inverted)
                 if prof_max_inv > prof_min_inv + 1e-6:
@@ -1354,97 +1360,74 @@ if __name__ == "__main__":
                 min_prominence_abs = max(1.0, min_prominence_abs)
 
                 try:
-                    peaks_indices, _ = find_peaks(
-                        self.profile, height=min_height_abs, prominence=min_prominence_abs,
-                        distance=self.peak_distance, width=1
-                    )
-                    # *** Store ALL initially detected peaks ***
+                    peaks_indices, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
                     self._all_initial_peaks = np.sort(peaks_indices)
-                    # *** Filter out user-deleted peaks for display ***
                     self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
-
                 except Exception as e:
-                    print(f"AutoLaneTuneDialog: Peak detection error: {e}")
-                    self._all_initial_peaks = np.array([])
-                    self.detected_peaks = np.array([])
+                    self._all_initial_peaks = np.array([]); self.detected_peaks = np.array([])
 
+                # --- THEME-AWARE COLOR DEFINITIONS ---
+                is_dark_theme = self.parent() and hasattr(self.parent(), 'current_theme') and self.parent().current_theme == "dark"
+                if is_dark_theme:
+                    bg_color, ax_bg_color = '#2D2D30', '#38383C'
+                    text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
+                    profile_color, peak_marker_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#42A5F5'
+                else:
+                    bg_color, ax_bg_color = 'white', 'white'
+                    text_color, spine_color, grid_color = 'black', '#555555', '#DDDDDD'
+                    profile_color, peak_marker_color, selected_peak_color = 'black', 'red', 'blue'
 
                 # --- Update Plot ---
-                self.ax_profile.clear()
-                self.ax_image.clear() # Clear image axis too
+                self.ax_profile.clear(); self.ax_image.clear()
+                self.fig.patch.set_facecolor(bg_color)
+                for axis in [self.ax_profile, self.ax_image]:
+                    axis.patch.set_facecolor(ax_bg_color)
+                    for spine in axis.spines.values(): spine.set_color(spine_color)
+                    axis.tick_params(axis='x', colors=text_color); axis.tick_params(axis='y', colors=text_color)
+                    axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
+                # --- End Theme Setup ---
 
                 if self.profile_original_inverted is not None and len(self.profile_original_inverted) > 0:
-                    self.ax_profile.plot(self.profile_original_inverted, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color="black", lw=1.0)
+                    self.ax_profile.plot(self.profile_original_inverted, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
 
-                    # Plot *currently active* detected peaks
-                    # These are the peaks that `on_canvas_click` will try to select for deletion
                     if len(self.detected_peaks) > 0:
                         valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(self.profile_original_inverted))]
                         if len(valid_peaks) > 0:
                             peak_y_values = self.profile_original_inverted[valid_peaks]
-                            # No need for `picker=True` if on_canvas_click handles selection by coordinate
-                            self.peak_plot_artist, = self.ax_profile.plot(
-                                valid_peaks, peak_y_values, "rx", markersize=8,
-                                label=f"Active Peaks ({len(valid_peaks)})") # Removed picker
+                            self.peak_plot_artist, = self.ax_profile.plot(valid_peaks, peak_y_values, "x", color=peak_marker_color, markersize=8, label=f"Active Peaks ({len(valid_peaks)})")
 
-                            # --- Highlight selected peak (logic remains the same) ---
                             if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
                                  idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
                                  if len(idx_in_valid) > 0:
-                                      self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]],
-                                                         'o', markersize=12, markeredgecolor='blue', markerfacecolor='none',
-                                                         label='Selected')
-                            # --- End Highlight ---
-                    
-                    # Profile plot styling
-                    self.ax_profile.set_ylabel("Intensity (Smoothed, Inverted)", fontsize=9)
-                    self.ax_profile.legend(fontsize='x-small')
-                    self.ax_profile.set_title("Intensity Profile and Detected Peaks", fontsize=10)
-                    self.ax_profile.grid(True, linestyle=':', alpha=0.6)
-                    # Remove x-axis labels/ticks for the top plot
-                    self.ax_profile.tick_params(axis='x', labelbottom=False)
-                    if np.max(self.profile_original_inverted) > 10000:
-                        self.ax_profile.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+                                      self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected')
 
-                    # --- Plot Image Preview ---
+                    self.ax_profile.set_ylabel("Intensity (Smoothed, Inverted)", fontsize=9)
+                    leg = self.ax_profile.legend(fontsize='x-small'); leg.get_frame().set_facecolor(ax_bg_color)
+                    for text in leg.get_texts(): text.set_color(text_color)
+                    self.ax_profile.set_title("Intensity Profile and Detected Peaks", fontsize=10)
+                    self.ax_profile.grid(True, linestyle=':', alpha=0.6, color=grid_color)
+                    self.ax_profile.tick_params(axis='x', labelbottom=False)
+                    if np.max(self.profile_original_inverted) > 10000: self.ax_profile.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+
                     try:
-                        # Rotate the PIL image 90 degrees for horizontal display matching profile axis
                         rotated_pil_image = self.pil_image_for_display.rotate(90, expand=True)
                         im_array_disp = np.array(rotated_pil_image)
-
-                        # Determine vmin/vmax for imshow based on original data range
                         im_vmin, im_vmax = self.display_vmin, self.display_vmax
-                        # Handle float case specifically if needed
-                        if self.pil_image_for_display.mode == 'F':
-                            im_vmin, im_vmax = 0.0, self.original_max_value # Or 0.0, 1.0 if normalized
-
+                        if self.pil_image_for_display.mode == 'F': im_vmin, im_vmax = 0.0, self.original_max_value
                         profile_length = len(self.profile_original_inverted)
                         extent = [0, profile_length - 1 if profile_length > 0 else 0, 0, rotated_pil_image.height]
-
-                        self.ax_image.imshow(im_array_disp, cmap='gray', aspect='auto',
-                                             extent=extent, vmin=im_vmin, vmax=im_vmax)
+                        self.ax_image.imshow(im_array_disp, cmap='gray', aspect='auto', extent=extent, vmin=im_vmin, vmax=im_vmax)
                         self.ax_image.set_xlabel("Pixel Index along Profile Axis", fontsize=9)
-                        self.ax_image.set_yticks([]) # Hide Y ticks for image preview
-                        self.ax_image.set_ylabel("Lane Width", fontsize=9)
+                        self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     except Exception as img_e:
-                        print(f"AutoLaneTuneDialog: Error displaying image preview: {img_e}")
-                        self.ax_image.text(0.5, 0.5, 'Error displaying preview', ha='center', va='center', transform=self.ax_image.transAxes)
+                        self.ax_image.text(0.5, 0.5, 'Error displaying preview', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
                         self.ax_image.set_xticks([]); self.ax_image.set_yticks([])
-
                 else:
-                    self.ax_profile.text(0.5, 0.5, "No Profile Data", ha='center', va='center', transform=self.ax_profile.transAxes)
-                    self.ax_image.text(0.5, 0.5, "No Image Data", ha='center', va='center', transform=self.ax_image.transAxes)
-
-                # Use tight_layout or constrained_layout
-                # try:
-                #     self.fig.tight_layout(pad=0.5)
-                # except ValueError: # Can happen with certain plot states
-                #     try:
-                #         self.fig.set_constrained_layout(True)
-                #     except AttributeError: pass # Older matplotlib
+                    self.ax_profile.text(0.5, 0.5, "No Profile Data", ha='center', va='center', color=text_color, transform=self.ax_profile.transAxes)
+                    self.ax_image.text(0.5, 0.5, "No Image Data", ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
 
                 self.canvas.draw_idle()
-                plt.close()
+                plt.close(self.fig)
 
             def on_pick(self, event):
                 """Handles clicking on a peak marker."""
@@ -1970,7 +1953,7 @@ if __name__ == "__main__":
                          parent_app_instance=None, peak_details_data=None):
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
-                self.setGeometry(50, 50, 750, 700) 
+                self.setGeometry(50, 50, 750, 900) 
                 self.temp_clipboard_file_path = None
                 self.parent_app = parent_app_instance
                 self.current_results_data = {} 
@@ -2203,14 +2186,19 @@ if __name__ == "__main__":
                 )
                 if current_plot_widget:
                     plot_layout_current.addWidget(current_plot_widget)
-                plot_group_current.setMaximumHeight(250)
-                plot_group_current.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                
+                # --- THIS IS THE DEFINITIVE FIX ---
+                # Set a reasonable minimum height for the plot group box.
+                # This ensures it's always large enough, regardless of other widgets.
+                plot_group_current.setMinimumHeight(280)
+                # --- END OF FIX ---
+
                 current_main_layout.addWidget(plot_group_current)
                 
                 # --- Group 3: Band Analysis (contains results table and lane preview) ---
                 results_group = QGroupBox("Band Analysis")
                 results_layout = QVBoxLayout(results_group)
-
+                
                 results_display_area = QWidget()
                 results_display_layout = QVBoxLayout(results_display_area)
                 results_display_layout.setContentsMargins(0,0,0,0)
@@ -2240,7 +2228,9 @@ if __name__ == "__main__":
                     results_display_layout.addWidget(no_data_label)
                 
                 results_layout.addWidget(results_display_area)
-                current_main_layout.addWidget(results_group)
+                
+                # Add the results group with a stretch factor so it fills remaining space
+                current_main_layout.addWidget(results_group, 1)
 
                 # --- Bottom Buttons (Copy/Export) ---
                 current_buttons_layout = QHBoxLayout()
@@ -2253,7 +2243,6 @@ if __name__ == "__main__":
                 current_buttons_layout.addWidget(export_current_button)
                 current_main_layout.addLayout(current_buttons_layout)
                 
-                current_main_layout.addStretch(1)
                 self.tab_widget.addTab(current_tab_widget, "Current Analysis")
                        
             def _copy_active_lane_table_data(self):
@@ -4566,6 +4555,7 @@ if __name__ == "__main__":
                 # Main container widget
                 self.main_widget = QWidget()
                 self.setCentralWidget(self.main_widget)
+                self.table_window_instance = None
                 self._deactivate_all_previews()
 
                 # --- Create the two main widgets that will be rearranged ---
@@ -5044,6 +5034,8 @@ if __name__ == "__main__":
                 self.theme_action = QAction(theme_icon, "Toggle Dark/Light Mode", self)
                 self.theme_action.setCheckable(True)
                 self.theme_action.setToolTip("Switch between light and dark themes.")
+                self.theme_action.setToolTip("Switch between light and dark themes (Ctrl+Shift+D or Cmd+Shift+D).")
+                self.theme_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
                 self.theme_action.triggered.connect(self._toggle_theme)
                 # --- END ADD ---
 
@@ -6610,14 +6602,12 @@ if __name__ == "__main__":
                 Saves a complete snapshot of the application's visual and logical state to the undo stack.
                 This is the new, robust state management core.
                 """
-                # Do not save state if no master image exists. This is a critical guard.
                 if not self.image_master or self.image_master.isNull():
                     return
 
-                # Limit the undo stack to a reasonable size (e.g., 20)
                 UNDO_LIMIT = 20
                 while len(self.undo_stack) >= UNDO_LIMIT:
-                    self.undo_stack.pop(0) # Remove the oldest state
+                    self.undo_stack.pop(0)
 
                 state = {
                     # --- Core Image ---
@@ -6653,62 +6643,85 @@ if __name__ == "__main__":
                     "clahe_data": self.clahe_data.copy(),
                     
                     # --- Padding State ---
-                    "image_padded": self.image_padded
+                    "image_padded": self.image_padded,
+
+                    # --- ANALYSIS REGIONS (THE FIX) ---
+                    "multi_lane_definitions": [
+                        {
+                            'type': d['type'], 'id': d['id'],
+                            'points_label': (
+                                [(p.x(), p.y()) for p in d['points_label']] if d['type'] == 'quad' else
+                                [(d['points_label'][0].x(), d['points_label'][0].y(), d['points_label'][0].width(), d['points_label'][0].height())]
+                            )
+                        } for d in self.multi_lane_definitions
+                    ],
+                    "single_quad_points": [(p.x(), p.y()) for p in self.live_view_label.quad_points],
+                    "single_bounding_box": self.live_view_label.bounding_box_preview,
+                    # --- END OF FIX ---
                 }
                 
                 self.undo_stack.append(state)
-                self.redo_stack.clear() # Any new action clears the redo stack
+                self.redo_stack.clear()
 
             def _restore_state_from_dict(self, state_dict):
                 """
                 Restores the entire application state from a snapshot dictionary.
                 This method updates both internal variables and the UI controls.
                 """
-                self._is_restoring_state = True # Prevent feedback loops
+                self._is_restoring_state = True
 
                 try:
-                    # --- Restore Core Image ---
+                    # --- Restore Core Image & Annotations ---
                     self.image_master = state_dict['image_master'].copy()
-                    
-                    # --- Restore Annotations ---
                     self.left_markers = state_dict['left_markers']
                     self.right_markers = state_dict['right_markers']
                     self.top_markers = state_dict['top_markers']
                     self.custom_markers = state_dict['custom_markers']
                     self.custom_shapes = state_dict['custom_shapes']
 
-                    # --- Restore Marker Alignment ---
+                    # --- ANALYSIS REGIONS (THE FIX) ---
+                    serialized_defs = state_dict.get("multi_lane_definitions", [])
+                    self.multi_lane_definitions = []
+                    for d in serialized_defs:
+                        restored_def = {'type': d['type'], 'id': d['id']}
+                        if d['type'] == 'quad':
+                            restored_def['points_label'] = [QPointF(x, y) for x, y in d['points_label']]
+                        elif d['type'] == 'rectangle':
+                            x, y, w, h = d['points_label'][0]
+                            restored_def['points_label'] = [QRectF(x, y, w, h)]
+                        self.multi_lane_definitions.append(restored_def)
+
+                    serialized_quad = state_dict.get("single_quad_points", [])
+                    self.live_view_label.quad_points = [QPointF(x, y) for x, y in serialized_quad]
+                    self.live_view_label.bounding_box_preview = state_dict.get("single_bounding_box", None)
+                    # --- END OF FIX ---
+
+                    # --- Restore Marker Alignment & Font ---
                     self.left_marker_shift_added = state_dict['left_marker_shift_added']
                     self.right_marker_shift_added = state_dict['right_marker_shift_added']
                     self.top_marker_shift_added = state_dict['top_marker_shift_added']
-
-                    # --- Restore Font Settings ---
                     self.font_family = state_dict['font_family']
                     self.font_size = state_dict['font_size']
                     self.font_color = QColor(state_dict['font_color'])
                     self.font_rotation = state_dict['font_rotation']
-
+                    
                     # --- Restore Image Adjustments ---
                     self.main_image_is_inverted = state_dict['main_image_is_inverted']
                     self.channel_mixer_data = state_dict['channel_mixer_data']
                     self.unsharp_mask_data = state_dict['unsharp_mask_data']
                     self.clahe_data = state_dict['clahe_data']
-                    lg_settings = state_dict['levels_gamma']
-
-                    # --- Restore Padding State ---
                     self.image_padded = state_dict['image_padded']
-
-                    # --- UPDATE UI CONTROLS (with signals blocked) ---
-                    # Marker Alignment Sliders
-                    self._update_marker_slider_ranges() # Recalculate ranges for the restored image size
+                    
+                    # --- UPDATE UI CONTROLS ---
+                    self._update_marker_slider_ranges()
                     self.left_padding_slider.blockSignals(True); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.blockSignals(False)
                     self.right_padding_slider.blockSignals(True); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.blockSignals(False)
                     self.top_padding_slider.blockSignals(True); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.blockSignals(False)
-                    
-                    # Adjustment Sliders
-                    self._load_adjustments_to_ui("Main Image") # This helper now does all the work
-                    
-                    # Font UI
+                    self._load_adjustments_to_ui("Main Image")
+                    lg_settings = state_dict['levels_gamma']
+                    self.black_point_slider.setValue(lg_settings.get('black_point', 0))
+                    self.white_point_slider.setValue(lg_settings.get('white_point', 65535))
+                    self.gamma_slider.setValue(lg_settings.get('gamma', 100))
                     self.font_combo_box.setCurrentFont(QFont(self.font_family))
                     self.font_size_spinner.setValue(self.font_size)
                     self._update_color_button_style(self.font_color_button, self.font_color)
@@ -6716,15 +6729,13 @@ if __name__ == "__main__":
                     
                     # --- Finalize ---
                     self._update_status_bar()
-                    # Re-apply all adjustments to the newly restored image_master
                     self.apply_all_adjustments()
 
                 except KeyError as e:
-                    print(f"CRITICAL: State restoration failed. Missing key: {e}")
                     QMessageBox.critical(self, "Undo/Redo Error", f"Cannot restore state. Data for '{e}' is missing. The undo history may be corrupted.")
                 finally:
                     self._is_restoring_state = False
-                    self.update_live_view() # Ensure final render happens
+                    self.update_live_view()
             
             def undo_action_m(self):
                 """Undo the last action by restoring the previous state."""
@@ -6769,128 +6780,119 @@ if __name__ == "__main__":
                     
             def analysis_tab(self):
                 tab = QWidget()
-                layout = QVBoxLayout(tab)
-                layout.setSpacing(10)
+                main_layout = QVBoxLayout(tab)
+                main_layout.setSpacing(10)
 
-                # --- Molecular Weight Prediction and Glycosylation Mapper ---
-                mw_glyco_group = QGroupBox("Molecular Weight Prediction and Glycosylation Mapper")
-                mw_glyco_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                mw_glyco_layout = QVBoxLayout(mw_glyco_group)
-
-                # -- Main Controls Layout (Single Row) --
-                main_controls_layout = QHBoxLayout()
-                main_controls_layout.addWidget(QLabel("Regression Model:"))
+                # --- Group 1: Molecular Weight Prediction (Compact layout) ---
+                mw_group = QGroupBox("Molecular Weight Prediction")
+                mw_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                mw_layout = QGridLayout(mw_group)
+                mw_layout.addWidget(QLabel("Regression Model:"), 0, 0)
                 self.mw_regression_model_combo = QComboBox()
-                self.mw_regression_model_combo.addItems([
-                    "Log-Linear (Degree 1)",
-                    "Log-Polynomial (Degree 2)",
-                    "Log-Polynomial (Degree 3)"
-                ])
-                main_controls_layout.addWidget(self.mw_regression_model_combo, 1) # Add stretch factor
-                
+                self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"])
+                mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
                 self.predict_button = QPushButton("Predict Molecular Weight")
-                self.predict_button.setToolTip("Predicts size based on the active marker set.\nShortcut: Ctrl+P / Cmd+P")
+                self.predict_button.setToolTip("Click a point on a lane to predict its MW based on the active standard markers.\nShortcut: Ctrl+P")
                 self.predict_button.setEnabled(False)
                 self.predict_button.clicked.connect(self.predict_molecular_weight)
-                main_controls_layout.addWidget(self.predict_button)
-
-                self.open_glyco_mapper_button = QPushButton("Protein Size Analysis")
-                self.open_glyco_mapper_button.setToolTip("Analyze a protein sequence for N-glycosylation sites and predict potential masses.")
+                mw_layout.addWidget(self.predict_button, 0, 2)
+                self.open_glyco_mapper_button = QPushButton("Protein Analysis")
+                self.open_glyco_mapper_button.setToolTip("Analyze a protein sequence for modifications and oligomerization.")
                 self.open_glyco_mapper_button.clicked.connect(self.open_protein_analyzer)
-                main_controls_layout.addWidget(self.open_glyco_mapper_button)
-
-                mw_glyco_layout.addLayout(main_controls_layout)
+                mw_layout.addWidget(self.open_glyco_mapper_button, 0, 3)
+                mw_layout.setColumnStretch(1, 1)
                 self.show_oligomer_glyco_overlay_checkbox = QCheckBox("Show Oligomer/Glyco Overlay")
-                self.show_oligomer_glyco_overlay_checkbox.setToolTip("Overlays potential oligomeric and glycosylated bands on the image after running MW prediction.")
+                self.show_oligomer_glyco_overlay_checkbox.setToolTip("After predicting an MW, overlay potential oligomeric and glycosylated bands on the image.")
                 self.show_oligomer_glyco_overlay_checkbox.stateChanged.connect(self.update_live_view)
-                mw_glyco_layout.addWidget(self.show_oligomer_glyco_overlay_checkbox)
-                layout.addWidget(mw_glyco_group)
+                mw_layout.addWidget(self.show_oligomer_glyco_overlay_checkbox, 1, 0, 1, 4)
+                main_layout.addWidget(mw_group)
 
+                # --- Group 2: Lane Quantification Workflow ---
+                quant_workflow_group = QGroupBox("Lane Quantification Workflow")
+                quant_workflow_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                quant_workflow_layout = QVBoxLayout(quant_workflow_group)
+                quant_workflow_layout.setSpacing(8)
 
-                # --- Peak Area / Sample Quantification Group (remains the same) ---
-                quant_group = QGroupBox("Peak Area and Sample Quantification")
-                quant_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                quant_layout = QVBoxLayout(quant_group)
-                area_def_layout = QHBoxLayout()
-                self.btn_define_quad = QPushButton("Define Single Quad Area")
-                self.btn_define_quad.setToolTip("Click 4 corner points to define a region for skewed lanes.")
+                # -- Step 1: Define Regions (Grid layout for buttons) --
+                step1_group = QGroupBox("Define & Manage Analysis Regions")
+                step1_layout = QGridLayout(step1_group)
+                self.btn_define_quad = QPushButton("Define Single Quad"); self.btn_define_quad.setToolTip("Click 4 corner points to define a region for a single skewed lane.")
                 self.btn_define_quad.clicked.connect(self.enable_quad_mode)
-                self.btn_define_rec = QPushButton("Define Single Rectangle Area")
-                self.btn_define_rec.setToolTip("Click and drag to define a rectangular region for straight lanes.")
+                self.btn_define_rec = QPushButton("Define Single Rectangle"); self.btn_define_rec.setToolTip("Click and drag to define a rectangular region for a single straight lane.")
                 self.btn_define_rec.clicked.connect(self.enable_rectangle_mode)
-                self.btn_sel_rec = QPushButton("Move/Resize Selected Area")
-                self.btn_sel_rec.setToolTip("Click a defined lane to select it for moving or resizing.")
-                self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
-                self.btn_analyze_multiple_lanes = QPushButton("Define Multiple Lanes")
-                self.btn_analyze_multiple_lanes.setToolTip("Define multiple lanes (quads or rectangles) sequentially.")
+                self.btn_analyze_multiple_lanes = QPushButton("Define Multiple"); self.btn_analyze_multiple_lanes.setToolTip("Define multiple lanes sequentially to analyze as a group.")
                 self.btn_analyze_multiple_lanes.clicked.connect(self.start_analyze_multiple_lanes)
-                self.btn_finish_multi_lane_def = QPushButton("Finish Defining Multiple Lanes")
-                self.btn_finish_multi_lane_def.setToolTip("Signal that all multiple lanes have been defined.")
+                self.btn_finish_multi_lane_def = QPushButton("Finish Defining"); self.btn_finish_multi_lane_def.setToolTip("Signal that all multiple lanes have been defined.")
                 self.btn_finish_multi_lane_def.clicked.connect(self.finish_multi_lane_definition_and_process)
                 self.btn_finish_multi_lane_def.setEnabled(False)
-                area_def_layout.addWidget(self.btn_define_quad)
-                area_def_layout.addWidget(self.btn_define_rec)
-                area_def_layout.addWidget(self.btn_sel_rec)
-                area_def_layout.addWidget(self.btn_analyze_multiple_lanes)
-                area_def_layout.addWidget(self.btn_finish_multi_lane_def)
-                quant_layout.addLayout(area_def_layout)
-                quant_layout.addWidget(self.create_separator())
-                std_proc_layout = QHBoxLayout()
-                self.btn_process_std = QPushButton("Process As Standard")
-                self.btn_process_std.setToolTip("Analyze the currently defined/selected area as a standard lane.")
+                self.btn_sel_rec = QPushButton("Move/Resize Area"); self.btn_sel_rec.setToolTip("Click a defined lane to select it for moving, resizing, or deleting with the Delete/Backspace key.")
+                self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
+                step1_layout.addWidget(self.btn_define_quad, 0, 0)
+                step1_layout.addWidget(self.btn_define_rec, 0, 1)
+                step1_layout.addWidget(self.btn_analyze_multiple_lanes, 0, 2)
+                step1_layout.addWidget(self.btn_finish_multi_lane_def, 1, 0)
+                step1_layout.addWidget(self.btn_sel_rec, 1, 1, 1, 2)
+                quant_workflow_layout.addWidget(step1_group)
+
+                # -- Step 2: Process Regions & View Results --
+                step2_group = QGroupBox("Process Regions & View Results")
+                step2_layout = QGridLayout(step2_group)
+                
+                # --- START OF BUG FIX ---
+                # Create a specific layout for the top two buttons
+                process_buttons_layout = QHBoxLayout()
+                self.btn_process_std = QPushButton("Process Selected as Standard"); self.btn_process_std.setToolTip("Analyze a pre-defined and selected region as a single standard lane.")
                 self.btn_process_std.clicked.connect(self.process_standard)
-                std_proc_layout.addWidget(self.btn_process_std)
-                quant_layout.addLayout(std_proc_layout)
-                std_info_layout = QGridLayout()
-                std_info_layout.addWidget(QLabel("Std. Quantities:"), 0, 0)
-                self.standard_protein_values = QLineEdit()
-                self.standard_protein_values.setPlaceholderText("Known quantities (comma-separated)")
-                # FIX: Removed setReadOnly(True) to make it editable
-                std_info_layout.addWidget(self.standard_protein_values, 0, 1)
-                std_info_layout.addWidget(QLabel("Std. Areas:"), 1, 0)
-                self.standard_protein_areas_text = QLineEdit()
-                self.standard_protein_areas_text.setPlaceholderText("Calculated total areas (comma-separated)")
-                # FIX: Removed setReadOnly(True) to make it editable
-                std_info_layout.addWidget(self.standard_protein_areas_text, 1, 1)
-
-                # FIX: Add a button to apply manual edits
-                self.update_standards_button = QPushButton("Update Standards from Text")
-                self.update_standards_button.setToolTip("Apply any manual changes made to the Quantities and Areas fields.")
-                self.update_standards_button.clicked.connect(self.update_standards_from_text_fields)
-                std_info_layout.addWidget(self.update_standards_button, 2, 0, 1, 2) # Span across both columns
-
-                quant_layout.addLayout(std_info_layout)
-                quant_layout.addWidget(self.create_separator())
-                sample_proc_layout = QHBoxLayout()
-                self.btn_analyze_sample = QPushButton("Analyze As Sample(s)")
-                self.btn_analyze_sample.setToolTip("Analyze the defined area(s) as sample lane(s) using the standard curve.")
+                self.btn_analyze_sample = QPushButton("Analyze as Sample(s)"); self.btn_analyze_sample.setToolTip("Analyze the defined region(s) as sample lane(s), using the standard curve if available.")
                 self.btn_analyze_sample.clicked.connect(self.process_sample)
-                sample_proc_layout.addWidget(self.btn_analyze_sample)
-                quant_layout.addLayout(sample_proc_layout)
-                sample_info_layout = QGridLayout()
-                sample_info_layout.addWidget(QLabel("Sample Areas:"), 0, 0)
-                self.target_protein_areas_text = QTextEdit()
-                self.target_protein_areas_text.setPlaceholderText("Calculated peak areas (auto-populated)")
-                self.target_protein_areas_text.setReadOnly(True)
-                self.target_protein_areas_text.setFixedHeight(70)
-                sample_info_layout.addWidget(self.target_protein_areas_text, 0, 1)
-                self.table_export_button = QPushButton("View/Export Results Table")
-                self.table_export_button.setToolTip("View and export the analysis results to Excel.")
+
+                # Set an expanding size policy for both buttons to make them equal width
+                self.btn_process_std.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.btn_analyze_sample.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+                process_buttons_layout.addWidget(self.btn_process_std)
+                process_buttons_layout.addWidget(self.btn_analyze_sample)
+                
+                # Add this layout to the grid, spanning all columns
+                step2_layout.addLayout(process_buttons_layout, 0, 0, 1, 3)
+                
+                step2_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
+                step2_layout.addWidget(QLabel("Std. Quantities:"), 2, 0); self.standard_protein_values = QLineEdit(); self.standard_protein_values.setPlaceholderText("Known quantities (comma-separated)")
+                step2_layout.addWidget(self.standard_protein_values, 2, 1)
+                self.update_standards_button = QPushButton("Update Curve"); self.update_standards_button.setToolTip("Apply manual changes to the Quantities and Areas fields to update the standard curve.")
+                self.update_standards_button.clicked.connect(self.update_standards_from_text_fields)
+                step2_layout.addWidget(self.update_standards_button, 2, 2)
+                step2_layout.addWidget(QLabel("Std. Areas:"), 3, 0); self.standard_protein_areas_text = QLineEdit(); self.standard_protein_areas_text.setPlaceholderText("Calculated total areas (comma-separated)")
+                step2_layout.addWidget(self.standard_protein_areas_text, 3, 1, 1, 2)
+                step2_layout.addWidget(QLabel("Sample Results:"), 4, 0, Qt.AlignTop); self.target_protein_areas_text = QTextEdit(); self.target_protein_areas_text.setPlaceholderText("Calculated peak areas and quantities will appear here for each lane.")
+                self.target_protein_areas_text.setReadOnly(True); self.target_protein_areas_text.setFixedHeight(60)
+                step2_layout.addWidget(self.target_protein_areas_text, 4, 1, 1, 2)
+
+                # Create a layout for the bottom row buttons
+                bottom_buttons_layout = QHBoxLayout()
+                self.table_export_button = QPushButton("View Full Results and History")
+                self.table_export_button.setToolTip("Open a new window to view, export, and manage current and past analysis results.")
                 self.table_export_button.clicked.connect(self.open_table_window)
-                sample_info_layout.addWidget(self.table_export_button, 1, 0, 1, 2)
-                quant_layout.addLayout(sample_info_layout)
-                layout.addWidget(quant_group)
-                
-                # --- Clear Button ---
-                clear_layout = QHBoxLayout()
-                clear_layout.addStretch()
-                self.clear_predict_button = QPushButton("Clear Analysis Markers & Regions")
-                self.clear_predict_button.setToolTip("Clears MW prediction line and all analysis regions.\nShortcut: Ctrl+Shift+P / Cmd+Shift+P")
+                self.clear_predict_button = QPushButton("Clear All Analysis")
+                self.clear_predict_button.setToolTip("Clears MW prediction line, all analysis regions, and standard curve data.\nShortcut: Ctrl+Shift+P")
                 self.clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
-                clear_layout.addWidget(self.clear_predict_button)
-                layout.addLayout(clear_layout)
+
+                # Set an expanding size policy for both buttons to make them equal width
+                self.table_export_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.clear_predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 
-                layout.addStretch()
+                bottom_buttons_layout.addWidget(self.table_export_button)
+                bottom_buttons_layout.addWidget(self.clear_predict_button)
+                
+                # Add this layout to the grid, spanning all columns
+                step2_layout.addLayout(bottom_buttons_layout, 5, 0, 1, 3)
+                # --- END OF BUG FIX ---
+                
+                quant_workflow_layout.addWidget(step2_group)
+                main_layout.addWidget(quant_workflow_group)
+
+                main_layout.addStretch(1) # Keeps everything pushed to the top correctly
+                
                 return tab
             
             def update_standards_from_text_fields(self):
@@ -7439,31 +7441,43 @@ if __name__ == "__main__":
                 return nearest_point
             
             def open_table_window(self):
+                # --- THIS IS THE FIX ---
+                # Check if an old instance of the window exists and close it before creating a new one.
+                if hasattr(self, 'table_window_instance') and self.table_window_instance:
+                    try:
+                        self.table_window_instance.close()
+                        self.table_window_instance.deleteLater()
+                    except RuntimeError:
+                        # This can happen if the window was already closed by the user. It's safe to ignore.
+                        pass
+                # --- END OF FIX ---
+
                 is_multi_lane_results = bool(self.latest_multi_lane_peak_areas) and self.multi_lane_processing_finished
 
                 peak_areas_data_for_table = None
                 quantities_data_for_table = None
-                peak_details_for_table = None # NEW
+                peak_details_for_table = None
 
                 if is_multi_lane_results:
                     peak_areas_data_for_table = self.latest_multi_lane_peak_areas 
                     quantities_data_for_table = self.latest_multi_lane_calculated_quantities
-                    peak_details_for_table = self.latest_multi_lane_peak_details # Pass multi-lane details
+                    peak_details_for_table = self.latest_multi_lane_peak_details
                 else: 
                     peak_areas_data_for_table = self.latest_peak_areas 
                     quantities_data_for_table = self.latest_calculated_quantities 
-                    peak_details_for_table = {1: self.latest_peak_details} if self.latest_peak_details else {} # Wrap single in dict for TableWindow
+                    peak_details_for_table = {1: self.latest_peak_details} if self.latest_peak_details else {}
 
                 standard_dict_to_show_current = self.quantities_peak_area_dict
                 is_standard_mode_current = len(standard_dict_to_show_current) >= 2
             
+                # Create the new instance and store the reference to it.
                 self.table_window_instance = TableWindow(
                     peak_areas_data_for_table, 
                     standard_dict_to_show_current,
                     is_standard_mode_current,
                     quantities_data_for_table,
-                    self, # parent_app_instance
-                    peak_details_data=peak_details_for_table # NEW Pass peak details
+                    self,
+                    peak_details_data=peak_details_for_table
                 )
                 self.table_window_instance.show()
             
@@ -7620,7 +7634,29 @@ if __name__ == "__main__":
                     self.live_view_label.setCursor(Qt.ArrowCursor)
                     self.update_live_view()
                 
-            
+            def _reset_to_selection_mode(self):
+                """
+                Resets the interaction state back to 'select_for_move' without fully cancelling the mode.
+                This is used after an action (like processing a standard) interrupts the mouse event flow.
+                """
+                self.current_selection_mode = "select_for_move"
+                self.live_view_label.mode = "select_for_move"
+
+                # Clear any temporary drag/resize state variables
+                self.shape_points_at_drag_start_label = []
+                self.initial_mouse_pos_for_shape_drag_label = QPointF()
+                self.resizing_corner_index = -1
+                self.is_duplicating_shape = False
+                self.duplication_source_info = None
+
+                # Reset the event handlers to allow for a new selection click
+                self._reset_live_view_label_custom_handlers()
+                self.live_view_label._custom_left_click_handler_from_app = self.handle_area_selection_click
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+
+                # Refresh the view to clear any selection-specific highlights
+                self.update_live_view()
+
             def process_standard(self):
                 extracted_qimage = None
                 region_type_for_message = "" # For user feedback
@@ -7703,6 +7739,7 @@ if __name__ == "__main__":
                         self.analyze_bounding_box(processed_data_pil, standard=True) 
                     else:
                         QMessageBox.warning(self, "Error", f"Could not convert {region_type_for_message} to grayscale for analysis.")
+                self._reset_to_selection_mode()
             
             def process_sample(self):
                 # --- START FIX ---
@@ -7845,6 +7882,7 @@ if __name__ == "__main__":
                 else:
                     self.target_protein_areas_text.setText("N/A or analysis failed for all lanes.")
                 
+                self._reset_to_selection_mode()
                 self.update_live_view()
                 
             def _map_label_rect_to_image_rect(self, rect_label_space: QRectF):
@@ -9234,28 +9272,28 @@ if __name__ == "__main__":
             
             def _update_level_slider_ranges_and_defaults(self):
                 """
-                Sets the Black/White Point slider default values.
-                Black point defaults to 0.
-                White point slider default value is set based on image format:
-                - 255 for Format_Grayscale8 or Format_Mono.
-                - 65535 for Format_Grayscale16 and all other formats (including color).
-                The slider *ranges* are fixed at 0-65535 in the UI creation.
+                Sets the Black/White Point slider default values based on the master image's format.
+                Black point defaults to 0. White point defaults to 65535 for 16-bit/color images
+                and 255 for 8-bit grayscale images. The slider ranges are fixed at 0-65535.
                 """
-                default_white_point_slider_value = 65535 # Default to 65535 for most cases
+                default_white_point_slider_value = 65535 # Default to full 16-bit range
 
-                if self.image and not self.image.isNull():
-                    current_format = self.image.format()
-
+                # --- START OF BUG FIX ---
+                # The sliders' default values must be based on the high-fidelity master image's
+                # bit depth, not the 8-bit display cache (self.image).
+                img_to_check_format = self.image_master
+                if img_to_check_format and not img_to_check_format.isNull():
+                    current_format = img_to_check_format.format()
+                    
+                    # If the master image is 8-bit grayscale, the default white point should be 255.
                     if current_format == QImage.Format_Grayscale8:
                         default_white_point_slider_value = 255
-                    elif current_format == QImage.Format_Mono:
-                        # For a 1-bit image, max actual value is 1.
-                        # Setting slider default to 255 gives more UI range.
-                        # apply_levels_gamma will correctly scale from slider (0-65535) to image range (0-1).
-                        default_white_point_slider_value = 255
-                    # For QImage.Format_Grayscale16, and all color formats (RGB888, ARGB32, etc.),
-                    # or any other/unknown format, we'll default the white point *slider value* to 65535.
-                    # The apply_levels_gamma function handles the true data range of these images.
+                    # For all other formats (16-bit grayscale, color, etc.), the slider should
+                    # default to the full 16-bit range (0-65535), as this is the internal
+                    # working range for the levels/gamma function.
+                    else:
+                        default_white_point_slider_value = 65535
+                # --- END OF BUG FIX ---
 
                 # Black point slider: Range is 0-65535, Value defaults to 0
                 if hasattr(self, 'black_point_slider'):
@@ -9264,7 +9302,7 @@ if __name__ == "__main__":
                     self.black_point_slider.blockSignals(False)
                     if hasattr(self, 'black_point_value_label'): self.black_point_value_label.setText("0")
 
-                # White point slider: Range is 0-65535, Value defaults based on above logic
+                # White point slider: Range is 0-65535, Value defaults based on the logic above
                 if hasattr(self, 'white_point_slider'):
                     self.white_point_slider.blockSignals(True)
                     self.white_point_slider.setValue(default_white_point_slider_value)
@@ -9780,29 +9818,23 @@ if __name__ == "__main__":
                 presets_layout.addWidget(self.save_button, 0, 3)
                 self.remove_config_button = QPushButton("Remove"); self.remove_config_button.clicked.connect(self.remove_config)
                 presets_layout.addWidget(self.remove_config_button, 0, 4)
-
-                # --- START FIX: Add the new checkbox here ---
                 self.load_custom_from_preset_checkbox = QCheckBox("Load Custom Markers/Shapes from Preset")
                 self.load_custom_from_preset_checkbox.setChecked(True) # Default to checked
                 self.load_custom_from_preset_checkbox.setToolTip("If checked, changing the preset will also load any custom markers/shapes saved with it, overwriting existing ones.")
-                presets_layout.addWidget(self.load_custom_from_preset_checkbox, 1, 1, 1, 4) # Add to row 1, spanning 4 columns
-                # --- END FIX ---
-
-                # --- Adjust row indices for the following widgets ---
-                presets_layout.addWidget(QLabel("L/R Values:"), 2, 0) # Was row 1, now row 2
+                presets_layout.addWidget(self.load_custom_from_preset_checkbox, 1, 1, 1, 4)
+                presets_layout.addWidget(QLabel("L/R Values:"), 2, 0)
                 self.marker_values_textbox = QLineEdit(self)
                 self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-separated)"); self.marker_values_textbox.setEnabled(False)
-                presets_layout.addWidget(self.marker_values_textbox, 2, 1, 1, 4) # Was row 1, now row 2
-
-                presets_layout.addWidget(QLabel("Top Labels:"), 3, 0, Qt.AlignTop) # Was row 2, now row 3
+                presets_layout.addWidget(self.marker_values_textbox, 2, 1, 1, 4)
+                presets_layout.addWidget(QLabel("Top Labels:"), 3, 0, Qt.AlignTop)
                 self.top_marker_input = QTextEdit(self)
                 self.top_marker_input.setText(", ".join(map(str, getattr(self, 'top_label', []))))
                 self.top_marker_input.setFixedHeight(50); self.top_marker_input.setPlaceholderText("Top labels (comma-separated)")
-                presets_layout.addWidget(self.top_marker_input, 3, 1, 1, 3) # Was row 2, now row 3
+                presets_layout.addWidget(self.top_marker_input, 3, 1, 1, 3)
                 self.update_labels_button = QPushButton("Update Labels")
                 self.update_labels_button.setToolTip("Apply values from the L/R and Top text boxes to any markers currently on the image.")
                 self.update_labels_button.clicked.connect(self.update_all_labels)
-                presets_layout.addWidget(self.update_labels_button, 3, 4) # Was row 2, now row 3
+                presets_layout.addWidget(self.update_labels_button, 3, 4)
                 main_layout.addWidget(presets_group)
 
                 # --- Group 2: Standard Marker Tools ---
@@ -9810,8 +9842,6 @@ if __name__ == "__main__":
                 standard_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 standard_layout = QGridLayout(standard_group)
                 standard_layout.setColumnStretch(1, 1)
-
-                # Font Controls (MOVED HERE)
                 font_options_layout = QHBoxLayout()
                 self.font_combo_box = QFontComboBox(); self.font_combo_box.setCurrentFont(QFont(self.font_family)); self.font_combo_box.currentFontChanged.connect(self.update_font)
                 self.font_size_spinner = QSpinBox(); self.font_size_spinner.setRange(6, 72); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.valueChanged.connect(self.update_font)
@@ -9821,20 +9851,16 @@ if __name__ == "__main__":
                 font_options_layout.addWidget(self.font_color_button); font_options_layout.addWidget(QLabel("Top Rotation:")); font_options_layout.addWidget(self.font_rotation_input)
                 standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
-
-                # Placement Controls
                 left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
                 left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
                 self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(self.update_left_padding)
                 standard_layout.addWidget(self.left_padding_slider, 2, 1)
                 duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
-                
                 right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
                 right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
                 self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(self.update_right_padding)
                 standard_layout.addWidget(self.right_padding_slider, 3, 1)
                 duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
-                
                 top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
                 top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
                 self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(self.update_top_padding)
@@ -9842,19 +9868,32 @@ if __name__ == "__main__":
                 main_layout.addWidget(standard_group)
 
                 # --- Group 3: Custom Markers, Shapes & Grid ---
-                custom_group = QGroupBox("Custom Markers, Shapes & Grid") # This group is fine as-is
+                custom_group = QGroupBox("Custom Markers, Shapes & Grid")
                 custom_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                # ... (The rest of this method, containing the logic for the custom_group, is unchanged) ...
                 custom_layout = QVBoxLayout(custom_group); custom_layout.setSpacing(6)
                 row1_layout = QHBoxLayout(); row1_layout.setSpacing(6)
                 self.custom_marker_button = QPushButton("Place Custom", self); self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
                 self.custom_marker_text_entry = QLineEdit(self); self.custom_marker_text_entry.setPlaceholderText("Custom text...")
                 arrow_buttons_layout = QHBoxLayout(); arrow_buttons_layout.setContentsMargins(0, 0, 0, 0); arrow_buttons_layout.setSpacing(2)
-                arrow_size = 25
-                self.custom_marker_button_left_arrow = QPushButton("←"); self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left")
-                self.custom_marker_button_right_arrow = QPushButton("→"); self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right")
-                self.custom_marker_button_top_arrow = QPushButton("↑"); self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up")
-                self.custom_marker_button_bottom_arrow = QPushButton("↓"); self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size); self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down")
+                arrow_size = 35
+                self.custom_marker_button_left_arrow = QPushButton("←"); self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left")
+                self.custom_marker_button_right_arrow = QPushButton("→"); self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right")
+                self.custom_marker_button_top_arrow = QPushButton("↑"); self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up")
+                self.custom_marker_button_bottom_arrow = QPushButton("↓"); self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down")
+
+                # --- START OF BUG FIX ---
+                # 1. Enlarge the arrow symbols by applying a larger, bold font.
+                arrow_font = QFont(); arrow_font.setPointSize(14); arrow_font.setBold(True)
+                self.custom_marker_button_left_arrow.setFont(arrow_font)
+                self.custom_marker_button_right_arrow.setFont(arrow_font)
+                self.custom_marker_button_top_arrow.setFont(arrow_font)
+                self.custom_marker_button_bottom_arrow.setFont(arrow_font)
+                
+                self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size)
+                self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size)
+                self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size)
+                self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size)
+                
                 arrow_buttons_layout.addWidget(self.custom_marker_button_left_arrow); arrow_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
                 arrow_buttons_layout.addWidget(self.custom_marker_button_top_arrow); arrow_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
                 self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
@@ -9866,8 +9905,16 @@ if __name__ == "__main__":
                 self.custom_marker_color_button = QPushButton("Color"); self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
                 if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
                 self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                row1_layout.addWidget(self.custom_marker_button); row1_layout.addWidget(self.custom_marker_text_entry); row1_layout.addLayout(arrow_buttons_layout)
-                row1_layout.addWidget(self.custom_font_type_dropdown, 1); row1_layout.addWidget(self.custom_font_size_spinbox); row1_layout.addWidget(self.custom_marker_color_button)
+                
+                row1_layout.addWidget(self.custom_marker_button)
+                # 2. Adjust stretch factors to make the text box longer.
+                row1_layout.addWidget(self.custom_marker_text_entry, 2) # Give text entry a stretch factor of 2
+                row1_layout.addLayout(arrow_buttons_layout)
+                row1_layout.addWidget(self.custom_font_type_dropdown, 1) # Give font dropdown a stretch factor of 1
+                row1_layout.addWidget(self.custom_font_size_spinbox)
+                row1_layout.addWidget(self.custom_marker_color_button)
+                # --- END OF BUG FIX ---
+                
                 custom_layout.addLayout(row1_layout)
                 row2_layout = QHBoxLayout(); row2_layout.setSpacing(6)
                 self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
@@ -11655,11 +11702,17 @@ if __name__ == "__main__":
                             if loaded_image.isNull():
                                 try:
                                     pil_image = Image.open(file_path)
-                                    loaded_image = ImageQt.ImageQt(pil_image)
+                                    # --- START OF BUG FIX ---
+                                    # Replace the problematic ImageQt conversion with the robust NumPy bridge
+                                    # that correctly handles 16-bit data. This makes the logic identical
+                                    # to the successful path in the main load_image function.
+                                    np_array = np.array(pil_image)
+                                    loaded_image = self.numpy_to_qimage(np_array)
+                                    # --- END OF BUG FIX ---
                                     if loaded_image.isNull():
-                                        loaded_image = None
+                                        loaded_image = None # Ensure it's None if conversion failed
                                     else:
-                                        source_info = f"{file_path} (Pillow)"
+                                        source_info = f"{file_path} (Pillow/NumPy)" # Update source info for clarity
                                 except Exception as e:
                                     QMessageBox.warning(self, "File Load Error", f"Could not load image from file '{os.path.basename(file_path)}':\n{e}")
                                     loaded_image = None
@@ -11732,6 +11785,7 @@ if __name__ == "__main__":
                         #     target_height = self.preview_label_max_height_setting
                         #     target_width = int(target_height * ratio)
                         self._update_preview_label_size()
+                        self.adjustSize() 
 
                         # Update slider ranges based on *new* label size
                         render_scale = 3
@@ -11761,7 +11815,7 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                    self.update_live_view() # Render the loaded image
+                    QTimer.singleShot(0, self.update_live_view) # Render the loaded image
                     self._update_levels_histogram() # Update histogram for new image
                     self.save_state()
 
@@ -11781,8 +11835,10 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
                     self._update_status_bar()
-                    self.update_live_view() # Render the loaded image
+                    self.adjustSize()
+                    QTimer.singleShot(0, self.update_live_view) # Render the loaded image
                     self._update_levels_histogram() # Update histogram for new image
+                    
                 
             def update_font(self):
                 self.save_state()
@@ -11906,7 +11962,8 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                    self.update_live_view() # Render the loaded image
+                    self.adjustSize()
+                    QTimer.singleShot(0, self.update_live_view)
                     self._update_levels_histogram() # Update histogram for new image
                     self.save_state()
             
