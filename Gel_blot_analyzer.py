@@ -1151,7 +1151,7 @@ if __name__ == "__main__":
                 self.smoothing_slider.setRange(0, 100) # 0.0 to 10.0
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
                 self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
-                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.smoothing_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.smoothing_slider.setFocus())) # Re-run on change
                 controls_layout.addWidget(self.smoothing_label, 1, 0)
                 controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
 
@@ -1161,7 +1161,7 @@ if __name__ == "__main__":
                 self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
                 self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
                 self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})"))
-                self.peak_prominence_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.peak_prominence_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.peak_prominence_slider.setFocus())) # Re-run on change
                 controls_layout.addWidget(self.peak_prominence_slider_label, 2, 0)
                 controls_layout.addWidget(self.peak_prominence_slider, 2, 1, 1, 2)
 
@@ -1171,7 +1171,7 @@ if __name__ == "__main__":
                 self.peak_height_slider.setRange(0, 100)
                 self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
                 self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})"))
-                self.peak_height_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.peak_height_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.peak_height_slider.setFocus()))# Re-run on change
                 controls_layout.addWidget(self.peak_height_slider_label, 3, 0)
                 controls_layout.addWidget(self.peak_height_slider, 3, 1, 1, 2)
 
@@ -1181,7 +1181,7 @@ if __name__ == "__main__":
                 self.peak_distance_slider.setRange(1, 200)
                 self.peak_distance_slider.setValue(self.peak_distance)
                 self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px"))
-                self.peak_distance_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.peak_distance_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.peak_distance_slider.setFocus()))# Re-run on change
                 controls_layout.addWidget(self.peak_distance_slider_label, 4, 0)
                 controls_layout.addWidget(self.peak_distance_slider, 4, 1, 1, 2)
 
@@ -1586,35 +1586,35 @@ if __name__ == "__main__":
                 global_adjust_layout.addWidget(QLabel("Shift X (% Img W):"), 0, 0)
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_x_shift_slider.setValue(0)
-                self.abs_x_shift_slider.valueChanged.connect(self._update_global_adjustments)
+                self.abs_x_shift_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.abs_x_shift_slider.setFocus()))
                 self.abs_x_shift_label = QLabel("0.00%"); self.abs_x_shift_label.setFixedSize(80, 20)
                 self.abs_x_shift_slider.valueChanged.connect(lambda val: self.abs_x_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1); global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
                 global_adjust_layout.addWidget(QLabel("Shift Y (% Img H):"), 1, 0)
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_y_shift_slider.setValue(0)
-                self.abs_y_shift_slider.valueChanged.connect(self._update_global_adjustments)
+                self.abs_y_shift_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.abs_y_shift_slider.setFocus()))
                 self.abs_y_shift_label = QLabel("0.00%"); self.abs_y_shift_label.setFixedSize(80, 20)
                 self.abs_y_shift_slider.valueChanged.connect(lambda val: self.abs_y_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1); global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
                 global_adjust_layout.addWidget(QLabel("Scale X (%):"), 2, 0)
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
-                self.rel_x_scale_slider.valueChanged.connect(self._update_global_adjustments)
+                self.rel_x_scale_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.rel_x_scale_slider.setFocus()))
                 self.rel_x_scale_label = QLabel("100.0%"); self.rel_x_scale_label.setFixedSize(80, 20)
                 self.rel_x_scale_slider.valueChanged.connect(lambda val: self.rel_x_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1); global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
                 global_adjust_layout.addWidget(QLabel("Scale Y (%):"), 3, 0)
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
-                self.rel_y_scale_slider.valueChanged.connect(self._update_global_adjustments)
+                self.rel_y_scale_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.rel_y_scale_slider.setFocus()))
                 self.rel_y_scale_label = QLabel("100.0%"); self.rel_y_scale_label.setFixedSize(80, 20)
                 self.rel_y_scale_slider.valueChanged.connect(lambda val: self.rel_y_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1); global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
                 global_adjust_layout.addWidget(QLabel("Font Scale (%):"), 4, 0)
                 self.font_scale_slider = QSlider(Qt.Horizontal)
                 self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
-                self.font_scale_slider.valueChanged.connect(self._update_global_adjustments)
+                self.font_scale_slider.valueChanged.connect(lambda: (self._update_global_adjustments, self.font_scale_slider.setFocus()))
                 self.font_scale_label = QLabel("100.0%"); self.font_scale_label.setFixedSize(80, 20)
                 self.font_scale_slider.valueChanged.connect(lambda val: self.font_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.font_scale_slider, 4, 1); global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
@@ -2866,6 +2866,7 @@ if __name__ == "__main__":
                 self.rolling_ball_slider.setRange(1, 500)
                 self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
+                self.rolling_ball_slider.valueChanged.connect(self.rolling_ball_slider.setFocus())
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
                 
                 self.auto_adjust_checkbox = QCheckBox("Auto")
@@ -2881,7 +2882,7 @@ if __name__ == "__main__":
                 
                 peak_detect_group = QGroupBox("Peak Detection & Manipulation")
                 peak_detect_layout = QGridLayout(peak_detect_group)
-                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(self.detect_peaks); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
+                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(lambda: (self.regenerate_profile_and_detect,self.denoise_sigma_slider.setFocus())); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(lambda: (self.regenerate_profile_and_detect, self.smoothing_slider.setFocus())); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(lambda: (self.detect_peaks,self.peak_prominence_slider.setFocus())); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(lambda: (self.detect_peaks, self.peak_height_slider.setFocus())); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(lambda: (self.detect_peaks, self.peak_distance_slider.setFocus())); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
                 self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 6, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 6, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 6, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
                 if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
                 peak_detect_layout.addWidget(self.copy_regions_button, 7,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 7,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
@@ -3421,9 +3422,8 @@ if __name__ == "__main__":
             CORNER_HANDLE_BASE_RADIUS = 6.0
             def __init__(self, font_type, font_size, marker_color, app_instance, parent=None): # Added app_instance
                 super().__init__(parent)
-                self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+                self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.setScaledContents(True)
-                self.setMinimumSize(400, 300)
                 self.app_instance = app_instance # Store the CombinedSDSApp instance
                 self.setMouseTracking(True)
                 self.preview_marker_enabled = False
@@ -3436,7 +3436,7 @@ if __name__ == "__main__":
                 self.standard_marker_preview_position = None
                 self.standard_marker_preview_text = ""
                 self.standard_marker_preview_mode = None
-                self.setFocusPolicy(Qt.StrongFocus)
+                self.setFocusPolicy(Qt.ClickFocus)
                 self.mw_predict_preview_enabled = False
                 self.mw_predict_preview_position = None # QPointF in unzoomed label space
                 self.bounding_box_preview = [] # Used for single rect, multi-lane rect, auto-lane rect previews
@@ -4588,7 +4588,6 @@ if __name__ == "__main__":
                 self._create_actions()
                 self.create_tool_bar()
                 
-                self._update_preview_label_size()
                 
                 # 2. The tab widget for settings (created but not yet placed in a layout)
                 self.tab_widget = QTabWidget()
@@ -5187,29 +5186,54 @@ if __name__ == "__main__":
 
             def _update_main_layout(self, position: str):
                 """
-                Rebuilds the main window's layout by replacing the central widget
-                with a new one containing the rearranged child widgets.
+                Rebuilds the main window's layout, applying a fixed size to the
+                controls area (QTabWidget) based on the layout orientation.
                 """
+                # --- START OF MODIFICATION ---
+                # Define the desired fixed sizes for the controls area
+                CONTROLS_FIXED_WIDTH = 1000   # Use this for Left/Right layouts
+                CONTROLS_FIXED_HEIGHT = 600  # Use this for Top/Bottom layouts
+                VIEWER_FIXED_WIDTH = 550
+                VIEWER_FIXED_HEIGHT = 350
+                QWIDGETSIZE_MAX = 16777215   # A very large number to represent "unconstrained"
+
                 new_main_widget = QWidget()
                 new_layout = None
 
                 if position in ["Top", "Bottom"]:
+                    # For vertical layouts, we want a fixed HEIGHT for the controls
                     new_layout = QVBoxLayout(new_main_widget)
+                    self.tab_widget.setFixedHeight(CONTROLS_FIXED_HEIGHT)
+                    # Unset any fixed width from a previous Left/Right layout
+                    self.tab_widget.setFixedWidth(CONTROLS_FIXED_WIDTH)
+                    self.live_view_label.setFixedHeight(VIEWER_FIXED_HEIGHT)
+                    self.live_view_label.setFixedWidth(VIEWER_FIXED_WIDTH)
+                    
                     if position == "Top":
-                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
-                        new_layout.addWidget(self.tab_widget, 0)
+                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
+                        new_layout.addWidget(self.create_separator())
+                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
                     else:  # Bottom
-                        new_layout.addWidget(self.tab_widget, 0)
-                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
+                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(self.create_separator())
+                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                 
                 elif position in ["Left", "Right"]:
+                    # For horizontal layouts, we want a fixed WIDTH for the controls
                     new_layout = QHBoxLayout(new_main_widget)
+                    self.tab_widget.setFixedWidth(CONTROLS_FIXED_WIDTH)
+                    # Unset any fixed height from a previous Top/Bottom layout
+                    self.tab_widget.setFixedHeight(CONTROLS_FIXED_HEIGHT)
+                    self.live_view_label.setFixedHeight(VIEWER_FIXED_HEIGHT)
+                    self.live_view_label.setFixedWidth(VIEWER_FIXED_WIDTH)
+
                     if position == "Left":
-                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
-                        new_layout.addWidget(self.tab_widget, 0)
+                        new_layout.addWidget(self.live_view_label, 0)
+                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
                     else:  # Right
-                        new_layout.addWidget(self.tab_widget, 0)
-                        new_layout.addWidget(self.live_view_label, 1) # Use the label directly
+                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(self.live_view_label, 0)
+                # --- END OF MODIFICATION ---
 
                 if new_layout:
                     old_central_widget = self.centralWidget()
@@ -5217,6 +5241,7 @@ if __name__ == "__main__":
                     self.main_widget = new_main_widget
                     if old_central_widget:
                         old_central_widget.deleteLater()
+
                 
             def _transition_layout_change(self, position: str):
                 """
@@ -8022,28 +8047,28 @@ if __name__ == "__main__":
                 image1_layout.addWidget(reset_overlay1_button, 1, 1, 1, 1)
 
                 image1_layout.addWidget(QLabel("X:"), 2, 0)
-                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image1_left_slider.setFocus()))
                 image1_layout.addWidget(self.image1_left_slider, 2, 1)
                 self.image1_pos_x_label = QLabel("0"); self.image1_pos_x_label.setFixedWidth(40)
                 self.image1_left_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_x_label: lbl.setText(str(val)))
                 image1_layout.addWidget(self.image1_pos_x_label, 2, 2)
                 
                 image1_layout.addWidget(QLabel("Y:"), 3, 0)
-                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders,self.image1_top_slider.setFocus()))
                 image1_layout.addWidget(self.image1_top_slider, 3, 1)
                 self.image1_pos_y_label = QLabel("0"); self.image1_pos_y_label.setFixedWidth(40)
                 self.image1_top_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_y_label: lbl.setText(str(val)))
                 image1_layout.addWidget(self.image1_pos_y_label, 3, 2)
 
                 image1_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(self.update_live_view)
+                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_resize_slider.setFocus()))
                 image1_layout.addWidget(self.image1_resize_slider, 4, 1)
                 self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(40)
                 self.image1_resize_slider.valueChanged.connect(lambda val, lbl=self.image1_resize_label: lbl.setText(f"{val}%"))
                 image1_layout.addWidget(self.image1_resize_label, 4, 2)
 
                 image1_layout.addWidget(QLabel("Rotate:"), 5, 0)
-                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(self.update_live_view)
+                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_rotation_slider.setFocus()))
                 image1_layout.addWidget(self.image1_rotation_slider, 5, 1)
                 self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(40)
                 self.image1_rotation_slider.valueChanged.connect(lambda val, lbl=self.image1_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
@@ -8068,28 +8093,28 @@ if __name__ == "__main__":
                 image2_layout.addWidget(reset_overlay2_button, 1, 1, 1, 1)
 
                 image2_layout.addWidget(QLabel("X:"), 2, 0)
-                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_left_slider.setFocus()))
                 image2_layout.addWidget(self.image2_left_slider, 2, 1)
                 self.image2_pos_x_label = QLabel("0"); self.image2_pos_x_label.setFixedWidth(40)
                 self.image2_left_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_x_label: lbl.setText(str(val)))
                 image2_layout.addWidget(self.image2_pos_x_label, 2, 2)
 
                 image2_layout.addWidget(QLabel("Y:"), 3, 0)
-                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(self._update_overlay_position_from_sliders)
+                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_top_slider.setFocus()))
                 image2_layout.addWidget(self.image2_top_slider, 3, 1)
                 self.image2_pos_y_label = QLabel("0"); self.image2_pos_y_label.setFixedWidth(40)
                 self.image2_top_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_y_label: lbl.setText(str(val)))
                 image2_layout.addWidget(self.image2_pos_y_label, 3, 2)
                 
                 image2_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(self.update_live_view)
+                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_resize_slider.setFocus()))
                 image2_layout.addWidget(self.image2_resize_slider, 4, 1)
                 self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(40)
                 self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
                 image2_layout.addWidget(self.image2_resize_label, 4, 2)
 
                 image2_layout.addWidget(QLabel("Rotate:"), 5, 0)
-                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(self.update_live_view)
+                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_rotation_slider.setFocus()))
                 image2_layout.addWidget(self.image2_rotation_slider, 5, 1)
                 self.image2_rotation_label = QLabel("0.0°"); self.image2_rotation_label.setFixedWidth(40)
                 self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
@@ -8120,7 +8145,7 @@ if __name__ == "__main__":
                 self.blend_slider = QSlider(Qt.Horizontal)
                 self.blend_slider.setRange(0, 100); self.blend_slider.setValue(50)
                 self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
-                self.blend_slider.valueChanged.connect(self.update_live_view)
+                self.blend_slider.valueChanged.connect(lambda: (self.update_live_view, self.blend_slider.setFocus()))
                 global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 4)
 
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
@@ -8403,7 +8428,6 @@ if __name__ == "__main__":
                 self.adjustment_context_combo.model().item(2).setEnabled(False)
                 self.adjustment_context_combo.setCurrentText("Main Image")
 
-                self._update_preview_label_size()
                 self._update_status_bar()
                 self._update_marker_slider_ranges()
                 self._update_overlay_slider_ranges()
@@ -8653,7 +8677,7 @@ if __name__ == "__main__":
                 reset_button = QPushButton("Reset Current Adjustments"); reset_button.clicked.connect(self.reset_all_adjustments)
                 actions_layout.addWidget(self.bw_button); actions_layout.addWidget(invert_button); actions_layout.addStretch(); actions_layout.addWidget(reset_button)
                 left_column_layout.addWidget(actions_group)
-                left_column_layout.addStretch(); main_layout.addLayout(left_column_layout)
+                left_column_layout.addStretch(1); main_layout.addLayout(left_column_layout, 1)
 
                 right_column_layout = QVBoxLayout()
                 cm_group = QGroupBox("Channel Mixer (for Color Images)"); cm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -8687,7 +8711,7 @@ if __name__ == "__main__":
                 self.clahe_tile_label = QLabel("8x8"); self.clahe_tile_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Tile Size:"), 1, 0); clahe_layout.addWidget(self.clahe_tile_slider, 1, 1); clahe_layout.addWidget(self.clahe_tile_label, 1, 2)
 
                 right_column_layout.addWidget(clahe_group)
-                right_column_layout.addStretch(); main_layout.addLayout(right_column_layout)
+                right_column_layout.addStretch(); main_layout.addLayout(right_column_layout, 1)
 
                 # --- START OF CONNECTION LOGIC FIX ---
                 # Helper lambda to save state and then apply adjustments.
@@ -8700,11 +8724,11 @@ if __name__ == "__main__":
 
                 self.black_point_slider.sliderReleased.connect(self.apply_all_adjustments)
                 self.white_point_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.gamma_slider.valueChanged.connect(self.apply_all_adjustments)
+                self.gamma_slider.valueChanged.connect(lambda: (self.apply_all_adjustments, self.gamma_slider.setFocus()))
 
                 # Histogram and value labels are only for live feedback, no state saving.
-                self.black_point_slider.valueChanged.connect(self._update_levels_histogram)
-                self.white_point_slider.valueChanged.connect(self._update_levels_histogram)
+                self.black_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.black_point_slider.setFocus()))
+                self.white_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.white_point_slider.setFocus()))
                 self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
                 self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
                 self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}"))
@@ -8715,9 +8739,9 @@ if __name__ == "__main__":
                 self.cm_blue_slider.sliderReleased.connect(save_and_apply)
                 self.cm_mono_checkbox.stateChanged.connect(save_and_apply)
 
-                self.cm_red_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.cm_green_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.cm_blue_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.cm_red_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_red_slider.setFocus()))
+                self.cm_green_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_green_slider.setFocus()))
+                self.cm_blue_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_blue_slider.setFocus()))
                 
                 self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
                 self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
@@ -8728,17 +8752,17 @@ if __name__ == "__main__":
                 self.usm_radius_slider.sliderReleased.connect(save_and_apply)
                 self.usm_threshold_slider.sliderReleased.connect(save_and_apply)
                 
-                self.usm_amount_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.usm_radius_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.usm_threshold_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.usm_amount_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_amount_slider.setFocus()))
+                self.usm_radius_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_radius_slider.setFocus()))
+                self.usm_threshold_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_threshold_slider.setFocus()))
                 
                 self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
                 self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
                 self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
 
                 # CLAHE: Save state on release, update live on change.
-                self.clahe_clip_slider.sliderReleased.connect(save_and_apply)
-                self.clahe_tile_slider.sliderReleased.connect(save_and_apply)
+                self.clahe_clip_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_clip_slider.setFocus()))
+                self.clahe_tile_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_tile_slider.setFocus()))
 
                 self.clahe_clip_slider.sliderReleased.connect(self.apply_all_adjustments)
                 self.clahe_tile_slider.sliderReleased.connect(self.apply_all_adjustments)
@@ -9363,7 +9387,7 @@ if __name__ == "__main__":
                 self.orientation_slider.setRange(-3600, 3600)
                 self.orientation_slider.setValue(0)
                 self.orientation_slider.valueChanged.connect(self._update_rotation_label)
-                self.orientation_slider.valueChanged.connect(self.update_live_view)
+                self.orientation_slider.valueChanged.connect(lambda: (self.update_live_view(), self.orientation_slider.setFocus()))
                 self.align_button = QPushButton("Apply"); self.align_button.clicked.connect(self.align_image)
                 self.reset_align_button = QPushButton("Reset"); self.reset_align_button.clicked.connect(self.reset_align_image)
                 rotation_layout.addWidget(self.orientation_label, 0, 0)
@@ -9395,7 +9419,7 @@ if __name__ == "__main__":
                 self.taper_skew_slider = QSlider(Qt.Horizontal)
                 self.taper_skew_slider.setRange(-70, 70); self.taper_skew_slider.setValue(0)
                 self.taper_skew_slider.valueChanged.connect(lambda value: self.taper_skew_label.setText(f"Skew ({value / 100.0:+0.2f})"))
-                self.taper_skew_slider.valueChanged.connect(self.update_live_view)
+                self.taper_skew_slider.valueChanged.connect(lambda: (self.update_live_view(), self.taper_skew_slider.setFocus()))
                 self.skew_button = QPushButton("Apply"); self.skew_button.clicked.connect(self.update_skew)
                 self.reset_skew_button = QPushButton("Reset"); self.reset_skew_button.clicked.connect(lambda: self.taper_skew_slider.setValue(0))
                 skew_layout.addWidget(self.taper_skew_label, 0, 0)
@@ -9406,7 +9430,7 @@ if __name__ == "__main__":
                 left_column_layout.addWidget(skew_group)
                 left_column_layout.addStretch(1)
                 
-                main_layout.addLayout(left_column_layout) # Add the completed left column layout
+                main_layout.addLayout(left_column_layout,1) # Add the completed left column layout
 
                 # ======================================================================
                 # === RIGHT COLUMN: Destructive Edits (Crop & Pad) ===
@@ -9431,13 +9455,13 @@ if __name__ == "__main__":
                     lbl = QLabel(f"{initial_value:.2f}%"); lbl.setMinimumWidth(55); lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     return lbl
                 self.crop_x_start_slider = QSlider(Qt.Horizontal); self.crop_x_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_start_slider.setValue(self.crop_slider_min); self.crop_x_start_slider.setEnabled(False)
-                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_start_slider.setFocus()))
                 self.crop_x_end_slider = QSlider(Qt.Horizontal); self.crop_x_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_end_slider.setValue(self.crop_slider_max); self.crop_x_end_slider.setEnabled(False)
-                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_end_slider.setFocus()))
                 self.crop_y_start_slider = QSlider(Qt.Horizontal); self.crop_y_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_start_slider.setValue(self.crop_slider_min); self.crop_y_start_slider.setEnabled(False)
-                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_start_slider.setFocus()))
                 self.crop_y_end_slider = QSlider(Qt.Horizontal); self.crop_y_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_end_slider.setValue(self.crop_slider_max); self.crop_y_end_slider.setEnabled(False)
-                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(self._update_crop_from_sliders)
+                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_end_slider.setFocus()))
                 crop_slider_layout.addWidget(QLabel("Left:"), 0, 0); crop_slider_layout.addWidget(self.crop_x_start_slider, 0, 1); crop_slider_layout.addWidget(self.crop_x_start_value_label, 0, 2)
                 crop_slider_layout.addWidget(QLabel("Right:"), 0, 3); crop_slider_layout.addWidget(self.crop_x_end_slider, 0, 4); crop_slider_layout.addWidget(self.crop_x_end_value_label, 0, 5)
                 crop_slider_layout.addWidget(QLabel("Top:"), 1, 0); crop_slider_layout.addWidget(self.crop_y_start_slider, 1, 1); crop_slider_layout.addWidget(self.crop_y_start_value_label, 1, 2)
@@ -9469,7 +9493,7 @@ if __name__ == "__main__":
                 right_column_layout.addWidget(padding_group)
                 right_column_layout.addStretch(1)
 
-                main_layout.addLayout(right_column_layout) # Add the completed right column layout
+                main_layout.addLayout(right_column_layout,1) # Add the completed right column layout
 
                 return tab
             
@@ -9865,17 +9889,17 @@ if __name__ == "__main__":
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
                 left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
-                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(self.update_left_padding)
+                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: (self.update_left_padding, self.left_padding_slider.setFocus()))
                 standard_layout.addWidget(self.left_padding_slider, 2, 1)
                 duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
                 right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
                 right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
-                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(self.update_right_padding)
+                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: (self.update_right_padding, self.right_padding_slider.setFocus()))
                 standard_layout.addWidget(self.right_padding_slider, 3, 1)
                 duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
                 top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
                 top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
-                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(self.update_top_padding)
+                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: (self.update_top_padding, self.top_padding_slider.setFocus()))
                 standard_layout.addWidget(self.top_padding_slider, 4, 1)
                 main_layout.addWidget(standard_group)
 
@@ -11797,8 +11821,6 @@ if __name__ == "__main__":
                         # if hasattr(self, 'preview_label_max_height_setting') and target_height > self.preview_label_max_height_setting:
                         #     target_height = self.preview_label_max_height_setting
                         #     target_width = int(target_height * ratio)
-                        self._update_preview_label_size()
-                        self.adjustSize() 
 
                         # Update slider ranges based on *new* label size
                         render_scale = 3
@@ -11821,7 +11843,6 @@ if __name__ == "__main__":
 
                     except Exception as e:
                         QMessageBox.warning(self, "UI Update Error", f"Could not update UI elements after pasting: {e}")
-                        self._update_preview_label_size()
                         
                     enable_pan = self.live_view_label.zoom_level > 1.0
                     if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
@@ -11841,7 +11862,6 @@ if __name__ == "__main__":
                     self.image_master = None
                     self.image_path = None
                     self.live_view_label.clear()
-                    self._update_preview_label_size()
                     self.setWindowTitle(self.window_title)
                     if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
@@ -11950,7 +11970,6 @@ if __name__ == "__main__":
                     if self.image and not self.image.isNull():
                         try:
                             # (UI update logic remains the same as before)
-                            self._update_preview_label_size()
 
                             render_scale = 3
                             render_width = self.live_view_label.width() * render_scale
@@ -11975,7 +11994,6 @@ if __name__ == "__main__":
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                    self.adjustSize()
                     QTimer.singleShot(0, self.update_live_view)
                     self._update_levels_histogram() # Update histogram for new image
                     self.save_state()
@@ -12522,7 +12540,6 @@ if __name__ == "__main__":
                     # CRUCIALLY, we do NOT touch self.main_image_is_inverted or other adjustment dictionaries.
                     
                     # Update UI related to new image dimensions
-                    self._update_preview_label_size()
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
@@ -12952,14 +12969,6 @@ if __name__ == "__main__":
             # Modify align_image and update_crop to preserve settings
             def reset_align_image(self):
                 self.orientation_slider.setValue(0)
-                try:
-                    if self.image: # Check if image exists after cropping
-                        self._update_preview_label_size()
-                except Exception as e:
-                    # Fallback size?
-                    self._update_preview_label_size()
-
-
                 self.update_live_view() # Final update with corrected markers and image
 
             def _finalize_permanent_transformation(self, new_master_image):
@@ -12982,7 +12991,6 @@ if __name__ == "__main__":
 
                 self.reset_all_adjustments()
 
-                self._update_preview_label_size()
                 self._update_status_bar()
                 self._update_marker_slider_ranges()
                 self._update_overlay_slider_ranges()
@@ -13090,7 +13098,6 @@ if __name__ == "__main__":
                     self.image_padded = False
                     self.is_modified = True
 
-                    self._update_preview_label_size()
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
@@ -13233,7 +13240,6 @@ if __name__ == "__main__":
                     self.image_padded = False
                     self.is_modified = True
 
-                    self._update_preview_label_size()
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
@@ -13337,7 +13343,6 @@ if __name__ == "__main__":
                     self.image_padded = False
                     self.is_modified = True
 
-                    self._update_preview_label_size()
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
@@ -14188,12 +14193,9 @@ if __name__ == "__main__":
                 except Exception: pass
 
                 if self.image and not self.image.isNull():
-                    self._update_preview_label_size()
                     if hasattr(self, 'left_padding_input'): self.left_padding_input.setText(str(int(self.image.width()*0.1)))
                     if hasattr(self, 'right_padding_input'): self.right_padding_input.setText(str(int(self.image.width()*0.1)))
                     if hasattr(self, 'top_padding_input'): self.top_padding_input.setText(str(int(self.image.height()*0.15)))
-                else:
-                    self.live_view_label.clear(); self._update_preview_label_size()
 
                 self.live_view_label.zoom_level = 1.0; self.live_view_label.pan_offset = QPointF(0, 0)
                 if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
