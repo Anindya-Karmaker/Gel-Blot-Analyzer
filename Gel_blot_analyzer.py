@@ -478,6 +478,13 @@ if __name__ == "__main__":
         from scipy.ndimage import gaussian_filter1d
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
         from scipy.interpolate import interp1d # Needed for interpolation
+        SCIPY_AVAILABLE = False
+        try:
+            from scipy.optimize import curve_fit
+            SCIPY_AVAILABLE = True
+        except ImportError:
+            print("WARNING: SciPy library not found. Advanced regression models (4-PL) will be disabled.")
+            print("Install it with: pip install scipy")
         import cv2
         import datetime
 
@@ -504,6 +511,12 @@ if __name__ == "__main__":
             "O-linked Core 1 (Simple)": 0.4,
             "Custom...": -1.0 # Special value to indicate manual input
         }
+
+        def four_param_logistic(x, a, b, c, d):
+            """ 4-Parameter Logistic Regression model (sigmoidal). y = d + (a - d) / (1 + (x / c)**b) """
+            return d + (a - d) / (1 + (x / c)**b)
+
+        
 
         def create_text_icon(font_type: QFont, icon_size: QSize, color: QColor, symbol: str) -> QIcon:
             """Creates a QIcon by drawing text/symbol onto a pixmap."""
@@ -1151,7 +1164,7 @@ if __name__ == "__main__":
                 self.smoothing_slider.setRange(0, 100) # 0.0 to 10.0
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
                 self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
-                self.smoothing_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.smoothing_slider.setFocus())) # Re-run on change
+                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
                 controls_layout.addWidget(self.smoothing_label, 1, 0)
                 controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
 
@@ -1161,7 +1174,7 @@ if __name__ == "__main__":
                 self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
                 self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
                 self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})"))
-                self.peak_prominence_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.peak_prominence_slider.setFocus())) # Re-run on change
+                self.peak_prominence_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
                 controls_layout.addWidget(self.peak_prominence_slider_label, 2, 0)
                 controls_layout.addWidget(self.peak_prominence_slider, 2, 1, 1, 2)
 
@@ -1171,7 +1184,7 @@ if __name__ == "__main__":
                 self.peak_height_slider.setRange(0, 100)
                 self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
                 self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})"))
-                self.peak_height_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.peak_height_slider.setFocus()))# Re-run on change
+                self.peak_height_slider.valueChanged.connect(self.run_peak_detection_and_plot)# Re-run on change
                 controls_layout.addWidget(self.peak_height_slider_label, 3, 0)
                 controls_layout.addWidget(self.peak_height_slider, 3, 1, 1, 2)
 
@@ -1181,7 +1194,7 @@ if __name__ == "__main__":
                 self.peak_distance_slider.setRange(1, 200)
                 self.peak_distance_slider.setValue(self.peak_distance)
                 self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px"))
-                self.peak_distance_slider.valueChanged.connect(lambda: (self.run_peak_detection_and_plot, self.peak_distance_slider.setFocus()))# Re-run on change
+                self.peak_distance_slider.valueChanged.connect(self.run_peak_detection_and_plot)# Re-run on change
                 controls_layout.addWidget(self.peak_distance_slider_label, 4, 0)
                 controls_layout.addWidget(self.peak_distance_slider, 4, 1, 1, 2)
 
@@ -1965,8 +1978,9 @@ if __name__ == "__main__":
                 self.is_current_data_multi_lane = isinstance(current_peak_areas_data, dict)
                 self.current_lane_pil_images = {}
                 self.current_peak_details_data = peak_details_data if peak_details_data else {}
-
-                # --- REMOVED Font size attributes and slider ---
+                
+                self.current_model_name = "Linear"
+                self.current_fit_params = None
 
                 if self.is_current_data_multi_lane:
                     for lane_id_key in current_peak_areas_data.keys():
@@ -2000,7 +2014,7 @@ if __name__ == "__main__":
                             img_coords_s = self.parent_app._map_label_rect_to_image_rect(QRectF(QPointF(self.parent_app.live_view_label.bounding_box_preview[0],self.parent_app.live_view_label.bounding_box_preview[1]),QPointF(self.parent_app.live_view_label.bounding_box_preview[2],self.parent_app.live_view_label.bounding_box_preview[3])).normalized())
                             if img_coords_s: extracted_qimage_single = self.parent_app.image.copy(*img_coords_s)
                         if extracted_qimage_single and not extracted_qimage_single.isNull():
-                            pil_for_lane = self.parent_app.convert_qimage_to_grayscale_pil(extracted_qimage_single)
+                            pil_for_lane = self.parent_app.convert_qimage_to_grayscale_pil(extracted_qimage)
                             if pil_for_lane: self.current_lane_pil_images[1] = pil_for_lane
 
                 self.current_standard_dictionary = current_standard_dictionary if current_standard_dictionary is not None else {}
@@ -2025,8 +2039,344 @@ if __name__ == "__main__":
                 if self.current_results_data: self.tab_widget.setCurrentIndex(0)
                 elif self.analysis_history: self.tab_widget.setCurrentIndex(1)
                 else: self.tab_widget.setCurrentIndex(0)
+                
+                # Initial update for current tab if data exists
+                if self.current_results_data:
+                    self._update_analysis_display_for_tab(is_for_history=False)
+
+            def _get_available_models(self):
+                models = ["Linear", "Polynomial (Deg 2)", "Polynomial (Deg 3)"]
+                if SCIPY_AVAILABLE:
+                    models.extend(["4-PL Sigmoidal"])
+                return models
+
+            def _accept_dialog_and_save_current(self):
+                if self.current_results_data: 
+                    peak_dialog_settings_current = {}
+                    if self.parent_app and hasattr(self.parent_app, 'peak_dialog_settings'):
+                        peak_dialog_settings_current = self.parent_app.peak_dialog_settings.copy()
+                    user_defined_analysis_name = self.analysis_name_input_widget.text().strip() if self.analysis_name_input_widget else ""
+                    display_name_for_history = user_defined_analysis_name if user_defined_analysis_name else self.source_image_name_current
+                    
+                    new_entry = {
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "user_defined_name": display_name_for_history,
+                        "source_image_name": self.source_image_name_current,
+                        "is_multi_lane": self.is_current_data_multi_lane,
+                        "results_data": self.current_results_data,
+                        "standard_dictionary": self.current_standard_dictionary,
+                        "analysis_settings": peak_dialog_settings_current,
+                        "quantification_model": self.current_model_name # --- NEW: Save the selected model ---
+                    }
+                    self.analysis_history.insert(0, new_entry)
+                    self._save_history()
+                    if self.previous_sessions_listwidget: self._populate_previous_sessions_list()
+                self.accept()
+
+            def _create_current_results_tab(self):
+                current_tab_widget = QWidget()
+                current_main_layout = QVBoxLayout(current_tab_widget)
+                current_main_layout.setSpacing(10)
+                name_group = QGroupBox("Analysis Identification")
+                name_layout = QHBoxLayout(name_group)
+                name_layout.addWidget(QLabel("Analysis Name:"))
+                self.analysis_name_input_widget = QLineEdit(self.current_analysis_custom_name)
+                name_layout.addWidget(self.analysis_name_input_widget)
+                current_main_layout.addWidget(name_group)
+                
+                # --- MODIFIED: Create plot group with model selector ---
+                self.plot_group_current = QGroupBox("Standard Curve (Current Analysis)")
+                plot_layout_current = QVBoxLayout(self.plot_group_current)
+                model_layout_current = QHBoxLayout()
+                model_layout_current.addWidget(QLabel("Regression Model:"))
+                self.model_combo_current = QComboBox()
+                self.model_combo_current.addItems(self._get_available_models())
+                self.model_combo_current.currentTextChanged.connect(lambda: self._update_analysis_display_for_tab(is_for_history=False))
+                model_layout_current.addWidget(self.model_combo_current, 1)
+                plot_layout_current.addLayout(model_layout_current)
+                self.plot_placeholder_current = QWidget() # Placeholder for the canvas
+                plot_layout_current.addWidget(self.plot_placeholder_current, 1)
+                self.plot_group_current.setMinimumHeight(280)
+                current_main_layout.addWidget(self.plot_group_current)
+                
+                results_group = QGroupBox("Band Analysis")
+                results_layout = QVBoxLayout(results_group)
+                results_display_area = QWidget()
+                self.results_display_layout_current = QVBoxLayout(results_display_area)
+                self.results_display_layout_current.setContentsMargins(0,0,0,0)
+                results_layout.addWidget(results_display_area)
+                current_main_layout.addWidget(results_group, 1)
+                current_buttons_layout = QHBoxLayout()
+                copy_current_button = QPushButton("Copy Active Lane Table")
+                copy_current_button.clicked.connect(self._copy_active_lane_table_data)
+                export_current_button = QPushButton("Export All Lanes to Excel")
+                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(self.current_results_data, self.analysis_name_input_widget.text() or self.source_image_name_current, self.current_standard_dictionary, is_multi_lane_data=self.is_current_data_multi_lane))
+                current_buttons_layout.addWidget(copy_current_button); current_buttons_layout.addStretch(); current_buttons_layout.addWidget(export_current_button)
+                current_main_layout.addLayout(current_buttons_layout)
+                self.tab_widget.addTab(current_tab_widget, "Current Analysis")
+
+            def _create_previous_results_tab(self):
+                previous_tab_widget = QWidget()
+                previous_main_layout = QHBoxLayout(previous_tab_widget)
+                left_pane_widget = QWidget(); left_layout = QVBoxLayout(left_pane_widget)
+                left_layout.addWidget(QLabel("Saved Analyses:"))
+                self.previous_sessions_listwidget = QListWidget(); self.previous_sessions_listwidget.itemSelectionChanged.connect(self._on_history_session_selected)
+                left_layout.addWidget(self.previous_sessions_listwidget)
+                history_buttons_layout = QHBoxLayout()
+                self.delete_entry_button = QPushButton("Delete Selected"); self.delete_entry_button.clicked.connect(self._delete_selected_history_entry); self.delete_entry_button.setEnabled(False)
+                self.clear_history_button = QPushButton("Clear All History"); self.clear_history_button.clicked.connect(self._clear_all_history)
+                history_buttons_layout.addWidget(self.delete_entry_button); history_buttons_layout.addStretch(); history_buttons_layout.addWidget(self.clear_history_button)
+                left_layout.addLayout(history_buttons_layout); previous_main_layout.addWidget(left_pane_widget, 1)
+                
+                right_pane_history_widget = QWidget(); right_layout = QVBoxLayout(right_pane_history_widget)
+                
+                # --- MODIFIED: Create plot group with model selector for history ---
+                self.previous_plot_groupbox = QGroupBox("Standard Curve (Selected History)")
+                self.previous_plot_groupbox_layout = QVBoxLayout(self.previous_plot_groupbox)
+                model_layout_history = QHBoxLayout()
+                model_layout_history.addWidget(QLabel("Regression Model:"))
+                self.model_combo_history = QComboBox()
+                self.model_combo_history.addItems(self._get_available_models())
+                self.model_combo_history.currentTextChanged.connect(lambda: self._update_analysis_display_for_tab(is_for_history=True))
+                model_layout_history.addWidget(self.model_combo_history, 1)
+                self.previous_plot_groupbox_layout.addLayout(model_layout_history)
+                self.plot_placeholder_history = QWidget() # Placeholder for the canvas
+                self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details."); self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
+                self.plot_placeholder_history.setLayout(QVBoxLayout()); self.plot_placeholder_history.layout().addWidget(self.previous_plot_placeholder_label)
+                self.previous_plot_groupbox_layout.addWidget(self.plot_placeholder_history, 1)
+                self.previous_plot_groupbox.setMinimumHeight(280)
+                right_layout.addWidget(self.previous_plot_groupbox)
+
+                self.history_results_display_container = QWidget()
+                self.history_results_display_layout = QVBoxLayout(self.history_results_display_container); self.history_results_display_layout.setContentsMargins(0,0,0,0)
+                initial_hist_table_placeholder = QLabel("Lane data will appear here."); initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
+                self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
+                right_layout.addWidget(self.history_results_display_container, 1)
+                previous_table_buttons_layout = QHBoxLayout()
+                copy_previous_button = QPushButton("Copy Active History Lane Table"); copy_previous_button.clicked.connect(self._copy_active_history_lane_table_data)
+                self.export_previous_button = QPushButton("Export Selected History to Excel"); self.export_previous_button.clicked.connect(self._export_selected_history_to_excel); self.export_previous_button.setEnabled(False)
+                previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch(); previous_table_buttons_layout.addWidget(self.export_previous_button)
+                right_layout.addLayout(previous_table_buttons_layout); previous_main_layout.addWidget(right_pane_history_widget, 2)
+                self.tab_widget.addTab(previous_tab_widget, "Analysis History")
+                self._populate_previous_sessions_list()
+            
+            def _update_analysis_display_for_tab(self, is_for_history):
+                """Central function to update plot, quantities, and tables for a given tab."""
+                if is_for_history:
+                    selected_items = self.previous_sessions_listwidget.selectedItems()
+                    if not selected_items: return
+                    selected_row_index = self.previous_sessions_listwidget.currentRow()
+                    if not (0 <= selected_row_index < len(self.analysis_history)): return
+                    entry = self.analysis_history[selected_row_index]
+                    
+                    std_dict = entry.get("standard_dictionary", {})
+                    results_data = entry.get("results_data", {})
+                    is_multi_lane = entry.get("is_multi_lane", False)
+                    model_name = self.model_combo_history.currentText()
+                    
+                    # Update quantities in the results_data dictionary
+                    if std_dict and self.parent_app:
+                        std_qtys = list(std_dict.keys())
+                        std_areas = list(std_dict.values())
+                        for lane_id, lane_content in results_data.items():
+                            sample_areas = lane_content.get('areas', [])
+                            if sample_areas:
+                                new_qtys, _ = self.parent_app._perform_quantification(model_name, std_qtys, std_areas, sample_areas)
+                                results_data[lane_id]['quantities'] = new_qtys
+                    
+                    # Update plot
+                    new_plot = self._create_standard_curve_plot_generic(std_dict, model_name)
+                    old_widget = self.plot_placeholder_history.layout().takeAt(0).widget()
+                    if old_widget: old_widget.deleteLater()
+                    self.plot_placeholder_history.layout().addWidget(new_plot)
+
+                    # Update tables
+                    old_content = self.history_results_display_layout.takeAt(0).widget()
+                    if old_content: old_content.deleteLater()
+                    new_content = self._create_results_display_widget(results_data, std_dict, is_multi_lane, is_for_history=True)
+                    self.history_results_display_layout.addWidget(new_content)
+
+                else: # For current tab
+                    model_name = self.model_combo_current.currentText()
+                    self.current_model_name = model_name # Store for saving history
+
+                    if self.current_standard_dictionary and self.parent_app:
+                        std_qtys = list(self.current_standard_dictionary.keys())
+                        std_areas = list(self.current_standard_dictionary.values())
+                        for lane_id, lane_content in self.current_results_data.items():
+                            sample_areas = lane_content.get('areas', [])
+                            if sample_areas:
+                                new_qtys, params = self.parent_app._perform_quantification(model_name, std_qtys, std_areas, sample_areas)
+                                self.current_results_data[lane_id]['quantities'] = new_qtys
+                                self.current_fit_params = params
+                    
+                    new_plot = self._create_standard_curve_plot_generic(self.current_standard_dictionary, model_name)
+                    old_widget = self.plot_placeholder_current.layout().takeAt(0).widget() if self.plot_placeholder_current.layout() else None
+                    if old_widget: old_widget.deleteLater()
+                    if not self.plot_placeholder_current.layout(): self.plot_placeholder_current.setLayout(QVBoxLayout())
+                    self.plot_placeholder_current.layout().addWidget(new_plot)
+                    
+                    old_content = self.results_display_layout_current.takeAt(0).widget() if self.results_display_layout_current.count() > 0 else None
+                    if old_content: old_content.deleteLater()
+                    new_content = self._create_results_display_widget(self.current_results_data, self.current_standard_dictionary, self.is_current_data_multi_lane, is_for_history=False)
+                    self.results_display_layout_current.addWidget(new_content)
+            
+            def _create_results_display_widget(self, results_data, std_dict, is_multi_lane, is_for_history):
+                container = QWidget()
+                layout = QVBoxLayout(container); layout.setContentsMargins(0,0,0,0)
+                is_std_mode = bool(std_dict)
+
+                if is_multi_lane and len(results_data) > 0:
+                    tabs = QTabWidget()
+                    for lane_id in sorted(results_data.keys()):
+                        lane_data = results_data[lane_id]
+                        pil_img = self.current_lane_pil_images.get(lane_id) if not is_for_history else None
+                        details = lane_data.get('details', [])
+                        widget = self._create_lane_data_display_widget(lane_id, lane_data.get('areas', []), lane_data.get('quantities', []), is_std_mode, pil_img, details, is_for_history)
+                        tabs.addTab(widget, f"Lane {lane_id}")
+                    layout.addWidget(tabs)
+                elif 1 in results_data:
+                    lane_data = results_data[1]
+                    pil_img = self.current_lane_pil_images.get(1) if not is_for_history else None
+                    details = lane_data.get('details', [])
+                    widget = self._create_lane_data_display_widget(1, lane_data.get('areas',[]), lane_data.get('quantities',[]), is_std_mode, pil_img, details, is_for_history)
+                    layout.addWidget(widget)
+                else:
+                    layout.addWidget(QLabel("No analysis data to display.", alignment=Qt.AlignCenter))
+                return container
+
+            def _on_history_session_selected(self):
+                if not self.previous_sessions_listwidget: return
+                selected_items = self.previous_sessions_listwidget.selectedItems()
+                if not selected_items or "No history available." in selected_items[0].text():
+                    self._clear_previous_details_view(); return
+
+                selected_row_index = self.previous_sessions_listwidget.currentRow()
+                if not (0 <= selected_row_index < len(self.analysis_history)):
+                    self._clear_previous_details_view(); return
+                
+                entry = self.analysis_history[selected_row_index]
+                self.delete_entry_button.setEnabled(True); self.export_previous_button.setEnabled(True)
+
+                # --- NEW: Set the model combo box from history ---
+                saved_model = entry.get("quantification_model", "Linear") # Default to Linear if not saved
+                self.model_combo_history.blockSignals(True)
+                self.model_combo_history.setCurrentText(saved_model)
+                self.model_combo_history.blockSignals(False)
+
+                self._update_analysis_display_for_tab(is_for_history=True)
+            
+            def _create_standard_curve_plot_generic(self, standard_dictionary, model_name):
+                is_std_mode = bool(standard_dictionary)
+                if not is_std_mode or len(standard_dictionary) < 2:
+                    return QLabel("Standard curve requires at least 2 standard points.", alignment=Qt.AlignCenter)
+                try:
+                    quantities = np.array(list(standard_dictionary.keys()), dtype=float)
+                    areas = np.array(list(standard_dictionary.values()), dtype=float)
+                    
+                    is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
+                    if is_dark_theme:
+                        bg_color, ax_bg_color, text_color, spine_color, grid_color, scatter_color, line_color = '#2D2D30', '#38383C', '#F1F1F1', '#707070', '#5A5A60', '#FF8A65', '#42A5F5'
+                    else:
+                        bg_color, ax_bg_color, text_color, spine_color, grid_color, scatter_color, line_color = 'white', 'white', 'black', '#555555', '#DDDDDD', 'red', 'blue'
+
+                    fig, ax = plt.subplots(figsize=(4.5, 3.2)); fig.set_dpi(90)
+                    fig.patch.set_facecolor(bg_color); ax.patch.set_facecolor(ax_bg_color)
+                    for spine in ax.spines.values(): spine.set_color(spine_color)
+                    ax.tick_params(axis='x', colors=text_color); ax.tick_params(axis='y', colors=text_color)
+                    ax.yaxis.label.set_color(text_color); ax.xaxis.label.set_color(text_color); ax.title.set_color(text_color)
+
+                    ax.scatter(quantities, areas, label='Standard Points', color=scatter_color, zorder=5, s=30)
+                    
+                    # --- NEW: Model fitting and plotting ---
+                    q_min, q_max = np.min(quantities), np.max(quantities)
+                    x_line = np.linspace(q_min, q_max, 200)
+                    y_line = None
+                    fit_label = f'{model_name}: Fit Failed'
+                    
+                    try:
+                        if "Linear" in model_name or "Polynomial" in model_name:
+                            degree = 1
+                            if "Deg 2" in model_name: degree = 2
+                            elif "Deg 3" in model_name: degree = 3
+                            if len(quantities) > degree:
+                                params = np.polyfit(quantities, areas, degree)
+                                y_line = np.polyval(params, x_line)
+                                residuals = areas - np.polyval(params, quantities)
+                                ss_res = np.sum(residuals**2); ss_tot = np.sum((areas - np.mean(areas))**2)
+                                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+                                fit_label = f'{model_name} (R² = {r_squared:.4f})'
+                        
+                        elif SCIPY_AVAILABLE and "4-PL" in model_name and len(quantities) >= 4:
+                            p0 = [min(areas), 1.0, np.median(quantities), max(areas)]
+                            params, _ = curve_fit(four_param_logistic, quantities, areas, p0=p0, maxfev=10000)
+                            y_line = four_param_logistic(x_line, *params)
+                            fit_label = '4-PL Sigmoidal Fit'
 
 
+                        if y_line is not None:
+                            ax.plot(x_line, y_line, label=fit_label, color=line_color, linewidth=1.2)
+                    except (RuntimeError, ValueError) as fit_error:
+                         print(f"Fit Error: {fit_error}")
+                         ax.text(0.5, 0.5, f"Could not fit\n{model_name}", ha='center', va='center', color='red', transform=ax.transAxes)
+
+                    ax.set_xlabel('Known Quantity', fontsize=8); ax.set_ylabel('Measured Peak Area', fontsize=8)
+                    ax.set_title('Standard Curve', fontsize=9, fontweight='bold')
+                    leg = ax.legend(fontsize='xx-small', loc='best'); leg.get_frame().set_facecolor(ax.get_facecolor())
+                    for text in leg.get_texts(): text.set_color(text_color)
+                    ax.grid(True, linestyle=':', alpha=0.7, linewidth=0.5, color=grid_color)
+                    ax.tick_params(axis='both', which='major', labelsize=7)
+                    if np.any(areas > 1e4) or (np.any(areas < 1e-2) and np.any(areas != 0)): ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+                    if np.any(quantities > 1e4) or (np.any(quantities < 1e-2) and np.any(quantities != 0)): ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
+                    try: fig.set_constrained_layout(True)
+                    except AttributeError: plt.tight_layout(pad=0.3)
+                    canvas = FigureCanvas(fig); canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
+                    plt.close(fig)
+                    return canvas
+                except Exception as e:
+                    traceback.print_exc()
+                    return QLabel(f"Error generating plot:\n{str(e)[:100]}...", alignment=Qt.AlignCenter, styleSheet="color: red;")
+            
+            # (All other TableWindow methods like _get_config_dir, _load_history, _save_history, etc., remain unchanged)
+            # ...
+            # The remaining methods from the previous version of TableWindow should be pasted here.
+            # I am omitting them for brevity as they are not changed by this request.
+            # The key is to replace the ENTIRE class with this new structure.
+            # ...
+            # MAKE SURE TO PASTE THE REST OF THE UNCHANGED TableWindow METHODS HERE
+            # ...
+            def _get_config_dir(self):
+                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                    application_path = os.path.dirname(sys.executable)
+                elif getattr(sys, 'frozen', False):
+                    application_path = os.path.dirname(sys.executable)
+                else:
+                    try: application_path = os.path.dirname(os.path.abspath(__file__))
+                    except NameError: application_path = os.getcwd()
+                return application_path
+
+            def _load_history(self):
+                history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
+                if os.path.exists(history_file_path):
+                    try:
+                        with open(history_file_path, "r", encoding='utf-8') as f:
+                            loaded_data = json.load(f)
+                        if isinstance(loaded_data, list):
+                            self.analysis_history = [entry for entry in loaded_data if isinstance(entry, dict)]
+                        else:
+                            self.analysis_history = []
+                    except (json.JSONDecodeError, IOError) as e:
+                        self.analysis_history = []
+                else:
+                    self.analysis_history = []
+
+            def _save_history(self):
+                history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
+                try:
+                    with open(history_file_path, "w", encoding='utf-8') as f:
+                        json.dump(self.analysis_history, f, indent=4)
+                except IOError as e:
+                    QMessageBox.critical(self, "Save History Error", f"Could not save analysis history to {history_file_path}: {e}")
             def _create_lane_data_display_widget(self, lane_id, peak_areas, calculated_quantities, is_std_mode,
                                                  pil_lane_image=None, peak_details_for_lane=None, is_for_history=False):
                 lane_widget = QWidget()
@@ -2110,153 +2460,16 @@ if __name__ == "__main__":
                 
                     lane_layout.addWidget(lane_image_label, 1) # Image takes less horizontal stretch
                 return lane_widget
-
-            def _get_config_dir(self):
-                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                    application_path = os.path.dirname(sys.executable)
-                elif getattr(sys, 'frozen', False):
-                    application_path = os.path.dirname(sys.executable)
-                else:
-                    try: application_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError: application_path = os.getcwd()
-                return application_path
-
-            def _load_history(self):
-                history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
-                if os.path.exists(history_file_path):
-                    try:
-                        with open(history_file_path, "r", encoding='utf-8') as f:
-                            loaded_data = json.load(f)
-                        if isinstance(loaded_data, list):
-                            self.analysis_history = [entry for entry in loaded_data if isinstance(entry, dict)]
-                        else:
-                            self.analysis_history = []
-                    except (json.JSONDecodeError, IOError) as e:
-                        self.analysis_history = []
-                else:
-                    self.analysis_history = []
-
-            def _save_history(self):
-                history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
-                try:
-                    with open(history_file_path, "w", encoding='utf-8') as f:
-                        json.dump(self.analysis_history, f, indent=4)
-                except IOError as e:
-                    QMessageBox.critical(self, "Save History Error", f"Could not save analysis history to {history_file_path}: {e}")
-
-            def _accept_dialog_and_save_current(self):
-                if self.current_results_data: 
-                    peak_dialog_settings_current = {}
-                    if self.parent_app and hasattr(self.parent_app, 'peak_dialog_settings'):
-                        peak_dialog_settings_current = self.parent_app.peak_dialog_settings.copy()
-                    user_defined_analysis_name = self.analysis_name_input_widget.text().strip() if self.analysis_name_input_widget else ""
-                    display_name_for_history = user_defined_analysis_name if user_defined_analysis_name else self.source_image_name_current
-                    
-                    new_entry = {
-                        "timestamp": datetime.datetime.now().isoformat(),
-                        "user_defined_name": display_name_for_history,
-                        "source_image_name": self.source_image_name_current,
-                        "is_multi_lane": self.is_current_data_multi_lane,
-                        "results_data": self.current_results_data,
-                        "standard_dictionary": self.current_standard_dictionary,
-                        "analysis_settings": peak_dialog_settings_current
-                    }
-                    self.analysis_history.insert(0, new_entry)
-                    self._save_history()
-                    if self.previous_sessions_listwidget: self._populate_previous_sessions_list()
-                self.accept()
-
-            def _create_current_results_tab(self):
-                """Creates the 'Current Analysis' tab with a polished, grouped layout."""
-                current_tab_widget = QWidget()
-                current_main_layout = QVBoxLayout(current_tab_widget)
-                current_main_layout.setSpacing(10)
-
-                # --- Group 1: Analysis Identification ---
-                name_group = QGroupBox("Analysis Identification")
-                name_layout = QHBoxLayout(name_group)
-                name_label = QLabel("Analysis Name:")
-                self.analysis_name_input_widget = QLineEdit(self.current_analysis_custom_name)
-                self.analysis_name_input_widget.setPlaceholderText("Enter a name for this analysis...")
-                self.analysis_name_input_widget.setToolTip("Used for history and export filenames.")
-                name_layout.addWidget(name_label)
-                name_layout.addWidget(self.analysis_name_input_widget)
-                current_main_layout.addWidget(name_group)
-
-                # --- Group 2: Standard Curve ---
-                plot_group_current = QGroupBox("Standard Curve (Current Analysis)")
-                plot_layout_current = QVBoxLayout(plot_group_current)
-                current_plot_widget = self._create_standard_curve_plot_generic(
-                    self.current_standard_dictionary, self.current_is_standard_mode, for_history=False
-                )
-                if current_plot_widget:
-                    plot_layout_current.addWidget(current_plot_widget)
-                
-                # --- THIS IS THE DEFINITIVE FIX ---
-                # Set a reasonable minimum height for the plot group box.
-                # This ensures it's always large enough, regardless of other widgets.
-                plot_group_current.setMinimumHeight(280)
-                # --- END OF FIX ---
-
-                current_main_layout.addWidget(plot_group_current)
-                
-                # --- Group 3: Band Analysis (contains results table and lane preview) ---
-                results_group = QGroupBox("Band Analysis")
-                results_layout = QVBoxLayout(results_group)
-                
-                results_display_area = QWidget()
-                results_display_layout = QVBoxLayout(results_display_area)
-                results_display_layout.setContentsMargins(0,0,0,0)
-
-                if self.is_current_data_multi_lane and len(self.current_results_data) > 0:
-                    self.current_lanes_tab_widget = QTabWidget()
-                    for lane_id_sorted in sorted(self.current_results_data.keys()):
-                        lane_data = self.current_results_data[lane_id_sorted]
-                        pil_image_for_lane = self.current_lane_pil_images.get(lane_id_sorted)
-                        peak_details_for_this_lane = lane_data.get('details', [])
-                        lane_content_widget = self._create_lane_data_display_widget(
-                            lane_id_sorted, lane_data['areas'], lane_data['quantities'],
-                            self.current_is_standard_mode, pil_image_for_lane, peak_details_for_this_lane,
-                            is_for_history=False
-                        )
-                        self.current_lanes_tab_widget.addTab(lane_content_widget, f"Lane {lane_id_sorted}")
-                    results_display_layout.addWidget(self.current_lanes_tab_widget)
-                elif 1 in self.current_results_data:
-                    lane_data = self.current_results_data[1]; pil_image_for_lane = self.current_lane_pil_images.get(1); peak_details_for_this_lane = lane_data.get('details', [])
-                    self.single_lane_content_widget_ref = self._create_lane_data_display_widget(
-                        1, lane_data['areas'], lane_data['quantities'], self.current_is_standard_mode,
-                        pil_image_for_lane, peak_details_for_this_lane, is_for_history=False
-                    )
-                    results_display_layout.addWidget(self.single_lane_content_widget_ref)
-                else:
-                    no_data_label = QLabel("No current analysis data to display."); no_data_label.setAlignment(Qt.AlignCenter)
-                    results_display_layout.addWidget(no_data_label)
-                
-                results_layout.addWidget(results_display_area)
-                
-                # Add the results group with a stretch factor so it fills remaining space
-                current_main_layout.addWidget(results_group, 1)
-
-                # --- Bottom Buttons (Copy/Export) ---
-                current_buttons_layout = QHBoxLayout()
-                copy_current_button = QPushButton("Copy Active Lane Table")
-                copy_current_button.clicked.connect(self._copy_active_lane_table_data)
-                export_current_button = QPushButton("Export All Lanes to Excel")
-                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(self.current_results_data, self.analysis_name_input_widget.text() or self.source_image_name_current, self.current_standard_dictionary, is_multi_lane_data=self.is_current_data_multi_lane))
-                current_buttons_layout.addWidget(copy_current_button)
-                current_buttons_layout.addStretch()
-                current_buttons_layout.addWidget(export_current_button)
-                current_main_layout.addLayout(current_buttons_layout)
-                
-                self.tab_widget.addTab(current_tab_widget, "Current Analysis")
-                       
             def _copy_active_lane_table_data(self):
                 table_to_copy = None
                 current_lane_widget = None
-                if self.is_current_data_multi_lane and hasattr(self, 'current_lanes_tab_widget'):
-                    current_lane_widget = self.current_lanes_tab_widget.currentWidget()
-                elif hasattr(self, 'single_lane_content_widget_ref'):
-                    current_lane_widget = self.single_lane_content_widget_ref
+                
+                # Check current tab's content
+                current_tab_content = self.results_display_layout_current.itemAt(0).widget() if self.results_display_layout_current.count() > 0 else None
+                if isinstance(current_tab_content, QTabWidget): # Multi-lane view
+                    current_lane_widget = current_tab_content.currentWidget()
+                elif isinstance(current_tab_content, QWidget): # Single-lane view
+                    current_lane_widget = current_tab_content
                 
                 if current_lane_widget:
                     table_widgets_in_lane = current_lane_widget.findChildren(QTableWidget)
@@ -2267,54 +2480,6 @@ if __name__ == "__main__":
                     self._copy_table_data_generic(table_to_copy)
                 else:
                     QMessageBox.information(self, "Copy Error", "Could not find the active lane's table to copy.")
-
-            def _create_previous_results_tab(self):
-                previous_tab_widget = QWidget()
-                previous_main_layout = QHBoxLayout(previous_tab_widget)
-                left_pane_widget = QWidget()
-                left_layout = QVBoxLayout(left_pane_widget); left_layout.setContentsMargins(0, 0, 5, 0)
-                left_layout.addWidget(QLabel("Saved Analyses:"))
-                self.previous_sessions_listwidget = QListWidget()
-                self.previous_sessions_listwidget.itemSelectionChanged.connect(self._on_history_session_selected)
-                left_layout.addWidget(self.previous_sessions_listwidget)
-                history_buttons_layout = QHBoxLayout()
-                self.delete_entry_button = QPushButton("Delete Selected"); self.delete_entry_button.clicked.connect(self._delete_selected_history_entry); self.delete_entry_button.setEnabled(False)
-                history_buttons_layout.addWidget(self.delete_entry_button); history_buttons_layout.addStretch()
-                self.clear_history_button = QPushButton("Clear All History"); self.clear_history_button.clicked.connect(self._clear_all_history)
-                history_buttons_layout.addWidget(self.clear_history_button); left_layout.addLayout(history_buttons_layout)
-                previous_main_layout.addWidget(left_pane_widget, 1)
-
-                self.right_pane_history_widget = QWidget()
-                right_layout = QVBoxLayout(self.right_pane_history_widget)
-                self.previous_plot_groupbox = QGroupBox("Standard Curve (Selected History)")
-                self.previous_plot_groupbox_layout = QVBoxLayout(self.previous_plot_groupbox)
-                self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details.")
-                self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
-                self.previous_plot_groupbox_layout.addWidget(self.previous_plot_placeholder_label)
-                self.previous_plot_groupbox.setMaximumHeight(250)
-                self.previous_plot_groupbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                right_layout.addWidget(self.previous_plot_groupbox)
-                self.history_results_display_container = QWidget() 
-                self.history_results_display_layout = QVBoxLayout(self.history_results_display_container)
-                self.history_results_display_layout.setContentsMargins(0,0,0,0)
-                initial_hist_table_placeholder = QLabel("Lane data will appear here.")
-                initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
-                self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
-                right_layout.addWidget(self.history_results_display_container, 1)
-
-                previous_table_buttons_layout = QHBoxLayout()
-                copy_previous_button = QPushButton("Copy Active History Lane Table")
-                copy_previous_button.clicked.connect(self._copy_active_history_lane_table_data)
-                self.export_previous_button = QPushButton("Export Selected History to Excel")
-                self.export_previous_button.clicked.connect(self._export_selected_history_to_excel)
-                self.export_previous_button.setEnabled(False)
-                previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch()
-                previous_table_buttons_layout.addWidget(self.export_previous_button)
-                right_layout.addLayout(previous_table_buttons_layout)
-                previous_main_layout.addWidget(self.right_pane_history_widget, 2)
-                self.tab_widget.addTab(previous_tab_widget, "Analysis History")
-                self._populate_previous_sessions_list()
-                
             def _copy_active_history_lane_table_data(self):
                 table_to_copy = None
                 if hasattr(self, 'history_results_display_container'):
@@ -2335,7 +2500,6 @@ if __name__ == "__main__":
                     self._copy_table_data_generic(table_to_copy)
                 else:
                     QMessageBox.information(self, "Copy Error", "Could not find the active history lane's table to copy.")
-
             def _populate_previous_sessions_list(self):
                 self.previous_sessions_listwidget.clear()
                 if not self.analysis_history:
@@ -2360,7 +2524,6 @@ if __name__ == "__main__":
                 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
-
             def _clear_previous_details_view(self):
                 if hasattr(self, 'history_results_display_layout'):
                     while self.history_results_display_layout.count() > 0:
@@ -2371,104 +2534,14 @@ if __name__ == "__main__":
                     initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
                     self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
 
-                if hasattr(self, 'previous_plot_canvas_widget') and self.previous_plot_canvas_widget:
-                    if self.previous_plot_groupbox_layout: self.previous_plot_groupbox_layout.removeWidget(self.previous_plot_canvas_widget)
-                    self.previous_plot_canvas_widget.deleteLater(); self.previous_plot_canvas_widget = None
-                if self.previous_plot_placeholder_label: 
-                    self.previous_plot_placeholder_label.setText("Select an analysis from the list to view details.")
-                    if self.previous_plot_placeholder_label.isHidden(): self.previous_plot_placeholder_label.show()
+                old_plot_widget = self.plot_placeholder_history.layout().takeAt(0).widget()
+                if old_plot_widget: old_plot_widget.deleteLater()
+                self.plot_placeholder_history.layout().addWidget(self.previous_plot_placeholder_label)
+                self.previous_plot_placeholder_label.setText("Select an analysis from the list to view details.")
+                self.previous_plot_placeholder_label.show()
                 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
-
-            def _on_history_session_selected(self):
-                if not self.previous_sessions_listwidget: return
-                selected_items = self.previous_sessions_listwidget.selectedItems()
-                if not selected_items or "No history available." in selected_items[0].text():
-                    self._clear_previous_details_view()
-                    return
-
-                selected_row_index = self.previous_sessions_listwidget.currentRow()
-                if not (0 <= selected_row_index < len(self.analysis_history)):
-                    self._clear_previous_details_view()
-                    return
-
-                entry = self.analysis_history[selected_row_index]
-                if self.delete_entry_button: self.delete_entry_button.setEnabled(True)
-                if self.export_previous_button: self.export_previous_button.setEnabled(True)
-
-                hist_is_multi_lane_from_flag = entry.get("is_multi_lane", False)
-                processed_hist_results = {} 
-
-                if "results_data" in entry and isinstance(entry["results_data"], dict) and entry["results_data"]:
-                    temp_results_data = entry["results_data"]
-                    for lane_id_str, lane_content in temp_results_data.items():
-                        try:
-                            lane_id = int(lane_id_str)
-                            processed_hist_results[lane_id] = {
-                                'areas': lane_content.get('areas', []),
-                                'quantities': lane_content.get('quantities', []),
-                                'details': lane_content.get('details', []) 
-                            }
-                        except (ValueError, TypeError): pass
-                    if len(processed_hist_results) > 1: hist_is_multi_lane_from_flag = True 
-                    elif len(processed_hist_results) == 1: hist_is_multi_lane_from_flag = False
-                elif isinstance(entry.get("peak_areas"), list):
-                    legacy_areas = entry.get("peak_areas", []); legacy_quantities = entry.get("calculated_quantities", [])
-                    legacy_details_raw = entry.get("peak_details"); legacy_details_list = []
-                    if isinstance(legacy_details_raw, dict) and 1 in legacy_details_raw: legacy_details_list = legacy_details_raw[1]
-                    elif isinstance(legacy_details_raw, list): legacy_details_list = legacy_details_raw
-                    if legacy_areas: processed_hist_results[1] = {'areas': legacy_areas, 'quantities': legacy_quantities, 'details': legacy_details_list}
-                    hist_is_multi_lane_from_flag = False
-                else: pass
-
-                hist_std_dict = entry.get("standard_dictionary", {})
-                hist_is_std_mode = bool(hist_std_dict)
-
-                if hasattr(self, 'previous_plot_canvas_widget') and self.previous_plot_canvas_widget:
-                    if self.previous_plot_groupbox_layout: self.previous_plot_groupbox_layout.removeWidget(self.previous_plot_canvas_widget)
-                    self.previous_plot_canvas_widget.deleteLater(); self.previous_plot_canvas_widget = None
-                if self.previous_plot_placeholder_label and not self.previous_plot_placeholder_label.isHidden():
-                    self.previous_plot_placeholder_label.hide()
-                
-                while self.history_results_display_layout.count() > 0:
-                    item = self.history_results_display_layout.takeAt(0)
-                    widget = item.widget()
-                    if widget: widget.deleteLater()
-                
-                display_as_multi_lane_hist = hist_is_multi_lane_from_flag and len(processed_hist_results) > 0
-                display_as_single_lane_hist = (not hist_is_multi_lane_from_flag) and (1 in processed_hist_results) and len(processed_hist_results) == 1
-
-                if display_as_multi_lane_hist:
-                    hist_lane_tabs = QTabWidget()
-                    for lane_id_hist_sorted in sorted(processed_hist_results.keys()):
-                        lane_data_hist = processed_hist_results[lane_id_hist_sorted]
-                        lane_content_hist_widget = self._create_lane_data_display_widget(
-                            lane_id_hist_sorted, lane_data_hist.get('areas', []), lane_data_hist.get('quantities', []),
-                            hist_is_std_mode, pil_lane_image=None,
-                            peak_details_for_lane=lane_data_hist.get('details', []), 
-                            is_for_history=True
-                        )
-                        hist_lane_tabs.addTab(lane_content_hist_widget, f"Lane {lane_id_hist_sorted}")
-                    self.history_results_display_layout.addWidget(hist_lane_tabs)
-                elif display_as_single_lane_hist: 
-                    lane_data_hist = processed_hist_results[1]
-                    peak_details_hist = lane_data_hist.get('details', [])
-                    single_hist_lane_widget = self._create_lane_data_display_widget(
-                        1, lane_data_hist.get('areas', []), lane_data_hist.get('quantities', []), hist_is_std_mode, 
-                        pil_lane_image=None, peak_details_for_lane=peak_details_hist,
-                        is_for_history=True
-                    )
-                    self.history_results_display_layout.addWidget(single_hist_lane_widget)
-                else: 
-                    no_hist_data_label = QLabel("No valid lane results data found in this history entry.")
-                    no_hist_data_label.setAlignment(Qt.AlignCenter)
-                    self.history_results_display_layout.addWidget(no_hist_data_label)
-                
-                hist_plot_widget = self._create_standard_curve_plot_generic(hist_std_dict, hist_is_std_mode, for_history=True)
-                self.previous_plot_canvas_widget = hist_plot_widget
-                if self.previous_plot_groupbox_layout: self.previous_plot_groupbox_layout.addWidget(self.previous_plot_canvas_widget)
-
             def _delete_selected_history_entry(self):
                 if not self.previous_sessions_listwidget: return
                 current_row = self.previous_sessions_listwidget.currentRow()
@@ -2483,7 +2556,6 @@ if __name__ == "__main__":
                         self._clear_previous_details_view()
                 else:
                     QMessageBox.information(self, "No Selection", "Please select an entry to delete.")
-
             def _clear_all_history(self):
                 reply = QMessageBox.question(self, "Confirm Clear All History",
                                              "Are you sure you want to delete ALL saved analysis entries?\nThis action cannot be undone.",
@@ -2493,7 +2565,6 @@ if __name__ == "__main__":
                     self._save_history()
                     self._populate_previous_sessions_list()
                     self._clear_previous_details_view()
-
             def _export_selected_history_to_excel(self):
                 if not self.previous_sessions_listwidget: return
                 current_row = self.previous_sessions_listwidget.currentRow()
@@ -2520,63 +2591,6 @@ if __name__ == "__main__":
                     )
                 else:
                     QMessageBox.information(self, "No Selection", "Please select a history entry to export.")
-
-            def _create_standard_curve_plot_generic(self, standard_dictionary, is_standard_mode, for_history=False):
-                if not is_standard_mode or not standard_dictionary or len(standard_dictionary) < 2:
-                    no_curve_label = QLabel("Standard curve requires at least 2 standard points." if not for_history else "No standard data for this historical entry.")
-                    no_curve_label.setAlignment(Qt.AlignCenter)
-                    return no_curve_label
-                try:
-                    quantities = np.array(list(standard_dictionary.keys()), dtype=float)
-                    areas = np.array(list(standard_dictionary.values()), dtype=float)
-                    if len(quantities) < 2:
-                         no_curve_label = QLabel("Insufficient valid standard points (less than 2).")
-                         no_curve_label.setAlignment(Qt.AlignCenter)
-                         return no_curve_label
-
-                    coeffs = np.polyfit(areas, quantities, 1); slope, intercept = coeffs
-                    predicted_quantities = np.polyval(coeffs, areas); residuals = quantities - predicted_quantities
-                    ss_res = np.sum(residuals**2); ss_tot = np.sum((quantities - np.mean(quantities))**2)
-                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                    
-                    fig, ax = plt.subplots(figsize=(4.5, 3.2)); fig.set_dpi(90)
-
-                    is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
-                    if is_dark_theme:
-                        fig.patch.set_facecolor('#2D2D30'); ax.patch.set_facecolor('#38383C')
-                        text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
-                        scatter_color, line_color = '#FF8A65', '#42A5F5' # Light Orange, Light Blue
-                        for spine in ax.spines.values(): spine.set_color(spine_color)
-                        ax.tick_params(axis='x', colors=text_color); ax.tick_params(axis='y', colors=text_color)
-                        ax.yaxis.label.set_color(text_color); ax.xaxis.label.set_color(text_color); ax.title.set_color(text_color)
-                    else:
-                        scatter_color, line_color, grid_color, text_color = 'red', 'blue', '#DDDDDD', 'black'
-
-                    ax.scatter(areas, quantities, label='Standard Points', color=scatter_color, zorder=5, s=30)
-                    x_min_plot = np.min(areas) * 0.9 if areas.size > 0 else 0
-                    x_max_plot = np.max(areas) * 1.1 if areas.size > 0 else 1
-                    if x_min_plot == x_max_plot: x_min_plot -= 0.5; x_max_plot += 0.5
-                    x_line = np.linspace(x_min_plot, x_max_plot, 100); y_line = slope * x_line + intercept
-                    fit_label = (f'Qty = {slope:.3g}*Area + {intercept:.3g}\nR² = {r_squared:.3f}')
-                    ax.plot(x_line, y_line, label=fit_label, color=line_color, linewidth=1.2)
-                    ax.set_xlabel('Total Peak Area', fontsize=8); ax.set_ylabel('Known Quantity', fontsize=8)
-                    title_prefix = "Historical " if for_history else ""; ax.set_title(f'{title_prefix}Standard Curve', fontsize=9, fontweight='bold')
-                    leg = ax.legend(fontsize='xx-small', loc='best'); leg.get_frame().set_facecolor(ax.get_facecolor())
-                    for text in leg.get_texts(): text.set_color(text_color)
-                    ax.grid(True, linestyle=':', alpha=0.7, linewidth=0.5, color=grid_color)
-                    ax.tick_params(axis='both', which='major', labelsize=7)
-                    if np.any(areas > 1e4) or (np.any(areas < 1e-2) and np.any(areas != 0)): ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
-                    if np.any(quantities > 1e4) or (np.any(quantities < 1e-2) and np.any(quantities != 0)): ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
-                    try: fig.set_constrained_layout(True)
-                    except AttributeError: plt.tight_layout(pad=0.3)
-                    canvas = FigureCanvas(fig); canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
-                    plt.close(fig)
-                    return canvas
-                except Exception as e:
-                    traceback.print_exc()
-                    error_label = QLabel(f"Error generating plot:\n{str(e)[:100]}..."); error_label.setAlignment(Qt.AlignCenter); error_label.setStyleSheet("color: red;")
-                    return error_label
-
             def _populate_table_generic(self, table_widget, results_data, is_standard_mode, is_multi_lane_data):
                 table_widget.clearContents()
                 table_widget.setRowCount(0)
@@ -2612,22 +2626,28 @@ if __name__ == "__main__":
                         table_widget.setItem(current_row_idx, col_offset + 2, QTableWidgetItem(percentage_str))
                         quantity_str = ""
                         if is_standard_mode and calculated_quantities and band_idx < len(calculated_quantities):
-                            quantity_str = f"{calculated_quantities[band_idx]:.2f}"
+                            quantity_str = f"{calculated_quantities[band_idx]:.3f}" # More precision
                         table_widget.setItem(current_row_idx, col_offset + 3, QTableWidgetItem(quantity_str))
                         current_row_idx += 1
                 if current_row_idx == 0:
                     self._populate_table_generic(table_widget, None, False, False)
                 else:
                     table_widget.resizeColumnsToContents()
-
             def _copy_table_data_generic(self, table_widget_source):
                 if not table_widget_source: return
                 selected_ranges = table_widget_source.selectedRanges()
-                if not selected_ranges: return
+                if not selected_ranges: 
+                    # If nothing selected, select all and then copy
+                    table_widget_source.selectAll()
+                    selected_ranges = table_widget_source.selectedRanges()
+                    if not selected_ranges: return
                 selected_range = selected_ranges[0]
                 start_row, end_row = selected_range.topRow(), selected_range.bottomRow()
                 start_col, end_col = selected_range.leftColumn(), selected_range.rightColumn()
                 clipboard_string = ""
+                # Add headers to clipboard string
+                header_data = [table_widget_source.horizontalHeaderItem(c).text() for c in range(start_col, end_col + 1)]
+                clipboard_string += "\t".join(header_data) + "\n"
                 for r in range(start_row, end_row + 1):
                     row_data = []
                     for c in range(start_col, end_col + 1):
@@ -2639,7 +2659,6 @@ if __name__ == "__main__":
                     if any(cell_text for cell_text in row_data):
                         clipboard_string += "\t".join(row_data) + "\n"
                 QApplication.clipboard().setText(clipboard_string.strip())
-
             def _export_to_excel_generic(self, results_data_for_export, analysis_name_for_filename_base="Analysis_Results", 
                                          standard_dict_for_export=None, is_multi_lane_data=False):
                 safe_analysis_name = str(analysis_name_for_filename_base).replace('.', '_').replace(' ', '_').replace(':', '-')
@@ -2680,7 +2699,7 @@ if __name__ == "__main__":
                             except ValueError: worksheet_data.cell(row=current_excel_row, column=4, value=perc_val_str)
                             qty_str_val = ""
                             if self.current_is_standard_mode and calculated_quantities and band_idx < len(calculated_quantities):
-                                qty_str_val = f"{calculated_quantities[band_idx]:.2f}"
+                                qty_str_val = f"{calculated_quantities[band_idx]:.3f}" # More precision
                                 try: worksheet_data.cell(row=current_excel_row, column=5, value=float(qty_str_val))
                                 except ValueError: worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
                             else: worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
@@ -2717,7 +2736,7 @@ if __name__ == "__main__":
                         except ValueError: worksheet_data_single.cell(row=excel_r, column=3, value=perc_val_str)
                         qty_str_val = ""
                         if self.current_is_standard_mode and calculated_quantities_single and r_idx < len(calculated_quantities_single):
-                            qty_str_val = f"{calculated_quantities_single[r_idx]:.2f}"
+                            qty_str_val = f"{calculated_quantities_single[r_idx]:.3f}" # More precision
                             try: worksheet_data_single.cell(row=excel_r, column=4, value=float(qty_str_val))
                             except ValueError: worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
                         else: worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
@@ -6592,12 +6611,19 @@ if __name__ == "__main__":
                         print(f"Sample Analysis: Calculated Peak Info = {self.latest_peak_details}")
 
                         if len(self.quantities_peak_area_dict) >= 2:
-                            self.latest_calculated_quantities = self.calculate_unknown_quantity(
-                                list(self.quantities_peak_area_dict.values()),
+                            # --- NEW: Use the central quantification engine ---
+                            # The model name is taken from the TableWindow's current tab, if open.
+                            model_to_use = "Linear" # Default
+                            if self.table_window_instance and not self.table_window_instance.isHidden():
+                                model_to_use = self.table_window_instance.model_combo_current.currentText()
+                            
+                            quantities, _ = self._perform_quantification(
+                                model_to_use,
                                 list(self.quantities_peak_area_dict.keys()),
-                                self.latest_peak_areas 
+                                list(self.quantities_peak_area_dict.values()),
+                                self.latest_peak_areas
                             )
-                            print(f"Sample Analysis: Calculated Quantities = {self.latest_calculated_quantities}")
+                            self.latest_calculated_quantities = quantities
                         else: self.latest_calculated_quantities = []
                         try: 
                             # FIX: Format numbers for clean display
@@ -6639,36 +6665,61 @@ if __name__ == "__main__":
                 return peak_info_list if peak_info_list is not None else [] # Return list of dicts or empty list
             
             
-            def calculate_unknown_quantity(self, standard_total_areas, known_quantities, sample_peak_areas):
+            def _perform_quantification(self, model_name, standard_quantities, standard_areas, sample_areas):
                 """
-                Calculates unknown quantities based on a given standard curve and sample areas. 
-                Returns a list of quantities.
+                Central quantification engine. Fits a standard curve using the specified model
+                and calculates unknown quantities for sample areas.
                 """
-                if not standard_total_areas or not known_quantities or len(standard_total_areas) != len(known_quantities):
-                    print("Error: Invalid standard data for quantity calculation.")
-                    return []
-                if len(standard_total_areas) < 2:
-                    print("Error: Need at least 2 standards for regression.")
-                    return []
-                if not sample_peak_areas:
-                     # This is a valid case (e.g., just updating standards), so don't print a warning.
-                     return []
+                if len(standard_quantities) < 2 or not sample_areas:
+                    return ([0.0] * len(sample_areas), None)
 
+                std_qty_np = np.array(standard_quantities, dtype=float)
+                std_area_np = np.array(standard_areas, dtype=float)
+                sample_areas_np = np.array(sample_areas, dtype=float)
+                
+                fit_params = None
                 calculated_quantities = []
+
                 try:
-                    # Use total standard area vs known quantity for the standard curve
-                    coefficients = np.polyfit(standard_total_areas, known_quantities, 1)
+                    # --- START OF THE FIX ---
+                    # For polynomial models, we fit Quantity as a function of Area.
+                    # This makes calculating the unknown quantity a simple evaluation, not a complex root-finding problem.
+                    if "Linear" in model_name or "Polynomial" in model_name:
+                        degree = 1
+                        if "Deg 2" in model_name: degree = 2
+                        elif "Deg 3" in model_name: degree = 3
+                        
+                        # Ensure enough points for the chosen degree
+                        if len(std_qty_np) <= degree: return ([0.0] * len(sample_areas), None)
 
-                    # Apply the standard curve to *each individual* sample peak area
-                    for area in sample_peak_areas:
-                        val = np.polyval(coefficients, area)
-                        calculated_quantities.append(round(val, 2))
+                        # Fit Quantity = f(Area)
+                        fit_params = np.polyfit(std_area_np, std_qty_np, degree)
+                        
+                        # Calculate quantities by simply evaluating the polynomial with the sample areas
+                        calculated_quantities = np.polyval(fit_params, sample_areas_np).tolist()
 
-                except Exception as e:
-                     print(f"Error during quantity calculation: {e}")
-                     return [] # Return empty list on error
+                    # --- END OF THE FIX ---
 
-                return calculated_quantities
+                    elif SCIPY_AVAILABLE and "4-PL" in model_name:
+                        # For sigmoidal models, we fit Area = f(Quantity) and then use the mathematical inverse.
+                        if len(std_qty_np) < 4: return ([0.0] * len(sample_areas), None)
+                        
+                        p0 = [min(std_area_np), 1.0, np.median(std_qty_np), max(std_area_np)]
+                        fit_params, _ = curve_fit(four_param_logistic, std_qty_np, std_area_np, p0=p0, maxfev=10000)
+                        a, b, c, d = fit_params
+
+                        # Calculate quantity from area using the inverse of the 4-PL function
+                        term = ((a - d) / (sample_areas_np - d)) - 1
+                        quantities = np.full_like(sample_areas_np, 0.0)
+                        valid_mask = term > 0
+                        quantities[valid_mask] = c * (term[valid_mask]**(1/b))
+                        calculated_quantities = quantities.tolist()
+                
+                except (RuntimeError, ValueError, np.linalg.LinAlgError) as e:
+                    print(f"ERROR: Could not fit model '{model_name}': {e}")
+                    return ([0.0] * len(sample_areas), None)
+
+                return (calculated_quantities, fit_params)
 
                 
             def draw_quantity_text(self, painter, x, y, quantity, scale_x, scale_y):
@@ -6875,6 +6926,7 @@ if __name__ == "__main__":
                 mw_layout.addWidget(QLabel("Regression Model:"), 0, 0)
                 self.mw_regression_model_combo = QComboBox()
                 self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"])
+                self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 3)")
                 mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
                 self.predict_button = QPushButton("Predict Molecular Weight")
                 self.predict_button.setToolTip("Click a point on a lane to predict its MW based on the active standard markers.\nShortcut: Ctrl+P")
@@ -6983,7 +7035,8 @@ if __name__ == "__main__":
             def update_standards_from_text_fields(self):
                 """
                 Reads the editable standard fields, validates them, updates the internal dictionary,
-                and automatically recalculates quantities for the last analyzed samples.
+                and automatically recalculates quantities for the last analyzed samples using the
+                currently selected regression model from the TableWindow.
                 """
                 try:
                     # Read and parse quantities and areas
@@ -7007,7 +7060,9 @@ if __name__ == "__main__":
 
                     QMessageBox.information(self, "Success", "Standard curve data has been updated.")
                     
-                    # --- NEW: AUTOMATIC RECALCULATION LOGIC ---
+                    # --- START OF MODIFICATION ---
+                    # AUTOMATIC RECALCULATION LOGIC using the new quantification engine
+
                     if len(self.quantities_peak_area_dict) < 2:
                         # If standards are no longer valid, clear quantities
                         self.latest_calculated_quantities = []
@@ -7016,15 +7071,21 @@ if __name__ == "__main__":
                         QMessageBox.information(self, "Info", "Standard curve is no longer valid (less than 2 points). Sample quantities cleared.")
                         return
 
+                    # Determine which regression model to use from the (potentially open) TableWindow
+                    model_to_use = "Linear" # Default if window isn't open or accessible
+                    if self.table_window_instance and not self.table_window_instance.isHidden():
+                        model_to_use = self.table_window_instance.model_combo_current.currentText()
+                    
                     all_lanes_text_results = []
+                    std_qtys = list(self.quantities_peak_area_dict.keys())
+                    std_areas = list(self.quantities_peak_area_dict.values())
+
                     # Check if the last analysis was multi-lane
                     if self.latest_multi_lane_peak_areas:
                         for lane_id, lane_areas in self.latest_multi_lane_peak_areas.items():
                             if lane_areas:
-                                new_quantities = self.calculate_unknown_quantity(
-                                    list(self.quantities_peak_area_dict.values()),
-                                    list(self.quantities_peak_area_dict.keys()),
-                                    lane_areas
+                                new_quantities, _ = self._perform_quantification(
+                                    model_to_use, std_qtys, std_areas, lane_areas
                                 )
                                 self.latest_multi_lane_calculated_quantities[lane_id] = new_quantities
                                 
@@ -7037,10 +7098,8 @@ if __name__ == "__main__":
 
                     # Check if the last analysis was single-lane
                     elif self.latest_peak_areas:
-                        new_quantities = self.calculate_unknown_quantity(
-                            list(self.quantities_peak_area_dict.values()),
-                            list(self.quantities_peak_area_dict.keys()),
-                            self.latest_peak_areas
+                        new_quantities, _ = self._perform_quantification(
+                            model_to_use, std_qtys, std_areas, self.latest_peak_areas
                         )
                         self.latest_calculated_quantities = new_quantities
                         
@@ -7052,7 +7111,12 @@ if __name__ == "__main__":
                     # Update the UI text box with the newly calculated results
                     if all_lanes_text_results:
                         self.target_protein_areas_text.setText("\n".join(all_lanes_text_results))
-                    # --- END OF NEW LOGIC ---
+                    
+                    # If the table window is open, refresh it to show the new curve and quantities
+                    if self.table_window_instance and not self.table_window_instance.isHidden():
+                        self.table_window_instance._update_analysis_display_for_tab(is_for_history=False)
+
+                    # --- END OF MODIFICATION ---
 
                 except ValueError:
                     QMessageBox.critical(self, "Input Error", "Please ensure all values are comma-separated numbers.")
@@ -7956,9 +8020,10 @@ if __name__ == "__main__":
 
                 # --- Analyze each extracted PIL image ---
                 all_lanes_text_results = []
-                if not extracted_regions_info: # Double check if list is empty before iterating
-                    QMessageBox.warning(self, "Analysis Error", "No regions were successfully extracted for analysis.")
-                    return
+                model_to_use = "Linear"
+                std_qtys = list(self.quantities_peak_area_dict.keys())
+                std_areas = list(self.quantities_peak_area_dict.values())
+                # --- END OF THE FIX ---
 
                 for region_info in extracted_regions_info: # Iterate over the populated list
                     lane_id = region_info['id']
@@ -7972,19 +8037,24 @@ if __name__ == "__main__":
                         self.latest_multi_lane_peak_details[lane_id] = peak_info_for_lane 
 
                         if len(self.quantities_peak_area_dict) >= 2:
-                            quantities_for_lane = self.calculate_unknown_quantity(
-                                list(self.quantities_peak_area_dict.values()),
-                                list(self.quantities_peak_area_dict.keys()),
+                            # --- START OF THE FIX ---
+                            # Call the new, correct quantification function
+                            quantities_for_lane, _ = self._perform_quantification(
+                                model_to_use,
+                                std_qtys,
+                                std_areas,
                                 areas_for_this_lane 
                             )
+                            # --- END OF THE FIX ---
+                            
                             self.latest_multi_lane_calculated_quantities[lane_id] = quantities_for_lane
-                            # FIX: Format the lists for clean display in the QTextEdit
+                            # Format the lists for clean display in the QTextEdit
                             formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
                             formatted_quantities = ', '.join([f"{q:.2f}" for q in quantities_for_lane])
                             all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}], Qty=[{formatted_quantities}]")
                         else:
                             self.latest_multi_lane_calculated_quantities[lane_id] = []
-                            # FIX: Format the list for clean display
+                            # Format the list for clean display
                             formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
                             all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}] (No std curve for qty)")
                     else:
