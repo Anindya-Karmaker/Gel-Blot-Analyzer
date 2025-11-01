@@ -2833,8 +2833,8 @@ if __name__ == "__main__":
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
 
-                self.fig = plt.figure(figsize=(10, 6))
-                gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig)
+                self.fig = plt.figure(figsize=(10, 7.5)) 
+                gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.1, figure=self.fig)
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
                 
@@ -2887,7 +2887,7 @@ if __name__ == "__main__":
                 
                 peak_detect_group = QGroupBox("Peak Detection & Manipulation")
                 peak_detect_layout = QGridLayout(peak_detect_group)
-                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(lambda: (self.regenerate_profile_and_detect,self.denoise_sigma_slider.setFocus())); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(lambda: (self.regenerate_profile_and_detect, self.smoothing_slider.setFocus())); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(lambda: (self.detect_peaks,self.peak_prominence_slider.setFocus())); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(lambda: (self.detect_peaks, self.peak_height_slider.setFocus())); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(lambda: (self.detect_peaks, self.peak_distance_slider.setFocus())); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
+                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(self.detect_peaks); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
                 self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 6, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 6, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 6, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
                 if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
                 peak_detect_layout.addWidget(self.copy_regions_button, 7,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 7,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
@@ -3041,39 +3041,44 @@ if __name__ == "__main__":
                     text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
                     bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#EC407A'
+                    fill_color_rv = 'yellow'; fill_alpha_rv = 0.5
                 else:
                     bg_color, ax_bg_color = 'white', 'white'
                     text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
                     bg_line_color, sl_line_color, rv_line_color = 'green', 'purple', 'magenta'
+                    fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
-                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
-                     self.fig.clf(); gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
-                     self.fig.patch.set_facecolor(bg_color); self.ax.patch.set_facecolor(ax_bg_color); self.ax_image.patch.set_facecolor(ax_bg_color)
-                     self.ax_image.set_xlabel("Pixel Index", color=text_color); self.ax.tick_params(axis='x', labelbottom=False)
-                     self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes); self.canvas.draw_idle(); return
-                
-                if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
-                    self.background = np.zeros_like(profile_to_plot_and_calc)
-                
-                self.fig.clf(); self.fig.patch.set_facecolor(bg_color)
-                gs = GridSpec(2, 1, height_ratios=[3, 1.5], hspace=0.1, figure=self.fig); self.ax = self.fig.add_subplot(gs[0]); self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
+                # --- Clearing and setup ---
+                self.fig.clf()
+                gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.1, figure=self.fig)
+                self.ax = self.fig.add_subplot(gs[0])
+                self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
+                self.fig.patch.set_facecolor(bg_color)
                 self.interactive_artists.clear()
                 
                 for axis in [self.ax, self.ax_image]:
                     axis.patch.set_facecolor(ax_bg_color)
                     for spine in axis.spines.values(): spine.set_color(spine_color)
-                    axis.tick_params(axis='x', colors=text_color); axis.tick_params(axis='y', colors=text_color)
+                    axis.tick_params(axis='x', colors=text_color, labelsize=8); axis.tick_params(axis='y', colors=text_color, labelsize=8)
                     axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
+                
+                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
+                     self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=9)
+                     self.ax.tick_params(axis='x', labelbottom=False)
+                     self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
+                     self.canvas.draw_idle(); return
+                
+                if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
+                    self.background = np.zeros_like(profile_to_plot_and_calc)
 
-                plot_label_with_denoise = f"Profile (Denoise σ={self.denoise_sigma:.1f}, Smooth σ={self.smoothing_sigma:.1f})"
-                self.ax.plot(profile_to_plot_and_calc, label=plot_label_with_denoise, color=profile_color, lw=1.2)
+                self.ax.plot(profile_to_plot_and_calc, label="Profile", color=profile_color, lw=1.2)
                 
                 if len(self.peaks) > 0:
                      valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
                      if len(valid_peaks_indices) > 0:
                          peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks_indices]
-                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color=peak_marker_color, marker='x', s=50, label="Peaks", zorder=5) 
+                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color=peak_marker_color, marker='x', s=40, label="Peaks", zorder=5) 
                          if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
                              focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]
                              self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=6)
@@ -3082,14 +3087,11 @@ if __name__ == "__main__":
                 
                 global_sl_baseline = None
                 if self.method == "Straight Line" and self.peak_regions:
-                    trough_x = []
-                    trough_y = []
-                    trough_x.append(self.peak_regions[0][0])
-                    trough_y.append(profile_to_plot_and_calc[self.peak_regions[0][0]])
+                    trough_x = [self.peak_regions[0][0]]
+                    trough_y = [profile_to_plot_and_calc[self.peak_regions[0][0]]]
                     for start_handle, end_handle in self.peak_regions:
                         trough_x.append(end_handle)
                         trough_y.append(profile_to_plot_and_calc[end_handle])
-                    
                     if len(trough_x) >= 2:
                         x_all = np.arange(len(profile_to_plot_and_calc))
                         global_sl_baseline = np.interp(x_all, trough_x, trough_y)
@@ -3099,6 +3101,8 @@ if __name__ == "__main__":
                 
                 profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0
                 max_y_for_plot_limit = np.max(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 1
+
+                text_positions = []
 
                 for i in range(len(self.peak_regions)):
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
@@ -3120,48 +3124,69 @@ if __name__ == "__main__":
                         area_sl = np.trapz(np.maximum(0, difference_sl_local))
                     self.peak_areas_straight_line.append(max(0, area_sl))
 
-                    # For "Rolling-valley", the calculation uses a local straight line baseline.
                     y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
                     baseline_rv_local = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
-                    
-                    if start_handle < end_handle:
-                        signal_in_region = profile_to_plot_and_calc[start_handle:end_handle+1]
-                        difference_rv = signal_in_region - baseline_rv_local
-                        # Integrate only where the signal is above the local baseline
-                        area_valley = np.trapz(np.maximum(0, difference_rv))
-                    else:
-                        area_valley = 0.0
+                    area_valley = np.trapz(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rv_local)) if start_handle < end_handle else 0.0
                     self.peak_areas_valley.append(area_valley)
                     
                     if self.method == "Rolling Ball":
                         x_region = np.arange(start_calc_rb, end_calc_rb + 1)
                         self.ax.fill_between(x_region, baseline_rb[x_region], profile_to_plot_and_calc[x_region], color="yellow", alpha=0.4, interpolate=True)
                         if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG")
-                        area_text = area_rb
+                        area_text_val = area_rb
                     elif self.method == "Straight Line":
                         if global_sl_baseline is not None:
                             x_region = np.arange(start_handle, end_handle + 1)
                             self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True)
-                        area_text = area_sl
+                        area_text_val = area_sl
                     elif self.method == "Rolling-valley":
                         x_region_rv = np.arange(start_handle, end_handle + 1)
-                        # Fill area between signal and local straight line, ONLY where signal is higher
-                        self.ax.fill_between(x_region_rv, baseline_rv_local, profile_to_plot_and_calc[x_region_rv], where=(profile_to_plot_and_calc[x_region_rv] >= baseline_rv_local), color="yellow", alpha=0.7, interpolate=True)
-                        # Draw the thick orange line connecting the troughs for this peak
+                        self.ax.fill_between(x_region_rv, baseline_rv_local, profile_to_plot_and_calc[x_region_rv], where=(profile_to_plot_and_calc[x_region_rv] >= baseline_rv_local), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True)
                         self.ax.plot([start_handle, end_handle], y_baseline_rv_points, color='darkorange', lw=1.5, zorder=4)
-                        # Still show the rolling ball line for reference
-                        if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color=rv_line_color, ls="--", lw=1.2, label="RV BG")
-                        area_text = area_valley
+                        if i == 0 and self.background is not None: self.ax.plot(np.arange(len(self.background)), self.background, color=rv_line_color, ls="--", lw=1.2, label="RV BG")
+                        area_text_val = area_valley
                     
-                    text_x_pos = peak_x; text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
-                    self.ax.text(text_x_pos, text_y_pos, f"{area_text:.0f}", ha="center", va="bottom", fontsize=7, color=text_color, bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8))
+                    text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
+                    text_positions.append((peak_x, text_y_pos, f"{area_text_val:.0f}"))
                     max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
 
-                leg = self.ax.legend(fontsize='small', loc='upper right'); leg.get_frame().set_facecolor(ax_bg_color)
-                for text in leg.get_texts(): text.set_color(text_color)
-                self.ax.set_ylabel("Intensity"); self.ax.set_title(f"Profile & Peak Regions"); self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
-                if len(profile_to_plot_and_calc) > 1: self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1); self.ax.set_ylim(bottom=min(0, np.min(profile_to_plot_and_calc)), top=max_y_for_plot_limit * 1.05)
-                if np.max(profile_to_plot_and_calc) > 10000: self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+                last_text_end_x = -np.inf
+                text_spacing_pixels = 5
+                text_positions.sort(key=lambda item: item[0])
+                for x, y, text_str in text_positions:
+                    text_artist = self.ax.text(x, y, text_str, ha="center", va="bottom", fontsize=7, color=text_color,
+                                               bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8))
+                    
+                    renderer = self.canvas.get_renderer()
+                    bbox = text_artist.get_window_extent(renderer=renderer)
+                    bbox_data = self.ax.transData.inverted().transform(bbox)
+                    
+                    if bbox_data[0,0] < last_text_end_x + text_spacing_pixels:
+                        new_y = y + profile_range_plot * 0.08
+                        text_artist.set_y(new_y)
+                        max_y_for_plot_limit = max(max_y_for_plot_limit, new_y)
+                        bbox = text_artist.get_window_extent(renderer=renderer)
+                        bbox_data = self.ax.transData.inverted().transform(bbox)
+
+                    last_text_end_x = bbox_data[1,0]
+                
+                handles, labels = self.ax.get_legend_handles_labels()
+                if handles:
+                    leg = self.fig.legend(handles, labels, loc='lower center', ncol=len(handles), 
+                                          bbox_to_anchor=(0.5, 0.01),
+                                          fontsize='medium', facecolor=bg_color, edgecolor=spine_color)
+                    for text in leg.get_texts():
+                        text.set_color(text_color)
+                
+                self.ax.set_ylabel("Intensity", fontsize=9)
+                self.ax.set_title(f"Profile & Peak Regions ({self.method})", fontsize=10, weight='bold')
+                self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+                if len(profile_to_plot_and_calc) > 1:
+                    self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1)
+                    self.ax.set_ylim(bottom=min(0, np.min(profile_to_plot_and_calc)), top=max_y_for_plot_limit * 1.1)
+                
+                if np.max(profile_to_plot_and_calc) > 10000:
+                    self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
                 
                 self.ax_image.clear() 
                 if hasattr(self, 'enhanced_cropped_image_for_display') and self.enhanced_cropped_image_for_display:
@@ -3169,15 +3194,19 @@ if __name__ == "__main__":
                     image_extent = [0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil_image_display.height]
                     self.ax_image.imshow(np.array(rotated_pil_image_display), cmap='gray', aspect='auto', extent=image_extent)
                     
-                    self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize='small'); self.ax_image.set_xlabel("Pixel Index", fontsize='small')
+                    self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
+                    self.ax_image.set_xlabel("Pixel Index", fontsize=9)
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
                         is_focused = peak_idx == self.selected_peak_for_ui_focus
-                        line_color, zorder_val, lw = ('orange', 11, 2.0) if is_focused else ('blue', 10, 1.5)
+                        line_color, zorder_val, lw = (focused_peak_color, 11, 2.0) if is_focused else ('blue', 10, 1.5)
                         
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
-                self.fig.tight_layout(pad=0.5); self.canvas.draw_idle(); plt.close(self.fig)
+                self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.25)
+                
+                self.canvas.draw_idle()
+                plt.close(self.fig)
 
             def on_draw(self, event): self.background_blit = self.canvas.copy_from_bbox(self.fig.bbox)
             def on_canvas_press(self, event):
@@ -4249,66 +4278,74 @@ if __name__ == "__main__":
                         painter.setPen(quad_pen)
                     if len(self.quad_points) == 4: painter.drawPolygon(QPolygonF(self.quad_points))
 
-                elif self.bounding_box_preview and self.mode not in ["rectangle", "auto_lane_rect"] and \
-                     (not (self.app_instance and self.app_instance.multi_lane_definitions) or is_selected_single_rect_for_move):
-                    pen_color = Qt.magenta if is_selected_single_rect_for_move else Qt.darkYellow
-                    pen_width_sf = 2.0 if is_selected_single_rect_for_move else 1.0
-                    effective_pen_width_bbox = max(0.5, pen_width_sf / self.zoom_level)
-                    rect_pen = QPen(pen_color, effective_pen_width_bbox, Qt.SolidLine)
+                elif self.bounding_box_preview and self.mode not in ["rectangle", "auto_lane_rect"] and not (self.app_instance and self.app_instance.multi_lane_definitions):
+                    is_selected = (self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.app_instance.moving_multi_lane_index == -3)
+                    pen_color = Qt.magenta if is_selected else Qt.darkYellow
+                    pen_width_sf = 2.0 if is_selected else 1.0
+                    rect_pen = QPen(pen_color, max(0.5, pen_width_sf / self.zoom_level), Qt.SolidLine)
                     painter.setPen(rect_pen)
-                    start_x, start_y, end_x, end_y = self.bounding_box_preview
-                    rect_label_space = QRectF(QPointF(start_x, start_y), QPointF(end_x, end_y)).normalized()
+                    rect_label_space = QRectF(QPointF(*self.bounding_box_preview[:2]), QPointF(*self.bounding_box_preview[2:])).normalized()
                     painter.drawRect(rect_label_space)
-                    if is_selected_single_rect_for_move or \
-                       (self.app_instance and self.app_instance.current_selection_mode == "select_for_move" and self.app_instance.moving_multi_lane_index == -3):
-                        point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
-                        painter.setPen(QPen(point_pen_color, effective_pen_width_bbox * 2))
+                    if self.app_instance and self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"]:
+                        point_pen_color = Qt.red if self.app_instance.current_selection_mode != "select_for_move" else Qt.blue
+                        painter.setPen(QPen(point_pen_color, max(0.5, 2.0 / self.zoom_level) * 1.5))
                         rect_corners = [rect_label_space.topLeft(), rect_label_space.topRight(), rect_label_space.bottomRight(), rect_label_space.bottomLeft()]
                         for idx, corner_ls in enumerate(rect_corners):
-                             if self.app_instance.current_selection_mode == "resizing_corner" and \
-                                self.app_instance.moving_multi_lane_index == -3 and self.app_instance.resizing_corner_index == idx:
-                                 painter.setBrush(QBrush(Qt.red))
-                                 painter.drawEllipse(corner_ls, handle_radius_view * 1.2, handle_radius_view * 1.2)
-                                 painter.setBrush(Qt.NoBrush)
-                             else:
+                            is_resizing_this_corner = (is_selected and self.app_instance.current_selection_mode == "resizing_corner" and self.app_instance.resizing_corner_index == idx)
+                            if is_resizing_this_corner:
+                                painter.setBrush(QBrush(Qt.red))
+                                painter.drawEllipse(corner_ls, handle_radius_view * 1.2, handle_radius_view * 1.2)
+                                painter.setBrush(Qt.NoBrush)
+                            else:
                                 painter.drawEllipse(corner_ls, handle_radius_view, handle_radius_view)
-                        painter.setPen(rect_pen)
 
                 if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
-                    lane_font_size = 10
-                    lane_font = QFont("Arial"); lane_font.setPixelSize(int(lane_font_size / self.zoom_level if self.zoom_level > 0 else lane_font_size)); lane_font.setBold(True)
+                    lane_font = QFont("Arial"); lane_font.setPixelSize(int(10 / self.zoom_level if self.zoom_level > 0 else 10)); lane_font.setBold(True)
                     for i, lane_def in enumerate(self.app_instance.multi_lane_definitions):
-                        lane_id_str = str(lane_def['id']); center_point = QPointF()
-                        is_selected_for_move_or_resize = (self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.app_instance.moving_multi_lane_index == i)
-                        pen_width_multilane = max(0.5, (2.0 if is_selected_for_move_or_resize else 1.0) / self.zoom_level)
-                        pen_defined_lane = QPen(Qt.magenta if is_selected_for_move_or_resize else Qt.darkYellow, pen_width_multilane, Qt.SolidLine); painter.setPen(pen_defined_lane)
-                        current_lane_shape_points_label = []
+                        # Determine if THIS specific lane is the one being interacted with
+                        is_selected_this_lane = (self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.app_instance.moving_multi_lane_index == i)
+                        
+                        # Set body color based on selection
+                        pen_color = Qt.magenta if is_selected_this_lane else Qt.darkYellow
+                        pen_width_multilane = max(0.5, (2.0 if is_selected_this_lane else 1.0) / self.zoom_level)
+                        pen_defined_lane = QPen(pen_color, pen_width_multilane, Qt.SolidLine)
+                        painter.setPen(pen_defined_lane)
+                        
+                        center_point, corners = QPointF(), []
                         if lane_def['type'] == 'rectangle':
-                            rect_label_space = lane_def['points_label'][0]; painter.drawRect(rect_label_space); center_point = rect_label_space.center()
-                            if is_selected_for_move_or_resize: current_lane_shape_points_label = [rect_label_space.topLeft(), rect_label_space.topRight(), rect_label_space.bottomRight(), rect_label_space.bottomLeft()]
+                            rect_ls = lane_def['points_label'][0]; painter.drawRect(rect_ls); center_point = rect_ls.center()
+                            corners = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
                         elif lane_def['type'] == 'quad':
-                            quad_points_label_space = lane_def['points_label']; poly = QPolygonF(quad_points_label_space); painter.drawPolygon(poly)
-                            if is_selected_for_move_or_resize: current_lane_shape_points_label = quad_points_label_space
-                            if len(quad_points_label_space) == 4: cx = sum(p.x() for p in quad_points_label_space) / 4.0; cy = sum(p.y() for p in quad_points_label_space) / 4.0; center_point = QPointF(cx, cy)
-                        if is_selected_for_move_or_resize and current_lane_shape_points_label:
-                            point_pen_color = Qt.blue if self.app_instance.current_selection_mode == "select_for_move" else Qt.red
+                            quad_pts = lane_def['points_label']; poly = QPolygonF(quad_pts); painter.drawPolygon(poly)
+                            corners = quad_pts
+                            if len(quad_pts) == 4: center_point = QPointF(sum(p.x() for p in quad_pts) / 4.0, sum(p.y() for p in quad_pts) / 4.0)
+                        
+                        # --- THIS IS THE FIX: Simplified condition to draw handles ---
+                        # Draw handles if we are in ANY selection mode.
+                        if self.app_instance.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"]:
+                            # If this specific lane is selected, handles are red (for drag/resize).
+                            # If no lane is selected yet (select_for_move), all handles are blue.
+                            point_pen_color = Qt.red if is_selected_this_lane and self.app_instance.current_selection_mode != "select_for_move" else Qt.blue
                             painter.setPen(QPen(point_pen_color, pen_width_multilane * 1.5))
-                            for idx, p_ls_multi in enumerate(current_lane_shape_points_label):
-                                if self.app_instance.current_selection_mode == "resizing_corner" and \
-                                   self.app_instance.moving_multi_lane_index == i and self.app_instance.resizing_corner_index == idx: 
+                            
+                            for idx, p_ls_multi in enumerate(corners):
+                                is_resizing_this_corner = (is_selected_this_lane and self.app_instance.current_selection_mode == "resizing_corner" and self.app_instance.resizing_corner_index == idx)
+                                if is_resizing_this_corner: 
                                     painter.setBrush(QBrush(Qt.red))
                                     painter.drawEllipse(p_ls_multi, handle_radius_view * 1.2, handle_radius_view * 1.2)
                                     painter.setBrush(Qt.NoBrush)
                                 else:
                                     painter.drawEllipse(p_ls_multi, handle_radius_view, handle_radius_view)
-                            painter.setPen(pen_defined_lane)
+                        # --- END OF FIX ---
+                        
                         if not center_point.isNull(): 
-                            painter.setFont(lane_font); painter.setPen(Qt.black)
+                            lane_id_str = str(lane_def['id'])
+                            painter.setFont(lane_font); painter.setPen(Qt.red if is_selected_this_lane else Qt.black)
                             fm_lane = QFontMetrics(lane_font); text_rect_lane = fm_lane.boundingRect(lane_id_str)
-                            draw_x_lane = center_point.x() - text_rect_lane.width() / 2.0 - text_rect_lane.left(); draw_y_lane = center_point.y() - text_rect_lane.height() / 2.0 - text_rect_lane.top()
-                            bg_rect_lane = QRectF(draw_x_lane - 2, draw_y_lane - 2 + text_rect_lane.top(), text_rect_lane.width() + 4, text_rect_lane.height() + 4)
-                            painter.save(); painter.setBrush(QColor(255, 255, 255, 220 if is_selected_for_move_or_resize else 180)); painter.setPen(Qt.NoPen); painter.drawRoundedRect(bg_rect_lane, 3, 3); painter.restore()
-                            painter.setPen(Qt.red if is_selected_for_move_or_resize else Qt.black); painter.drawText(QPointF(draw_x_lane, draw_y_lane), lane_id_str)
+                            draw_x = center_point.x() - text_rect_lane.width() / 2.0; draw_y = center_point.y() + text_rect_lane.height() / 4.0
+                            bg_rect = QRectF(draw_x - 2, draw_y - text_rect_lane.height() + 2, text_rect_lane.width() + 4, text_rect_lane.height() + 4)
+                            painter.save(); painter.setBrush(QColor(255, 255, 255, 180)); painter.setPen(Qt.NoPen); painter.drawRoundedRect(bg_rect, 3, 3); painter.restore()
+                            painter.drawText(QPointF(draw_x, draw_y), lane_id_str)
 
                 if self.drag_preview_rect or self.drag_preview_quad_points:
                     painter.save()
@@ -6203,7 +6240,7 @@ if __name__ == "__main__":
                 
                 # --- START FIX ---
                 # Use the fully adjusted master image as the source for warping.
-                adjusted_master = self.get_adjusted_master_image()
+                adjusted_master = self._get_fully_adjusted_image_for_analysis()
                 if not adjusted_master or adjusted_master.isNull():
                     QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
                     return
@@ -6277,7 +6314,7 @@ if __name__ == "__main__":
                             raise ValueError("Coordinate mapping from label to image failed.")
                         # --- END FIX ---
     
-                        adjusted_master = self.get_adjusted_master_image()
+                        adjusted_master = self._get_fully_adjusted_image_for_analysis()
                         if not adjusted_master or adjusted_master.isNull():
                             raise ValueError("Could not get adjusted image for analysis.")
                         
@@ -7301,70 +7338,109 @@ if __name__ == "__main__":
                     return
 
                 clicked_point_ls = self.live_view_label.transform_point(event.position())
-                self.moving_multi_lane_index = -1
-                self.resizing_corner_index = -1
-                selected_shape_for_interaction = False
                 click_radius_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 1.5 / self.live_view_label.zoom_level
 
-                # --- Stage 1: Check for Corner Clicks to Initiate RESIZE ---
+                def setup_interaction(item_index, resize_corner_index, shape_points):
+                    self.moving_multi_lane_index = item_index
+                    self.resizing_corner_index = resize_corner_index
+                    self.shape_points_at_drag_start_label = [QPointF(p) for p in shape_points]
+                    self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
+                    
+                    modifiers = QApplication.keyboardModifiers()
+                    is_duplicate = (resize_corner_index == -1 and (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) == (Qt.ControlModifier | Qt.ShiftModifier))
+                    self.is_duplicating_shape = is_duplicate
+                    
+                    if resize_corner_index != -1:
+                        self.current_selection_mode = "resizing_corner"
+                        self.live_view_label.mode = "resizing_corner"
+                        self.live_view_label.setCursor(Qt.CrossCursor)
+                    else:
+                        self.current_selection_mode = "dragging_shape"
+                        self.live_view_label.mode = "dragging_shape"
+                        self.live_view_label.setCursor(Qt.CrossCursor if is_duplicate else Qt.SizeAllCursor)
+
+                    self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_drag_operation
+                    self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_drag_release
+                    self.update_live_view()
+                    return True
+
+                # --- START: Two-Pass Hierarchical Check ---
+
+                # PASS 1: Check for corner handle clicks ONLY. This has highest priority.
+                # Iterate in reverse to check topmost shapes first.
+                
+                # Check multi-lane corners
                 if self.multi_lane_definitions:
                     for i, lane_def in reversed(list(enumerate(self.multi_lane_definitions))):
                         corners = []
-                        if lane_def['type'] == 'rectangle': r = lane_def['points_label'][0]; corners = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
-                        elif lane_def['type'] == 'quad': corners = lane_def['points_label']
+                        if lane_def['type'] == 'rectangle':
+                            rect_ls = lane_def['points_label'][0]
+                            corners = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
+                        elif lane_def['type'] == 'quad':
+                            corners = lane_def['points_label']
+                        
                         for corner_idx, corner_pt in enumerate(corners):
                             if (clicked_point_ls - corner_pt).manhattanLength() < click_radius_threshold:
-                                self.moving_multi_lane_index = i; self.resizing_corner_index = corner_idx; self.shape_points_at_drag_start_label = [QPointF(p) for p in corners]; selected_shape_for_interaction = True; break
-                        if selected_shape_for_interaction: break
-                
-                if not selected_shape_for_interaction and self.live_view_label.quad_points:
-                    for corner_idx, corner_pt in enumerate(self.live_view_label.quad_points):
+                                setup_interaction(i, corner_idx, corners)
+                                return # Corner hit found, stop all further checks.
+
+                # Check single quad corners (if no multi-lanes)
+                if not self.multi_lane_definitions and self.live_view_label.quad_points:
+                    corners = self.live_view_label.quad_points
+                    for corner_idx, corner_pt in enumerate(corners):
                         if (clicked_point_ls - corner_pt).manhattanLength() < click_radius_threshold:
-                            self.moving_multi_lane_index = -2; self.resizing_corner_index = corner_idx; self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]; selected_shape_for_interaction = True; break
+                            setup_interaction(-2, corner_idx, corners)
+                            return # Corner hit found, stop all further checks.
                 
-                if not selected_shape_for_interaction and self.live_view_label.bounding_box_preview:
+                # Check single rectangle corners (if no multi-lanes)
+                if not self.multi_lane_definitions and self.live_view_label.bounding_box_preview:
                     rect_single = QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized()
                     corners = [rect_single.topLeft(), rect_single.topRight(), rect_single.bottomRight(), rect_single.bottomLeft()]
                     for corner_idx, corner_pt in enumerate(corners):
                         if (clicked_point_ls - corner_pt).manhattanLength() < click_radius_threshold:
-                            self.moving_multi_lane_index = -3; self.resizing_corner_index = corner_idx; self.shape_points_at_drag_start_label = [QPointF(p) for p in corners]; selected_shape_for_interaction = True; break
+                            setup_interaction(-3, corner_idx, corners)
+                            return # Corner hit found, stop all further checks.
 
-                # --- Stage 2: If no corner, check for Body Click to Initiate MOVE/DUPLICATE ---
-                if not selected_shape_for_interaction:
-                    if self.multi_lane_definitions:
-                        for i, lane_def in reversed(list(enumerate(self.multi_lane_definitions))):
-                            is_inside = False; points_for_body_check = []
-                            if lane_def['type'] == 'rectangle':
-                                if lane_def['points_label'][0].contains(clicked_point_ls): is_inside = True
-                                r = lane_def['points_label'][0]; points_for_body_check = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
-                            elif lane_def['type'] == 'quad':
-                                if QPolygonF(lane_def['points_label']).containsPoint(clicked_point_ls, Qt.OddEvenFill): is_inside = True
-                                points_for_body_check = lane_def['points_label']
-                            if is_inside: self.moving_multi_lane_index = i; self.shape_points_at_drag_start_label = [QPointF(p) for p in points_for_body_check]; selected_shape_for_interaction = True; break
-                    
-                    if not selected_shape_for_interaction and self.live_view_label.quad_points and QPolygonF(self.live_view_label.quad_points).containsPoint(clicked_point_ls, Qt.OddEvenFill):
-                        self.moving_multi_lane_index = -2; self.shape_points_at_drag_start_label = [QPointF(p) for p in self.live_view_label.quad_points]; selected_shape_for_interaction = True
-                    
-                    if not selected_shape_for_interaction and self.live_view_label.bounding_box_preview and QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized().contains(clicked_point_ls):
-                        r = QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized()
-                        self.moving_multi_lane_index = -3; self.shape_points_at_drag_start_label = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]; selected_shape_for_interaction = True
+                # PASS 2: If no corner was hit, now check for body clicks for move/duplicate.
+                # Iterate in reverse again to check topmost shapes first.
 
-                # --- Setup for Dragging/Resizing/Duplicating if a shape was selected ---
-                if selected_shape_for_interaction:
-                    self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
-                    modifiers = QApplication.keyboardModifiers()
-                    
-                    is_duplicate_combo_pressed = (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) == (Qt.ControlModifier | Qt.ShiftModifier)
-                    self.is_duplicating_shape = (self.resizing_corner_index == -1 and is_duplicate_combo_pressed)
-                    
-                    if self.resizing_corner_index != -1: self.current_selection_mode = "resizing_corner"; self.live_view_label.mode = "resizing_corner"; self.live_view_label.setCursor(Qt.CrossCursor)
-                    else: self.current_selection_mode = "dragging_shape"; self.live_view_label.mode = "dragging_shape"; self.live_view_label.setCursor(Qt.CrossCursor if self.is_duplicating_shape else Qt.SizeAllCursor)
+                # Check multi-lane bodies
+                if self.multi_lane_definitions:
+                    for i, lane_def in reversed(list(enumerate(self.multi_lane_definitions))):
+                        corners, body_shape = [], None
+                        if lane_def['type'] == 'rectangle':
+                            rect_ls = lane_def['points_label'][0]
+                            corners = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
+                            body_shape = rect_ls
+                        elif lane_def['type'] == 'quad':
+                            corners = lane_def['points_label']
+                            body_shape = QPolygonF(corners)
 
-                    self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_drag_operation 
-                    self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_drag_release
-                else:
-                    self.moving_multi_lane_index = -1; self.resizing_corner_index = -1
-                
+                        if (isinstance(body_shape, QRectF) and body_shape.contains(clicked_point_ls)) or \
+                           (isinstance(body_shape, QPolygonF) and body_shape.containsPoint(clicked_point_ls, Qt.OddEvenFill)):
+                            setup_interaction(i, -1, corners) # -1 means body move
+                            return # Body hit found, stop all further checks.
+
+                # Check single quad body
+                if not self.multi_lane_definitions and self.live_view_label.quad_points:
+                    corners = self.live_view_label.quad_points
+                    if QPolygonF(corners).containsPoint(clicked_point_ls, Qt.OddEvenFill):
+                        setup_interaction(-2, -1, corners)
+                        return # Body hit found, stop all further checks.
+
+                # Check single rectangle body
+                if not self.multi_lane_definitions and self.live_view_label.bounding_box_preview:
+                    rect_single = QRectF(QPointF(*self.live_view_label.bounding_box_preview[:2]), QPointF(*self.live_view_label.bounding_box_preview[2:])).normalized()
+                    corners = [rect_single.topLeft(), rect_single.topRight(), rect_single.bottomRight(), rect_single.bottomLeft()]
+                    if rect_single.contains(clicked_point_ls):
+                        setup_interaction(-3, -1, corners)
+                        return # Body hit found, stop all further checks.
+
+                # --- END OF REWRITTEN LOGIC ---
+
+                # If we get here, no shape (corner or body) was clicked. Deselect everything.
+                self.moving_multi_lane_index = -1
+                self.resizing_corner_index = -1
                 self.update_live_view()
             
             def handle_drag_operation(self, event):
@@ -7710,7 +7786,7 @@ if __name__ == "__main__":
 
                 # --- START FIX ---
                 # Get the fully adjusted master image ONCE at the start.
-                adjusted_master = self.get_adjusted_master_image()
+                adjusted_master = self._get_fully_adjusted_image_for_analysis()
                 if not adjusted_master or adjusted_master.isNull():
                     QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
                     return
@@ -7791,7 +7867,7 @@ if __name__ == "__main__":
             def process_sample(self):
                 # --- START FIX ---
                 # Get the fully adjusted master image ONCE at the start.
-                adjusted_master = self.get_adjusted_master_image()
+                adjusted_master = self._get_fully_adjusted_image_for_analysis()
                 if not adjusted_master or adjusted_master.isNull():
                     QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
                     return
@@ -9201,11 +9277,11 @@ if __name__ == "__main__":
                     traceback.print_exc()
                     return qimage_base
                 
-            def get_adjusted_master_image(self):
+            def _get_fully_adjusted_image_for_analysis(self):
                 """
-                Returns a new QImage object representing the master image with all
-                current "Main Image" adjustments (inversion, levels, etc.) applied,
-                preserving the original bit depth for high-fidelity analysis.
+                Creates a temporary, high-fidelity QImage with ALL 'Main Image' visual adjustments
+                (inversion, channels, sharpen, CLAHE, and Levels/Gamma) applied.
+                This is the definitive "What You See Is What You Analyze" image source.
                 """
                 if not self.image_master or self.image_master.isNull():
                     return None
@@ -9217,14 +9293,11 @@ if __name__ == "__main__":
                 if self.main_image_is_inverted:
                     adjusted_master_copy.invertPixels()
                 
-                # The rest of the adjustments (CLAHE, Sharpen, Channels) are applied
-                # non-destructively for the preview, but need to be applied here for analysis.
-                # For simplicity and correctness, we will use NumPy for these transformations
-                # on the high-bit-depth data.
-                
+                # Use NumPy for the next series of transformations
                 np_adjusted_hq = self.qimage_to_numpy(adjusted_master_copy)
                 if np_adjusted_hq is None:
-                    return adjusted_master_copy # Return partially adjusted if numpy fails
+                    # If numpy fails, at least return the inverted image
+                    return adjusted_master_copy 
 
                 # Channel Mixer
                 cm_settings = self.channel_mixer_data
@@ -9240,12 +9313,26 @@ if __name__ == "__main__":
                         max_val = 65535 if np_adjusted_hq.dtype == np.uint16 else 255
                         np_adjusted_hq = np.clip(np_float, 0, max_val).astype(np_adjusted_hq.dtype)
 
-                # CLAHE
+                # --- START OF THE BUG FIX ---
+                # The previous version was missing the 'elif np_adjusted_hq.ndim == 3:' block.
+                # This corrected version includes the full logic for both grayscale and color images.
                 clahe_settings = self.clahe_data
                 if clahe_settings.get('clip_limit', 1.0) > 1.0:
                     clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
                     if np_adjusted_hq.ndim == 2:
                         np_adjusted_hq = clahe.apply(np_adjusted_hq)
+                    elif np_adjusted_hq.ndim == 3:
+                        # This logic was missing before
+                        if np_adjusted_hq.shape[2] == 4: # BGRA
+                            bgr = np_adjusted_hq[...,:3]
+                            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                            lab[..., 0] = clahe.apply(lab[..., 0])
+                            np_adjusted_hq[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                        else: # BGR
+                            lab = cv2.cvtColor(np_adjusted_hq, cv2.COLOR_BGR2LAB)
+                            lab[..., 0] = clahe.apply(lab[..., 0])
+                            np_adjusted_hq = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                # --- END OF THE BUG FIX ---
                 
                 # Unsharp Mask
                 usm_settings = self.unsharp_mask_data
@@ -9257,9 +9344,19 @@ if __name__ == "__main__":
                 # Convert back to QImage before applying levels
                 qimage_after_effects = self.numpy_to_qimage(np_adjusted_hq)
                 
-                # Return the image. Levels/Gamma adjustments are not applied here to keep the data linear for analysis.
-                # Analysis dialogs should operate on this linear, but inverted/color-corrected data.
-                return qimage_after_effects
+                # Finally, apply the Levels/Gamma adjustments to this temporary image
+                black_point_val = self.black_point_slider.value()
+                white_point_val = self.white_point_slider.value()
+                gamma_factor = self.gamma_slider.value() / 100.0
+
+                fully_adjusted_image = self.apply_levels_gamma(
+                    qimage_after_effects, 
+                    black_point_val, 
+                    white_point_val, 
+                    gamma_factor
+                )
+                
+                return fully_adjusted_image
             
             def update_image_levels_and_gamma(self):
                 """Applies levels and gamma adjustments based on current slider values."""
@@ -10427,6 +10524,12 @@ if __name__ == "__main__":
                     a_mode_was_cancelled_or_view_reset = False
                     self._deactivate_all_previews()
 
+                    if self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.moving_multi_lane_index != -1:
+                        self.moving_multi_lane_index = -1 # Deselect the item
+                        self._reset_to_selection_mode()   # Reset handlers to allow a new selection
+                        self.setFocus()
+                        event.accept()
+                        return 
                     if self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                         self.cancel_custom_item_interaction_mode()
                         a_mode_was_cancelled_or_view_reset = True
@@ -11404,7 +11507,7 @@ if __name__ == "__main__":
                         return qimage # Return original if unsupported dimensions
 
                     # Convert back to original data type
-                    img_array_final = img_array_final_float.astype(img_array.dtype)
+                    img_array_final = img_array_final_float.astype(original_dtype)
 
                     # Convert back to QImage using the helper function
                     result_qimage = self.numpy_to_qimage(img_array_final)
