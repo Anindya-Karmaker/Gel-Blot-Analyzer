@@ -1586,35 +1586,40 @@ if __name__ == "__main__":
                 global_adjust_layout.addWidget(QLabel("Shift X (% Img W):"), 0, 0)
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_x_shift_slider.setValue(0)
-                self.abs_x_shift_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.abs_x_shift_slider.setFocus()))
+                self.abs_x_shift_slider.valueChanged.connect(self._update_global_adjustments)
+                self.abs_x_shift_slider.valueChanged.connect(self.abs_x_shift_slider.setFocus())
                 self.abs_x_shift_label = QLabel("0.00%"); self.abs_x_shift_label.setFixedSize(80, 20)
                 self.abs_x_shift_slider.valueChanged.connect(lambda val: self.abs_x_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1); global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
                 global_adjust_layout.addWidget(QLabel("Shift Y (% Img H):"), 1, 0)
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_y_shift_slider.setValue(0)
-                self.abs_y_shift_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.abs_y_shift_slider.setFocus()))
+                self.abs_y_shift_slider.valueChanged.connect(self._update_global_adjustments)
+                self.abs_y_shift_slider.valueChanged.connect(self.abs_y_shift_slider.setFocus())
                 self.abs_y_shift_label = QLabel("0.00%"); self.abs_y_shift_label.setFixedSize(80, 20)
                 self.abs_y_shift_slider.valueChanged.connect(lambda val: self.abs_y_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1); global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
                 global_adjust_layout.addWidget(QLabel("Scale X (%):"), 2, 0)
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
-                self.rel_x_scale_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.rel_x_scale_slider.setFocus()))
+                self.rel_x_scale_slider.valueChanged.connect(self._update_global_adjustments)
+                self.rel_x_scale_slider.valueChanged.connect(self.rel_x_scale_slider.setFocus())
                 self.rel_x_scale_label = QLabel("100.0%"); self.rel_x_scale_label.setFixedSize(80, 20)
                 self.rel_x_scale_slider.valueChanged.connect(lambda val: self.rel_x_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1); global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
                 global_adjust_layout.addWidget(QLabel("Scale Y (%):"), 3, 0)
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
-                self.rel_y_scale_slider.valueChanged.connect(lambda: (self._update_global_adjustments,self.rel_y_scale_slider.setFocus()))
+                self.rel_y_scale_slider.valueChanged.connect(self._update_global_adjustments)
+                self.rel_y_scale_slider.valueChanged.connect(self.rel_y_scale_slider.setFocus())
                 self.rel_y_scale_label = QLabel("100.0%"); self.rel_y_scale_label.setFixedSize(80, 20)
                 self.rel_y_scale_slider.valueChanged.connect(lambda val: self.rel_y_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1); global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
                 global_adjust_layout.addWidget(QLabel("Font Scale (%):"), 4, 0)
                 self.font_scale_slider = QSlider(Qt.Horizontal)
                 self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
-                self.font_scale_slider.valueChanged.connect(lambda: (self._update_global_adjustments, self.font_scale_slider.setFocus()))
+                self.font_scale_slider.valueChanged.connect(self._update_global_adjustments)
+                self.font_scale_slider.valueChanged.connect(self.font_scale_slider.setFocus())
                 self.font_scale_label = QLabel("100.0%"); self.font_scale_label.setFixedSize(80, 20)
                 self.font_scale_slider.valueChanged.connect(lambda val: self.font_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.font_scale_slider, 4, 1); global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
@@ -5219,6 +5224,9 @@ if __name__ == "__main__":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                 
                 elif position in ["Left", "Right"]:
+                    separator = QFrame()
+                    separator.setFrameShape(QFrame.VLine)
+                    separator.setFrameShadow(QFrame.Sunken)
                     # For horizontal layouts, we want a fixed WIDTH for the controls
                     new_layout = QHBoxLayout(new_main_widget)
                     self.tab_widget.setFixedWidth(CONTROLS_FIXED_WIDTH)
@@ -5229,9 +5237,11 @@ if __name__ == "__main__":
 
                     if position == "Left":
                         new_layout.addWidget(self.live_view_label, 0)
+                        new_layout.addWidget(separator)
                         new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
                     else:  # Right
                         new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(separator)
                         new_layout.addWidget(self.live_view_label, 0)
                 # --- END OF MODIFICATION ---
 
