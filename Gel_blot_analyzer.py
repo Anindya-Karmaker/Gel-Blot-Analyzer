@@ -2904,7 +2904,7 @@ if __name__ == "__main__":
                 
                 left_controls_vbox.addWidget(global_settings_group)
                 
-                peak_detect_group = QGroupBox("Peak Detection & Manipulation")
+                peak_detect_group = QGroupBox("Peak Detection Settings")
                 peak_detect_layout = QGridLayout(peak_detect_group)
                 peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(self.detect_peaks); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
                 self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 6, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 6, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 6, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
@@ -4388,13 +4388,13 @@ if __name__ == "__main__":
                     if grid_size_label_space > 0:
                         pen_grid_paint = QPen(Qt.red)
                         pen_grid_paint.setStyle(Qt.DashLine)
-                        effective_pen_width_grid = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 1.0)
+                        effective_pen_width_grid = max(0.25, 0.5 / self.zoom_level if self.zoom_level > 0 else 0.5)
                         pen_grid_paint.setWidthF(effective_pen_width_grid)
                         painter.setPen(pen_grid_paint)
-                        label_width_unzoomed = self.width() / (self.zoom_level if self.zoom_level > 0 else 1.0)
-                        label_height_unzoomed = self.height() / (self.zoom_level if self.zoom_level > 0 else 1.0)
-                        view_origin_x_unzoomed = -self.pan_offset.x() / (self.zoom_level if self.zoom_level > 0 else 1.0)
-                        view_origin_y_unzoomed = -self.pan_offset.y() / (self.zoom_level if self.zoom_level > 0 else 1.0)
+                        label_width_unzoomed = self.width() / (self.zoom_level if self.zoom_level > 0 else 0.5)
+                        label_height_unzoomed = self.height() / (self.zoom_level if self.zoom_level > 0 else 0.5)
+                        view_origin_x_unzoomed = -self.pan_offset.x() / (self.zoom_level if self.zoom_level > 0 else 0.5)
+                        view_origin_y_unzoomed = -self.pan_offset.y() / (self.zoom_level if self.zoom_level > 0 else 0.5)
                         if self.app_instance.show_grid_checkbox_x.isChecked():
                             start_x_grid = (int(view_origin_x_unzoomed / grid_size_label_space) -1) * grid_size_label_space
                             for x_grid_ls in range(start_x_grid, int(view_origin_x_unzoomed + label_width_unzoomed + grid_size_label_space), grid_size_label_space):
@@ -4782,8 +4782,7 @@ if __name__ == "__main__":
                 self.move_tab_4_shortcut.activated.connect(lambda: self.move_tab(3))
                 self.move_tab_5_shortcut = QShortcut(QKeySequence("Ctrl+5"), self)
                 self.move_tab_5_shortcut.activated.connect(lambda: self.move_tab(4))
-                self.move_tab_6_shortcut = QShortcut(QKeySequence("Ctrl+6"), self)
-                self.move_tab_6_shortcut.activated.connect(lambda: self.move_tab(5))
+
                 
                 self.viewer_position = "Top" # Default value before loading
                 self.load_config()
@@ -4794,6 +4793,10 @@ if __name__ == "__main__":
                 elif self.viewer_position == "Bottom": self.layout_bottom_action.setChecked(True)
                 elif self.viewer_position == "Left": self.layout_left_action.setChecked(True)
                 elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
+
+            def _on_table_window_closed(self):
+                """Slot to clear the reference to the TableWindow when it closes."""
+                self.table_window_instance = None
 
 
             # --- ADD THIS NEW METHOD ---
@@ -6959,16 +6962,17 @@ if __name__ == "__main__":
                 self.btn_define_rec.clicked.connect(self.enable_rectangle_mode)
                 self.btn_analyze_multiple_lanes = QPushButton("Define Multiple"); self.btn_analyze_multiple_lanes.setToolTip("Define multiple lanes sequentially to analyze as a group.")
                 self.btn_analyze_multiple_lanes.clicked.connect(self.start_analyze_multiple_lanes)
-                self.btn_finish_multi_lane_def = QPushButton("Finish Defining"); self.btn_finish_multi_lane_def.setToolTip("Signal that all multiple lanes have been defined.")
-                self.btn_finish_multi_lane_def.clicked.connect(self.finish_multi_lane_definition_and_process)
-                self.btn_finish_multi_lane_def.setEnabled(False)
+                
+                # The "Move/Resize Area" button is now made larger and more prominent.
                 self.btn_sel_rec = QPushButton("Move/Resize Area"); self.btn_sel_rec.setToolTip("Click a defined lane to select it for moving, resizing, or deleting with the Delete/Backspace key.")
                 self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
+                
                 step1_layout.addWidget(self.btn_define_quad, 0, 0)
                 step1_layout.addWidget(self.btn_define_rec, 0, 1)
                 step1_layout.addWidget(self.btn_analyze_multiple_lanes, 0, 2)
-                step1_layout.addWidget(self.btn_finish_multi_lane_def, 1, 0)
-                step1_layout.addWidget(self.btn_sel_rec, 1, 1, 1, 2)
+                
+                # Make the "Move/Resize Area" button span the entire second row.
+                step1_layout.addWidget(self.btn_sel_rec, 1, 0, 1, 3)
                 quant_workflow_layout.addWidget(step1_group)
 
                 # -- Step 2: Process Regions & View Results --
@@ -7010,15 +7014,30 @@ if __name__ == "__main__":
                 self.table_export_button = QPushButton("View Full Results and History")
                 self.table_export_button.setToolTip("Open a new window to view, export, and manage current and past analysis results.")
                 self.table_export_button.clicked.connect(self.open_table_window)
-                self.clear_predict_button = QPushButton("Clear All Analysis")
+                
+                # --- NEW BUTTONS ---
+                self.save_analysis_button = QPushButton("Save Analysis")
+                self.save_analysis_button.setToolTip("Saves all defined regions, standard curve data, and results to a config file associated with the current image.")
+                self.save_analysis_button.clicked.connect(self.save_analysis_to_config)
+                
+                self.load_analysis_button = QPushButton("Load Analysis")
+                self.load_analysis_button.setToolTip("Loads analysis regions and standard curve data from a config file.")
+                self.load_analysis_button.clicked.connect(self.load_analysis_from_config)
+                # --- END NEW BUTTONS ---
+
+                self.clear_predict_button = QPushButton("Reset Analysis")
                 self.clear_predict_button.setToolTip("Clears MW prediction line, all analysis regions, and standard curve data.\nShortcut: Ctrl+Shift+P")
                 self.clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
 
-                # Set an expanding size policy for both buttons to make them equal width
+                # Set an expanding size policy for all buttons to make them equal width
                 self.table_export_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.save_analysis_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.load_analysis_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.clear_predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 
                 bottom_buttons_layout.addWidget(self.table_export_button)
+                bottom_buttons_layout.addWidget(self.save_analysis_button) # Add new button
+                bottom_buttons_layout.addWidget(self.load_analysis_button) # Add new button
                 bottom_buttons_layout.addWidget(self.clear_predict_button)
                 
                 # Add this layout to the grid, spanning all columns
@@ -7031,6 +7050,98 @@ if __name__ == "__main__":
                 main_layout.addStretch(1) # Keeps everything pushed to the top correctly
                 
                 return tab
+            
+            def save_analysis_to_config(self):
+                """
+                Saves the complete current configuration (including analysis data, regions,
+                adjustments, and markers) to a text file. This will overwrite any
+                existing config file for the current image.
+                """
+                if not self.image_path:
+                    QMessageBox.warning(self, "Save Error", "Please save the main image first to associate it with a file name before saving the analysis.")
+                    return
+
+                # Construct the config file path based on the main image path
+                base_name_no_ext = os.path.splitext(os.path.basename(self.image_path))[0]
+                config_base = base_name_no_ext.replace("_original", "").replace("_modified", "")
+                config_save_path = os.path.join(os.path.dirname(self.image_path), f"{config_base}_config.txt")
+
+                # --- START OF THE FIX: Simplify to always save the full current state ---
+
+                # 1. Get the complete current configuration dictionary.
+                #    This now correctly includes all boundary boxes and protein analysis data.
+                config_data_to_save = self.get_current_config()
+
+                # --- END OF THE FIX ---
+
+                try:
+                    with open(config_save_path, "w", encoding='utf-8') as config_file:
+                        json.dump(config_data_to_save, config_file, indent=4)
+                    
+                    self.is_modified = False # Mark as saved
+                    self.setWindowTitle(f"{self.window_title}::{config_base}")
+                    self._update_status_bar()
+                    QMessageBox.information(self, "Analysis Saved", f"Analysis configuration saved successfully to:\n{os.path.basename(config_save_path)}")
+                
+                except Exception as e:
+                    QMessageBox.critical(self, "Save Analysis Error", f"Could not save the analysis config file: {e}")
+                    traceback.print_exc()
+
+            def load_analysis_from_config(self):
+                """
+                Loads analysis configuration from the config file associated with the current image,
+                without opening a file dialog.
+                """
+                if not self.image_path:
+                    QMessageBox.warning(self, "Load Error", "An image must be loaded and saved to have an associated analysis file.")
+                    return
+
+                # --- START OF MODIFICATION: Auto-find the config file ---
+                base_name_no_ext = os.path.splitext(os.path.basename(self.image_path))[0]
+                config_base = base_name_no_ext.replace("_original", "").replace("_modified", "")
+                config_path = os.path.join(os.path.dirname(self.image_path), f"{config_base}_config.txt")
+
+                if not os.path.exists(config_path):
+                    QMessageBox.information(self, "Load Analysis", f"No analysis file found for this image.\n(Looked for: {os.path.basename(config_path)})")
+                    return
+                # --- END OF MODIFICATION ---
+
+                try:
+                    with open(config_path, "r", encoding='utf-8') as config_file:
+                        config_data = json.load(config_file)
+                    
+                    self.save_state()
+
+                    # --- MODIFICATION: Call apply_config to load ALL data ---
+                    self.apply_config(config_data,load_analysis=True)
+
+                    # Specifically load analysis-related data that might be separate
+                    raw_qpa_dict = config_data.get("quantities_peak_area_dict", {})
+                    self.quantities_peak_area_dict = {float(k): float(v) for k, v in raw_qpa_dict.items()}
+                    self.multi_lane_processing_finished = config_data.get("multi_lane_processing_finished", False)
+                    
+                    # Update UI text fields for standards
+                    formatted_quantities = [f"{qty:.2f}" for qty in self.quantities_peak_area_dict.keys()]
+                    formatted_areas = [f"{area:.3f}" for area in self.quantities_peak_area_dict.values()]
+                    self.standard_protein_values.setText(", ".join(formatted_quantities))
+                    self.standard_protein_areas_text.setText(", ".join(formatted_areas))
+
+                    # Load Protein Analysis data
+                    protein_analysis_data = config_data.get("protein_analysis_data", {})
+                    self.protein_sequence = protein_analysis_data.get("protein_sequence", "")
+                    self.base_protein_mw = float(protein_analysis_data.get("base_protein_mw", 0.0))
+                    self.avg_glycan_mass = float(protein_analysis_data.get("avg_glycan_mass", 0.0))
+                    self.num_oligomers_to_model = int(protein_analysis_data.get("num_oligomers_to_model", 1))
+                    self.num_glycans_to_model = int(protein_analysis_data.get("num_glycans_to_model", 0))
+                    self.last_predicted_mw = float(protein_analysis_data.get("last_predicted_mw", 0.0))
+                    
+                    self.is_modified = True
+                    self.update_live_view()
+                    QMessageBox.information(self, "Analysis Loaded", f"Analysis configuration loaded successfully from:\n{os.path.basename(config_path)}")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Load Analysis Error", f"Failed to load or apply the configuration file: {e}")
+                    traceback.print_exc()
             
             def update_standards_from_text_fields(self):
                 """
@@ -7326,41 +7437,7 @@ if __name__ == "__main__":
                 self.is_modified = True
                 self.update_live_view() # Redraws all stored multi_lane_definitions
 
-            def finish_multi_lane_definition_and_process(self):
-                # ... (existing logic to discard incomplete definitions) ...
-                if self.multi_lane_mode_active:
-                    if self.multi_lane_definition_type == 'rectangle' and self.current_multi_lane_rect_start is not None:
-                        print("INFO: Discarding incomplete rectangle definition upon finishing.")
-                        self.current_multi_lane_rect_start = None
-                        self.live_view_label.bounding_box_preview = None 
-                    elif self.multi_lane_definition_type == 'quad' and self.current_multi_lane_points:
-                        print("INFO: Discarding incomplete quadrilateral definition upon finishing.")
-                        self.current_multi_lane_points = []
-                        self.live_view_label.quad_points = [] 
-                    self.update_live_view() 
-
-                if not self.multi_lane_definitions:
-                    # ... (message box) ...
-                    self.cancel_multi_lane_mode() 
-                    return
-
-                QMessageBox.information(self, "Finished Processing Multiple Lanes", f"Finished Processing {len(self.multi_lane_definitions)} defined lanes. Click Analyze button to calculate the properties")
-                
-                self.multi_lane_mode_active = False 
-                self.btn_finish_multi_lane_def.setEnabled(False)
-                
-                self.live_view_label.mode = None
-                self.live_view_label.setCursor(Qt.ArrowCursor)
-                self._reset_live_view_label_custom_handlers()
-                
-                # === ADDED/UNCOMMENTED: Explicitly clear LiveViewLabel's preview buffers ===
-                self.live_view_label.quad_points = [] 
-                self.live_view_label.bounding_box_preview = None
-                # === END ADDED/UNCOMMENTED ===
-
-                self.multi_lane_processing_finished = True
-
-
+        
             def cancel_multi_lane_mode(self):
                 # ... (existing logic to clear multi-lane specific app state) ...
                 self.multi_lane_mode_active = False
@@ -7629,36 +7706,40 @@ if __name__ == "__main__":
                 return nearest_point
             
             def open_table_window(self):
-                # --- THIS IS THE FIX ---
-                # Check if an old instance of the window exists and close it before creating a new one.
                 if hasattr(self, 'table_window_instance') and self.table_window_instance:
                     try:
                         self.table_window_instance.close()
                         self.table_window_instance.deleteLater()
                     except RuntimeError:
-                        # This can happen if the window was already closed by the user. It's safe to ignore.
                         pass
-                # --- END OF FIX ---
-
-                is_multi_lane_results = bool(self.latest_multi_lane_peak_areas) and self.multi_lane_processing_finished
+                
+                # --- START OF THE FIX ---
+                # This logic now correctly identifies if the last analysis was multi-lane
+                # and passes the correct data structures to the TableWindow.
+                
+                is_multi_lane_results = bool(self.latest_multi_lane_peak_areas)
 
                 peak_areas_data_for_table = None
                 quantities_data_for_table = None
                 peak_details_for_table = None
 
                 if is_multi_lane_results:
+                    # For multi-lane, pass the dictionaries directly.
                     peak_areas_data_for_table = self.latest_multi_lane_peak_areas 
                     quantities_data_for_table = self.latest_multi_lane_calculated_quantities
                     peak_details_for_table = self.latest_multi_lane_peak_details
                 else: 
-                    peak_areas_data_for_table = self.latest_peak_areas 
-                    quantities_data_for_table = self.latest_calculated_quantities 
+                    # For single-lane, wrap the lists in a dictionary with key '1' for consistency.
+                    peak_areas_data_for_table = {1: self.latest_peak_areas} if self.latest_peak_areas else {}
+                    quantities_data_for_table = {1: self.latest_calculated_quantities} if self.latest_calculated_quantities else {}
                     peak_details_for_table = {1: self.latest_peak_details} if self.latest_peak_details else {}
-
+                
+                # This part remains the same
                 standard_dict_to_show_current = self.quantities_peak_area_dict
                 is_standard_mode_current = len(standard_dict_to_show_current) >= 2
+                
+                # --- END OF THE FIX ---
             
-                # Create the new instance and store the reference to it.
                 self.table_window_instance = TableWindow(
                     peak_areas_data_for_table, 
                     standard_dict_to_show_current,
@@ -7667,6 +7748,8 @@ if __name__ == "__main__":
                     self,
                     peak_details_data=peak_details_for_table
                 )
+
+                self.table_window_instance.finished.connect(self._on_table_window_closed)
                 self.table_window_instance.show()
             
             def enable_quad_mode(self):
@@ -7846,96 +7929,79 @@ if __name__ == "__main__":
 
             def process_standard(self):
                 extracted_qimage = None
-                region_type_for_message = "" # For user feedback
-
-                # --- START FIX ---
-                # Get the fully adjusted master image ONCE at the start.
+                region_type_for_message = ""
+                
+                # --- Get the fully adjusted image for analysis ---
                 adjusted_master = self._get_fully_adjusted_image_for_analysis()
                 if not adjusted_master or adjusted_master.isNull():
                     QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
                     return
-                # --- END FIX ---
 
-                self.live_view_label.pan_offset = QPointF(0, 0)
-                self.live_view_label.zoom_level=1.0
-                if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
-                if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
-                if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
-                if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
-                self.update_live_view()
+                # --- START: New, Robust Logic to Find the Target Region ---
+                target_lane_def = None # This will hold the definition of the one region we will process.
 
-                # Check if a multi-lane was selected via the "Move/Resize Selected Area" mode
-                if hasattr(self, 'moving_multi_lane_index') and self.moving_multi_lane_index >= 0 and \
-                   self.moving_multi_lane_index < len(self.multi_lane_definitions):
-                    
-                    selected_lane_def = self.multi_lane_definitions[self.moving_multi_lane_index]
-                    lane_id = selected_lane_def['id']
-                    region_type_for_message = f"Selected Multi-Lane {lane_id} ({selected_lane_def['type']})"
-                    print(f"Processing Standard: {region_type_for_message}")
+                # Case 1: A specific multi-lane region is already selected.
+                if hasattr(self, 'moving_multi_lane_index') and self.moving_multi_lane_index >= 0:
+                    if self.moving_multi_lane_index < len(self.multi_lane_definitions):
+                        target_lane_def = self.multi_lane_definitions[self.moving_multi_lane_index]
+                        region_type_for_message = f"Selected Multi-Lane {target_lane_def['id']}"
 
-                    if selected_lane_def['type'] == 'quad':
-                        quad_points_label_space = selected_lane_def['points_label']
-                        extracted_qimage = self.quadrilateral_to_rect(adjusted_master, quad_points_label_space) # Use adjusted
-                    elif selected_lane_def['type'] == 'rectangle':
-                        rect_label_space = selected_lane_def['points_label'][0] # QRectF
-                        img_coords_rect = self._map_label_rect_to_image_rect(rect_label_space)
-                        if img_coords_rect:
-                            x, y, w, h = img_coords_rect
-                            extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
-                    
-                    if not extracted_qimage or extracted_qimage.isNull():
-                        QMessageBox.warning(self, "Error", f"Could not extract/warp {region_type_for_message}.")
-                        return
-                
-                # Fallback to single defined quad on LiveViewLabel
-                elif len(self.live_view_label.quad_points) == 4:
-                    region_type_for_message = "Defined Single Quadrilateral"
-                    print(f"Processing Standard: {region_type_for_message}")
-                    extracted_qimage = self.quadrilateral_to_rect(adjusted_master, self.live_view_label.quad_points) # Use adjusted
-                    if not extracted_qimage or extracted_qimage.isNull():
-                        QMessageBox.warning(self, "Error", "Single Quadrilateral warping failed.")
-                        return
-
-                # Fallback to single defined rectangle on LiveViewLabel
-                elif self.live_view_label.bounding_box_preview is not None and len(self.live_view_label.bounding_box_preview) == 4:
-                    region_type_for_message = "Defined Single Rectangle"
-                    print(f"Processing Standard: {region_type_for_message}")
-                    try:
-                        img_coords_rect = self._map_label_rect_to_image_rect(QRectF(
-                            QPointF(self.live_view_label.bounding_box_preview[0], self.live_view_label.bounding_box_preview[1]),
-                            QPointF(self.live_view_label.bounding_box_preview[2], self.live_view_label.bounding_box_preview[3])
-                        ).normalized())
-                        if img_coords_rect:
-                            x, y, w, h = img_coords_rect
-                            extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
-                        if not extracted_qimage or extracted_qimage.isNull():
-                            raise ValueError("QImage.copy failed for single rectangle.")
-                    except Exception as e:
-                         print(f"Error processing single rectangle region for standard: {e}")
-                         QMessageBox.warning(self, "Error", "Could not process single rectangular region.")
-                         return
+                # Case 2: No selection, check for single defined regions.
                 else:
-                    QMessageBox.warning(self, "Input Error", "Please define an area (Single Quad/Rect) or select a Multi-Lane area using 'Move/Resize Selected Area' first.")
+                    is_single_quad = len(self.live_view_label.quad_points) == 4
+                    is_single_rect = self.live_view_label.bounding_box_preview is not None
+                    has_multi_lanes = bool(self.multi_lane_definitions)
+
+                    if has_multi_lanes and len(self.multi_lane_definitions) > 1:
+                        QMessageBox.warning(self, "Ambiguous Selection", "Multiple analysis regions are defined. Please use 'Move/Resize Area' to click on the single lane you want to process as a standard.")
+                        return
+                    elif has_multi_lanes and len(self.multi_lane_definitions) == 1:
+                        target_lane_def = self.multi_lane_definitions[0]
+                        region_type_for_message = f"Single Defined Multi-Lane {target_lane_def['id']}"
+                    elif is_single_quad:
+                        target_lane_def = {'type': 'quad', 'points_label': self.live_view_label.quad_points}
+                        region_type_for_message = "Defined Single Quadrilateral"
+                    elif is_single_rect:
+                        rect_ls = QRectF(QPointF(self.live_view_label.bounding_box_preview[0], self.live_view_label.bounding_box_preview[1]),
+                                         QPointF(self.live_view_label.bounding_box_preview[2], self.live_view_label.bounding_box_preview[3])).normalized()
+                        target_lane_def = {'type': 'rectangle', 'points_label': [rect_ls]}
+                        region_type_for_message = "Defined Single Rectangle"
+
+                if not target_lane_def:
+                    QMessageBox.warning(self, "Input Error", "Please define an analysis region first.")
+                    return
+                # --- END: New Logic ---
+
+                # --- Extract the image data from the identified target region ---
+                print(f"Processing Standard: {region_type_for_message}")
+                if target_lane_def['type'] == 'quad':
+                    extracted_qimage = self.quadrilateral_to_rect(adjusted_master, target_lane_def['points_label'])
+                elif target_lane_def['type'] == 'rectangle':
+                    img_coords_rect = self._map_label_rect_to_image_rect(target_lane_def['points_label'][0])
+                    if img_coords_rect:
+                        extracted_qimage = adjusted_master.copy(*img_coords_rect)
+
+                if not extracted_qimage or extracted_qimage.isNull():
+                    QMessageBox.warning(self, "Error", f"Could not extract or warp the defined region: {region_type_for_message}.")
                     return
 
-                # --- Convert extracted region to Grayscale PIL for analysis ---
-                if extracted_qimage and not extracted_qimage.isNull():
-                    processed_data_pil = self.convert_qimage_to_grayscale_pil(extracted_qimage)
-                    if processed_data_pil:
-                        # analyze_bounding_box now expects standard=True/False
-                        self.analyze_bounding_box(processed_data_pil, standard=True) 
-                    else:
-                        QMessageBox.warning(self, "Error", f"Could not convert {region_type_for_message} to grayscale for analysis.")
+                # --- Final analysis step (unchanged) ---
+                processed_data_pil = self.convert_qimage_to_grayscale_pil(extracted_qimage)
+                if processed_data_pil:
+                    self.analyze_bounding_box(processed_data_pil, standard=True)
+                else:
+                    QMessageBox.warning(self, "Error", f"Could not convert {region_type_for_message} to grayscale for analysis.")
+                
                 self._reset_to_selection_mode()
             
             def process_sample(self):
-                # --- START FIX ---
-                # Get the fully adjusted master image ONCE at the start.
+                extracted_qimage = None
+                
                 adjusted_master = self._get_fully_adjusted_image_for_analysis()
                 if not adjusted_master or adjusted_master.isNull():
                     QMessageBox.warning(self, "Error", "Could not get adjusted image for analysis.")
                     return
-                # --- END FIX ---
+                
                 self.live_view_label.pan_offset = QPointF(0, 0)
                 self.live_view_label.zoom_level=1.0
                 if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
@@ -7951,50 +8017,45 @@ if __name__ == "__main__":
                 self.latest_multi_lane_peak_details.clear()
                 self.latest_multi_lane_calculated_quantities.clear()
 
-                extracted_regions_info = [] # List of dicts: {'pil': PIL, 'id': int, 'original_def': ...}
+                extracted_regions_info = []
 
-                if self.multi_lane_definitions and self.multi_lane_processing_finished: 
+                # --- START OF THE FIX ---
+                # New, more robust logic to decide which regions to process.
+                # It no longer depends on the faulty 'multi_lane_processing_finished' flag after loading.
+
+                # Priority 1: If multi-lane definitions exist, always use them.
+                if self.multi_lane_definitions:
                     print(f"Processing {len(self.multi_lane_definitions)} multiple lanes as samples.")
                     for lane_def in self.multi_lane_definitions:
                         extracted_qimage = None
-                        current_region_def_img_space = None 
-                        pil_for_this_lane = None # Initialize here
-                        
                         if lane_def['type'] == 'quad':
-                            quad_points_label_space = lane_def['points_label']
-                            extracted_qimage = self.quadrilateral_to_rect(adjusted_master, quad_points_label_space) # Use adjusted
-                            current_region_def_img_space = self._map_label_points_to_image_points(quad_points_label_space)
+                            extracted_qimage = self.quadrilateral_to_rect(adjusted_master, lane_def['points_label'])
                         elif lane_def['type'] == 'rectangle':
-                            rect_label_space = lane_def['points_label'][0] 
-                            img_coords_rect = self._map_label_rect_to_image_rect(rect_label_space)
-                            if img_coords_rect and adjusted_master: # Check if adjusted_master is valid
-                                x, y, w, h = img_coords_rect
-                                extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
-                                current_region_def_img_space = img_coords_rect
+                            img_coords_rect = self._map_label_rect_to_image_rect(lane_def['points_label'][0])
+                            if img_coords_rect and adjusted_master:
+                                extracted_qimage = adjusted_master.copy(*img_coords_rect)
                         
                         if extracted_qimage and not extracted_qimage.isNull():
                             pil_for_this_lane = self.convert_qimage_to_grayscale_pil(extracted_qimage)
                             if pil_for_this_lane:
-                                extracted_regions_info.append({'pil': pil_for_this_lane, 'id': lane_def['id'], 'original_def': current_region_def_img_space})
+                                extracted_regions_info.append({'pil': pil_for_this_lane, 'id': lane_def['id']})
                             else:
                                 QMessageBox.warning(self, "Error", f"Could not convert Lane {lane_def['id']} to PIL for analysis.")
                         else:
                              QMessageBox.warning(self, "Error", f"Could not extract/warp Lane {lane_def['id']}.")
-                    
-                    if not extracted_regions_info:
-                        QMessageBox.warning(self, "Error", "No valid regions could be prepared for multi-lane sample analysis.")
-                        return
-
+                
+                # Priority 2: If no multi-lanes, check for a single defined quad.
                 elif len(self.live_view_label.quad_points) == 4: 
                     print("Processing Sample: Single Quadrilateral")
-                    extracted_qimage = self.quadrilateral_to_rect(adjusted_master, self.live_view_label.quad_points) # Use adjusted
+                    extracted_qimage = self.quadrilateral_to_rect(adjusted_master, self.live_view_label.quad_points)
                     if extracted_qimage and not extracted_qimage.isNull():
                         pil_img = self.convert_qimage_to_grayscale_pil(extracted_qimage)
                         if pil_img:
-                             extracted_regions_info.append({'pil': pil_img, 'id': 1, 'original_def': self._map_label_points_to_image_points(self.live_view_label.quad_points)})
+                             extracted_regions_info.append({'pil': pil_img, 'id': 1})
                         else: QMessageBox.warning(self, "Error", "Could not convert quad region to PIL.")
                     else: QMessageBox.warning(self, "Error", "Quadrilateral warping failed for sample.")
 
+                # Priority 3: If still nothing, check for a single defined rectangle.
                 elif self.live_view_label.bounding_box_preview is not None and len(self.live_view_label.bounding_box_preview) == 4: 
                     print("Processing Sample: Single Rectangle")
                     try:
@@ -8002,33 +8063,36 @@ if __name__ == "__main__":
                             QPointF(self.live_view_label.bounding_box_preview[0], self.live_view_label.bounding_box_preview[1]),
                             QPointF(self.live_view_label.bounding_box_preview[2], self.live_view_label.bounding_box_preview[3])
                         ).normalized())
-                        if img_coords_rect and adjusted_master: # Check adjusted_master
-                            x, y, w, h = img_coords_rect
-                            extracted_qimage = adjusted_master.copy(x, y, w, h) # Use adjusted
+                        if img_coords_rect and adjusted_master:
+                            extracted_qimage = adjusted_master.copy(*img_coords_rect)
                             if extracted_qimage and not extracted_qimage.isNull():
                                 pil_img = self.convert_qimage_to_grayscale_pil(extracted_qimage)
                                 if pil_img:
-                                     extracted_regions_info.append({'pil': pil_img, 'id': 1, 'original_def': img_coords_rect})
+                                     extracted_regions_info.append({'pil': pil_img, 'id': 1})
                                 else: QMessageBox.warning(self, "Error", "Could not convert rect region to PIL.")
                             else: raise ValueError("QImage.copy failed for rectangle.")
                         else: raise ValueError("Failed to map rectangle to image coords or image is missing.")
                     except Exception as e:
                          print(f"Error processing rectangle region for sample: {e}"); QMessageBox.warning(self, "Error", "Could not process rectangular region.")
+                
+                # Priority 4: If no regions of any kind are defined, show the error message.
                 else:
                     QMessageBox.warning(self, "Input Error", "Please define a Quadrilateral or Rectangle area first, or finish defining multiple lanes.")
                     return
+                # --- END OF THE FIX ---
 
-                # --- Analyze each extracted PIL image ---
                 all_lanes_text_results = []
+                if not extracted_regions_info:
+                    QMessageBox.warning(self, "Analysis Error", "No regions were successfully extracted for analysis.")
+                    return
+
                 model_to_use = "Linear"
                 std_qtys = list(self.quantities_peak_area_dict.keys())
                 std_areas = list(self.quantities_peak_area_dict.values())
-                # --- END OF THE FIX ---
-
-                for region_info in extracted_regions_info: # Iterate over the populated list
+                
+                for region_info in extracted_regions_info:
                     lane_id = region_info['id']
                     pil_image_for_dialog = region_info['pil'] 
-                    
                     peak_info_for_lane = self.calculate_peak_area(pil_image_for_dialog) 
 
                     if peak_info_for_lane and len(peak_info_for_lane) > 0:
@@ -8037,24 +8101,13 @@ if __name__ == "__main__":
                         self.latest_multi_lane_peak_details[lane_id] = peak_info_for_lane 
 
                         if len(self.quantities_peak_area_dict) >= 2:
-                            # --- START OF THE FIX ---
-                            # Call the new, correct quantification function
-                            quantities_for_lane, _ = self._perform_quantification(
-                                model_to_use,
-                                std_qtys,
-                                std_areas,
-                                areas_for_this_lane 
-                            )
-                            # --- END OF THE FIX ---
-                            
+                            quantities_for_lane, _ = self._perform_quantification(model_to_use, std_qtys, std_areas, areas_for_this_lane)
                             self.latest_multi_lane_calculated_quantities[lane_id] = quantities_for_lane
-                            # Format the lists for clean display in the QTextEdit
                             formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
                             formatted_quantities = ', '.join([f"{q:.2f}" for q in quantities_for_lane])
                             all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}], Qty=[{formatted_quantities}]")
                         else:
                             self.latest_multi_lane_calculated_quantities[lane_id] = []
-                            # Format the list for clean display
                             formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
                             all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}] (No std curve for qty)")
                     else:
@@ -11949,7 +12002,7 @@ if __name__ == "__main__":
                                     try:
                                         with open(config_path, "r") as config_file:
                                             config_data = json.load(config_file)
-                                        self.apply_config(config_data) # Apply loaded settings
+                                        self.apply_config(config_data,load_analysis=False) # Apply loaded settings
                                         config_loaded_from_paste = True # Set flag
                                     except Exception as e:
                                         QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply associated config file '{os.path.basename(config_path)}': {e}")
@@ -12140,7 +12193,7 @@ if __name__ == "__main__":
                             try:
                                 with open(config_path, "r") as config_file:
                                     config_data = json.load(config_file)
-                                self.apply_config(config_data) # Apply loaded settings
+                                self.apply_config(config_data, load_analysis=False) # Apply loaded settings
                             except Exception as e:
                                 QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
                         # --- End Config File Loading ---
@@ -12181,8 +12234,10 @@ if __name__ == "__main__":
                     self._update_levels_histogram() # Update histogram for new image
                     self.save_state()
             
-            def apply_config(self, config_data):
+            def apply_config(self, config_data,load_analysis=False):
                 # --- 1. Load data from config_data into self attributes ---
+                if "peak_dialog_settings" in config_data:
+                    self.peak_dialog_settings.update(config_data["peak_dialog_settings"])
 
                 # Padding text inputs
                 adding_white_space_data = config_data.get("adding_white_space", {})
@@ -12233,6 +12288,23 @@ if __name__ == "__main__":
                     # If no L/R values from this specific image config,
                     # self.marker_values will be populated by on_combobox_changed based on the selected preset.
                     self.marker_values = []
+
+                if load_analysis:
+                    serialized_defs = config_data.get("multi_lane_definitions", [])
+                    self.multi_lane_definitions = []
+                    for d in serialized_defs:
+                        restored_def = {'type': d['type'], 'id': d['id']}
+                        if d['type'] == 'quad':
+                            restored_def['points_label'] = [QPointF(x, y) for x, y in d['points_label']]
+                        elif d['type'] == 'rectangle':
+                            x, y, w, h = d['points_label'][0]
+                            restored_def['points_label'] = [QRectF(x, y, w, h)]
+                        self.multi_lane_definitions.append(restored_def)
+
+                    serialized_quad = config_data.get("single_quad_points", [])
+                    self.live_view_label.quad_points = [QPointF(x, y) for x, y in serialized_quad]
+
+                    self.live_view_label.bounding_box_preview = config_data.get("single_bounding_box", None)
 
                 adj_settings = config_data.get("image_adjustments", {})
                 if adj_settings:
@@ -12403,11 +12475,9 @@ if __name__ == "__main__":
                     if isinstance(value, list):
                         return [make_json_serializable(v) for v in value]
                     if isinstance(value, tuple):
-                        # For JSON, lists are generally preferred over tuples if modification isn't an issue
-                        # For coordinates like (pos, label), we want [float(pos), str(label)]
-                        if len(value) == 2 and isinstance(value[1], str): # Heuristic for (pos, label)
+                        if len(value) == 2 and isinstance(value[1], str):
                             return [make_json_serializable(value[0]), str(value[1])]
-                        return [make_json_serializable(v) for v in value] # General tuple to list
+                        return [make_json_serializable(v) for v in value]
                     if isinstance(value, dict):
                         return {make_json_serializable(k): make_json_serializable(v) for k, v in value.items()}
                     return value
@@ -12418,36 +12488,35 @@ if __name__ == "__main__":
                         "right": self.right_padding_input.text(),
                         "top": self.top_padding_input.text(),
                         "bottom": self.bottom_padding_input.text(),
-                        "transparency": self.transparency, # Assuming self.transparency exists
+                        "transparency": self.transparency,
                     },
                     "marker_positions": {
-                        # Store positions only for standard markers
                         "left": [(pos, label) for pos, label in getattr(self, 'left_markers', [])],
                         "right": [(pos, label) for pos, label in getattr(self, 'right_markers', [])],
                         "top": [(pos, label) for pos, label in getattr(self, 'top_markers', [])],
                     },
-                    "marker_labels": { # Storing labels separately might be redundant if already in positions
+                    "marker_labels": {
                         "top": getattr(self, 'top_label', []),
                         "left": [marker[1] for marker in getattr(self, 'left_markers', [])],
                         "right": [marker[1] for marker in getattr(self, 'right_markers', [])],
                     },
-                    "marker_padding": { # Current slider values
+                    "marker_padding": {
                         "top": self.top_padding_slider.value() if hasattr(self, 'top_padding_slider') else 0,
                         "left": self.left_padding_slider.value() if hasattr(self, 'left_padding_slider') else 0,
                         "right": self.right_padding_slider.value() if hasattr(self, 'right_padding_slider') else 0,
                     },
-                    "font_options": { # Default font options for standard markers
+                    "font_options": {
                         "font_family": self.font_family,
                         "font_size": self.font_size,
                         "font_rotation": self.font_rotation,
                         "font_color": self.font_color.name(),
                     },
-                    "slider_ranges": { # Current slider ranges
+                    "slider_ranges": {
                          "left": getattr(self, 'left_slider_range', [-100, 1000]),
                          "right": getattr(self, 'right_slider_range', [-100, 1000]),
                          "top": getattr(self, 'top_slider_range', [-100, 1000]),
                      },
-                    "added_shift": { # Store current added shifts
+                    "added_shift": {
                          "left": getattr(self, 'left_marker_shift_added', 0),
                          "right": getattr(self, 'right_marker_shift_added', 0),
                          "top": getattr(self, 'top_marker_shift_added', 0),
@@ -12465,29 +12534,54 @@ if __name__ == "__main__":
                     }
                 }
 
-                # --- Updated Custom Markers Section ---
+                # --- START OF THE FIX ---
+                # Explicitly add all analysis region definitions (single and multi-lane)
+                
+                # 1. Multi-lane definitions (already in the save_state function, let's add it here too for consistency)
+                config["multi_lane_definitions"] = [
+                    {
+                        'type': d['type'], 'id': d['id'],
+                        'points_label': (
+                            [(p.x(), p.y()) for p in d['points_label']] if d['type'] == 'quad' else
+                            [(d['points_label'][0].x(), d['points_label'][0].y(), d['points_label'][0].width(), d['points_label'][0].height())]
+                        )
+                    } for d in self.multi_lane_definitions
+                ]
+
+                # 2. Single quadrilateral points
+                config["single_quad_points"] = [(p.x(), p.y()) for p in self.live_view_label.quad_points]
+
+                # 3. Single rectangle points
+                config["single_bounding_box"] = self.live_view_label.bounding_box_preview
+                # --- END OF BOUNDARY BOX FIX ---
+
                 custom_markers_data = []
-                # Use getattr for safety, default to empty list
                 for marker_tuple in getattr(self, "custom_markers", []):
                     try:
-                        # Unpack 8 elements
                         x, y, text, color, font, font_size, is_bold, is_italic = marker_tuple
                         custom_markers_data.append({
-                            "x": x,
-                            "y": y,
-                            "text": text,
-                            "color": color.name(), # Save color name/hex
-                            "font": font,
-                            "font_size": font_size,
-                            "bold": is_bold,       # Save bold flag
-                            "italic": is_italic    # Save italic flag
+                            "x": x, "y": y, "text": text, "color": color.name(),
+                            "font": font, "font_size": font_size, "bold": is_bold, "italic": is_italic
                         })
-                    except (ValueError, TypeError, IndexError) as e:
-                        pass
+                    except (ValueError, TypeError, IndexError): pass
                 config["custom_markers"] = custom_markers_data
                 config["custom_shapes"] = [dict(s) for s in getattr(self, "custom_shapes", [])]
-                # --- End Updated Custom Markers ---
 
+                config["quantities_peak_area_dict"] = self.quantities_peak_area_dict
+
+                # --- START OF THE PROTEIN SEQUENCE FIX ---
+                config["protein_analysis_data"] = {
+                    "protein_sequence": self.protein_sequence,
+                    "base_protein_mw": self.base_protein_mw,
+                    "avg_glycan_mass": self.avg_glycan_mass,
+                    "num_oligomers_to_model": self.num_oligomers_to_model,
+                    "num_glycans_to_model": self.num_glycans_to_model,
+                    "last_predicted_mw": self.last_predicted_mw,
+                }
+
+                config["peak_dialog_settings"] = self.peak_dialog_settings
+                # --- END OF PROTEIN SEQUENCE FIX ---
+                
                 return config
             
             def add_band(self, event):
