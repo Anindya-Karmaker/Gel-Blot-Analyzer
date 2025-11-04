@@ -161,268 +161,7 @@ if __name__ == "__main__":
         else:
             print("INFO: Using existing QApplication instance.")
 
-        light_stylesheet = """
-            /* 
-            ================================================================================
-            POLISHED COMPACT STYLESHEET for Gel Blot Analyzer (LIGHT THEME)
-            ================================================================================
-            */
-            QMainWindow, QDialog { background-color: #F0F2F5; }
-            QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #333333; }
-            QGroupBox { background-color: #FBFCFD; border: 1px solid #D0D5DB; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #FFFFFF; background-color: #5D98D4; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
-            QPushButton { background-color: #FFFFFF; border: 1px solid #C0C5CB; border-radius: 3px; padding: 4px 8px; min-height: 18px; }
-            QPushButton:hover { background-color: #E6F0F9; border-color: #5D98D4; }
-            QPushButton:pressed { background-color: #D0E0EF; }
-            QPushButton:checked { background-color: #D4EDDA; border: 1px solid #74B882; }
-            QPushButton:disabled { background-color: #F0F2F5; color: #AAAAAA; }
-            QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; }
-            QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
-            QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
-            QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-            QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
-            QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
-            QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #5D98D4; border: 1px solid #4A78A9; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
-            QTabWidget::pane { border-top: 1px solid #D0D5DB; }
-            QTabBar::tab { background-color: #E4E7EB; border: 1px solid #D0D5DB; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #FBFCFD; border-bottom-color: #FBFCFD; font-weight: bold; }
-            QTabBar::tab:!selected:hover { background: #EFF2F5; }
-            QToolBar { background-color: #E4E7EB; border: none; padding: 1px; }
-            QToolBar QToolButton {
-                border: 1px solid transparent;
-                border-radius: 3px;
-                padding: 2px;
-            }
-            QToolBar QToolButton:hover {
-                background-color: #E6F0F9;
-                border: 1px solid #5D98D4;
-            }
-            QToolBar QToolButton:pressed {
-                background-color: #D0E0EF;
-            }
-            QToolBar QToolButton:checked { background-color: #A0D0A0; }
-            QStatusBar { background-color: #E4E7EB; }
-            #LiveViewLabel { background-color: white; border: 1px solid #AAAAAA; }
-
-            /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
-            QTableView, QTableWidget, QListView, QListWidget {
-                border: 1px solid #D0D5DB;
-                gridline-color: #EAEAEA;
-                color: #333333;
-                selection-background-color: #5D98D4;
-                selection-color: white;
-            }
-            
-            QTableView QAbstractItemView, QTableWidget QAbstractItemView {
-                background-color: #FFFFFF; 
-            }
-
-            QHeaderView {
-                background-color: #F0F2F5;
-            }
-
-            QHeaderView::section {
-                background-color: #E4E7EB;
-                color: #333333;
-                padding: 4px;
-                border-top: 0px;
-                border-left: 0px;
-                border-right: 1px solid #D0D5DB;
-                border-bottom: 2px solid #C0C5CB;
-                font-weight: bold;
-            }
-
-            QTableCornerButton::section {
-                background-color: #E4E7EB;
-                border-right: 1px solid #D0D5DB;
-                border-bottom: 2px solid #C0C5CB;
-            }
-
-            /* --- Light Scrollbars --- */
-            QScrollBar:vertical {
-                border: none;
-                background-color: #F0F2F5;
-                width: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #C0C5CB;
-                min-height: 25px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #A8B0B6;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-
-            QScrollBar:horizontal {
-                border: none;
-                background-color: #F0F2F5;
-                height: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:horizontal {
-                background-color: #C0C5CB;
-                min-width: 25px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background-color: #A8B0B6;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                width: 0px;
-            }
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-                background: none;
-            }
-        """
         
-        dark_stylesheet = """
-            /* 
-            ================================================================================
-            POLISHED COMPACT STYLESHEET for Gel Blot Analyzer (DARK THEME - FINAL)
-            ================================================================================
-            */
-            QMainWindow, QDialog { background-color: #2D2D30; }
-            QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #F1F1F1; }
-            
-            QGroupBox { background-color: #38383C; border: 1px solid #505055; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #F1F1F1; background-color: #007ACC; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
-            
-            QPushButton { background-color: #4A4A4F; border: 1px solid #606065; border-radius: 3px; padding: 4px 8px; min-height: 18px; color: #F1F1F1; }
-            QPushButton:hover { background-color: #5A5A60; border-color: #007ACC; }
-            QPushButton:pressed { background-color: #6A6A70; }
-            QPushButton:checked { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }
-            QPushButton:disabled { background-color: #3A3A3D; color: #707070; border-color: #4A4A4F; }
-            
-            QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
-            QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
-            QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
-            
-            QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-            QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjRjFGNEYxIiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
-            QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #3C3C3F; border: 1px solid #505055; selection-background-color: #007ACC; }
-            
-            QSlider::groove:horizontal { border: 1px solid #505055; background: #3C3C3F; height: 4px; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #007ACC; border: 1px solid #009AFF; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
-            
-            QTabWidget::pane { border-top: 1px solid #505055; }
-            QTabBar::tab { background-color: #38383C; border: 1px solid #505055; border-bottom: none; color: #A0A0A0; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #2D2D30; border-bottom-color: #2D2D30; font-weight: bold; color: #F1F1F1; }
-            QTabBar::tab:!selected:hover { background: #4A4A4F; color: #F1F1F1; }
-            QToolBar { background-color: #4F4F54; border: none; padding: 1px; }
-            QToolBar QToolButton {
-                border: 1px solid transparent;
-                border-radius: 3px;
-                padding: 2px;
-            }
-            QToolBar QToolButton:hover {
-                background-color: #5A5A60;
-                border: 1px solid #009AFF;
-            }
-            QToolBar QToolButton:pressed {
-                background-color: #6A6A70;
-            }
-            QToolBar QToolButton:checked { 
-                background-color: #3D984E; 
-                border: 1px solid #5DBB6F;
-            }
-            QStatusBar { background-color: #007ACC; }
-            QStatusBar QLabel { color: white; }
-            
-            #LiveViewLabel {
-                background-color: #5A5A60;
-                border: 1px solid #404040;
-            }
-
-            /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
-            
-            /* THIS IS THE CRITICAL FIX: Style the viewport area BEHIND the items */
-            QAbstractItemView {
-                background-color: #3C3C3F;
-            }
-
-            QTableView, QTableWidget, QListView, QListWidget {
-                border: 1px solid #505055;
-                gridline-color: #505055;
-                color: #F1F1F1;
-                selection-background-color: #007ACC;
-                selection-color: white;
-            }
-
-            /* Style the entire header widget background */
-            QHeaderView {
-                background-color: #38383C;
-            }
-
-            /* Styles individual header sections (horizontal and vertical) */
-            QHeaderView::section {
-                background-color: #4A4A4F;
-                color: #F1F1F1;
-                padding: 4px;
-                border-top: 0px;
-                border-left: 0px;
-                border-right: 1px solid #606065;
-                border-bottom: 2px solid #606065;
-                font-weight: bold;
-            }
-            
-            /* Style the top-left corner button */
-            QTableCornerButton::section {
-                background-color: #4A4A4F;
-                border-right: 1px solid #606065;
-                border-bottom: 2px solid #606065;
-            }
-            
-            /* --- Dark Scrollbars --- */
-            QScrollBar:vertical {
-                border: none;
-                background-color: #2D2D30;
-                width: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #5A5A60;
-                min-height: 25px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #6A6A70;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-
-            QScrollBar:horizontal {
-                border: none;
-                background-color: #2D2D30;
-                height: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:horizontal {
-                background-color: #5A5A60;
-                min-width: 25px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background-color: #6A6A70;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                width: 0px;
-            }
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-                background: none;
-            }
-        """
         
         # 2. Set the global font and apply the stylesheet
         app.setFont(QFont("Segoe UI", 10))
@@ -916,7 +655,7 @@ if __name__ == "__main__":
             def _on_glycan_type_selected(self, text):
                 mass = GLYCAN_MASSES_KDA.get(text, 0.0)
                 self.glycan_mass_input.blockSignals(True)
-                if mass == -1.0: self.glycan_mass_input.clear(); self.glycan_mass_input.setFocus()
+                if mass == -1.0: self.glycan_mass_input.clear(); self.glycan_mass_input.setFocus
                 elif mass >= 0.0: self.glycan_mass_input.setText(str(mass))
                 self.glycan_mass_input.blockSignals(False); self.update_potential_fragments()
 
@@ -1600,7 +1339,7 @@ if __name__ == "__main__":
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_x_shift_slider.setValue(0)
                 self.abs_x_shift_slider.valueChanged.connect(self._update_global_adjustments)
-                self.abs_x_shift_slider.valueChanged.connect(self.abs_x_shift_slider.setFocus())
+                self.abs_x_shift_slider.valueChanged.connect(self.abs_x_shift_slider.setFocus)
                 self.abs_x_shift_label = QLabel("0.00%"); self.abs_x_shift_label.setFixedSize(80, 20)
                 self.abs_x_shift_slider.valueChanged.connect(lambda val: self.abs_x_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1); global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
@@ -1608,7 +1347,7 @@ if __name__ == "__main__":
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_y_shift_slider.setValue(0)
                 self.abs_y_shift_slider.valueChanged.connect(self._update_global_adjustments)
-                self.abs_y_shift_slider.valueChanged.connect(self.abs_y_shift_slider.setFocus())
+                self.abs_y_shift_slider.valueChanged.connect(self.abs_y_shift_slider.setFocus)
                 self.abs_y_shift_label = QLabel("0.00%"); self.abs_y_shift_label.setFixedSize(80, 20)
                 self.abs_y_shift_slider.valueChanged.connect(lambda val: self.abs_y_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1); global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
@@ -1616,7 +1355,7 @@ if __name__ == "__main__":
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_x_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.rel_x_scale_slider.valueChanged.connect(self.rel_x_scale_slider.setFocus())
+                self.rel_x_scale_slider.valueChanged.connect(self.rel_x_scale_slider.setFocus)
                 self.rel_x_scale_label = QLabel("100.0%"); self.rel_x_scale_label.setFixedSize(80, 20)
                 self.rel_x_scale_slider.valueChanged.connect(lambda val: self.rel_x_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1); global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
@@ -1624,7 +1363,7 @@ if __name__ == "__main__":
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_y_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.rel_y_scale_slider.valueChanged.connect(self.rel_y_scale_slider.setFocus())
+                self.rel_y_scale_slider.valueChanged.connect(self.rel_y_scale_slider.setFocus)
                 self.rel_y_scale_label = QLabel("100.0%"); self.rel_y_scale_label.setFixedSize(80, 20)
                 self.rel_y_scale_slider.valueChanged.connect(lambda val: self.rel_y_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1); global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
@@ -1632,7 +1371,7 @@ if __name__ == "__main__":
                 self.font_scale_slider = QSlider(Qt.Horizontal)
                 self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.font_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.font_scale_slider.valueChanged.connect(self.font_scale_slider.setFocus())
+                self.font_scale_slider.valueChanged.connect(self.font_scale_slider.setFocus)
                 self.font_scale_label = QLabel("100.0%"); self.font_scale_label.setFixedSize(80, 20)
                 self.font_scale_slider.valueChanged.connect(lambda val: self.font_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.font_scale_slider, 4, 1); global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
@@ -2890,7 +2629,7 @@ if __name__ == "__main__":
                 self.rolling_ball_slider.setRange(1, 500)
                 self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
-                self.rolling_ball_slider.valueChanged.connect(self.rolling_ball_slider.setFocus())
+                self.rolling_ball_slider.valueChanged.connect(self.rolling_ball_slider.setFocus)
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
                 
                 self.auto_adjust_checkbox = QCheckBox("Auto")
@@ -4168,12 +3907,312 @@ if __name__ == "__main__":
         class CombinedSDSApp(QMainWindow):
             CONFIG_PRESET_FILE_NAME = "Gel_Blot_Analyzer_preset_config.txt"
             MIME_TYPE_CUSTOM_ITEMS = "application/x-Gel-Blot-Analyzer.customitems+json"
+            light_stylesheet = """
+                /* 
+                ================================================================================
+                POLISHED COMPACT STYLESHEET for Gel Blot Analyzer (LIGHT THEME)
+                ================================================================================
+                */
+                QMainWindow, QDialog { background-color: #F0F2F5; }
+                QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #333333; }
+                QGroupBox { background-color: #FBFCFD; border: 1px solid #D0D5DB; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #FFFFFF; background-color: #5D98D4; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
+                QPushButton { background-color: #FFFFFF; border: 1px solid #C0C5CB; border-radius: 3px; padding: 4px 8px; min-height: 18px; }
+                QPushButton:hover { background-color: #E6F0F9; border-color: #5D98D4; }
+                QPushButton:pressed { background-color: #D0E0EF; }
+                QPushButton:checked { background-color: #D4EDDA; border: 1px solid #74B882; }
+                QPushButton:disabled { background-color: #F0F2F5; color: #AAAAAA; }
+                QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; color: #333333; }
+                QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
+                QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
+                QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+                QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
+                QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
+                QSlider::handle:horizontal { background: #5D98D4; border: 1px solid #4A78A9; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
+                QTabWidget::pane { border-top: 1px solid #D0D5DB; }
+                QTabBar::tab { background-color: #E4E7EB; border: 1px solid #D0D5DB; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
+                QTabBar::tab:selected { background: #FBFCFD; border-bottom-color: #FBFCFD; font-weight: bold; }
+                QTabBar::tab:!selected:hover { background: #EFF2F5; }
+                QCheckBox { spacing: 5px; }
+                QCheckBox::indicator {
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 3px;
+                    border: 1px solid #C0C5CB;
+                    background-color: #FFFFFF;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #5D98D4;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #5D98D4;
+                    border-color: #4A78A9;
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTlsNy03Ljg5TDIxIDdsLTEuNDEtMS40MUw5IDE2LjE3eiIvPjwvc3ZnPg==);
+                }
+                QCheckBox::indicator:disabled {
+                    background-color: #E0E0E0;
+                }
+                QToolBar { background-color: #E4E7EB; border: none; padding: 1px; }
+                QToolBar QToolButton {
+                    border: 1px solid transparent;
+                    border-radius: 3px;
+                    padding: 2px;
+                }
+                QToolBar QToolButton:hover {
+                    background-color: #E6F0F9;
+                    border: 1px solid #5D98D4;
+                }
+                QToolBar QToolButton:pressed {
+                    background-color: #D0E0EF;
+                }
+                QToolBar QToolButton:checked { background-color: #A0D0A0; }
+                QStatusBar { background-color: #E4E7EB; }
+                #LiveViewLabel { background-color: white; border: 1px solid #AAAAAA; }
+
+                /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
+                QTableView, QTableWidget, QListView, QListWidget {
+                    border: 1px solid #D0D5DB;
+                    gridline-color: #EAEAEA;
+                    color: #333333;
+                    selection-background-color: #5D98D4;
+                    selection-color: white;
+                }
+                
+                QTableView QAbstractItemView, QTableWidget QAbstractItemView {
+                    background-color: #FFFFFF; 
+                }
+
+                QHeaderView {
+                    background-color: #F0F2F5;
+                }
+
+                QHeaderView::section {
+                    background-color: #E4E7EB;
+                    color: #333333;
+                    padding: 4px;
+                    border-top: 0px;
+                    border-left: 0px;
+                    border-right: 1px solid #D0D5DB;
+                    border-bottom: 2px solid #C0C5CB;
+                    font-weight: bold;
+                }
+
+                QTableCornerButton::section {
+                    background-color: #E4E7EB;
+                    border-right: 1px solid #D0D5DB;
+                    border-bottom: 2px solid #C0C5CB;
+                }
+
+                /* --- Light Scrollbars --- */
+                QScrollBar:vertical {
+                    border: none;
+                    background-color: #F0F2F5;
+                    width: 12px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background-color: #C0C5CB;
+                    min-height: 25px;
+                    border-radius: 6px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background-color: #A8B0B6;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: none;
+                }
+
+                QScrollBar:horizontal {
+                    border: none;
+                    background-color: #F0F2F5;
+                    height: 12px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:horizontal {
+                    background-color: #C0C5CB;
+                    min-width: 25px;
+                    border-radius: 6px;
+                }
+                QScrollBar::handle:horizontal:hover {
+                    background-color: #A8B0B6;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                    background: none;
+                }
+            """
+            
+            dark_stylesheet = """
+                /* 
+                ================================================================================
+                POLISHED COMPACT STYLESHEET for Gel Blot Analyzer (DARK THEME - FINAL)
+                ================================================================================
+                */
+                QMainWindow, QDialog { background-color: #2D2D30; }
+                QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #F1F1F1; }
+                
+                QGroupBox { background-color: #38383C; border: 1px solid #505055; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
+                QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #F1F1F1; background-color: #007ACC; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
+                
+                QPushButton { background-color: #4A4A4F; border: 1px solid #606065; border-radius: 3px; padding: 4px 8px; min-height: 18px; color: #F1F1F1; }
+                QPushButton:hover { background-color: #5A5A60; border-color: #007ACC; }
+                QPushButton:pressed { background-color: #6A6A70; }
+                QPushButton:checked { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }
+                QPushButton:disabled { background-color: #3A3A3D; color: #707070; border-color: #4A4A4F; }
+                
+                QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
+                QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
+                QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
+                
+                QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjRjFGNEYxIiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+                QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #3C3C3F; border: 1px solid #505055; selection-background-color: #007ACC; }
+                
+                QSlider::groove:horizontal { border: 1px solid #505055; background: #3C3C3F; height: 4px; border-radius: 2px; }
+                QSlider::handle:horizontal { background: #007ACC; border: 1px solid #009AFF; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
+                
+                QTabWidget::pane { border-top: 1px solid #505055; }
+                QTabBar::tab { background-color: #38383C; border: 1px solid #505055; border-bottom: none; color: #A0A0A0; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
+                QTabBar::tab:selected { background: #2D2D30; border-bottom-color: #2D2D30; font-weight: bold; color: #F1F1F1; }
+                QTabBar::tab:!selected:hover { background: #4A4A4F; color: #F1F1F1; }
+                QCheckBox { spacing: 5px; }
+                QCheckBox::indicator {
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 3px;
+                    border: 1px solid #505055;
+                    background-color: #3C3C3F;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #007ACC;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #007ACC;
+                    border-color: #009AFF;
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTlsNy03Ljg5TDIxIDdsLTEuNDEtMS40MUw5IDE2LjE3eiIvPjwvc3ZnPg==);
+                }
+                QCheckBox::indicator:disabled {
+                    background-color: #3A3A3D;
+                    border-color: #4A4A4F;
+                }
+                QToolBar { background-color: #4F4F54; border: none; padding: 1px; }
+                QToolBar QToolButton {
+                    border: 1px solid transparent;
+                    border-radius: 3px;
+                    padding: 2px;
+                }
+                QToolBar QToolButton:hover {
+                    background-color: #5A5A60;
+                    border: 1px solid #009AFF;
+                }
+                QToolBar QToolButton:pressed {
+                    background-color: #6A6A70;
+                }
+                QToolBar QToolButton:checked { 
+                    background-color: #3D984E; 
+                    border: 1px solid #5DBB6F;
+                }
+                QStatusBar { background-color: #007ACC; }
+                QStatusBar QLabel { color: white; }
+                
+                #LiveViewLabel {
+                    background-color: #5A5A60;
+                    border: 1px solid #404040;
+                }
+
+                /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
+                
+                /* THIS IS THE CRITICAL FIX: Style the viewport area BEHIND the items */
+                QAbstractItemView {
+                    background-color: #3C3C3F;
+                }
+
+                QTableView, QTableWidget, QListView, QListWidget {
+                    border: 1px solid #505055;
+                    gridline-color: #505055;
+                    color: #F1F1F1;
+                    selection-background-color: #007ACC;
+                    selection-color: white;
+                }
+
+                /* Style the entire header widget background */
+                QHeaderView {
+                    background-color: #38383C;
+                }
+
+                /* Styles individual header sections (horizontal and vertical) */
+                QHeaderView::section {
+                    background-color: #4A4A4F;
+                    color: #F1F1F1;
+                    padding: 4px;
+                    border-top: 0px;
+                    border-left: 0px;
+                    border-right: 1px solid #606065;
+                    border-bottom: 2px solid #606065;
+                    font-weight: bold;
+                }
+                
+                /* Style the top-left corner button */
+                QTableCornerButton::section {
+                    background-color: #4A4A4F;
+                    border-right: 1px solid #606065;
+                    border-bottom: 2px solid #606065;
+                }
+                
+                /* --- Dark Scrollbars --- */
+                QScrollBar:vertical {
+                    border: none;
+                    background-color: #2D2D30;
+                    width: 12px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background-color: #5A5A60;
+                    min-height: 25px;
+                    border-radius: 6px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background-color: #6A6A70;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: none;
+                }
+
+                QScrollBar:horizontal {
+                    border: none;
+                    background-color: #2D2D30;
+                    height: 12px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:horizontal {
+                    background-color: #5A5A60;
+                    min-width: 25px;
+                    border-radius: 6px;
+                }
+                QScrollBar::handle:horizontal:hover {
+                    background-color: #6A6A70;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                    background: none;
+                }
+            """
             def __init__(self):
                 super().__init__()
                 # --- ADD THIS LINE AT THE START OF __init__ ---
-                self.current_theme = "light" # Default theme
                 # --- (The rest of your __init__ method continues as before) ---
-                
+                self.current_theme='light'
                 primary_screen_obj = QApplication.primaryScreen()
                 if primary_screen_obj:
                     self.screen = primary_screen_obj.geometry() # Or .availableGeometry()
@@ -4529,6 +4568,23 @@ if __name__ == "__main__":
                 elif self.viewer_position == "Bottom": self.layout_bottom_action.setChecked(True)
                 elif self.viewer_position == "Left": self.layout_left_action.setChecked(True)
                 elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
+                
+                self._apply_initial_theme('dark')
+                self._apply_initial_theme('light')
+            
+            def _apply_initial_theme(self, current_theme):
+                """Applies the theme stylesheet based on the loaded preference."""
+                app = QApplication.instance()
+                if not app: return
+
+                if current_theme == "dark":
+                    app.setStyleSheet(self.dark_stylesheet)
+                    if hasattr(self, 'theme_action'):
+                        self.theme_action.setChecked(True)
+                else:
+                    app.setStyleSheet(self.light_stylesheet)
+                    if hasattr(self, 'theme_action'):
+                        self.theme_action.setChecked(False)
 
             def _on_table_window_closed(self):
                 """Slot to clear the reference to the TableWindow when it closes."""
@@ -4813,7 +4869,7 @@ if __name__ == "__main__":
                 """Create QAction objects for menus and toolbars."""
                 style = self.style() 
                 icon_size = QSize(30, 30) 
-                text_color = self.palette().color(QPalette.ButtonText) 
+                text_color = QColor("black")
 
                 open_icon = create_text_icon("Wingdings",icon_size, text_color, "1") 
                 save_icon = create_text_icon("Wingdings",icon_size, text_color, "=")
@@ -7876,28 +7932,28 @@ if __name__ == "__main__":
                 image1_layout.addWidget(reset_overlay1_button, 1, 1, 1, 1)
 
                 image1_layout.addWidget(QLabel("X:"), 2, 0)
-                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image1_left_slider.setFocus()))
+                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image1_left_slider.setFocus))
                 image1_layout.addWidget(self.image1_left_slider, 2, 1)
                 self.image1_pos_x_label = QLabel("0"); self.image1_pos_x_label.setFixedWidth(40)
                 self.image1_left_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_x_label: lbl.setText(str(val)))
                 image1_layout.addWidget(self.image1_pos_x_label, 2, 2)
                 
                 image1_layout.addWidget(QLabel("Y:"), 3, 0)
-                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders,self.image1_top_slider.setFocus()))
+                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders,self.image1_top_slider.setFocus))
                 image1_layout.addWidget(self.image1_top_slider, 3, 1)
                 self.image1_pos_y_label = QLabel("0"); self.image1_pos_y_label.setFixedWidth(40)
                 self.image1_top_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_y_label: lbl.setText(str(val)))
                 image1_layout.addWidget(self.image1_pos_y_label, 3, 2)
 
                 image1_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_resize_slider.setFocus()))
+                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_resize_slider.setFocus))
                 image1_layout.addWidget(self.image1_resize_slider, 4, 1)
                 self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(40)
                 self.image1_resize_slider.valueChanged.connect(lambda val, lbl=self.image1_resize_label: lbl.setText(f"{val}%"))
                 image1_layout.addWidget(self.image1_resize_label, 4, 2)
 
                 image1_layout.addWidget(QLabel("Rotate:"), 5, 0)
-                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_rotation_slider.setFocus()))
+                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_rotation_slider.setFocus))
                 image1_layout.addWidget(self.image1_rotation_slider, 5, 1)
                 self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(40)
                 self.image1_rotation_slider.valueChanged.connect(lambda val, lbl=self.image1_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
@@ -7922,28 +7978,28 @@ if __name__ == "__main__":
                 image2_layout.addWidget(reset_overlay2_button, 1, 1, 1, 1)
 
                 image2_layout.addWidget(QLabel("X:"), 2, 0)
-                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_left_slider.setFocus()))
+                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_left_slider.setFocus))
                 image2_layout.addWidget(self.image2_left_slider, 2, 1)
                 self.image2_pos_x_label = QLabel("0"); self.image2_pos_x_label.setFixedWidth(40)
                 self.image2_left_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_x_label: lbl.setText(str(val)))
                 image2_layout.addWidget(self.image2_pos_x_label, 2, 2)
 
                 image2_layout.addWidget(QLabel("Y:"), 3, 0)
-                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_top_slider.setFocus()))
+                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_top_slider.setFocus))
                 image2_layout.addWidget(self.image2_top_slider, 3, 1)
                 self.image2_pos_y_label = QLabel("0"); self.image2_pos_y_label.setFixedWidth(40)
                 self.image2_top_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_y_label: lbl.setText(str(val)))
                 image2_layout.addWidget(self.image2_pos_y_label, 3, 2)
                 
                 image2_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_resize_slider.setFocus()))
+                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_resize_slider.setFocus))
                 image2_layout.addWidget(self.image2_resize_slider, 4, 1)
                 self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(40)
                 self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
                 image2_layout.addWidget(self.image2_resize_label, 4, 2)
 
                 image2_layout.addWidget(QLabel("Rotate:"), 5, 0)
-                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_rotation_slider.setFocus()))
+                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_rotation_slider.setFocus))
                 image2_layout.addWidget(self.image2_rotation_slider, 5, 1)
                 self.image2_rotation_label = QLabel("0.0°"); self.image2_rotation_label.setFixedWidth(40)
                 self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
@@ -7974,7 +8030,7 @@ if __name__ == "__main__":
                 self.blend_slider = QSlider(Qt.Horizontal)
                 self.blend_slider.setRange(0, 100); self.blend_slider.setValue(50)
                 self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
-                self.blend_slider.valueChanged.connect(lambda: (self.update_live_view, self.blend_slider.setFocus()))
+                self.blend_slider.valueChanged.connect(lambda: (self.update_live_view, self.blend_slider.setFocus))
                 global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 4)
 
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
@@ -8553,11 +8609,11 @@ if __name__ == "__main__":
 
                 self.black_point_slider.sliderReleased.connect(self.apply_all_adjustments)
                 self.white_point_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.gamma_slider.valueChanged.connect(lambda: (self.apply_all_adjustments, self.gamma_slider.setFocus()))
+                self.gamma_slider.valueChanged.connect(lambda: (self.apply_all_adjustments, self.gamma_slider.setFocus))
 
                 # Histogram and value labels are only for live feedback, no state saving.
-                self.black_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.black_point_slider.setFocus()))
-                self.white_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.white_point_slider.setFocus()))
+                self.black_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.black_point_slider.setFocus))
+                self.white_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.white_point_slider.setFocus))
                 self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
                 self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
                 self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}"))
@@ -8568,9 +8624,9 @@ if __name__ == "__main__":
                 self.cm_blue_slider.sliderReleased.connect(save_and_apply)
                 self.cm_mono_checkbox.stateChanged.connect(save_and_apply)
 
-                self.cm_red_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_red_slider.setFocus()))
-                self.cm_green_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_green_slider.setFocus()))
-                self.cm_blue_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_blue_slider.setFocus()))
+                self.cm_red_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_red_slider.setFocus))
+                self.cm_green_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_green_slider.setFocus))
+                self.cm_blue_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_blue_slider.setFocus))
                 
                 self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
                 self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
@@ -8581,17 +8637,17 @@ if __name__ == "__main__":
                 self.usm_radius_slider.sliderReleased.connect(save_and_apply)
                 self.usm_threshold_slider.sliderReleased.connect(save_and_apply)
                 
-                self.usm_amount_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_amount_slider.setFocus()))
-                self.usm_radius_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_radius_slider.setFocus()))
-                self.usm_threshold_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_threshold_slider.setFocus()))
+                self.usm_amount_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_amount_slider.setFocus))
+                self.usm_radius_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_radius_slider.setFocus))
+                self.usm_threshold_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_threshold_slider.setFocus))
                 
                 self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
                 self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
                 self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
 
                 # CLAHE: Save state on release, update live on change.
-                self.clahe_clip_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_clip_slider.setFocus()))
-                self.clahe_tile_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_tile_slider.setFocus()))
+                self.clahe_clip_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_clip_slider.setFocus))
+                self.clahe_tile_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_tile_slider.setFocus))
 
                 self.clahe_clip_slider.sliderReleased.connect(self.apply_all_adjustments)
                 self.clahe_tile_slider.sliderReleased.connect(self.apply_all_adjustments)
@@ -9237,7 +9293,7 @@ if __name__ == "__main__":
                 self.orientation_slider.setRange(-3600, 3600)
                 self.orientation_slider.setValue(0)
                 self.orientation_slider.valueChanged.connect(self._update_rotation_label)
-                self.orientation_slider.valueChanged.connect(lambda: (self.update_live_view(), self.orientation_slider.setFocus()))
+                self.orientation_slider.valueChanged.connect(lambda: (self.update_live_view(), self.orientation_slider.setFocus))
                 self.align_button = QPushButton("Apply"); self.align_button.clicked.connect(self.align_image)
                 self.reset_align_button = QPushButton("Reset"); self.reset_align_button.clicked.connect(self.reset_align_image)
                 rotation_layout.addWidget(self.orientation_label, 0, 0)
@@ -9269,7 +9325,7 @@ if __name__ == "__main__":
                 self.taper_skew_slider = QSlider(Qt.Horizontal)
                 self.taper_skew_slider.setRange(-70, 70); self.taper_skew_slider.setValue(0)
                 self.taper_skew_slider.valueChanged.connect(lambda value: self.taper_skew_label.setText(f"Skew ({value / 100.0:+0.2f})"))
-                self.taper_skew_slider.valueChanged.connect(lambda: (self.update_live_view(), self.taper_skew_slider.setFocus()))
+                self.taper_skew_slider.valueChanged.connect(lambda: (self.update_live_view(), self.taper_skew_slider.setFocus))
                 self.skew_button = QPushButton("Apply"); self.skew_button.clicked.connect(self.update_skew)
                 self.reset_skew_button = QPushButton("Reset"); self.reset_skew_button.clicked.connect(lambda: self.taper_skew_slider.setValue(0))
                 skew_layout.addWidget(self.taper_skew_label, 0, 0)
@@ -9305,13 +9361,13 @@ if __name__ == "__main__":
                     lbl = QLabel(f"{initial_value:.2f}%"); lbl.setMinimumWidth(55); lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     return lbl
                 self.crop_x_start_slider = QSlider(Qt.Horizontal); self.crop_x_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_start_slider.setValue(self.crop_slider_min); self.crop_x_start_slider.setEnabled(False)
-                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_start_slider.setFocus()))
+                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_start_slider.setFocus))
                 self.crop_x_end_slider = QSlider(Qt.Horizontal); self.crop_x_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_end_slider.setValue(self.crop_slider_max); self.crop_x_end_slider.setEnabled(False)
-                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_end_slider.setFocus()))
+                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_end_slider.setFocus))
                 self.crop_y_start_slider = QSlider(Qt.Horizontal); self.crop_y_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_start_slider.setValue(self.crop_slider_min); self.crop_y_start_slider.setEnabled(False)
-                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_start_slider.setFocus()))
+                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_start_slider.setFocus))
                 self.crop_y_end_slider = QSlider(Qt.Horizontal); self.crop_y_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_end_slider.setValue(self.crop_slider_max); self.crop_y_end_slider.setEnabled(False)
-                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_end_slider.setFocus()))
+                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_end_slider.setFocus))
                 crop_slider_layout.addWidget(QLabel("Left:"), 0, 0); crop_slider_layout.addWidget(self.crop_x_start_slider, 0, 1); crop_slider_layout.addWidget(self.crop_x_start_value_label, 0, 2)
                 crop_slider_layout.addWidget(QLabel("Right:"), 0, 3); crop_slider_layout.addWidget(self.crop_x_end_slider, 0, 4); crop_slider_layout.addWidget(self.crop_x_end_value_label, 0, 5)
                 crop_slider_layout.addWidget(QLabel("Top:"), 1, 0); crop_slider_layout.addWidget(self.crop_y_start_slider, 1, 1); crop_slider_layout.addWidget(self.crop_y_start_value_label, 1, 2)
@@ -9679,7 +9735,6 @@ if __name__ == "__main__":
                 
                 
                 
-            # In class CombinedSDSApp:
 
             def create_markers_tab(self):
                 """Create the Markers tab with a more compact and organized layout."""
@@ -9739,17 +9794,17 @@ if __name__ == "__main__":
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
                 left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
-                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: (self.update_left_padding, self.left_padding_slider.setFocus()))
+                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: (self.update_left_padding, self.left_padding_slider.setFocus))
                 standard_layout.addWidget(self.left_padding_slider, 2, 1)
                 duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
                 right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
                 right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
-                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: (self.update_right_padding, self.right_padding_slider.setFocus()))
+                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: (self.update_right_padding, self.right_padding_slider.setFocus))
                 standard_layout.addWidget(self.right_padding_slider, 3, 1)
                 duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
                 top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
                 top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
-                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: (self.update_top_padding, self.top_padding_slider.setFocus()))
+                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: (self.update_top_padding, self.top_padding_slider.setFocus))
                 standard_layout.addWidget(self.top_padding_slider, 4, 1)
                 main_layout.addWidget(standard_group)
 
@@ -10239,7 +10294,7 @@ if __name__ == "__main__":
                     self._deactivate_all_previews()
 
                     if self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.moving_multi_lane_index != -1:
-                        self.moving_multi_lane_index = -1; self._reset_to_selection_mode(); self.setFocus(); event.accept(); return 
+                        self.moving_multi_lane_index = -1; self._reset_to_selection_mode(); self.setFocus; event.accept(); return 
                     if self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                         self.cancel_custom_item_interaction_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.overlay_mode_active:
@@ -10742,7 +10797,7 @@ if __name__ == "__main__":
                 self.live_view_label.marker_font_size=self.custom_font_size_spinbox.value()
                 self.live_view_label.marker_color=self.custom_marker_color
                 
-                self.live_view_label.setFocus()
+                self.live_view_label.setFocus
                 self.live_view_label.update()
                 
                 self.marker_mode = "custom"  # Indicate custom marker mode
@@ -14035,15 +14090,7 @@ if __name__ == "__main__":
 
 
         main_window = CombinedSDSApp()
-        main_window.light_stylesheet = light_stylesheet
-        main_window.dark_stylesheet = dark_stylesheet
 
-        if main_window.current_theme == "dark":
-            app.setStyleSheet(dark_stylesheet)
-            main_window.theme_action.setChecked(True)
-        else:
-            app.setStyleSheet(light_stylesheet)
-            main_window.theme_action.setChecked(False)
 
         # --- Close Loading Screen and Show Main Window ---
         if loading_dialog:
