@@ -1,49 +1,61 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+# =============================================================================
+# PyInstaller Spec File for Gel Blot Analyzer
+#
+# This file is optimized for space efficiency by:
+# 1. Specifically listing required submodules instead of collecting all of them.
+# 2. Excluding unnecessary large modules (e.g., QtPrintSupport).
+# 3. Using UPX compression on binaries.
+# =============================================================================
+
 import os
-import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files
 
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
-SCRIPT_FILE = "Gel_blot_analyzer.py"
-ICON_FILE = "Icon.icns"  # Make sure this file is in the same directory as this .spec file
+SCRIPT_FILE = "PROTOTYPE.py"  # Assumes your script is named PROTOTYPE.py
+ICON_FILE = "Icon.icns"      # For macOS builds
 BUNDLE_ID = "com.anindyakarmaker.gelblotanalyzer"
 
 # --- Data Files ---
-# Use PyInstaller helpers to automatically find all necessary data files for libraries.
-# This includes Qt plugins, matplotlib fonts, etc.
+# Collects necessary data like Qt plugins, SSL certificates, and matplotlib fonts.
 datas = []
 datas.extend(collect_data_files('PySide6'))
 datas.extend(collect_data_files('matplotlib'))
-# No other manual data paths (like rembg models) seem necessary for this script.
 
 # --- Hidden Imports ---
-# This list is crucial for libraries that PyInstaller's static analysis might miss.
+# This list is crucial for modules that PyInstaller's static analysis might miss.
+# We are being specific here to avoid including the entire scipy/skimage libraries.
 hiddenimports = [
-    'PySide6.QtSvg',
-    'PySide6.QtPrintSupport',
+    # PySide6 essentials
+    'PySide6.QtSvg',  # For SVG icon support
+
+    # Matplotlib backend for Qt
     'matplotlib.backends.backend_qtagg',
-    'skimage',
+
+    # Specific submodules used from libraries
     'skimage.restoration',
-    'scipy',
     'scipy.signal',
     'scipy.ndimage',
     'scipy.interpolate',
+    'scipy.optimize', # For curve_fit
+
+    # Core libraries
     'cv2',
     'openpyxl',
     'openpyxl.cell._writer',
-    # Often needed for scipy/numpy to work correctly when bundled
+
+    # These are often needed for SciPy/NumPy to function correctly when bundled.
+    # It's safer to keep them to avoid runtime errors.
     'scipy.special._cdflib',
-    'scipy.integrate',
     'scipy.linalg.cython_blas',
     'scipy.linalg.cython_lapack',
-    'scipy.sparse.csgraph._validation',
 ]
-# Automatically collect all submodules from key libraries to be safe
-hiddenimports.extend(collect_submodules('skimage'))
-hiddenimports.extend(collect_submodules('scipy'))
 
+# --- Excluded Modules ---
+# Explicitly exclude other Qt bindings to prevent accidental bundling.
+excludes = ['PyQt5', 'PyQt6', 'PySide6.QtPrintSupport', 'tkinter']
 
 # --- PyInstaller Analysis ---
 a = Analysis(
@@ -53,9 +65,8 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    # runtime_hooks=['runtime_hook.py'], # Only needed for special runtime configurations.
-    runtime_hooks=[],                   # Keep it empty if you don't have a hook file.
-    excludes=['PyQt5', 'PyQt6'],
+    runtime_hooks=[],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
@@ -73,13 +84,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    console=False,  # Set to False for a GUI application
-    disable_windowed_traceback=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=ICON_FILE
+    upx=True,         # Use UPX for maximum binary compression.
+    console=False,    # This creates a windowed GUI application, not a terminal one.
+    icon=ICON_FILE,
 )
 
 coll = COLLECT(
@@ -93,16 +100,18 @@ coll = COLLECT(
     name=APP_NAME
 )
 
+# --- macOS App Bundle Configuration ---
+# This section is only used when building on macOS.
 app = BUNDLE(
     coll,
     name=f'{APP_NAME}.app',
     icon=ICON_FILE,
     bundle_identifier=BUNDLE_ID,
     info_plist={
-        'NSHighResolutionCapable': 'True',
-        'LSMinimumSystemVersion': '10.15', # Target macOS Catalina and newer
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1',
-        'NSHumanReadableCopyright': 'Copyright © 2025 Anindya Karmaker. All rights reserved.',
+        'NSHighResolutionCapable': 'True',                     # Enables support for Retina displays.
+        'LSMinimumSystemVersion': '10.15',                     # Sets minimum supported OS to macOS Catalina.
+        'CFBundleShortVersionString': '3.0.0',                 # Your app's version number.
+        'CFBundleVersion': '3.0',                              # Your app's build number.
+        'NSHumanReadableCopyright': 'Copyright © 2024 Anindya Karmaker. All rights reserved.',
     }
 )
