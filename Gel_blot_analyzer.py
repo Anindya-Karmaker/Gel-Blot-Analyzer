@@ -162,7 +162,6 @@ if __name__ == "__main__":
             print("INFO: Using existing QApplication instance.")
 
         
-        
         # 2. Set the global font and apply the stylesheet
         app.setFont(QFont("Segoe UI", 10))
 
@@ -655,7 +654,7 @@ if __name__ == "__main__":
             def _on_glycan_type_selected(self, text):
                 mass = GLYCAN_MASSES_KDA.get(text, 0.0)
                 self.glycan_mass_input.blockSignals(True)
-                if mass == -1.0: self.glycan_mass_input.clear(); self.glycan_mass_input.setFocus
+                if mass == -1.0: self.glycan_mass_input.clear(); self.glycan_mass_input.setFocus()
                 elif mass >= 0.0: self.glycan_mass_input.setText(str(mass))
                 self.glycan_mass_input.blockSignals(False); self.update_potential_fragments()
 
@@ -868,19 +867,15 @@ if __name__ == "__main__":
                 plot_layout = QVBoxLayout(plot_widget)
                 plot_layout.setContentsMargins(0, 0, 0, 0) # No margins for the layout
 
-                # Use GridSpec for plot and image preview arrangement
-                # More height for the profile plot
-                self.fig = plt.figure(figsize=(7, 5)) # Adjusted height for gridspec
+                self.fig = plt.figure(figsize=(7, 5)) 
                 gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
                 self.fig.tight_layout(pad=0.5)
-                self.ax_profile = self.fig.add_subplot(gs[0]) # Axis for the profile
-                self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile) # Axis for the image preview
+                self.ax_profile = self.fig.add_subplot(gs[0]) 
+                self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile)
 
                 self.canvas = FigureCanvas(self.fig)
                 self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                # --- Enable picking on the canvas ---
                 self.canvas.mpl_connect('button_press_event', self.on_canvas_click)
-                # --- End Enable picking ---
                 plot_layout.addWidget(self.canvas)
                 main_layout.addWidget(plot_widget, stretch=1)
 
@@ -889,74 +884,64 @@ if __name__ == "__main__":
                 controls_layout = QGridLayout(controls_group)
                 controls_layout.setSpacing(8)
 
-                # Band Estimation (Needed for profile generation)
+                # --- START MODIFICATION: Remove Band Estimation ComboBox ---
                 controls_layout.addWidget(QLabel("Profile Method:"), 0, 0)
-                self.band_estimation_combobox = QComboBox()
-                self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
-                self.band_estimation_combobox.setCurrentText(self.band_estimation_method)
-                self.band_estimation_combobox.currentIndexChanged.connect(self.run_peak_detection_and_plot)
-                controls_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2) # Span 2 columns
+                profile_method_label = QLabel("Sum of Pixel Intensities")
+                font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
+                controls_layout.addWidget(profile_method_label, 0, 1, 1, 2)
+                # --- END MODIFICATION ---
 
-                # Smoothing Sigma
                 self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
                 self.smoothing_slider = QSlider(Qt.Horizontal)
-                self.smoothing_slider.setRange(0, 100) # 0.0 to 10.0
+                self.smoothing_slider.setRange(0, 100)
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
                 self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
-                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.smoothing_label, 1, 0)
                 controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
 
-                # Peak Prominence
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})")
                 self.peak_prominence_slider = QSlider(Qt.Horizontal)
-                self.peak_prominence_slider.setRange(0, 100) # 0.0 to 1.0 factor
+                self.peak_prominence_slider.setRange(0, 100)
                 self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
                 self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})"))
-                self.peak_prominence_slider.valueChanged.connect(self.run_peak_detection_and_plot) # Re-run on change
+                self.peak_prominence_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.peak_prominence_slider_label, 2, 0)
                 controls_layout.addWidget(self.peak_prominence_slider, 2, 1, 1, 2)
 
-                # Peak Height
                 self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})")
                 self.peak_height_slider = QSlider(Qt.Horizontal)
                 self.peak_height_slider.setRange(0, 100)
                 self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
                 self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})"))
-                self.peak_height_slider.valueChanged.connect(self.run_peak_detection_and_plot)# Re-run on change
+                self.peak_height_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.peak_height_slider_label, 3, 0)
                 controls_layout.addWidget(self.peak_height_slider, 3, 1, 1, 2)
 
-                # Peak Distance
                 self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px")
                 self.peak_distance_slider = QSlider(Qt.Horizontal)
                 self.peak_distance_slider.setRange(1, 200)
                 self.peak_distance_slider.setValue(self.peak_distance)
                 self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px"))
-                self.peak_distance_slider.valueChanged.connect(self.run_peak_detection_and_plot)# Re-run on change
+                self.peak_distance_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.peak_distance_slider_label, 4, 0)
                 controls_layout.addWidget(self.peak_distance_slider, 4, 1, 1, 2)
 
-
-                # --- Add Delete Peak Button ---
                 self.delete_peak_button = QPushButton("Delete Selected Peak")
                 self.delete_peak_button.setEnabled(False)
                 self.delete_peak_button.setToolTip("Click on a peak marker in the plot to select it, then click this.")
                 self.delete_peak_button.clicked.connect(self.delete_selected_peak)
-                controls_layout.addWidget(self.delete_peak_button, 5, 0, 1, 1) # Column 0, span 1
+                controls_layout.addWidget(self.delete_peak_button, 5, 0, 1, 1)
 
-                # --- NEW: Add Peak Manually Button ---
                 self.add_peak_button = QPushButton("Add Peak at Click")
-                self.add_peak_button.setCheckable(True) # Make it a toggle button
+                self.add_peak_button.setCheckable(True)
                 self.add_peak_button.setToolTip("Toggle: Click on the profile to add a new peak marker.")
                 self.add_peak_button.clicked.connect(self.toggle_add_peak_mode)
-                controls_layout.addWidget(self.add_peak_button, 5, 1, 1, 2) # Next to delete, span 2
-                # --- End Add Delete Button ---
+                controls_layout.addWidget(self.add_peak_button, 5, 1, 1, 2)
 
-                controls_layout.setColumnStretch(1, 1) # Slider column stretch
+                controls_layout.setColumnStretch(1, 1)
                 main_layout.addWidget(controls_group)
 
-                # --- Bottom Buttons ---
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 button_box.accepted.connect(self.accept_and_return_peaks)
                 button_box.rejected.connect(self.reject)
@@ -1030,33 +1015,11 @@ if __name__ == "__main__":
 
 
             def add_manual_peak(self, x_coord):
-                """Adds a new peak at the given x-coordinate if not already present or deleted."""
-                if x_coord in self._all_initial_peaks or x_coord in self.deleted_peak_indices:
-                    print(f"Peak at {x_coord} already exists or was previously deleted.")
-                    # Optionally, undelete if it was in deleted_peak_indices
-                    if x_coord in self.deleted_peak_indices:
-                         reply = QMessageBox.question(self, "Undelete Peak?",
-                                                      f"A peak at index {x_coord} was previously deleted. Undelete it?",
-                                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                         if reply == QMessageBox.Yes:
-                             self.deleted_peak_indices.discard(x_coord)
-                             # Add to _all_initial_peaks if it wasn't there (unlikely if deleted, but for safety)
-                             if x_coord not in self._all_initial_peaks:
-                                  self._all_initial_peaks = np.sort(np.append(self._all_initial_peaks, x_coord))
-                             # Update active peaks
-                             self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
-                             print(f"Undeleted peak at {x_coord}.")
-                             self.update_plot_highlights() # Update plot
-                         return # Don't proceed to add again
-                    else: # Already an initial peak
-                         return
-
-                # Add to both _all_initial_peaks and detected_peaks
-                self._all_initial_peaks = np.sort(np.append(self._all_initial_peaks, x_coord))
-                self.detected_peaks = np.sort(np.append(self.detected_peaks, x_coord))
-
-                print(f"Manually added peak at index: {x_coord}")
-                self.update_plot_highlights() # Update plot to show the new peak
+                if self.profile_original_inverted is None or x_coord in self.peaks: return
+                self.peaks = np.array(sorted(self.peaks.tolist() + [x_coord]))
+                if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
+                self._recalculate_all_regions()
+                self.update_plot()
 
             def run_peak_detection_and_plot(self):
                 """Generates profile, detects peaks, updates plot and image preview."""
@@ -1067,32 +1030,24 @@ if __name__ == "__main__":
                 if self.intensity_array_original_range is None: return
                 if find_peaks is None or gaussian_filter1d is None: return
 
-                self.band_estimation_method = self.band_estimation_combobox.currentText()
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0
                 self.peak_height_factor = self.peak_height_slider.value() / 100.0
                 self.peak_distance = self.peak_distance_slider.value()
                 self.peak_prominence_factor = self.peak_prominence_slider.value() / 100.0
 
-                profile_temp = None
-                if self.band_estimation_method == "Mean":
-                    profile_temp = np.mean(self.intensity_array_original_range, axis=1)
-                elif self.band_estimation_method.startswith("Percentile"):
-                    try:
-                        percent = int(self.band_estimation_method.split(":")[1].replace('%', ''))
-                        profile_temp = np.percentile(self.intensity_array_original_range, max(0, min(100, percent)), axis=1)
-                    except:
-                        profile_temp = np.percentile(self.intensity_array_original_range, 5, axis=1)
-                        print("AutoLaneTuneDialog: Defaulting to 5th percentile for profile.")
-                else:
-                    profile_temp = np.mean(self.intensity_array_original_range, axis=1)
+                # --- START OF DEFINITIVE FIX FOR DENSITOMETRY PROFILE ---
+                # 1. Invert the image data first. Now dark bands are high values (signal).
+                inverted_array = self.original_max_value - self.intensity_array_original_range.astype(np.float64)
+                
+                # 2. Sum the inverted data across the rows. This is the true integrated density.
+                profile_temp = np.sum(inverted_array, axis=1)
+                # --- END OF DEFINITIVE FIX ---
 
                 if profile_temp is None or not np.all(np.isfinite(profile_temp)):
                     profile_temp = np.zeros(self.intensity_array_original_range.shape[0])
 
-                profile_original_inv_raw = self.original_max_value - profile_temp.astype(np.float64)
-                min_inverted_raw = np.min(profile_original_inv_raw)
-                profile_original_inv_raw -= min_inverted_raw
-                self.profile_original_inverted = profile_original_inv_raw
+                # The profile is already correctly inverted (signal is high), so we just assign it.
+                self.profile_original_inverted = profile_temp
                 try:
                     current_sigma = self.smoothing_sigma
                     if current_sigma > 0.1 and len(self.profile_original_inverted) > int(3 * current_sigma) * 2 + 1:
@@ -1118,7 +1073,6 @@ if __name__ == "__main__":
                 except Exception as e:
                     self._all_initial_peaks = np.array([]); self.detected_peaks = np.array([])
 
-                # --- THEME-AWARE COLOR DEFINITIONS ---
                 is_dark_theme = self.parent() and hasattr(self.parent(), 'current_theme') and self.parent().current_theme == "dark"
                 if is_dark_theme:
                     bg_color, ax_bg_color = '#2D2D30', '#38383C'
@@ -1129,7 +1083,6 @@ if __name__ == "__main__":
                     text_color, spine_color, grid_color = 'black', '#555555', '#DDDDDD'
                     profile_color, peak_marker_color, selected_peak_color = 'black', 'red', 'blue'
 
-                # --- Update Plot ---
                 self.ax_profile.clear(); self.ax_image.clear()
                 self.fig.patch.set_facecolor(bg_color)
                 for axis in [self.ax_profile, self.ax_image]:
@@ -1137,7 +1090,6 @@ if __name__ == "__main__":
                     for spine in axis.spines.values(): spine.set_color(spine_color)
                     axis.tick_params(axis='x', colors=text_color); axis.tick_params(axis='y', colors=text_color)
                     axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
-                # --- End Theme Setup ---
 
                 if self.profile_original_inverted is not None and len(self.profile_original_inverted) > 0:
                     self.ax_profile.plot(self.profile_original_inverted, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
@@ -1272,15 +1224,11 @@ if __name__ == "__main__":
 
             # MODIFY this method
             def accept_and_return_peaks(self):
-                """Store final settings and accept the dialog."""
-                # *** Settings are updated when sliders change now ***
-                # We just need to ensure the final state is stored if needed elsewhere
                 self._final_settings = {
                     'smoothing_sigma': self.smoothing_slider.value() / 10.0,
                     'peak_height_factor': self.peak_height_slider.value() / 100.0,
                     'peak_distance': self.peak_distance_slider.value(),
                     'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
-                    'band_estimation_method': self.band_estimation_combobox.currentText(),
                     'rolling_ball_radius': self._final_settings.get('rolling_ball_radius', 50),
                     'area_subtraction_method': self._final_settings.get('area_subtraction_method', "Rolling-valley"),
                 }
@@ -1339,7 +1287,7 @@ if __name__ == "__main__":
                 self.abs_x_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_x_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_x_shift_slider.setValue(0)
                 self.abs_x_shift_slider.valueChanged.connect(self._update_global_adjustments)
-                self.abs_x_shift_slider.valueChanged.connect(self.abs_x_shift_slider.setFocus)
+                self.abs_x_shift_slider.valueChanged.connect(lambda: self.abs_x_shift_slider.setFocus())
                 self.abs_x_shift_label = QLabel("0.00%"); self.abs_x_shift_label.setFixedSize(80, 20)
                 self.abs_x_shift_slider.valueChanged.connect(lambda val: self.abs_x_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_x_shift_slider, 0, 1); global_adjust_layout.addWidget(self.abs_x_shift_label, 0, 2)
@@ -1347,7 +1295,7 @@ if __name__ == "__main__":
                 self.abs_y_shift_slider = QSlider(Qt.Horizontal)
                 self.abs_y_shift_slider.setRange(int(-100 * self.percent_precision_factor), int(100 * self.percent_precision_factor)); self.abs_y_shift_slider.setValue(0)
                 self.abs_y_shift_slider.valueChanged.connect(self._update_global_adjustments)
-                self.abs_y_shift_slider.valueChanged.connect(self.abs_y_shift_slider.setFocus)
+                self.abs_y_shift_slider.valueChanged.connect(lambda: self.abs_y_shift_slider.setFocus())
                 self.abs_y_shift_label = QLabel("0.00%"); self.abs_y_shift_label.setFixedSize(80, 20)
                 self.abs_y_shift_slider.valueChanged.connect(lambda val: self.abs_y_shift_label.setText(f"{val / self.percent_precision_factor:.2f}%"))
                 global_adjust_layout.addWidget(self.abs_y_shift_slider, 1, 1); global_adjust_layout.addWidget(self.abs_y_shift_label, 1, 2)
@@ -1355,7 +1303,7 @@ if __name__ == "__main__":
                 self.rel_x_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_x_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_x_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_x_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.rel_x_scale_slider.valueChanged.connect(self.rel_x_scale_slider.setFocus)
+                self.rel_x_scale_slider.valueChanged.connect(lambda: self.rel_x_scale_slider.setFocus())
                 self.rel_x_scale_label = QLabel("100.0%"); self.rel_x_scale_label.setFixedSize(80, 20)
                 self.rel_x_scale_slider.valueChanged.connect(lambda val: self.rel_x_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_x_scale_slider, 2, 1); global_adjust_layout.addWidget(self.rel_x_scale_label, 2, 2)
@@ -1363,7 +1311,7 @@ if __name__ == "__main__":
                 self.rel_y_scale_slider = QSlider(Qt.Horizontal)
                 self.rel_y_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.rel_y_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.rel_y_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.rel_y_scale_slider.valueChanged.connect(self.rel_y_scale_slider.setFocus)
+                self.rel_y_scale_slider.valueChanged.connect(lambda: self.rel_y_scale_slider.setFocus())
                 self.rel_y_scale_label = QLabel("100.0%"); self.rel_y_scale_label.setFixedSize(80, 20)
                 self.rel_y_scale_slider.valueChanged.connect(lambda val: self.rel_y_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.rel_y_scale_slider, 3, 1); global_adjust_layout.addWidget(self.rel_y_scale_label, 3, 2)
@@ -1371,7 +1319,7 @@ if __name__ == "__main__":
                 self.font_scale_slider = QSlider(Qt.Horizontal)
                 self.font_scale_slider.setRange(int(10 * self.scale_precision_factor), int(300 * self.scale_precision_factor)); self.font_scale_slider.setValue(int(100 * self.scale_precision_factor))
                 self.font_scale_slider.valueChanged.connect(self._update_global_adjustments)
-                self.font_scale_slider.valueChanged.connect(self.font_scale_slider.setFocus)
+                self.font_scale_slider.valueChanged.connect(lambda: self.font_scale_slider.setFocus())
                 self.font_scale_label = QLabel("100.0%"); self.font_scale_label.setFixedSize(80, 20)
                 self.font_scale_slider.valueChanged.connect(lambda val: self.font_scale_label.setText(f"{val / self.scale_precision_factor:.1f}%"))
                 global_adjust_layout.addWidget(self.font_scale_slider, 4, 1); global_adjust_layout.addWidget(self.font_scale_label, 4, 2)
@@ -2521,7 +2469,7 @@ if __name__ == "__main__":
             Peak region boundaries are now manipulated directly on the image strip plot.
             Optimized for fast, interactive boundary adjustments using blitting.
             """
-            HANDLE_SIZE = 8 # Pixel size for draggable handles on ax_image
+            HANDLE_SIZE = 2 # Pixel size for draggable handles on ax_image
 
             def __init__(self, cropped_data, current_settings, persist_checked, parent=None):
                 super().__init__(parent)
@@ -2564,7 +2512,6 @@ if __name__ == "__main__":
                 self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = current_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.00)
-                self.band_estimation_method = current_settings.get('band_estimation_method', "Mean")
                 self.area_subtraction_method = current_settings.get('area_subtraction_method', "Rolling-valley")
                 self.auto_adjust_rb_radius = current_settings.get('auto_adjust_rb_radius', False)
                 self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions = []
@@ -2610,12 +2557,12 @@ if __name__ == "__main__":
                 left_controls_vbox = QVBoxLayout()
                 global_settings_group = QGroupBox("Global Settings & Area Method")
                 global_settings_layout = QGridLayout(global_settings_group)
-                global_settings_layout.addWidget(QLabel("Band Profile:"), 0, 0)
-                self.band_estimation_combobox = QComboBox()
-                self.band_estimation_combobox.addItems(["Mean", "Percentile:5%", "Percentile:10%", "Percentile:15%", "Percentile:30%"])
-                self.band_estimation_combobox.setCurrentText(self.band_estimation_method)
-                self.band_estimation_combobox.currentIndexChanged.connect(self.regenerate_profile_and_detect)
-                global_settings_layout.addWidget(self.band_estimation_combobox, 0, 1, 1, 2)
+                
+                global_settings_layout.addWidget(QLabel("Profile Method:"), 0, 0)
+                profile_method_label = QLabel("Sum of Pixel Intensities")
+                font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
+                global_settings_layout.addWidget(profile_method_label, 0, 1, 1, 2)
+
                 global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
                 self.method_combobox = QComboBox()
                 self.method_combobox.addItems(["Rolling-valley", "Rolling Ball", "Straight Line"])
@@ -2629,7 +2576,7 @@ if __name__ == "__main__":
                 self.rolling_ball_slider.setRange(1, 500)
                 self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
-                self.rolling_ball_slider.valueChanged.connect(self.rolling_ball_slider.setFocus)
+                self.rolling_ball_slider.valueChanged.connect(lambda: self.rolling_ball_slider.setFocus())
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
                 
                 self.auto_adjust_checkbox = QCheckBox("Auto")
@@ -2645,7 +2592,16 @@ if __name__ == "__main__":
                 
                 peak_detect_group = QGroupBox("Peak Detection Settings")
                 peak_detect_layout = QGridLayout(peak_detect_group)
-                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.2f})"); self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0,100); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*100)); self.peak_prominence_slider.valueChanged.connect(self.detect_peaks); self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
+                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); 
+                
+                self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.3f})")
+                self.peak_prominence_slider = QSlider(Qt.Horizontal)
+                self.peak_prominence_slider.setRange(0, 1000)
+                self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*1000))
+                self.peak_prominence_slider.valueChanged.connect(self.detect_peaks)
+                self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/1000.0:.3f})"))
+                
+                peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
                 self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 6, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 6, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 6, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
                 if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
                 peak_detect_layout.addWidget(self.copy_regions_button, 7,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 7,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
@@ -2686,7 +2642,7 @@ if __name__ == "__main__":
                     profile_range = np.ptp(self.profile)
                     if profile_range < 1e-6: profile_range = 1.0
                     min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
-                    min_prominence_abs = max(1.0, profile_range * self.peak_prominence_factor)
+                    min_prominence_abs = profile_range * self.peak_prominence_factor
                     _peaks_for_width, properties = find_peaks(
                         self.profile, height=min_height_abs, prominence=min_prominence_abs,
                         distance=self.peak_distance, width=1
@@ -2721,8 +2677,10 @@ if __name__ == "__main__":
                 
                 # Define peak region boundaries based on method.
                 if self.method == "Rolling Ball":
+                    # For Rolling Ball, boundaries are at the intersections with the background curve.
                     self._redefine_regions_from_background(self.background)
-                else: # "Straight Line" and "Rolling-valley" both use valley-to-valley boundaries.
+                else: # "Rolling-valley" and "Straight Line"
+                    # For both Valley methods, boundaries are defined by troughs (and outer background intersections).
                     self._redefine_all_valley_regions()
 
             def _redefine_regions_from_background(self, background):
@@ -2750,10 +2708,10 @@ if __name__ == "__main__":
                 else:
                     self.peak_height_factor = self.peak_height_slider.value()/100.0
                     self.peak_distance = self.peak_distance_slider.value()
-                    self.peak_prominence_factor = self.peak_prominence_slider.value()/100.0
+                    self.peak_prominence_factor = self.peak_prominence_slider.value()/1000.0
                     profile_range = np.ptp(self.profile)
                     min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
-                    min_prominence_abs = max(1.0, profile_range * self.peak_prominence_factor)
+                    min_prominence_abs = profile_range * self.peak_prominence_factor
                     try:
                         self.peaks, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
                     except Exception:
@@ -2775,17 +2733,19 @@ if __name__ == "__main__":
                 self.update_plot()
 
             def accept_and_close(self):
+                # --- START OF FIX: Correctly save the high-precision prominence factor ---
                 self._final_settings = {
                     'rolling_ball_radius': self.rolling_ball_slider.value(),
                     'denoise_sigma': self.denoise_sigma_slider.value() / 10.0,
                     'peak_height_factor': self.peak_height_slider.value() / 100.0,
                     'peak_distance': self.peak_distance_slider.value(),
-                    'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
-                    'band_estimation_method': self.band_estimation_combobox.currentText(),
+                    'peak_prominence_factor': self.peak_prominence_slider.value() / 1000.0, # Was incorrectly / 100.0
+                    'band_estimation_method': "Sum",
                     'area_subtraction_method': self.method_combobox.currentText(),
                     'smoothing_sigma': self.smoothing_slider.value() / 10.0,
                     'auto_adjust_rb_radius': self.auto_adjust_checkbox.isChecked()
                 }
+                # --- END OF FIX ---
                 self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked()
                 self.accept()
                 
@@ -2798,16 +2758,15 @@ if __name__ == "__main__":
                     bg_color, ax_bg_color = '#2D2D30', '#38383C'
                     text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
-                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#EC407A'
+                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5' # Blue line for baseline
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.5
                 else:
                     bg_color, ax_bg_color = 'white', 'white'
                     text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
-                    bg_line_color, sl_line_color, rv_line_color = 'green', 'purple', 'magenta'
+                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue' # Blue line for baseline
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
-                # --- Clearing and setup ---
                 self.fig.clf()
                 gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.1, figure=self.fig)
                 self.ax = self.fig.add_subplot(gs[0])
@@ -2830,111 +2789,128 @@ if __name__ == "__main__":
                 if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
                     self.background = np.zeros_like(profile_to_plot_and_calc)
 
-                self.ax.plot(profile_to_plot_and_calc, label="Profile", color=profile_color, lw=1.2)
+                self.ax.plot(profile_to_plot_and_calc, label="Profile", color=profile_color, lw=1.2, zorder=10)
                 
                 if len(self.peaks) > 0:
                      valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
                      if len(valid_peaks_indices) > 0:
                          peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks_indices]
-                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color=peak_marker_color, marker='x', s=40, label="Peaks", zorder=5) 
+                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color=peak_marker_color, marker='x', s=40, label="Peaks", zorder=15) 
                          if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
                              focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]
-                             self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=6)
+                             self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=16)
                          if self.selected_peak_index_for_delete != -1:
-                             self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=7)
+                             self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=17)
                 
-                global_sl_baseline = None
-                if self.method == "Straight Line" and self.peak_regions:
-                    trough_x = [self.peak_regions[0][0]]
-                    trough_y = [profile_to_plot_and_calc[self.peak_regions[0][0]]]
-                    for start_handle, end_handle in self.peak_regions:
-                        trough_x.append(end_handle)
-                        trough_y.append(profile_to_plot_and_calc[end_handle])
-                    if len(trough_x) >= 2:
-                        x_all = np.arange(len(profile_to_plot_and_calc))
-                        global_sl_baseline = np.interp(x_all, trough_x, trough_y)
-                        self.ax.plot(x_all, global_sl_baseline, color=sl_line_color, ls="--", lw=1, label="SL BG")
-
                 self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
                 
                 profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0
                 max_y_for_plot_limit = np.max(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 1
-
                 text_positions = []
 
+                # --- First pass: Calculate all areas for the current method ---
+                for i in range(len(self.peak_regions)):
+                    start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
+                    if start_handle >= end_handle or i >= len(self.peaks): 
+                        self.peak_areas_valley.append(0); self.peak_areas_straight_line.append(0); self.peak_areas_rolling_ball.append(0)
+                        continue
+                    
+                    # Rolling Ball Area
+                    baseline_rb = self.background
+                    area_rb = np.trapz(profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rb[start_handle:end_handle+1])
+                    self.peak_areas_rolling_ball.append(max(0, area_rb))
+                    
+                    # Straight Line Area (Global)
+                    global_sl_baseline = None
+                    if self.peak_regions:
+                        trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
+                        trough_y = [profile_to_plot_and_calc[x] for x in trough_x]
+                        if len(trough_x) >= 2:
+                            x_all = np.arange(len(profile_to_plot_and_calc))
+                            global_sl_baseline = np.interp(x_all, trough_x, trough_y)
+                    area_sl = 0.0
+                    if global_sl_baseline is not None:
+                        difference_sl = profile_to_plot_and_calc[start_handle:end_handle+1] - global_sl_baseline[start_handle:end_handle+1]
+                        area_sl = np.trapz(np.maximum(0, difference_sl))
+                    self.peak_areas_straight_line.append(max(0, area_sl))
+
+                    # --- DEFINITIVE ROLLING-VALLEY BASELINE LOGIC ---
+                    y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
+                    baseline_rv_local_straight = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
+                    final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
+                    area_valley = np.trapz(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - final_rv_baseline))
+                    self.peak_areas_valley.append(max(0, area_valley))
+
+                # --- Calculate total area for percentage display ---
+                total_area = 0
+                if self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
+                elif self.method == "Rolling Ball": total_area = sum(self.peak_areas_rolling_ball)
+                elif self.method == "Straight Line": total_area = sum(self.peak_areas_straight_line)
+                if total_area < 1e-9: total_area = 0.0
+
+                # --- Second pass: Draw fills, baselines, and text labels ---
                 for i in range(len(self.peak_regions)):
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
                     if start_handle >= end_handle or i >= len(self.peaks): continue
                     peak_x = self.peaks[i]
                     
-                    baseline_rb = self.background
-                    start_calc_rb, end_calc_rb = self._find_intersection_boundaries(profile_to_plot_and_calc, baseline_rb, peak_x, start_handle, end_handle)
-                    area_rb = np.trapz(profile_to_plot_and_calc[start_calc_rb:end_calc_rb+1] - baseline_rb[start_calc_rb:end_calc_rb+1]) if start_calc_rb < end_calc_rb else 0.0
-                    self.peak_areas_rolling_ball.append(max(0, area_rb))
-                    
-                    if global_sl_baseline is not None:
-                        difference_sl = profile_to_plot_and_calc[start_handle:end_handle+1] - global_sl_baseline[start_handle:end_handle+1]
-                        area_sl = np.trapz(np.maximum(0, difference_sl))
-                    else:
-                        y_baseline_sl_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
-                        baseline_sl_local = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_sl_points)
-                        difference_sl_local = profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_sl_local
-                        area_sl = np.trapz(np.maximum(0, difference_sl_local))
-                    self.peak_areas_straight_line.append(max(0, area_sl))
+                    area_to_display = 0.0
+                    if self.method == "Rolling-valley":
+                        x_region_rv = np.arange(start_handle, end_handle + 1)
+                        y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
+                        baseline_rv_local_straight = np.interp(x_region_rv, [start_handle, end_handle], y_baseline_rv_points)
+                        final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
+                        
+                        self.ax.fill_between(x_region_rv, final_rv_baseline, profile_to_plot_and_calc[x_region_rv], where=(profile_to_plot_and_calc[x_region_rv] >= final_rv_baseline), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True, zorder=1)
+                        self.ax.plot(x_region_rv, final_rv_baseline, color=rv_line_color, lw=1.5, zorder=4)
 
-                    y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
-                    baseline_rv_local = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
-                    area_valley = np.trapz(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rv_local)) if start_handle < end_handle else 0.0
-                    self.peak_areas_valley.append(area_valley)
+                        if i == 0:
+                            self.ax.get_lines()[-1].set_label("Valley BG")
+                            self.ax.plot(np.arange(len(self.background)), self.background, color='magenta', ls=":", lw=1.0, label="RV Guide BG", zorder=3)
+                        
+                        area_to_display = self.peak_areas_valley[i]
                     
-                    if self.method == "Rolling Ball":
-                        x_region = np.arange(start_calc_rb, end_calc_rb + 1)
-                        self.ax.fill_between(x_region, baseline_rb[x_region], profile_to_plot_and_calc[x_region], color="yellow", alpha=0.4, interpolate=True)
-                        if i == 0: self.ax.plot(np.arange(len(baseline_rb)), baseline_rb, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG")
-                        area_text_val = area_rb
+                    elif self.method == "Rolling Ball":
+                         x_region = np.arange(start_handle, end_handle + 1)
+                         self.ax.fill_between(x_region, self.background[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= self.background[x_region]), color="yellow", alpha=0.4, interpolate=True, zorder=1)
+                         if i == 0: self.ax.plot(np.arange(len(self.background)), self.background, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG", zorder=2)
+                         area_to_display = self.peak_areas_rolling_ball[i]
+
                     elif self.method == "Straight Line":
                         if global_sl_baseline is not None:
                             x_region = np.arange(start_handle, end_handle + 1)
-                            self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True)
-                        area_text_val = area_sl
-                    elif self.method == "Rolling-valley":
-                        x_region_rv = np.arange(start_handle, end_handle + 1)
-                        self.ax.fill_between(x_region_rv, baseline_rv_local, profile_to_plot_and_calc[x_region_rv], where=(profile_to_plot_and_calc[x_region_rv] >= baseline_rv_local), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True)
-                        self.ax.plot([start_handle, end_handle], y_baseline_rv_points, color='darkorange', lw=1.5, zorder=4)
-                        if i == 0 and self.background is not None: self.ax.plot(np.arange(len(self.background)), self.background, color=rv_line_color, ls="--", lw=1.2, label="RV BG")
-                        area_text_val = area_valley
+                            self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True, zorder=1)
+                            if i == 0: self.ax.plot(np.arange(len(global_sl_baseline)), global_sl_baseline, color=sl_line_color, ls="--", lw=1.2, label="SL BG", zorder=2)
+                        area_to_display = self.peak_areas_straight_line[i]
                     
                     text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
-                    text_positions.append((peak_x, text_y_pos, f"{area_text_val:.0f}"))
+                    if total_area > 0:
+                        text_str = f"{(area_to_display / total_area * 100):.1f}%"
+                    else:
+                        text_str = f"{area_to_display:.0f}"
+                    text_positions.append((peak_x, text_y_pos, text_str))
                     max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
 
                 last_text_end_x = -np.inf
                 text_spacing_pixels = 5
                 text_positions.sort(key=lambda item: item[0])
                 for x, y, text_str in text_positions:
-                    text_artist = self.ax.text(x, y, text_str, ha="center", va="bottom", fontsize=7, color=text_color,
+                    text_artist = self.ax.text(x, y, text_str, ha="center", va="bottom", fontsize=7, color=text_color, zorder=20,
                                                bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8))
-                    
                     renderer = self.canvas.get_renderer()
                     bbox = text_artist.get_window_extent(renderer=renderer)
                     bbox_data = self.ax.transData.inverted().transform(bbox)
-                    
                     if bbox_data[0,0] < last_text_end_x + text_spacing_pixels:
-                        new_y = y + profile_range_plot * 0.08
-                        text_artist.set_y(new_y)
+                        new_y = y + profile_range_plot * 0.08; text_artist.set_y(new_y)
                         max_y_for_plot_limit = max(max_y_for_plot_limit, new_y)
                         bbox = text_artist.get_window_extent(renderer=renderer)
                         bbox_data = self.ax.transData.inverted().transform(bbox)
-
                     last_text_end_x = bbox_data[1,0]
                 
                 handles, labels = self.ax.get_legend_handles_labels()
                 if handles:
-                    leg = self.fig.legend(handles, labels, loc='lower center', ncol=len(handles), 
-                                          bbox_to_anchor=(0.5, 0.01),
-                                          fontsize='medium', facecolor=bg_color, edgecolor=spine_color)
-                    for text in leg.get_texts():
-                        text.set_color(text_color)
+                    leg = self.fig.legend(handles, labels, loc='lower center', ncol=len(handles), bbox_to_anchor=(0.5, 0.01), fontsize='medium', facecolor=bg_color, edgecolor=spine_color)
+                    for text in leg.get_texts(): text.set_color(text_color)
                 
                 self.ax.set_ylabel("Intensity", fontsize=9)
                 self.ax.set_title(f"Profile & Peak Regions ({self.method})", fontsize=10, weight='bold')
@@ -2951,18 +2927,15 @@ if __name__ == "__main__":
                     rotated_pil_image_display = self.enhanced_cropped_image_for_display.rotate(90, expand=True)
                     image_extent = [0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil_image_display.height]
                     self.ax_image.imshow(np.array(rotated_pil_image_display), cmap='gray', aspect='auto', extent=image_extent)
-                    
                     self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     self.ax_image.set_xlabel("Pixel Index", fontsize=9)
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
                         is_focused = peak_idx == self.selected_peak_for_ui_focus
                         line_color, zorder_val, lw = (focused_peak_color, 11, 2.0) if is_focused else ('blue', 10, 1.5)
-                        
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
                 self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.25)
-                
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
@@ -3080,12 +3053,16 @@ if __name__ == "__main__":
                 self._recalculate_all_regions()
                 self.update_plot()
             def _redefine_all_valley_regions(self):
+                """
+                Defines the start/end region for each peak based on its adjacent troughs (valleys).
+                This is the definitive fix to prevent baselines from incorrectly connecting distant points.
+                """
                 self.peak_regions = []
                 profile = self.profile_original_inverted
                 if profile is None or len(profile) == 0 or len(self.peaks) == 0:
                     return
 
-                # For Rolling-valley and Straight Line, the boundaries are a mix of troughs and intersections
+                # 1. Find the troughs (local minima) BETWEEN each pair of adjacent peaks.
                 troughs = []
                 for i in range(len(self.peaks) - 1):
                     start_search = self.peaks[i]
@@ -3096,20 +3073,28 @@ if __name__ == "__main__":
                         local_min_idx = np.argmin(valley_region)
                         troughs.append(start_search + local_min_idx)
 
-                # Outermost boundaries are always the intersection with the rolling ball background
+                # 2. Find the absolute outer boundaries of the entire peak cluster using the rolling ball background.
                 left_outer_bound, _ = self._find_intersection_boundaries(profile, self.background, self.peaks[0], 0, self.peaks[0])
                 _, right_outer_bound = self._find_intersection_boundaries(profile, self.background, self.peaks[-1], self.peaks[-1], len(profile) - 1)
+
+                # 3. Create a complete list of all possible boundary points.
+                all_boundary_points = sorted(list(set([left_outer_bound] + troughs + [right_outer_bound])))
                 
-                # Assemble the final boundary points list
-                all_boundaries = [left_outer_bound] + troughs + [right_outer_bound]
-                
-                # Create peak_regions from the final boundary points
-                for i in range(len(self.peaks)):
-                    # Handle case where there are not enough boundaries (e.g., single peak)
-                    if i + 1 < len(all_boundaries):
-                        start = all_boundaries[i]
-                        end = all_boundaries[i+1]
-                        self.peak_regions.append((start, end))
+                # 4. For each peak, find its correct start and end from the boundary points list.
+                for i, peak_x in enumerate(self.peaks):
+                    # Find the closest boundary point to the left.
+                    left_boundaries = [b for b in all_boundary_points if b <= peak_x]
+                    start_handle = max(left_boundaries) if left_boundaries else 0
+
+                    # Find the closest boundary point to the right.
+                    right_boundaries = [b for b in all_boundary_points if b >= peak_x]
+                    end_handle = min(right_boundaries) if right_boundaries else len(profile) - 1
+                    
+                    if start_handle < end_handle:
+                        self.peak_regions.append((start_handle, end_handle))
+                    # Fallback for a peak that might not have a proper region found
+                    elif len(self.peak_regions) < len(self.peaks):
+                        self.peak_regions.append((max(0, peak_x - 5), min(len(profile)-1, peak_x + 5)))
 
             def delete_selected_peak_action(self):
                 if self.selected_peak_index_for_delete == -1 or self.selected_peak_index_for_delete not in self.peaks: return
@@ -3149,25 +3134,37 @@ if __name__ == "__main__":
             def get_final_peak_area(self): return [info['area'] for info in self.get_final_peak_info()]
             def regenerate_profile_and_detect(self):
                 if gaussian_filter1d is None or cv2 is None or ImageOps is None: return
-                self.band_estimation_method = self.band_estimation_combobox.currentText(); self.area_subtraction_method = self.method_combobox.currentText()
-                self.smoothing_sigma = self.smoothing_slider.value() / 10.0; self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
+                
+                self.area_subtraction_method = self.method_combobox.currentText()
+                self.smoothing_sigma = self.smoothing_slider.value() / 10.0
+                self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
+                
                 base_img = self.original_pil_cropped_data.copy()
                 if self.denoise_sigma > 0.01:
                     try:
                         base_img = Image.fromarray(cv2.GaussianBlur(np.array(base_img), (0,0), self.denoise_sigma).astype(np.array(base_img).dtype))
                     except: pass
+                
                 if base_img.mode.startswith('I') or base_img.mode == 'F': self.enhanced_cropped_image_for_display = Image.fromarray((np.clip((np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) / (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9), 0.0, 1.0) * 255).astype(np.uint8), mode='L')
                 else: self.enhanced_cropped_image_for_display = ImageOps.autocontrast(base_img.convert('L'))
-                if self.band_estimation_method == "Mean": profile_temp = np.mean(self.intensity_array_original_range, axis=1)
-                else: profile_temp = np.percentile(self.intensity_array_original_range, int(self.band_estimation_method.split(":")[1].replace('%', '')), axis=1)
-                profile_inv_raw = self.original_max_value - profile_temp.astype(np.float64); profile_inv_raw -= np.min(profile_inv_raw)
-                profile_to_process = profile_inv_raw.copy()
-                if self.denoise_sigma > 0.01: profile_to_process = gaussian_filter1d(profile_to_process, sigma=self.denoise_sigma)
-                self.profile_original_inverted = profile_to_process
-                if self.smoothing_sigma > 0.1: self.profile_original_inverted = gaussian_filter1d(self.profile_original_inverted, sigma=self.smoothing_sigma)
+                
+                # --- START OF DEFINITIVE FIX FOR DENSITOMETRY PROFILE ---
+                # 1. Invert the image data first. Now dark bands are high values (signal).
+                inverted_array = self.original_max_value - self.intensity_array_original_range.astype(np.float64)
+                
+                # 2. Sum the inverted data across the rows. This is the true integrated density.
+                profile_to_process = np.sum(inverted_array, axis=1)
+                # --- END OF DEFINITIVE FIX ---
+
+                if self.smoothing_sigma > 0.1: 
+                    self.profile_original_inverted = gaussian_filter1d(profile_to_process, sigma=self.smoothing_sigma)
+                else:
+                    self.profile_original_inverted = profile_to_process
+                
                 prof_min, prof_max = np.min(self.profile_original_inverted), np.max(self.profile_original_inverted)
                 if prof_max > prof_min + 1e-6: self.profile = (self.profile_original_inverted - prof_min) / (prof_max - prof_min) * 255.0
                 else: self.profile = np.zeros_like(self.profile_original_inverted)
+                
                 self.detect_peaks()
             def _find_outward_troughs(self, profile, peak_idx, left_bound, right_bound):
                 profile_len = len(profile)
@@ -3730,8 +3727,8 @@ if __name__ == "__main__":
                 elif self.app_instance and hasattr(self.app_instance, "protein_location") and self.app_instance.protein_location: anchor_point_ls = self.app_instance.protein_location
                 if anchor_point_ls:
                     # (This entire complex block for drawing MW lines remains unchanged)
-                    line_symbol = "⎯⎯"; base_font_size = self.app_instance.custom_font_size_spinbox.value() + 2
-                    predict_font = QFont(self.app_instance.custom_font_type_dropdown.currentText()); scaled_pixel_size = max(4, int(base_font_size / self.zoom_level))
+                    line_symbol = "⎯⎯"; base_font_size = 25
+                    predict_font = QFont(self.app_instance.custom_font_type_dropdown.currentText()); scaled_pixel_size = max(8, int(base_font_size / self.zoom_level))
                     predict_font.setPixelSize(scaled_pixel_size); predict_fm = QFontMetricsF(predict_font); predict_line_rect = predict_fm.boundingRect(line_symbol)
                     center_x_ls = anchor_point_ls.x(); predict_line_draw_start_x_ls = center_x_ls - (predict_line_rect.left() + predict_line_rect.width() / 2.0)
                     if self.mw_predict_preview_enabled and self.mw_predict_preview_position:
@@ -4588,7 +4585,10 @@ if __name__ == "__main__":
 
             def _on_table_window_closed(self):
                 """Slot to clear the reference to the TableWindow when it closes."""
-                self.table_window_instance = None
+                # --- START OF THE FIX ---
+                # This ensures the reference is cleared, preventing attempts to access a deleted object.
+                if hasattr(self, 'table_window_instance'):
+                    self.table_window_instance = None
 
 
             # --- ADD THIS NEW METHOD ---
@@ -4639,6 +4639,33 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"Warning: Could not save global app settings: {e}")
 
+            def _update_histogram_markers_only(self):
+                """A lightweight function that only updates the position of the level markers on the histogram canvas."""
+                if not hasattr(self, 'hist_ax') or not self.hist_ax or not hasattr(self, 'hist_black_line') or not self.hist_black_line:
+                    return # Do nothing if the histogram plot isn't ready
+
+                try:
+                    is_16bit = self.image_master.format() == QImage.Format_Grayscale16 if self.image_master else False
+                    hist_range = (0, 65536) if is_16bit else (0, 256)
+                    
+                    black_point_slider_val = self.black_point_slider.value()
+                    white_point_slider_val = self.white_point_slider.value()
+                    slider_max = self.black_point_slider.maximum()
+
+                    black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
+                    white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
+                    
+                    # Update the x-position of the line and marker artists
+                    self.hist_black_line.set_xdata([black_point_pos, black_point_pos])
+                    self.hist_black_marker.set_xdata([black_point_pos])
+                    self.hist_white_line.set_xdata([white_point_pos, white_point_pos])
+                    self.hist_white_marker.set_xdata([white_point_pos])
+                    
+                    # Redraw just the canvas, which is very fast
+                    self.hist_canvas.draw_idle()
+                except (AttributeError, RuntimeError):
+                    # Fail silently if artists have been deleted or are not ready
+                    pass
 
             def _update_levels_histogram(self):
                 """Draws or updates the intensity histogram for the currently selected adjustment context."""
@@ -4786,10 +4813,10 @@ if __name__ == "__main__":
                     black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
                     white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
                     
-                    self.hist_ax.axvline(black_point_pos, color=marker_color, lw=1.0)
-                    self.hist_ax.axvline(white_point_pos, color=marker_color, lw=1.0)
-                    self.hist_ax.plot(black_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)
-                    self.hist_ax.plot(white_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)
+                    self.hist_black_line = self.hist_ax.axvline(black_point_pos, color=marker_color, lw=1.0)
+                    self.hist_white_line = self.hist_ax.axvline(white_point_pos, color=marker_color, lw=1.0)
+                    self.hist_black_marker = self.hist_ax.plot(black_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)[0]
+                    self.hist_white_marker = self.hist_ax.plot(white_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)[0]
                     
                     self.hist_fig.subplots_adjust(left=0.01, right=0.99, top=1.0, bottom=0.15)
                     self.hist_canvas.draw_idle()
@@ -4869,7 +4896,7 @@ if __name__ == "__main__":
                 """Create QAction objects for menus and toolbars."""
                 style = self.style() 
                 icon_size = QSize(30, 30) 
-                text_color = QColor("black")
+                text_color = self.palette().color(QPalette.ButtonText) 
 
                 open_icon = create_text_icon("Wingdings",icon_size, text_color, "1") 
                 save_icon = create_text_icon("Wingdings",icon_size, text_color, "=")
@@ -7460,17 +7487,17 @@ if __name__ == "__main__":
                 return nearest_point
             
             def open_table_window(self):
-                if hasattr(self, 'table_window_instance') and self.table_window_instance:
-                    try:
-                        self.table_window_instance.close()
-                        self.table_window_instance.deleteLater()
-                    except RuntimeError:
-                        pass
-                
                 # --- START OF THE FIX ---
-                # This logic now correctly identifies if the last analysis was multi-lane
-                # and passes the correct data structures to the TableWindow.
+                # Check if an instance exists and is still a valid Qt widget.
+                # The 'isinstance' check prevents errors if the C++ part of the object was deleted.
+                if hasattr(self, 'table_window_instance') and self.table_window_instance and isinstance(self.table_window_instance, QDialog):
+                    # If it exists, bring it to the front instead of creating a new one.
+                    self.table_window_instance.raise_()
+                    self.table_window_instance.activateWindow()
+                    return # Exit the function to prevent creating a duplicate window
+                # --- END OF THE FIX ---
                 
+                # The rest of the logic to gather data and create the window is correct.
                 is_multi_lane_results = bool(self.latest_multi_lane_peak_areas)
 
                 peak_areas_data_for_table = None
@@ -7478,21 +7505,16 @@ if __name__ == "__main__":
                 peak_details_for_table = None
 
                 if is_multi_lane_results:
-                    # For multi-lane, pass the dictionaries directly.
                     peak_areas_data_for_table = self.latest_multi_lane_peak_areas 
                     quantities_data_for_table = self.latest_multi_lane_calculated_quantities
                     peak_details_for_table = self.latest_multi_lane_peak_details
                 else: 
-                    # For single-lane, wrap the lists in a dictionary with key '1' for consistency.
                     peak_areas_data_for_table = {1: self.latest_peak_areas} if self.latest_peak_areas else {}
                     quantities_data_for_table = {1: self.latest_calculated_quantities} if self.latest_calculated_quantities else {}
                     peak_details_for_table = {1: self.latest_peak_details} if self.latest_peak_details else {}
                 
-                # This part remains the same
                 standard_dict_to_show_current = self.quantities_peak_area_dict
                 is_standard_mode_current = len(standard_dict_to_show_current) >= 2
-                
-                # --- END OF THE FIX ---
             
                 self.table_window_instance = TableWindow(
                     peak_areas_data_for_table, 
@@ -7932,28 +7954,28 @@ if __name__ == "__main__":
                 image1_layout.addWidget(reset_overlay1_button, 1, 1, 1, 1)
 
                 image1_layout.addWidget(QLabel("X:"), 2, 0)
-                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image1_left_slider.setFocus))
+                self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(lambda: self._update_overlay_position_from_sliders()); self.image1_left_slider.valueChanged.connect(lambda: self.image1_left_slider.setFocus())
                 image1_layout.addWidget(self.image1_left_slider, 2, 1)
                 self.image1_pos_x_label = QLabel("0"); self.image1_pos_x_label.setFixedWidth(40)
                 self.image1_left_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_x_label: lbl.setText(str(val)))
                 image1_layout.addWidget(self.image1_pos_x_label, 2, 2)
                 
                 image1_layout.addWidget(QLabel("Y:"), 3, 0)
-                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders,self.image1_top_slider.setFocus))
+                self.image1_top_slider = QSlider(Qt.Horizontal); self.image1_top_slider.valueChanged.connect(lambda: self._update_overlay_position_from_sliders()); self.image1_top_slider.valueChanged.connect(lambda: self.image1_top_slider.setFocus())
                 image1_layout.addWidget(self.image1_top_slider, 3, 1)
                 self.image1_pos_y_label = QLabel("0"); self.image1_pos_y_label.setFixedWidth(40)
                 self.image1_top_slider.valueChanged.connect(lambda val, lbl=self.image1_pos_y_label: lbl.setText(str(val)))
                 image1_layout.addWidget(self.image1_pos_y_label, 3, 2)
 
                 image1_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_resize_slider.setFocus))
+                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(lambda: self.update_live_view()); self.image1_resize_slider.valueChanged.connect(lambda:  self.image1_resize_slider.setFocus())
                 image1_layout.addWidget(self.image1_resize_slider, 4, 1)
                 self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(40)
                 self.image1_resize_slider.valueChanged.connect(lambda val, lbl=self.image1_resize_label: lbl.setText(f"{val}%"))
                 image1_layout.addWidget(self.image1_resize_label, 4, 2)
 
                 image1_layout.addWidget(QLabel("Rotate:"), 5, 0)
-                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image1_rotation_slider.setFocus))
+                self.image1_rotation_slider = QSlider(Qt.Horizontal); self.image1_rotation_slider.setRange(-1800, 1800); self.image1_rotation_slider.setValue(0); self.image1_rotation_slider.valueChanged.connect(lambda: self.update_live_view()); self.image1_rotation_slider.valueChanged.connect(lambda:  self.image1_rotation_slider.setFocus())
                 image1_layout.addWidget(self.image1_rotation_slider, 5, 1)
                 self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(40)
                 self.image1_rotation_slider.valueChanged.connect(lambda val, lbl=self.image1_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
@@ -7978,28 +8000,28 @@ if __name__ == "__main__":
                 image2_layout.addWidget(reset_overlay2_button, 1, 1, 1, 1)
 
                 image2_layout.addWidget(QLabel("X:"), 2, 0)
-                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_left_slider.setFocus))
+                self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(lambda: self._update_overlay_position_from_sliders()); self.image2_left_slider.valueChanged.connect(lambda: self.image2_left_slider.setFocus())
                 image2_layout.addWidget(self.image2_left_slider, 2, 1)
                 self.image2_pos_x_label = QLabel("0"); self.image2_pos_x_label.setFixedWidth(40)
                 self.image2_left_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_x_label: lbl.setText(str(val)))
                 image2_layout.addWidget(self.image2_pos_x_label, 2, 2)
 
                 image2_layout.addWidget(QLabel("Y:"), 3, 0)
-                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(lambda: (self._update_overlay_position_from_sliders, self.image2_top_slider.setFocus))
+                self.image2_top_slider = QSlider(Qt.Horizontal); self.image2_top_slider.valueChanged.connect(lambda: self._update_overlay_position_from_sliders()); self.image2_top_slider.valueChanged.connect(lambda: self.image2_top_slider.setFocus())
                 image2_layout.addWidget(self.image2_top_slider, 3, 1)
                 self.image2_pos_y_label = QLabel("0"); self.image2_pos_y_label.setFixedWidth(40)
                 self.image2_top_slider.valueChanged.connect(lambda val, lbl=self.image2_pos_y_label: lbl.setText(str(val)))
                 image2_layout.addWidget(self.image2_pos_y_label, 3, 2)
                 
                 image2_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_resize_slider.setFocus))
+                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(lambda: self.update_live_view()); self.image2_resize_slider.valueChanged.connect(lambda: self.image2_resize_slider.setFocus())
                 image2_layout.addWidget(self.image2_resize_slider, 4, 1)
                 self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(40)
                 self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
                 image2_layout.addWidget(self.image2_resize_label, 4, 2)
 
                 image2_layout.addWidget(QLabel("Rotate:"), 5, 0)
-                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(lambda: (self.update_live_view, self.image2_rotation_slider.setFocus))
+                self.image2_rotation_slider = QSlider(Qt.Horizontal); self.image2_rotation_slider.setRange(-1800, 1800); self.image2_rotation_slider.setValue(0); self.image2_rotation_slider.valueChanged.connect(lambda: self.update_live_view());self.image2_rotation_slider.valueChanged.connect(lambda: self.image2_rotation_slider.setFocus())
                 image2_layout.addWidget(self.image2_rotation_slider, 5, 1)
                 self.image2_rotation_label = QLabel("0.0°"); self.image2_rotation_label.setFixedWidth(40)
                 self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
@@ -8030,7 +8052,7 @@ if __name__ == "__main__":
                 self.blend_slider = QSlider(Qt.Horizontal)
                 self.blend_slider.setRange(0, 100); self.blend_slider.setValue(50)
                 self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
-                self.blend_slider.valueChanged.connect(lambda: (self.update_live_view, self.blend_slider.setFocus))
+                self.blend_slider.valueChanged.connect(lambda: self.update_live_view); self.blend_slider.valueChanged.connect(lambda: self.blend_slider.setFocus())
                 global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 4)
 
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
@@ -8605,18 +8627,17 @@ if __name__ == "__main__":
                 # Levels and Gamma: Save state on release, update live preview on value change.
                 self.black_point_slider.sliderReleased.connect(save_and_apply)
                 self.white_point_slider.sliderReleased.connect(save_and_apply)
-                self.gamma_slider.sliderReleased.connect(save_and_apply)
+                self.black_point_slider.valueChanged.connect(self._update_histogram_markers_only)
+                self.white_point_slider.valueChanged.connect(self._update_histogram_markers_only)
 
-                self.black_point_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.white_point_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.gamma_slider.valueChanged.connect(lambda: (self.apply_all_adjustments, self.gamma_slider.setFocus))
+                # Gamma: Updates image live (as before).
+                self.gamma_slider.valueChanged.connect(self.apply_all_adjustments)
+                self.gamma_slider.sliderReleased.connect(self.save_state)
 
-                # Histogram and value labels are only for live feedback, no state saving.
-                self.black_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.black_point_slider.setFocus))
-                self.white_point_slider.valueChanged.connect(lambda: (self._update_levels_histogram,self.white_point_slider.setFocus))
-                self.black_point_slider.valueChanged.connect(lambda val, lbl=self.black_point_value_label: lbl.setText(f"{val}"))
-                self.white_point_slider.valueChanged.connect(lambda val, lbl=self.white_point_value_label: lbl.setText(f"{val}"))
-                self.gamma_slider.valueChanged.connect(lambda val, lbl=self.gamma_value_label: lbl.setText(f"{val/100.0:.2f}"))
+                # Value labels (live feedback for all).
+                self.black_point_slider.valueChanged.connect(lambda val: self.black_point_value_label.setText(f"{val}"))
+                self.white_point_slider.valueChanged.connect(lambda val: self.white_point_value_label.setText(f"{val}"))
+                self.gamma_slider.valueChanged.connect(lambda val: self.gamma_value_label.setText(f"{val/100.0:.2f}"))
 
                 # Channel Mixer: Save state on release/toggle, update live on change.
                 self.cm_red_slider.sliderReleased.connect(save_and_apply)
@@ -8624,9 +8645,9 @@ if __name__ == "__main__":
                 self.cm_blue_slider.sliderReleased.connect(save_and_apply)
                 self.cm_mono_checkbox.stateChanged.connect(save_and_apply)
 
-                self.cm_red_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_red_slider.setFocus))
-                self.cm_green_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_green_slider.setFocus))
-                self.cm_blue_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.cm_blue_slider.setFocus))
+                self.cm_red_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.cm_red_slider.sliderReleased.connect(lambda: self.cm_red_slider.setFocus())
+                self.cm_green_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.cm_green_slider.sliderReleased.connect(lambda: self.cm_green_slider.setFocus())
+                self.cm_blue_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.cm_blue_slider.sliderReleased.connect(lambda: self.cm_blue_slider.setFocus())
                 
                 self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
                 self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
@@ -8637,17 +8658,17 @@ if __name__ == "__main__":
                 self.usm_radius_slider.sliderReleased.connect(save_and_apply)
                 self.usm_threshold_slider.sliderReleased.connect(save_and_apply)
                 
-                self.usm_amount_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_amount_slider.setFocus))
-                self.usm_radius_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_radius_slider.setFocus))
-                self.usm_threshold_slider.sliderReleased.connect(lambda: (self.apply_all_adjustments, self.usm_threshold_slider.setFocus))
+                self.usm_amount_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.usm_amount_slider.sliderReleased.connect(lambda: self.usm_amount_slider.setFocus())
+                self.usm_radius_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.usm_radius_slider.sliderReleased.connect(lambda: self.usm_radius_slider.setFocus())
+                self.usm_threshold_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.usm_threshold_slider.sliderReleased.connect(lambda: self.usm_threshold_slider.setFocus())
                 
                 self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
                 self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
                 self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
 
                 # CLAHE: Save state on release, update live on change.
-                self.clahe_clip_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_clip_slider.setFocus))
-                self.clahe_tile_slider.sliderReleased.connect(lambda: (save_and_apply, self.clahe_tile_slider.setFocus))
+                self.clahe_clip_slider.sliderReleased.connect(lambda: save_and_apply); self.clahe_clip_slider.sliderReleased.connect(lambda: self.clahe_clip_slider.setFocus())
+                self.clahe_tile_slider.sliderReleased.connect(lambda: save_and_apply); self.clahe_tile_slider.sliderReleased.connect(lambda: self.clahe_tile_slider.setFocus())
 
                 self.clahe_clip_slider.sliderReleased.connect(self.apply_all_adjustments)
                 self.clahe_tile_slider.sliderReleased.connect(self.apply_all_adjustments)
@@ -9293,7 +9314,7 @@ if __name__ == "__main__":
                 self.orientation_slider.setRange(-3600, 3600)
                 self.orientation_slider.setValue(0)
                 self.orientation_slider.valueChanged.connect(self._update_rotation_label)
-                self.orientation_slider.valueChanged.connect(lambda: (self.update_live_view(), self.orientation_slider.setFocus))
+                self.orientation_slider.valueChanged.connect(lambda: self.update_live_view()); self.orientation_slider.valueChanged.connect(lambda: self.orientation_slider.setFocus())
                 self.align_button = QPushButton("Apply"); self.align_button.clicked.connect(self.align_image)
                 self.reset_align_button = QPushButton("Reset"); self.reset_align_button.clicked.connect(self.reset_align_image)
                 rotation_layout.addWidget(self.orientation_label, 0, 0)
@@ -9325,7 +9346,7 @@ if __name__ == "__main__":
                 self.taper_skew_slider = QSlider(Qt.Horizontal)
                 self.taper_skew_slider.setRange(-70, 70); self.taper_skew_slider.setValue(0)
                 self.taper_skew_slider.valueChanged.connect(lambda value: self.taper_skew_label.setText(f"Skew ({value / 100.0:+0.2f})"))
-                self.taper_skew_slider.valueChanged.connect(lambda: (self.update_live_view(), self.taper_skew_slider.setFocus))
+                self.taper_skew_slider.valueChanged.connect(lambda: self.update_live_view()); self.taper_skew_slider.valueChanged.connect(lambda: self.taper_skew_slider.setFocus())
                 self.skew_button = QPushButton("Apply"); self.skew_button.clicked.connect(self.update_skew)
                 self.reset_skew_button = QPushButton("Reset"); self.reset_skew_button.clicked.connect(lambda: self.taper_skew_slider.setValue(0))
                 skew_layout.addWidget(self.taper_skew_label, 0, 0)
@@ -9361,13 +9382,13 @@ if __name__ == "__main__":
                     lbl = QLabel(f"{initial_value:.2f}%"); lbl.setMinimumWidth(55); lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     return lbl
                 self.crop_x_start_slider = QSlider(Qt.Horizontal); self.crop_x_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_start_slider.setValue(self.crop_slider_min); self.crop_x_start_slider.setEnabled(False)
-                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_start_slider.setFocus))
+                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_x_start_slider.valueChanged.connect(lambda: self.crop_x_start_slider.setFocus())
                 self.crop_x_end_slider = QSlider(Qt.Horizontal); self.crop_x_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_end_slider.setValue(self.crop_slider_max); self.crop_x_end_slider.setEnabled(False)
-                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_x_end_slider.setFocus))
+                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_x_end_slider.valueChanged.connect(lambda: self.crop_x_end_slider.setFocus())
                 self.crop_y_start_slider = QSlider(Qt.Horizontal); self.crop_y_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_start_slider.setValue(self.crop_slider_min); self.crop_y_start_slider.setEnabled(False)
-                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_start_slider.setFocus))
+                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_y_start_slider.valueChanged.connect(lambda: self.crop_y_start_slider.setFocus())
                 self.crop_y_end_slider = QSlider(Qt.Horizontal); self.crop_y_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_end_slider.setValue(self.crop_slider_max); self.crop_y_end_slider.setEnabled(False)
-                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(lambda: (self._update_crop_from_sliders, self.crop_y_end_slider.setFocus))
+                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_y_end_slider.valueChanged.connect(lambda: self.crop_y_end_slider.setFocus())
                 crop_slider_layout.addWidget(QLabel("Left:"), 0, 0); crop_slider_layout.addWidget(self.crop_x_start_slider, 0, 1); crop_slider_layout.addWidget(self.crop_x_start_value_label, 0, 2)
                 crop_slider_layout.addWidget(QLabel("Right:"), 0, 3); crop_slider_layout.addWidget(self.crop_x_end_slider, 0, 4); crop_slider_layout.addWidget(self.crop_x_end_value_label, 0, 5)
                 crop_slider_layout.addWidget(QLabel("Top:"), 1, 0); crop_slider_layout.addWidget(self.crop_y_start_slider, 1, 1); crop_slider_layout.addWidget(self.crop_y_start_value_label, 1, 2)
@@ -9735,6 +9756,7 @@ if __name__ == "__main__":
                 
                 
                 
+            # In class CombinedSDSApp:
 
             def create_markers_tab(self):
                 """Create the Markers tab with a more compact and organized layout."""
@@ -9794,17 +9816,17 @@ if __name__ == "__main__":
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
                 left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
-                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: (self.update_left_padding, self.left_padding_slider.setFocus))
+                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: self.update_left_padding); self.left_padding_slider.valueChanged.connect(lambda: self.left_padding_slider.setFocus())
                 standard_layout.addWidget(self.left_padding_slider, 2, 1)
                 duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
                 right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
                 right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
-                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: (self.update_right_padding, self.right_padding_slider.setFocus))
+                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: self.update_right_padding); self.right_padding_slider.valueChanged.connect(lambda: self.right_padding_slider.setFocus())
                 standard_layout.addWidget(self.right_padding_slider, 3, 1)
                 duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
                 top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
                 top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
-                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: (self.update_top_padding, self.top_padding_slider.setFocus))
+                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: self.update_top_padding); self.top_padding_slider.valueChanged.connect(lambda: self.top_padding_slider.setFocus())
                 standard_layout.addWidget(self.top_padding_slider, 4, 1)
                 main_layout.addWidget(standard_group)
 
@@ -9865,8 +9887,10 @@ if __name__ == "__main__":
                 self.draw_rect_button = QPushButton("R"); self.draw_rect_button.setToolTip("Draw Rectangle"); self.draw_rect_button.setFixedSize(shape_size, shape_size); self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
                 self.remove_shape_button = QPushButton("X"); self.remove_shape_button.setToolTip("Remove Last Shape"); self.remove_shape_button.setFixedSize(shape_size, shape_size); self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
                 self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X or CMD+Shift+X toggles X and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
+                self.show_grid_checkbox_x.setFixedWidth(90)
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
                 self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y or CMD+Shift+Y  toggles Y and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
+                self.show_grid_checkbox_y.setFixedWidth(90)
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
                 self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
                 self.grid_size_input.valueChanged.connect(self.update_live_view)
@@ -10294,7 +10318,7 @@ if __name__ == "__main__":
                     self._deactivate_all_previews()
 
                     if self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.moving_multi_lane_index != -1:
-                        self.moving_multi_lane_index = -1; self._reset_to_selection_mode(); self.setFocus; event.accept(); return 
+                        self.moving_multi_lane_index = -1; self._reset_to_selection_mode(); self.setFocus(); event.accept(); return 
                     if self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                         self.cancel_custom_item_interaction_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.overlay_mode_active:
@@ -10797,7 +10821,7 @@ if __name__ == "__main__":
                 self.live_view_label.marker_font_size=self.custom_font_size_spinbox.value()
                 self.live_view_label.marker_color=self.custom_marker_color
                 
-                self.live_view_label.setFocus
+                self.live_view_label.setFocus()
                 self.live_view_label.update()
                 
                 self.marker_mode = "custom"  # Indicate custom marker mode
@@ -11051,6 +11075,9 @@ if __name__ == "__main__":
                     self.rename_input.clear()
 
                     preset_config = self.presets_data[preset_name]
+                    loaded_settings = preset_config.get("peak_dialog_settings", {})
+                    # Update the main app's settings dictionary with the loaded values
+                    self.peak_dialog_settings.update(loaded_settings)
                     
                     self.marker_values = list(preset_config.get("marker_values", []))
                     display_marker_values = [str(v) for v in self.marker_values]
@@ -11367,7 +11394,8 @@ if __name__ == "__main__":
                     "marker_values": marker_values_to_save,
                     "top_labels": top_labels_to_save,
                     "custom_markers_config": custom_markers_config_to_save,
-                    "custom_shapes_config": custom_shapes_config_to_save
+                    "custom_shapes_config": custom_shapes_config_to_save,
+                    "peak_dialog_settings": self.peak_dialog_settings.copy() # Save a copy of the current settings
                 }
 
                 # --- Save to file ---
@@ -14090,7 +14118,6 @@ if __name__ == "__main__":
 
 
         main_window = CombinedSDSApp()
-
 
         # --- Close Loading Screen and Show Main Window ---
         if loading_dialog:
