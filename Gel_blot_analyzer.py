@@ -1229,7 +1229,7 @@ if __name__ == "__main__":
                     'peak_height_factor': self.peak_height_slider.value() / 100.0,
                     'peak_distance': self.peak_distance_slider.value(),
                     'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
-                    'rolling_ball_radius': self._final_settings.get('rolling_ball_radius', 50),
+                    'rolling_ball_radius': self._final_settings.get('rolling_ball_radius'),
                     'area_subtraction_method': self._final_settings.get('area_subtraction_method', "Rolling-valley"),
                 }
                 self.accept()
@@ -3792,7 +3792,7 @@ if __name__ == "__main__":
                 # --- Draw Finalized Multi-Lane Shapes ---
                 if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
                     lane_font = QFont("Arial")
-                    font_pixel_size = max(1, int(10 / self.zoom_level if self.zoom_level > 0 else 10))
+                    font_pixel_size = max(4, int(10 / self.zoom_level if self.zoom_level > 0 else 10))
                     lane_font.setPixelSize(font_pixel_size)
                     lane_font.setBold(True)
                     
@@ -3848,13 +3848,31 @@ if __name__ == "__main__":
 
                                 painter.setBrush(Qt.NoBrush)
 
-                        if not center_point.isNull(): 
-                            lane_id_str = str(lane_def['id']); painter.setFont(lane_font); painter.setPen(Qt.red if is_selected_this_lane else Qt.black)
-                            fm_lane = QFontMetrics(lane_font); text_rect_lane = fm_lane.boundingRect(lane_id_str)
-                            draw_x = center_point.x() - text_rect_lane.width() / 2.0; draw_y = center_point.y() + text_rect_lane.height() / 4.0
-                            bg_rect = QRectF(draw_x - 2, draw_y - text_rect_lane.height() + 2, text_rect_lane.width() + 4, text_rect_lane.height() + 4)
-                            painter.save(); painter.setBrush(QColor(255, 255, 255, 180)); painter.setPen(Qt.NoPen); painter.drawRoundedRect(bg_rect, 3, 3); painter.restore()
-                            painter.drawText(QPointF(draw_x, draw_y), lane_id_str)
+                        if not center_point.isNull():
+                            lane_id_str = str(lane_def['id'])
+                            painter.setFont(lane_font)
+                            
+                            fm_lane = QFontMetrics(lane_font)
+                            text_rect = fm_lane.boundingRect(lane_id_str)
+                            
+                            # --- START OF ALIGNMENT FIX ---
+                            # 1. Determine the diameter needed for a circle that fits the text.
+                            padding = 3 # Increase padding for better visual balance
+                            diameter = max(text_rect.width(), text_rect.height()) + padding * 2
+                            
+                            # 2. Create a perfect square QRectF for the background circle.
+                            bg_rect = QRectF(0, 0, diameter, diameter)
+                            bg_rect.moveCenter(center_point)
+                            
+                            # 3. Draw the circle and the perfectly centered text.
+                            painter.save()
+                            painter.setBrush(QColor(255, 255, 255, 180))
+                            painter.setPen(Qt.NoPen)
+                            painter.drawEllipse(bg_rect)
+                            painter.restore()
+                            
+                            painter.setPen(Qt.red if is_selected_this_lane else Qt.black)
+                            painter.drawText(bg_rect, Qt.AlignCenter, lane_id_str)
                 
                 # Drag/Duplicate Preview
                 if self.drag_preview_rect or self.drag_preview_quad_points:
