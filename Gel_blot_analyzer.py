@@ -788,6 +788,9 @@ if __name__ == "__main__":
                 self._all_initial_peaks = np.array([])
                 self.add_peak_mode_active = False
 
+                # --- Display Inversion State ---
+                self.is_inverted = False
+
                 # --- Validate and Store Input Image ---
                 if not isinstance(pil_image_data, Image.Image):
                     raise TypeError("Input 'pil_image_data' must be a PIL Image object")
@@ -797,80 +800,60 @@ if __name__ == "__main__":
                 self.original_max_value = 255.0 # Default
                 pil_mode = pil_image_data.mode
                 try:
-                    # Handle common grayscale modes used in the main app
-                    if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
-                        self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
-                        self.original_max_value = 65535.0
-                    elif pil_mode == 'L':
-                        self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
-                        self.original_max_value = 255.0
-                    elif pil_mode == 'F': # Handle float images
-                        self.intensity_array_original_range = np.array(pil_image_data, dtype=np.float64)
-                        max_in_float = np.max(self.intensity_array_original_range) if np.any(self.intensity_array_original_range) else 1.0
-                        self.original_max_value = max(1.0, max_in_float) # Use max value or 1.0
-                    else: # Attempt conversion to grayscale 'L' as fallback
-                        gray_img = pil_image_data.convert("L")
-                        self.intensity_array_original_range = np.array(gray_img, dtype=np.float64)
-                        self.original_max_value = 255.0
-                        print(f"AutoLaneTuneDialog: Converted input mode '{pil_mode}' to 'L'.")
+                    # Invert the image data first, then sum, so dark bands become high values
+                    inverted_array = self.original_max_value - np.array(pil_image_data, dtype=np.float64)
+                    # This is the crucial change for correct densitometry.
+                    self.profile_original_inverted = np.sum(inverted_array, axis=1)
 
-                    if self.intensity_array_original_range is None:
-                        raise ValueError("Failed to convert PIL image to NumPy array.")
-                    if self.intensity_array_original_range.ndim != 2:
-                        raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
+                    if self.profile_original_inverted.ndim != 1:
+                        raise ValueError(f"Generated profile must be 1D, shape {self.profile_original_inverted.shape}")
                     
-                    if np.any(self.intensity_array_original_range):
+                    # Store display parameters from the original, non-inverted data
+                    original_data_for_display = np.array(pil_image_data, dtype=np.float64)
+                    if np.any(original_data_for_display):
                         # Use percentiles to avoid extreme outliers affecting contrast
-                        self.display_vmin, self.display_vmax = np.percentile(self.intensity_array_original_range, (1, 99))
+                        self.display_vmin, self.display_vmax = np.percentile(original_data_for_display, (1, 99))
                         if self.display_vmax <= self.display_vmin: # Fallback for low-contrast images
-                           self.display_vmin, self.display_vmax = np.min(self.intensity_array_original_range), np.max(self.intensity_array_original_range)
+                            self.display_vmin, self.display_vmax = np.min(original_data_for_display), np.max(original_data_for_display)
                     else:
                         self.display_vmin, self.display_vmax = 0, self.original_max_value
 
                 except Exception as e:
                     raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
-
-                self.profile_original_inverted = None # Smoothed, inverted profile (original range)
-                self.profile = None # Scaled (0-255), inverted, SMOOTHED profile for detection
+                
+                self.profile = None # Scaled (0-255), SMOOTHED profile for detection
                 self.detected_peaks = np.array([]) # Store indices of detected peaks
 
                 # --- Settings and State ---
-                # Use settings passed from the main app (likely self.peak_dialog_settings)
                 self.smoothing_sigma = initial_settings.get('smoothing_sigma', 0.0)
                 self.peak_height_factor = initial_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = initial_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', 0.00)
-                # Band estimation method is needed to generate the profile
-                self.band_estimation_method = initial_settings.get('band_estimation_method', "Mean")
-                self._final_settings = initial_settings.copy() # Store a copy to return modifications
+                self._final_settings = initial_settings.copy()
 
-                # Check dependencies needed for profile generation and peak detection
                 if find_peaks is None or gaussian_filter1d is None:
-                     QMessageBox.critical(self, "Dependency Error",
-                                          "Missing SciPy library functions.\n"
-                                          "Peak detection and smoothing require SciPy.\n"
-                                          "Please install it (e.g., 'pip install scipy') and restart.")
-                     # Don't call accept/reject here, let init fail or handle gracefully
-                     # self.close() # Or close immediately
+                    QMessageBox.critical(self, "Dependency Error",
+                                        "Missing SciPy library functions.\n"
+                                        "Peak detection and smoothing require SciPy.\n"
+                                        "Please install it (e.g., 'pip install scipy') and restart.")
+                    self.close()
 
-                # Build UI & Initial Setup
                 self._setup_ui()
-                self.run_peak_detection_and_plot() # Initial calculation and plot
+                self.run_peak_detection_and_plot()
 
             def _setup_ui(self):
                 """Creates and arranges the UI elements, including image preview."""
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
 
-                # --- Matplotlib Plot Canvas Area ---
-                plot_widget = QWidget() # Container for the plots
+                plot_widget = QWidget()
                 plot_layout = QVBoxLayout(plot_widget)
-                plot_layout.setContentsMargins(0, 0, 0, 0) # No margins for the layout
+                plot_layout.setContentsMargins(0, 0, 0, 0)
 
-                self.fig = plt.figure(figsize=(7, 5)) 
+                self.fig = plt.figure(figsize=(7, 5))
                 gs = GridSpec(2, 1, height_ratios=[3, 1], figure=self.fig)
                 self.fig.tight_layout(pad=0.5)
-                self.ax_profile = self.fig.add_subplot(gs[0]) 
+                self.ax_profile = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax_profile)
 
                 self.canvas = FigureCanvas(self.fig)
@@ -879,17 +862,14 @@ if __name__ == "__main__":
                 plot_layout.addWidget(self.canvas)
                 main_layout.addWidget(plot_widget, stretch=1)
 
-                # --- Controls Group ---
                 controls_group = QGroupBox("Peak Detection Parameters")
                 controls_layout = QGridLayout(controls_group)
                 controls_layout.setSpacing(8)
 
-                # --- START MODIFICATION: Remove Band Estimation ComboBox ---
                 controls_layout.addWidget(QLabel("Profile Method:"), 0, 0)
-                profile_method_label = QLabel("Sum of Pixel Intensities")
+                profile_method_label = QLabel("Sum of Inverted Intensities")
                 font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
                 controls_layout.addWidget(profile_method_label, 0, 1, 1, 2)
-                # --- END MODIFICATION ---
 
                 self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
                 self.smoothing_slider = QSlider(Qt.Horizontal)
@@ -927,17 +907,28 @@ if __name__ == "__main__":
                 controls_layout.addWidget(self.peak_distance_slider_label, 4, 0)
                 controls_layout.addWidget(self.peak_distance_slider, 4, 1, 1, 2)
 
+                # --- Button Row ---
                 self.delete_peak_button = QPushButton("Delete Selected Peak")
                 self.delete_peak_button.setEnabled(False)
                 self.delete_peak_button.setToolTip("Click on a peak marker in the plot to select it, then click this.")
                 self.delete_peak_button.clicked.connect(self.delete_selected_peak)
-                controls_layout.addWidget(self.delete_peak_button, 5, 0, 1, 1)
 
                 self.add_peak_button = QPushButton("Add Peak at Click")
                 self.add_peak_button.setCheckable(True)
                 self.add_peak_button.setToolTip("Toggle: Click on the profile to add a new peak marker.")
                 self.add_peak_button.clicked.connect(self.toggle_add_peak_mode)
-                controls_layout.addWidget(self.add_peak_button, 5, 1, 1, 2)
+
+                self.invert_display_button = QPushButton("Invert Image")
+                self.invert_display_button.setCheckable(True)
+                self.invert_display_button.toggled.connect(self._toggle_inversion_display)
+                self.invert_display_button.setToolTip("Invert the image preview and the profile plot.")
+                
+                button_hbox = QHBoxLayout()
+                button_hbox.addWidget(self.delete_peak_button)
+                button_hbox.addWidget(self.add_peak_button)
+                button_hbox.addWidget(self.invert_display_button)
+                
+                controls_layout.addLayout(button_hbox, 5, 0, 1, 3) # Add button layout spanning all 3 columns
 
                 controls_layout.setColumnStretch(1, 1)
                 main_layout.addWidget(controls_group)
@@ -946,80 +937,75 @@ if __name__ == "__main__":
                 button_box.accepted.connect(self.accept_and_return_peaks)
                 button_box.rejected.connect(self.reject)
                 main_layout.addWidget(button_box)
-                
+
+            def _toggle_inversion_display(self, checked):
+                """Toggles the display inversion for the profile plot and image preview."""
+                self.is_inverted = checked
+                self.run_peak_detection_and_plot() # Force a full redraw with the new display setting
+                    
             def toggle_add_peak_mode(self, checked):
                 """Toggles the manual peak adding mode."""
                 self.add_peak_mode_active = checked
                 if checked:
                     self.canvas.setCursor(Qt.CrossCursor)
-                    # The following lines were problematic as these attributes don't exist
-                    # in AutoLaneTuneDialog. They are part of PeakAreaDialog's UI focusing.
-                    # self.identify_peak_button.setChecked(False)
-                    # self.manual_select_mode_active = False
-                    # self.selected_peak_for_ui_focus = -1
-                    # self._update_peak_group_box_styles()
-                    
-                    # Reset selection for deletion if add mode is activated
                     self.selected_peak_index = -1 
                     self.delete_peak_button.setEnabled(False)
-                    self.update_plot_highlights() # Update plot to clear deletion selection highlights
+                    self.update_plot_highlights()
                     QMessageBox.information(self, "Add Peak", "Add Peak Mode: ON. Click on the profile plot to add a peak.")
                 else:
                     self.canvas.setCursor(Qt.ArrowCursor)
 
             def on_canvas_click(self, event):
                 """Handles clicks on the canvas for adding or selecting peaks."""
-                # Ignore clicks outside the profile axes or if no data
-                if event.inaxes != self.ax_profile or self.profile_original_inverted is None:
-                    return
-                if event.button != 1: # Only process left-clicks
+                if event.inaxes != self.ax_profile or self.profile_original_inverted is None or event.button != 1:
                     return
 
-                clicked_x = int(round(event.xdata)) # Get x-coordinate of the click
+                clicked_x = int(round(event.xdata))
 
                 if self.add_peak_mode_active:
-                    # --- Add Peak Mode ---
                     if 0 <= clicked_x < len(self.profile_original_inverted):
                         self.add_manual_peak(clicked_x)
                     else:
                         print(f"Clicked X ({clicked_x}) is outside profile bounds.")
-                    # Deactivate add mode after one click for single additions
-                    # self.add_peak_button.setChecked(False) # Optional: Toggle off after one add
-                    # self.toggle_add_peak_mode(False)       # Or call the toggle function
-
                 else:
-                    # --- Select Peak Mode (for deletion) ---
-                    # Find the closest *existing* peak marker to the click
                     if len(self.detected_peaks) > 0:
-                        # Calculate distance from click to all active peak X-coordinates
                         distances = np.abs(self.detected_peaks - clicked_x)
                         min_dist_idx = np.argmin(distances)
-                        # Define a click tolerance (e.g., 5 pixels on the x-axis)
-                        click_tolerance_x = max(5, self.peak_distance / 4) # Heuristic based on peak distance
+                        click_tolerance_x = max(5, self.peak_distance / 4)
 
                         if distances[min_dist_idx] <= click_tolerance_x:
-                            # A peak is close enough to the click
                             self.selected_peak_index = self.detected_peaks[min_dist_idx]
                             self.delete_peak_button.setEnabled(True)
-                            print(f"Selected peak for deletion at index: {self.selected_peak_index}")
                         else:
-                            # Click was not close enough to an existing peak
                             self.selected_peak_index = -1
                             self.delete_peak_button.setEnabled(False)
-                        self.update_plot_highlights() # Update plot to show selection or clear it
+                        self.update_plot_highlights()
                     else:
-                        # No peaks to select
                         self.selected_peak_index = -1
                         self.delete_peak_button.setEnabled(False)
                         self.update_plot_highlights()
 
-
             def add_manual_peak(self, x_coord):
-                if self.profile_original_inverted is None or x_coord in self.peaks: return
-                self.peaks = np.array(sorted(self.peaks.tolist() + [x_coord]))
-                if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
-                self._recalculate_all_regions()
-                self.update_plot()
+                """Adds a new peak at the given x-coordinate if not already present or deleted."""
+                if x_coord in self.detected_peaks:
+                    print(f"Peak at {x_coord} already exists.")
+                    return
+                
+                if x_coord in self.deleted_peak_indices:
+                    reply = QMessageBox.question(self, "Undelete Peak?",
+                                                f"A peak at index {x_coord} was previously deleted. Undelete it?",
+                                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply == QMessageBox.Yes:
+                        self.deleted_peak_indices.discard(x_coord)
+                        self.detected_peaks = np.sort(np.append(self.detected_peaks, x_coord))
+                        print(f"Undeleted peak at {x_coord}.")
+                        self.update_plot_highlights()
+                    return
+
+                self.detected_peaks = np.sort(np.append(self.detected_peaks, x_coord))
+                
+                print(f"Manually added peak at index: {x_coord}")
+                self.update_plot_highlights()
 
             def run_peak_detection_and_plot(self):
                 """Generates profile, detects peaks, updates plot and image preview."""
@@ -1027,102 +1013,93 @@ if __name__ == "__main__":
                 self.selected_peak_index = -1
                 self.delete_peak_button.setEnabled(False)
 
-                if self.intensity_array_original_range is None: return
+                if self.profile_original_inverted is None: return
                 if find_peaks is None or gaussian_filter1d is None: return
 
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0
                 self.peak_height_factor = self.peak_height_slider.value() / 100.0
                 self.peak_distance = self.peak_distance_slider.value()
                 self.peak_prominence_factor = self.peak_prominence_slider.value() / 100.0
-
-                # --- START OF DEFINITIVE FIX FOR DENSITOMETRY PROFILE ---
-                # 1. Invert the image data first. Now dark bands are high values (signal).
-                inverted_array = self.original_max_value - self.intensity_array_original_range.astype(np.float64)
                 
-                # 2. Sum the inverted data across the rows. This is the true integrated density.
-                profile_temp = np.sum(inverted_array, axis=1)
-                # --- END OF DEFINITIVE FIX ---
-
-                if profile_temp is None or not np.all(np.isfinite(profile_temp)):
-                    profile_temp = np.zeros(self.intensity_array_original_range.shape[0])
-
-                # The profile is already correctly inverted (signal is high), so we just assign it.
-                self.profile_original_inverted = profile_temp
+                # --- START OF CORRECTED PEAK CALCULATION LOGIC ---
+                
+                # 1. Always start with the true, smoothed densitometry profile where peaks are high values.
+                smoothed_profile_base = self.profile_original_inverted
                 try:
                     current_sigma = self.smoothing_sigma
-                    if current_sigma > 0.1 and len(self.profile_original_inverted) > int(3 * current_sigma) * 2 + 1:
-                        self.profile_original_inverted = gaussian_filter1d(self.profile_original_inverted, sigma=current_sigma)
+                    if current_sigma > 0.1 and len(smoothed_profile_base) > int(3 * current_sigma) * 2 + 1:
+                        smoothed_profile_base = gaussian_filter1d(smoothed_profile_base, sigma=current_sigma)
                 except Exception as smooth_err: print(f"AutoLaneTuneDialog: Error smoothing profile: {smooth_err}")
-
-                prof_min_inv, prof_max_inv = np.min(self.profile_original_inverted), np.max(self.profile_original_inverted)
-                if prof_max_inv > prof_min_inv + 1e-6:
-                    self.profile = (self.profile_original_inverted - prof_min_inv) / (prof_max_inv - prof_min_inv) * 255.0
+                
+                # 2. Determine the profile to use for BOTH detection and plotting based on the inversion flag.
+                prof_min_base, prof_max_base = np.min(smoothed_profile_base), np.max(smoothed_profile_base)
+                profile_for_detection_and_plot = (prof_max_base + prof_min_base) - smoothed_profile_base if self.is_inverted else smoothed_profile_base
+                
+                # 3. Normalize the chosen profile (normal or inverted) for consistent parameter application.
+                prof_min_detect, prof_max_detect = np.min(profile_for_detection_and_plot), np.max(profile_for_detection_and_plot)
+                if prof_max_detect > prof_min_detect + 1e-6:
+                    self.profile = (profile_for_detection_and_plot - prof_min_detect) / (prof_max_detect - prof_min_detect) * 255.0
                 else:
-                    self.profile = np.zeros_like(self.profile_original_inverted)
+                    self.profile = np.zeros_like(profile_for_detection_and_plot)
 
+                # 4. Calculate absolute parameters based on this potentially inverted, normalized profile.
                 profile_range_detect = np.ptp(self.profile); min_val_profile_detect = np.min(self.profile)
                 if profile_range_detect < 1e-6 : profile_range_detect = 1.0
                 min_height_abs = min_val_profile_detect + profile_range_detect * self.peak_height_factor
                 min_prominence_abs = profile_range_detect * self.peak_prominence_factor
-                min_prominence_abs = max(1.0, min_prominence_abs)
 
+                # 5. Run `find_peaks` on the profile that the user is currently seeing.
                 try:
                     peaks_indices, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
                     self._all_initial_peaks = np.sort(peaks_indices)
                     self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
                 except Exception as e:
                     self._all_initial_peaks = np.array([]); self.detected_peaks = np.array([])
+                    
+                # --- END OF CORRECTED PEAK CALCULATION LOGIC ---
 
                 is_dark_theme = self.parent() and hasattr(self.parent(), 'current_theme') and self.parent().current_theme == "dark"
                 if is_dark_theme:
-                    bg_color, ax_bg_color = '#2D2D30', '#38383C'
-                    text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
+                    bg_color, ax_bg_color, text_color, spine_color, grid_color = '#2D2D30', '#38383C', '#F1F1F1', '#707070', '#5A5A60'
                     profile_color, peak_marker_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#42A5F5'
                 else:
-                    bg_color, ax_bg_color = 'white', 'white'
-                    text_color, spine_color, grid_color = 'black', '#555555', '#DDDDDD'
+                    bg_color, ax_bg_color, text_color, spine_color, grid_color = 'white', 'white', 'black', '#555555', '#DDDDDD'
                     profile_color, peak_marker_color, selected_peak_color = 'black', 'red', 'blue'
 
                 self.ax_profile.clear(); self.ax_image.clear()
                 self.fig.patch.set_facecolor(bg_color)
                 for axis in [self.ax_profile, self.ax_image]:
-                    axis.patch.set_facecolor(ax_bg_color)
-                    for spine in axis.spines.values(): spine.set_color(spine_color)
+                    axis.patch.set_facecolor(ax_bg_color); [spine.set_color(spine_color) for spine in axis.spines.values()]
                     axis.tick_params(axis='x', colors=text_color); axis.tick_params(axis='y', colors=text_color)
                     axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
 
-                if self.profile_original_inverted is not None and len(self.profile_original_inverted) > 0:
-                    self.ax_profile.plot(self.profile_original_inverted, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
+                if profile_for_detection_and_plot is not None and len(profile_for_detection_and_plot) > 0:
+                    self.ax_profile.plot(profile_for_detection_and_plot, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
 
                     if len(self.detected_peaks) > 0:
-                        valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(self.profile_original_inverted))]
+                        valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(profile_for_detection_and_plot))]
                         if len(valid_peaks) > 0:
-                            peak_y_values = self.profile_original_inverted[valid_peaks]
+                            peak_y_values = profile_for_detection_and_plot[valid_peaks]
                             self.peak_plot_artist, = self.ax_profile.plot(valid_peaks, peak_y_values, "x", color=peak_marker_color, markersize=8, label=f"Active Peaks ({len(valid_peaks)})")
 
                             if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
-                                 idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
-                                 if len(idx_in_valid) > 0:
-                                      self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected')
+                                idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
+                                if len(idx_in_valid) > 0:
+                                    self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected')
 
-                    self.ax_profile.set_ylabel("Intensity (Smoothed, Inverted)", fontsize=9)
-                    leg = self.ax_profile.legend(fontsize='x-small'); leg.get_frame().set_facecolor(ax_bg_color)
-                    for text in leg.get_texts(): text.set_color(text_color)
-                    self.ax_profile.set_title("Intensity Profile and Detected Peaks", fontsize=10)
-                    self.ax_profile.grid(True, linestyle=':', alpha=0.6, color=grid_color)
+                    ylabel_text = "Integrated Intensity (Display Inverted)" if self.is_inverted else "Integrated Intensity (Inverted)"
+                    self.ax_profile.set_ylabel(ylabel_text, fontsize=9)
+                    leg = self.ax_profile.legend(fontsize='x-small'); leg.get_frame().set_facecolor(ax_bg_color); [text.set_color(text_color) for text in leg.get_texts()]
+                    self.ax_profile.set_title("Intensity Profile and Detected Peaks", fontsize=10); self.ax_profile.grid(True, linestyle=':', alpha=0.6, color=grid_color)
                     self.ax_profile.tick_params(axis='x', labelbottom=False)
-                    if np.max(self.profile_original_inverted) > 10000: self.ax_profile.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
+                    if np.max(profile_for_detection_and_plot) > 10000: self.ax_profile.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
 
                     try:
-                        rotated_pil_image = self.pil_image_for_display.rotate(90, expand=True)
-                        im_array_disp = np.array(rotated_pil_image)
-                        im_vmin, im_vmax = self.display_vmin, self.display_vmax
-                        if self.pil_image_for_display.mode == 'F': im_vmin, im_vmax = 0.0, self.original_max_value
-                        profile_length = len(self.profile_original_inverted)
-                        extent = [0, profile_length - 1 if profile_length > 0 else 0, 0, rotated_pil_image.height]
-                        self.ax_image.imshow(im_array_disp, cmap='gray', aspect='auto', extent=extent, vmin=im_vmin, vmax=im_vmax)
-                        self.ax_image.set_xlabel("Pixel Index along Profile Axis", fontsize=9)
-                        self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
+                        rotated_pil_image = self.pil_image_for_display.rotate(90, expand=True); im_array_disp = np.array(rotated_pil_image)
+                        im_vmin, im_vmax, cmap_val = self.display_vmin, self.display_vmax, 'gray_r' if self.is_inverted else 'gray'
+                        profile_length = len(profile_for_detection_and_plot); extent = [0, profile_length - 1 if profile_length > 0 else 0, 0, rotated_pil_image.height]
+                        self.ax_image.imshow(im_array_disp, cmap=cmap_val, aspect='auto', extent=extent, vmin=im_vmin, vmax=im_vmax)
+                        self.ax_image.set_xlabel("Pixel Index along Profile Axis", fontsize=9); self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     except Exception as img_e:
                         self.ax_image.text(0.5, 0.5, 'Error displaying preview', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
                         self.ax_image.set_xticks([]); self.ax_image.set_yticks([])
@@ -1133,111 +1110,61 @@ if __name__ == "__main__":
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
-            def on_pick(self, event):
-                """Handles clicking on a peak marker."""
-                # Check if the picked artist is the one we stored for the peaks
-                if event.artist != getattr(self, 'peak_plot_artist', None):
-                    return
-
-                # Get the index of the clicked data point within the plotted data
-                ind = event.ind[0] # Get the first index if multiple points are close
-
-                # Map this index back to the actual peak coordinate value (Y-index)
-                # Ensure self.detected_peaks is valid and index is within bounds
-                if ind < len(self.detected_peaks):
-                    clicked_peak_coord = self.detected_peaks[ind]
-                    # Check if this peak wasn't already deleted internally
-                    if clicked_peak_coord in self._all_initial_peaks and clicked_peak_coord not in self.deleted_peak_indices:
-                        self.selected_peak_index = clicked_peak_coord
-                        self.delete_peak_button.setEnabled(True)
-                        print(f"Selected peak at index: {self.selected_peak_index}") # Debug
-                        # Re-plot to show selection highlight
-                        self.update_plot_highlights() # Separate function for replotting highlights
-                    else:
-                        # Clicked on a potentially invalid/deleted point marker
-                        self.selected_peak_index = -1
-                        self.delete_peak_button.setEnabled(False)
-                        self.update_plot_highlights()
-                else:
-                     # Index out of bounds (shouldn't normally happen)
-                     self.selected_peak_index = -1
-                     self.delete_peak_button.setEnabled(False)
-                     self.update_plot_highlights()
-
             def update_plot_highlights(self):
                 """Redraws only the peak markers and highlights without full recalculation."""
                 if not hasattr(self, 'ax_profile'): return
 
-                # Clear only the peak markers and highlights from the profile axis
-                # Keep the main profile line
-                artists_to_remove = []
-                for artist in self.ax_profile.lines + self.ax_profile.collections:
-                    label = artist.get_label()
-                    if label and ('Peaks' in label or 'Selected' in label):
-                         artists_to_remove.append(artist)
-                for artist in artists_to_remove:
-                    artist.remove()
+                [artist.remove() for artist in self.ax_profile.lines + self.ax_profile.collections if artist.get_label() and ('Peaks' in artist.get_label() or 'Selected' in artist.get_label())]
 
-                # Re-plot the *currently active* detected peaks
+                # --- START FIX: Re-calculate the correct display profile ---
+                smoothed_profile_base = self.profile_original_inverted
+                try:
+                    current_sigma = self.smoothing_sigma
+                    if current_sigma > 0.1 and len(smoothed_profile_base) > int(3 * current_sigma) * 2 + 1:
+                        smoothed_profile_base = gaussian_filter1d(smoothed_profile_base, sigma=current_sigma)
+                except Exception: pass
+
+                prof_min_base, prof_max_base = np.min(smoothed_profile_base), np.max(smoothed_profile_base)
+                profile_for_display = (prof_max_base + prof_min_base) - smoothed_profile_base if self.is_inverted else smoothed_profile_base
+                # --- END FIX ---
+                
                 if len(self.detected_peaks) > 0:
-                    valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(self.profile_original_inverted))]
+                    valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(profile_for_display))]
                     if len(valid_peaks) > 0:
-                        peak_y_values = self.profile_original_inverted[valid_peaks]
-                        # Re-store the artist for picking
-                        self.peak_plot_artist, = self.ax_profile.plot(
-                            valid_peaks, peak_y_values, "rx", markersize=8,
-                            label=f"Active Peaks ({len(valid_peaks)})", picker=True, pickradius=5)
-
-                        # Re-apply highlight if a peak is selected
+                        # --- FIX: Get Y values from the correct display profile ---
+                        peak_y_values = profile_for_display[valid_peaks]
+                        self.peak_plot_artist, = self.ax_profile.plot(valid_peaks, peak_y_values, "rx", markersize=8, label=f"Active Peaks ({len(valid_peaks)})")
                         if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
                             idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
                             if len(idx_in_valid) > 0:
-                                self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]],
-                                                     'o', markersize=12, markeredgecolor='blue', markerfacecolor='none',
-                                                     label='Selected') # Visual indicator
+                                self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]], 'o', markersize=12, markeredgecolor='blue', markerfacecolor='none', label='Selected')
 
-                # Update the legend and redraw
-                handles, labels = self.ax_profile.get_legend_handles_labels()
-                # Filter out duplicate labels if any were added accidentally
-                by_label = dict(zip(labels, handles))
-                self.ax_profile.legend(by_label.values(), by_label.keys(), fontsize='x-small')
-                self.canvas.draw_idle()
-
+                handles, labels = self.ax_profile.get_legend_handles_labels(); by_label = dict(zip(labels, handles))
+                self.ax_profile.legend(by_label.values(), by_label.keys(), fontsize='x-small'); self.canvas.draw_idle()
 
             def delete_selected_peak(self):
                 """Marks the selected peak as deleted and updates the plot."""
                 if self.selected_peak_index != -1:
-                    # Add the index to the set of deleted peaks
                     self.deleted_peak_indices.add(self.selected_peak_index)
+                    self.detected_peaks = np.array([p for p in self.detected_peaks if p != self.selected_peak_index])
+                    print(f"Deleted peak at index: {self.selected_peak_index}")
+                    self.selected_peak_index = -1; self.delete_peak_button.setEnabled(False)
+                    self.update_plot_highlights()
 
-                    # Update the list of currently active peaks
-                    self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
-
-                    print(f"Deleted peak at index: {self.selected_peak_index}") # Debug
-
-                    # Reset selection and disable button
-                    self.selected_peak_index = -1
-                    self.delete_peak_button.setEnabled(False)
-
-                    # Re-plot to remove the deleted peak visually
-                    self.update_plot_highlights() # Use highlight update for efficiency
-
-            # MODIFY this method
             def accept_and_return_peaks(self):
                 self._final_settings = {
                     'smoothing_sigma': self.smoothing_slider.value() / 10.0,
                     'peak_height_factor': self.peak_height_slider.value() / 100.0,
                     'peak_distance': self.peak_distance_slider.value(),
                     'peak_prominence_factor': self.peak_prominence_slider.value() / 100.0,
-                    'rolling_ball_radius': self._final_settings.get('rolling_ball_radius'),
+                    'band_estimation_method': "Sum",
+                    'rolling_ball_radius': self._final_settings.get('rolling_ball_radius', 50),
                     'area_subtraction_method': self._final_settings.get('area_subtraction_method', "Rolling-valley"),
                 }
                 self.accept()
 
-            # MODIFY this method
             def get_detected_peaks(self):
-                """Returns the FINAL list/array of detected peak Y-coordinates (indices), excluding user-deleted ones."""
-                # Return the filtered list
+                """Returns the FINAL list/array of detected peak Y-coordinates (indices), including manual adds and excluding deletes."""
                 return self.detected_peaks
 
             def get_final_settings(self):
@@ -2478,7 +2405,7 @@ if __name__ == "__main__":
                 self.setGeometry(50, 50, 900, 900)
 
                 if not isinstance(cropped_data, Image.Image):
-                     raise TypeError("Input 'cropped_data' must be a PIL Image object")
+                    raise TypeError("Input 'cropped_data' must be a PIL Image object")
 
                 self.original_pil_cropped_data = cropped_data
                 self.enhanced_cropped_image_for_display = None
@@ -2504,7 +2431,11 @@ if __name__ == "__main__":
                     raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
 
                 if self.intensity_array_original_range.ndim != 2:
-                     raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
+                    raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
+
+                # --- START MODIFICATION: Add inversion state ---
+                self.is_inverted = current_settings.get('is_inverted', False)
+                # --- END MODIFICATION ---
 
                 self.profile_original_inverted = None; self.profile = None; self.background = None
                 self.rolling_ball_radius = current_settings.get('rolling_ball_radius', 50)
@@ -2529,47 +2460,40 @@ if __name__ == "__main__":
                 self.interactive_artists = []
                 
                 if rolling_ball is None or find_peaks is None or gaussian_filter1d is None or interp1d is None or cv2 is None or ImageOps is None:
-                     QMessageBox.critical(self, "Dependency Error","Missing required libraries...")
+                    QMessageBox.critical(self, "Dependency Error","Missing required libraries...")
                 
                 self._setup_ui(persist_checked)
                 self.regenerate_profile_and_detect()
 
             def _setup_ui(self, persist_checked_initial):
+                # ... (code before peak_detect_group is the same) ...
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
-
-                self.fig = plt.figure(figsize=(10, 7.5)) 
+                self.fig = plt.figure(figsize=(10, 7.5))
                 gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.1, figure=self.fig)
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
-                
                 self.canvas = FigureCanvas(self.fig)
                 self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                
                 self.canvas.mpl_connect('draw_event', self.on_draw)
                 self.canvas.mpl_connect('button_press_event', self.on_canvas_press)
                 self.canvas.mpl_connect('motion_notify_event', self.on_canvas_motion)
                 self.canvas.mpl_connect('button_release_event', self.on_canvas_release)
-
                 main_layout.addWidget(self.canvas, stretch=1)
-
                 controls_main_hbox = QHBoxLayout()
                 left_controls_vbox = QVBoxLayout()
                 global_settings_group = QGroupBox("Global Settings & Area Method")
                 global_settings_layout = QGridLayout(global_settings_group)
-                
                 global_settings_layout.addWidget(QLabel("Profile Method:"), 0, 0)
                 profile_method_label = QLabel("Sum of Pixel Intensities")
                 font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
                 global_settings_layout.addWidget(profile_method_label, 0, 1, 1, 2)
-
                 global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
                 self.method_combobox = QComboBox()
                 self.method_combobox.addItems(["Rolling-valley", "Rolling Ball", "Straight Line"])
                 self.method_combobox.setCurrentText(self.area_subtraction_method)
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
                 global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
-                
                 self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})")
                 self.rolling_ball_label.setMinimumWidth(160)
                 self.rolling_ball_slider = QSlider(Qt.Horizontal)
@@ -2578,34 +2502,86 @@ if __name__ == "__main__":
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
                 self.rolling_ball_slider.valueChanged.connect(lambda: self.rolling_ball_slider.setFocus())
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
-                
                 self.auto_adjust_checkbox = QCheckBox("Auto")
                 self.auto_adjust_checkbox.setToolTip("Automatically calculate the optimal rolling ball radius based on detected peak widths.")
                 self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
                 self.auto_adjust_checkbox.stateChanged.connect(self.toggle_auto_adjust_rb)
-                
                 global_settings_layout.addWidget(self.rolling_ball_label, 2, 0)
                 global_settings_layout.addWidget(self.rolling_ball_slider, 2, 1)
                 global_settings_layout.addWidget(self.auto_adjust_checkbox, 2, 2)
-                
                 left_controls_vbox.addWidget(global_settings_group)
-                
+                manual_actions_group = QGroupBox("Manual Peak Adjustment")
+                manual_actions_layout = QHBoxLayout(manual_actions_group)
+                self.add_peak_manually_button = QPushButton("Add Peak")
+                self.add_peak_manually_button.setCheckable(True)
+                self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode)
+                self.delete_selected_peak_button = QPushButton("Delete Peak")
+                self.delete_selected_peak_button.setEnabled(False)
+                self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action)
+                self.identify_peak_button = QPushButton("Focus Peak")
+                self.identify_peak_button.setCheckable(True)
+                self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode)
+                self.invert_display_button = QPushButton("Invert Profile & Image")
+                self.invert_display_button.setCheckable(True)
+                self.invert_display_button.toggled.connect(self._toggle_inversion_display)
+                self.invert_display_button.setToolTip("Invert the profile for peak detection and area calculation.\nWhen checked, light bands will be treated as peaks.")
+                self.invert_display_button.setChecked(self.is_inverted)
+                manual_actions_layout.addWidget(self.add_peak_manually_button)
+                manual_actions_layout.addWidget(self.delete_selected_peak_button)
+                manual_actions_layout.addWidget(self.identify_peak_button)
+                manual_actions_layout.addWidget(self.invert_display_button)
+                left_controls_vbox.addWidget(manual_actions_group)
+
                 peak_detect_group = QGroupBox("Peak Detection Settings")
                 peak_detect_layout = QGridLayout(peak_detect_group)
-                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2); self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10)); self.denoise_sigma_slider.valueChanged.connect(lambda val,lbl=self.denoise_sigma_label: lbl.setText(f"Denoise Sigma ({val/10.0:.1f})")); self.denoise_sigma_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2); self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10)); self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})")); self.smoothing_slider.valueChanged.connect(self.regenerate_profile_and_detect); peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2); 
+                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2)
+                
+                # --- START OF FIX: Update signal connections ---
+                self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10))
+                self.denoise_sigma_slider.valueChanged.connect(lambda val, lbl=self.denoise_sigma_label: (lbl.setText(f"Denoise Sigma ({val/10.0:.1f})"), setattr(self, 'denoise_sigma', val/10.0)))
+                self.denoise_sigma_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
+                peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2)
+                
+                self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10))
+                self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: (lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"), setattr(self, 'smoothing_sigma', val/10.0)))
+                self.smoothing_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
+                peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2)
                 
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.3f})")
-                self.peak_prominence_slider = QSlider(Qt.Horizontal)
-                self.peak_prominence_slider.setRange(0, 1000)
-                self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*1000))
-                self.peak_prominence_slider.valueChanged.connect(self.detect_peaks)
-                self.peak_prominence_slider.valueChanged.connect(lambda val,lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/1000.0:.3f})"))
+                self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0, 1000); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*1000))
+                self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: (lbl.setText(f"Min Prominence ({val/1000.0:.3f})"), setattr(self, 'peak_prominence_factor', val/1000.0)))
+                self.peak_prominence_slider.sliderReleased.connect(self.detect_peaks)
+                peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2)
                 
-                peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2); self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100)); self.peak_height_slider.valueChanged.connect(self.detect_peaks); self.peak_height_slider.valueChanged.connect(lambda val,lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})")); peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2); self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance); self.peak_distance_slider.valueChanged.connect(self.detect_peaks); self.peak_distance_slider.valueChanged.connect(lambda val,lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px")); peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2);
-                self.add_peak_manually_button = QPushButton("Add Peak"); self.add_peak_manually_button.setCheckable(True); self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode); self.delete_selected_peak_button = QPushButton("Delete Peak"); self.delete_selected_peak_button.setEnabled(False); self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action); self.identify_peak_button = QPushButton("Focus Peak"); self.identify_peak_button.setCheckable(True); self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode); peak_detect_layout.addWidget(self.add_peak_manually_button, 6, 0, 1, 1); peak_detect_layout.addWidget(self.delete_selected_peak_button, 6, 1, 1, 1); peak_detect_layout.addWidget(self.identify_peak_button, 6, 2, 1, 1); self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app); self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
+                self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100))
+                self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: (lbl.setText(f"Min Height ({val/100.0:.2f})"), setattr(self, 'peak_height_factor', val/100.0)))
+                self.peak_height_slider.sliderReleased.connect(self.detect_peaks)
+                peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2)
+                
+                self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance)
+                self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: (lbl.setText(f"Min Distance ({val}) px"), setattr(self, 'peak_distance', val)))
+                self.peak_distance_slider.sliderReleased.connect(self.detect_peaks)
+                peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2)
+                # --- END OF FIX ---
+                
+                self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app)
+                self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
                 if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
-                peak_detect_layout.addWidget(self.copy_regions_button, 7,0,1,1); peak_detect_layout.addWidget(self.paste_regions_button, 7,1,1,2); left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
+                
+                copy_paste_layout = QHBoxLayout()
+                copy_paste_layout.addWidget(self.copy_regions_button)
+                copy_paste_layout.addWidget(self.paste_regions_button)
+                peak_detect_layout.addLayout(copy_paste_layout, 6, 0, 1, 3)
+
+                left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
                 self.update_rb_controls_enabled_state()
+
+            # --- START MODIFICATION: New handler method ---
+            def _toggle_inversion_display(self, checked):
+                """Toggles the inversion state and re-runs the entire analysis pipeline."""
+                self.is_inverted = checked
+                self.regenerate_profile_and_detect()
+            # --- END MODIFICATION ---
 
             def _on_method_changed(self):
                 """Handles area method changes by recalculating regions and then updating the plot."""
@@ -2706,9 +2682,12 @@ if __name__ == "__main__":
                 if self.profile is None or len(self.profile) == 0:
                     self.peaks = np.array([])
                 else:
-                    self.peak_height_factor = self.peak_height_slider.value()/100.0
-                    self.peak_distance = self.peak_distance_slider.value()
-                    self.peak_prominence_factor = self.peak_prominence_slider.value()/1000.0
+                    # --- START OF FIX ---
+                    # REMOVED: self.peak_height_factor = self.peak_height_slider.value()/100.0
+                    # REMOVED: self.peak_distance = self.peak_distance_slider.value()
+                    # REMOVED: self.peak_prominence_factor = self.peak_prominence_slider.value()/1000.0
+                    # The method now uses the instance attributes directly.
+                    # --- END OF FIX ---
                     profile_range = np.ptp(self.profile)
                     min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
                     min_prominence_abs = profile_range * self.peak_prominence_factor
@@ -2733,23 +2712,30 @@ if __name__ == "__main__":
                 self.update_plot()
 
             def accept_and_close(self):
-                # --- START OF FIX: Correctly save the high-precision prominence factor ---
+                # --- START OF FIX ---
+                # Read from instance attributes, not UI elements
                 self._final_settings = {
-                    'rolling_ball_radius': self.rolling_ball_slider.value(),
-                    'denoise_sigma': self.denoise_sigma_slider.value() / 10.0,
-                    'peak_height_factor': self.peak_height_slider.value() / 100.0,
-                    'peak_distance': self.peak_distance_slider.value(),
-                    'peak_prominence_factor': self.peak_prominence_slider.value() / 1000.0, # Was incorrectly / 100.0
+                    'rolling_ball_radius': self.rolling_ball_radius,
+                    'denoise_sigma': self.denoise_sigma,
+                    'peak_height_factor': self.peak_height_factor,
+                    'peak_distance': self.peak_distance,
+                    'peak_prominence_factor': self.peak_prominence_factor,
                     'band_estimation_method': "Sum",
                     'area_subtraction_method': self.method_combobox.currentText(),
-                    'smoothing_sigma': self.smoothing_slider.value() / 10.0,
-                    'auto_adjust_rb_radius': self.auto_adjust_checkbox.isChecked()
+                    'smoothing_sigma': self.smoothing_sigma,
+                    'auto_adjust_rb_radius': self.auto_adjust_checkbox.isChecked(),
+                    'is_inverted': self.is_inverted,
                 }
                 # --- END OF FIX ---
                 self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked()
                 self.accept()
                 
             def update_plot(self):
+                """
+                THIS IS THE METHOD WITH THE FIX.
+                The logic has been simplified to ALWAYS plot the densitometry profile
+                (where peaks are high values) directly, removing the confusing visual inversion.
+                """
                 if self.canvas is None: return
                 profile_to_plot_and_calc = self.profile_original_inverted
                 
@@ -2758,13 +2744,13 @@ if __name__ == "__main__":
                     bg_color, ax_bg_color = '#2D2D30', '#38383C'
                     text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
-                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5' # Blue line for baseline
+                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.5
                 else:
                     bg_color, ax_bg_color = 'white', 'white'
                     text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
-                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue' # Blue line for baseline
+                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
                 self.fig.clf()
@@ -2786,26 +2772,30 @@ if __name__ == "__main__":
                      self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
                      self.canvas.draw_idle(); return
                 
+                # --- START OF FIX: This profile is now ALWAYS plotted directly ---
+                profile_for_display = profile_to_plot_and_calc
+                # --- END OF FIX ---
+
                 if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
                     self.background = np.zeros_like(profile_to_plot_and_calc)
 
-                self.ax.plot(profile_to_plot_and_calc, label="Profile", color=profile_color, lw=1.2, zorder=10)
+                self.ax.plot(profile_for_display, label="Profile", color=profile_color, lw=1.2, zorder=10)
                 
                 if len(self.peaks) > 0:
                      valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
                      if len(valid_peaks_indices) > 0:
-                         peak_y_on_smoothed = profile_to_plot_and_calc[valid_peaks_indices]
-                         self.ax.scatter(valid_peaks_indices, peak_y_on_smoothed, color=peak_marker_color, marker='x', s=40, label="Peaks", zorder=15) 
+                         peak_y_on_displayed = profile_for_display[valid_peaks_indices]
+                         self.ax.scatter(valid_peaks_indices, peak_y_on_displayed, color=peak_marker_color, marker='x', s=40, label="Peaks", zorder=15) 
                          if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
                              focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]
-                             self.ax.plot(focused_peak_x_val, profile_to_plot_and_calc[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=16)
+                             self.ax.plot(focused_peak_x_val, profile_for_display[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=16)
                          if self.selected_peak_index_for_delete != -1:
-                             self.ax.plot(self.selected_peak_index_for_delete, profile_to_plot_and_calc[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=17)
+                             self.ax.plot(self.selected_peak_index_for_delete, profile_for_display[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=17)
                 
                 self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
                 
-                profile_range_plot = np.ptp(profile_to_plot_and_calc) if np.ptp(profile_to_plot_and_calc) > 0 else 1.0
-                max_y_for_plot_limit = np.max(profile_to_plot_and_calc) if len(profile_to_plot_and_calc) > 0 else 1
+                profile_range_plot = np.ptp(profile_for_display) if np.ptp(profile_for_display) > 0 else 1.0
+                max_y_for_plot_limit = np.max(profile_for_display) if len(profile_for_display) > 0 else 1
                 text_positions = []
 
                 # --- First pass: Calculate all areas for the current method ---
@@ -2815,12 +2805,10 @@ if __name__ == "__main__":
                         self.peak_areas_valley.append(0); self.peak_areas_straight_line.append(0); self.peak_areas_rolling_ball.append(0)
                         continue
                     
-                    # Rolling Ball Area
                     baseline_rb = self.background
                     area_rb = np.trapz(profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rb[start_handle:end_handle+1])
                     self.peak_areas_rolling_ball.append(max(0, area_rb))
                     
-                    # Straight Line Area (Global)
                     global_sl_baseline = None
                     if self.peak_regions:
                         trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
@@ -2834,14 +2822,12 @@ if __name__ == "__main__":
                         area_sl = np.trapz(np.maximum(0, difference_sl))
                     self.peak_areas_straight_line.append(max(0, area_sl))
 
-                    # --- DEFINITIVE ROLLING-VALLEY BASELINE LOGIC ---
                     y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
                     baseline_rv_local_straight = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
                     final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
                     area_valley = np.trapz(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - final_rv_baseline))
                     self.peak_areas_valley.append(max(0, area_valley))
 
-                # --- Calculate total area for percentage display ---
                 total_area = 0
                 if self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
                 elif self.method == "Rolling Ball": total_area = sum(self.peak_areas_rolling_ball)
@@ -2861,29 +2847,31 @@ if __name__ == "__main__":
                         baseline_rv_local_straight = np.interp(x_region_rv, [start_handle, end_handle], y_baseline_rv_points)
                         final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
                         
-                        self.ax.fill_between(x_region_rv, final_rv_baseline, profile_to_plot_and_calc[x_region_rv], where=(profile_to_plot_and_calc[x_region_rv] >= final_rv_baseline), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True, zorder=1)
+                        # --- START OF FIX: Use the calculated baselines directly for plotting ---
+                        self.ax.fill_between(x_region_rv, final_rv_baseline, profile_for_display[x_region_rv], where=(profile_for_display[x_region_rv] >= final_rv_baseline), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True, zorder=1)
                         self.ax.plot(x_region_rv, final_rv_baseline, color=rv_line_color, lw=1.5, zorder=4)
 
                         if i == 0:
                             self.ax.get_lines()[-1].set_label("Valley BG")
                             self.ax.plot(np.arange(len(self.background)), self.background, color='magenta', ls=":", lw=1.0, label="RV Guide BG", zorder=3)
+                        # --- END OF FIX ---
                         
                         area_to_display = self.peak_areas_valley[i]
                     
                     elif self.method == "Rolling Ball":
                          x_region = np.arange(start_handle, end_handle + 1)
-                         self.ax.fill_between(x_region, self.background[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= self.background[x_region]), color="yellow", alpha=0.4, interpolate=True, zorder=1)
+                         self.ax.fill_between(x_region, self.background[x_region], profile_for_display[x_region], where=(profile_for_display[x_region] >= self.background[x_region]), color="yellow", alpha=0.4, interpolate=True, zorder=1)
                          if i == 0: self.ax.plot(np.arange(len(self.background)), self.background, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG", zorder=2)
                          area_to_display = self.peak_areas_rolling_ball[i]
 
                     elif self.method == "Straight Line":
                         if global_sl_baseline is not None:
                             x_region = np.arange(start_handle, end_handle + 1)
-                            self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_to_plot_and_calc[x_region], where=(profile_to_plot_and_calc[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True, zorder=1)
+                            self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_for_display[x_region], where=(profile_for_display[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True, zorder=1)
                             if i == 0: self.ax.plot(np.arange(len(global_sl_baseline)), global_sl_baseline, color=sl_line_color, ls="--", lw=1.2, label="SL BG", zorder=2)
                         area_to_display = self.peak_areas_straight_line[i]
                     
-                    text_y_pos = profile_to_plot_and_calc[peak_x] + profile_range_plot * 0.03
+                    text_y_pos = profile_for_display[peak_x] + profile_range_plot * 0.03
                     if total_area > 0:
                         text_str = f"{(area_to_display / total_area * 100):.1f}%"
                     else:
@@ -2917,7 +2905,7 @@ if __name__ == "__main__":
                 self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
                 if len(profile_to_plot_and_calc) > 1:
                     self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1)
-                    self.ax.set_ylim(bottom=min(0, np.min(profile_to_plot_and_calc)), top=max_y_for_plot_limit * 1.1)
+                    self.ax.set_ylim(bottom=min(0, np.min(profile_for_display)), top=max_y_for_plot_limit * 1.1)
                 
                 if np.max(profile_to_plot_and_calc) > 10000:
                     self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
@@ -2926,7 +2914,10 @@ if __name__ == "__main__":
                 if hasattr(self, 'enhanced_cropped_image_for_display') and self.enhanced_cropped_image_for_display:
                     rotated_pil_image_display = self.enhanced_cropped_image_for_display.rotate(90, expand=True)
                     image_extent = [0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil_image_display.height]
-                    self.ax_image.imshow(np.array(rotated_pil_image_display), cmap='gray', aspect='auto', extent=image_extent)
+                    
+                    cmap_val = 'gray_r' if self.is_inverted else 'gray'
+                    self.ax_image.imshow(np.array(rotated_pil_image_display), cmap=cmap_val, aspect='auto', extent=image_extent)
+
                     self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     self.ax_image.set_xlabel("Pixel Index", fontsize=9)
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
@@ -2935,7 +2926,7 @@ if __name__ == "__main__":
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
-                self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.25)
+                self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.3)
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
@@ -2984,7 +2975,7 @@ if __name__ == "__main__":
                 self.canvas.draw_idle()
             def handle_profile_plot_click(self, event):
                 if self.add_peak_mode_active:
-                     if event.button == 1 and event.xdata is not None:
+                    if event.button == 1 and event.xdata is not None:
                         clicked_x = int(round(event.xdata))
                         if self.profile_original_inverted is not None and 0 <= clicked_x < len(self.profile_original_inverted): self.add_manual_peak(clicked_x)
                 elif self.manual_select_mode_active:
@@ -3132,13 +3123,17 @@ if __name__ == "__main__":
             def get_current_settings(self): return self._final_settings
             def should_persist_settings(self): return self._persist_enabled_on_exit
             def get_final_peak_area(self): return [info['area'] for info in self.get_final_peak_info()]
+            
             def regenerate_profile_and_detect(self):
                 if gaussian_filter1d is None or cv2 is None or ImageOps is None: return
                 
-                self.area_subtraction_method = self.method_combobox.currentText()
-                self.smoothing_sigma = self.smoothing_slider.value() / 10.0
-                self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
-                
+                # --- START OF FIX ---
+                # REMOVED: self.smoothing_sigma = self.smoothing_slider.value() / 10.0
+                # REMOVED: self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
+                # The method now uses self.smoothing_sigma and self.denoise_sigma directly,
+                # which are updated by the slider signals.
+                # --- END OF FIX ---
+
                 base_img = self.original_pil_cropped_data.copy()
                 if self.denoise_sigma > 0.01:
                     try:
@@ -3148,13 +3143,13 @@ if __name__ == "__main__":
                 if base_img.mode.startswith('I') or base_img.mode == 'F': self.enhanced_cropped_image_for_display = Image.fromarray((np.clip((np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) / (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9), 0.0, 1.0) * 255).astype(np.uint8), mode='L')
                 else: self.enhanced_cropped_image_for_display = ImageOps.autocontrast(base_img.convert('L'))
                 
-                # --- START OF DEFINITIVE FIX FOR DENSITOMETRY PROFILE ---
-                # 1. Invert the image data first. Now dark bands are high values (signal).
-                inverted_array = self.original_max_value - self.intensity_array_original_range.astype(np.float64)
+                base_array = self.intensity_array_original_range.astype(np.float64)
+                if self.is_inverted:
+                    array_for_summing = base_array
+                else:
+                    array_for_summing = self.original_max_value - base_array
                 
-                # 2. Sum the inverted data across the rows. This is the true integrated density.
-                profile_to_process = np.sum(inverted_array, axis=1)
-                # --- END OF DEFINITIVE FIX ---
+                profile_to_process = np.sum(array_for_summing, axis=1)
 
                 if self.smoothing_sigma > 0.1: 
                     self.profile_original_inverted = gaussian_filter1d(profile_to_process, sigma=self.smoothing_sigma)
@@ -3166,6 +3161,7 @@ if __name__ == "__main__":
                 else: self.profile = np.zeros_like(self.profile_original_inverted)
                 
                 self.detect_peaks()
+
             def _find_outward_troughs(self, profile, peak_idx, left_bound, right_bound):
                 profile_len = len(profile)
                 if not (0 <= left_bound <= peak_idx <= right_bound < profile_len):
@@ -3182,8 +3178,8 @@ if __name__ == "__main__":
                     valley_right_idx = idx
                 else: valley_right_idx = right_bound
                 if valley_left_idx >= valley_right_idx:
-                     w = max(1, self.peak_distance // 8 if hasattr(self, 'peak_distance') else 2)
-                     return max(0, peak_idx - w), min(profile_len - 1, peak_idx + w)
+                    w = max(1, self.peak_distance // 8 if hasattr(self, 'peak_distance') else 2)
+                    return max(0, peak_idx - w), min(profile_len - 1, peak_idx + w)
                 return valley_left_idx, valley_right_idx
             def manual_peak_number_update(self):
                 if self.profile_original_inverted is None: return
