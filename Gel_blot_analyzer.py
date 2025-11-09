@@ -300,17 +300,23 @@ if __name__ == "__main__":
                 self.active_marker_values = active_marker_values
                 self.protein_y_image = protein_y_image
                 self.active_set_name = active_set_name
+                self.final_model_type = "poly"
                 self.final_coeffs = None
                 self.final_min_max_pos = None
-                self.final_predicted_mw = 0.0 # Add attribute to store result
+                self.final_predicted_mw = 0.0
 
                 main_layout = QVBoxLayout(self)
                 controls_layout = QHBoxLayout()
                 controls_layout.addWidget(QLabel("Regression Model:"))
                 self.model_combo_dialog = QComboBox()
-                self.model_combo_dialog.addItems([
-                    "Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"
-                ])
+                
+                # --- START MODIFICATION: Dynamically add models ---
+                model_items = ["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"]
+                if SCIPY_AVAILABLE:
+                    model_items.append("Log 4-PL")
+                self.model_combo_dialog.addItems(model_items)
+                # --- END MODIFICATION ---
+
                 self.model_combo_dialog.setCurrentText(self.parent_app.mw_regression_model_combo.currentText())
                 self.model_combo_dialog.currentTextChanged.connect(self._recalculate_and_redraw)
                 controls_layout.addWidget(self.model_combo_dialog, 1)
@@ -337,45 +343,86 @@ if __name__ == "__main__":
                 max_pos_active = np.max(self.active_marker_positions)
                 normalized_distances = (self.active_marker_positions - min_pos_active) / (max_pos_active - min_pos_active)
                 log_marker_values = np.log10(self.active_marker_values)
-                poly_degree = 1
-                if "Degree 2" in selected_model_text: poly_degree = 2
-                elif "Degree 3" in selected_model_text: poly_degree = 3
+                
+                coefficients = None
+                r_squared = 0.0
+                predicted_log10_weight = 0.0
 
-                if len(normalized_distances) <= poly_degree:
-                    self.ax.clear()
-                    self.ax.text(0.5, 0.5, f"Not enough points ({len(normalized_distances)}) for degree {poly_degree} fit.", 
-                                 ha='center', va='center', wrap=True, color='red')
-                    self.canvas.draw()
-                    self.mw_label.setText("Predicted MW: Error")
-                    self.r2_label.setText("Fit R²: Error")
-                    return
+                self.ax.clear()
 
-                coefficients = np.polyfit(normalized_distances, log_marker_values, poly_degree)
-                residuals = log_marker_values - np.polyval(coefficients, normalized_distances)
-                ss_res = np.sum(residuals**2)
-                ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                normalized_protein_position = (self.protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
-                predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
+                # --- START MODIFICATION: Add logic for 4-PL model ---
+                if "4-PL" in selected_model_text:
+                    self.final_model_type = "4-PL"
+                    if not SCIPY_AVAILABLE:
+                        self.ax.text(0.5, 0.5, "SciPy library is required for 4-PL model.", ha='center', va='center', wrap=True, color='red')
+                        self.canvas.draw(); return
+                    if len(normalized_distances) < 4:
+                        self.ax.text(0.5, 0.5, f"Not enough points ({len(normalized_distances)}) for 4-PL fit (min 4 required).", ha='center', va='center', wrap=True, color='red')
+                        self.canvas.draw(); return
+                    
+                    try:
+                        # Initial parameter guesses: a=max, d=min, c=median_x, b=slope
+                        p0 = [np.max(log_marker_values), 1.0, np.median(normalized_distances), np.min(log_marker_values)]
+                        coefficients, _ = curve_fit(four_param_logistic, normalized_distances, log_marker_values, p0=p0, maxfev=10000)
+                        
+                        residuals = log_marker_values - four_param_logistic(normalized_distances, *coefficients)
+                        ss_res = np.sum(residuals**2)
+                        ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
+                        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+                        
+                        normalized_protein_position = (self.protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
+                        predicted_log10_weight = four_param_logistic(normalized_protein_position, *coefficients)
+                    except RuntimeError:
+                        self.ax.text(0.5, 0.5, "4-PL model failed to converge.\nTry a polynomial model or different markers.", ha='center', va='center', wrap=True, color='red')
+                        self.canvas.draw(); return
+
+                else: # Polynomial models
+                    self.final_model_type = "poly"
+                    poly_degree = 1
+                    if "Degree 2" in selected_model_text: poly_degree = 2
+                    elif "Degree 3" in selected_model_text: poly_degree = 3
+
+                    if len(normalized_distances) <= poly_degree:
+                        self.ax.text(0.5, 0.5, f"Not enough points ({len(normalized_distances)}) for degree {poly_degree} fit.", ha='center', va='center', wrap=True, color='red')
+                        self.canvas.draw(); return
+
+                    coefficients = np.polyfit(normalized_distances, log_marker_values, poly_degree)
+                    residuals = log_marker_values - np.polyval(coefficients, normalized_distances)
+                    ss_res = np.sum(residuals**2)
+                    ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
+                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+                    normalized_protein_position = (self.protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
+                    predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
+                # --- END MODIFICATION ---
+
                 predicted_weight = 10 ** predicted_log10_weight
                 
-                # Store all final values
                 self.final_coeffs = coefficients
                 self.final_min_max_pos = (min_pos_active, max_pos_active)
-                self.final_predicted_mw = predicted_weight # Store the predicted MW
+                self.final_predicted_mw = predicted_weight
 
                 self.mw_label.setText(f"Predicted MW: <b>{predicted_weight:.2f}</b> units")
-                self.r2_label.setText(f"Fit R² (on active set): {r_squared:.3f}")
+                self.r2_label.setText(f"Fit R² (on active set): {r_squared:.4f}")
                 
-                self.ax.clear()
                 all_norm_distances_plot = (self.all_marker_positions.astype(float) - min_pos_active) / (max_pos_active - min_pos_active)
                 fit_line_x_dense_norm = np.linspace(np.min(normalized_distances), np.max(normalized_distances), 200)
-                fit_line_y_log_dense = np.polyval(coefficients, fit_line_x_dense_norm)
-                fit_line_y_mw_dense = 10**fit_line_y_log_dense
+
+                # --- START MODIFICATION: Plotting based on model type ---
+                if "4-PL" in selected_model_text and coefficients is not None:
+                    fit_line_y_log_dense = four_param_logistic(fit_line_x_dense_norm, *coefficients)
+                elif coefficients is not None:
+                    fit_line_y_log_dense = np.polyval(coefficients, fit_line_x_dense_norm)
+                else: # Handle fit failure case
+                    fit_line_y_log_dense = np.array([])
+                
+                if fit_line_y_log_dense.any():
+                    fit_line_y_mw_dense = 10**fit_line_y_log_dense
+                    simple_model_name = selected_model_text.split('(')[0].strip()
+                    self.ax.plot(fit_line_x_dense_norm, fit_line_y_mw_dense, color="blue", label=f"Fit ({simple_model_name})", linewidth=1.5)
+                # --- END MODIFICATION ---
+
                 self.ax.scatter(all_norm_distances_plot, self.all_marker_values, color="grey", alpha=0.5, label="All Markers (Context)", s=25)
                 self.ax.scatter(normalized_distances, self.active_marker_values, color="red", label="Active Set Data", s=40, marker='o')
-                simple_model_name = selected_model_text.split('(')[0].strip()
-                self.ax.plot(fit_line_x_dense_norm, fit_line_y_mw_dense, color="blue", label=f"Fit ({simple_model_name})", linewidth=1.5)
                 self.ax.axvline(normalized_protein_position, color="green", linestyle="--", label=f"Target Protein ({predicted_weight:.1f} units)", linewidth=1.5)
                 self.ax.set_xlabel(f"Normalized Distance (Relative to {self.active_set_name})", fontsize=9)
                 self.ax.set_ylabel("Molecular Weight (units)", fontsize=9)
@@ -389,7 +436,9 @@ if __name__ == "__main__":
                 self.model_changed_in_dialog.emit(selected_model_text)
 
             def get_final_prediction_model(self):
-                return {"coeffs": self.final_coeffs, "min_max_pos": self.final_min_max_pos}
+                # --- START MODIFICATION: Return model type along with coefficients ---
+                return {"model": self.final_model_type, "coeffs": self.final_coeffs, "min_max_pos": self.final_min_max_pos}
+                # --- END MODIFICATION ---
             
             def get_final_predicted_mw(self):
                 """Returns the final predicted molecular weight value."""
@@ -3736,14 +3785,14 @@ if __name__ == "__main__":
                         painter.setFont(predict_font); painter.setPen(Qt.green)
                         loc_y_ls = self.app_instance.protein_location.y(); draw_y_mw_ls = loc_y_ls - (predict_line_rect.top() + predict_line_rect.height() / 2.0)
                         painter.drawText(QPointF(predict_line_draw_start_x_ls, draw_y_mw_ls), line_symbol)
-                    should_draw_oligomer_overlay = (self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_coeffs is not None)
+                    should_draw_oligomer_overlay = (self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_model is not None)
                     if should_draw_oligomer_overlay:
                         line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]; text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
                         text_font = QFont(self.app_instance.custom_font_type_dropdown.currentText()); text_font.setPixelSize(max(4, int(self.app_instance.custom_font_size_spinbox.value() / self.zoom_level))); text_font.setBold(True)
                         painter.setFont(text_font); fm_text = QFontMetricsF(text_font); text_height = fm_text.height(); min_text_spacing = text_height * 1.2
                         bands_to_draw = []
                         for i, mw in enumerate(self.app_instance.oligomer_products):
-                            y_pos_img = self.app_instance._get_y_pos_from_mw(mw, self.app_instance.last_mw_prediction_coeffs, self.app_instance.last_mw_prediction_min_max_pos)
+                            y_pos_img = self.app_instance._get_y_pos_from_mw(mw, self.app_instance.last_mw_prediction_model, self.app_instance.last_mw_prediction_min_max_pos)
                             if y_pos_img is not None:
                                 y_pos_ls = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
                                 bands_to_draw.append({'mw': mw, 'y_ls': y_pos_ls, 'color': line_colors[i % len(line_colors)], 'text_color': text_colors[i % len(text_colors)]})
@@ -3761,8 +3810,33 @@ if __name__ == "__main__":
                             line_end_x = predict_line_draw_start_x_ls + predict_line_rect.width(); callout_start_point = QPointF(line_end_x, band['y_ls'])
                             text_leader_start_x = line_end_x + (40 / self.zoom_level); callout_bend_point = QPointF(text_leader_start_x, band['text_y_ls'])
                             text_start_x = callout_bend_point.x() + (5 / self.zoom_level); text_draw_y = band['text_y_ls'] - (text_rect.top() + text_rect.height() / 2.0)
-                            painter.drawLine(QPointF(line_start_x, band['y_ls']), callout_start_point); painter.drawLine(callout_start_point, callout_bend_point)
-                            painter.drawLine(callout_bend_point, QPointF(text_start_x, band['text_y_ls'])); painter.setFont(text_font); painter.setPen(band['text_color'])
+                            
+                            # Draw connector lines first
+                            painter.drawLine(QPointF(line_start_x, band['y_ls']), callout_start_point)
+                            painter.drawLine(callout_start_point, callout_bend_point)
+                            painter.drawLine(callout_bend_point, QPointF(text_start_x, band['text_y_ls']))
+                            
+                            painter.setFont(text_font)
+
+                            glow_color = QColor(255, 255, 255, 90) # Semi-transparent white
+                            glow_pen = QPen(glow_color)
+                            glow_pen.setWidth(2) # Make glow pen slightly thicker for a softer effect
+                            painter.setPen(glow_pen)
+                            
+                            # Define offsets for the glow, scaled by zoom level for consistency
+                            glow_offset = max(0.5, 1.0 / self.zoom_level)
+                            offsets = [
+                                (-glow_offset, -glow_offset), (glow_offset, -glow_offset),
+                                (-glow_offset, glow_offset), (glow_offset, glow_offset),
+                                (0, -glow_offset), (0, glow_offset),
+                                (-glow_offset, 0), (glow_offset, 0)
+                            ]
+                            # Draw the text multiple times at the offset positions
+                            for dx, dy in offsets:
+                                painter.drawText(QPointF(text_start_x + dx, text_draw_y + dy), text)
+
+                            # Finally, draw the main, sharp text on top
+                            painter.setPen(band['text_color'])
                             painter.drawText(QPointF(text_start_x, text_draw_y), text)
 
                 # --- START OF NEW STREAMLINED PREVIEW LOGIC ---
@@ -4270,7 +4344,7 @@ if __name__ == "__main__":
                 self.num_glycans_to_model = 0
                 #self.num_glycosylation_sites = 0
                 self.oligomer_products = [] # Combined list for all forms
-                self.last_mw_prediction_coeffs = None
+                self.last_mw_prediction_model = None
                 self.last_mw_prediction_min_max_pos = None
                 # --- Initialize Status Bar Labels ---
                 self.size_label = QLabel("Image Size: N/A")
@@ -6767,7 +6841,7 @@ if __name__ == "__main__":
                 mw_layout = QGridLayout(mw_group)
                 mw_layout.addWidget(QLabel("Regression Model:"), 0, 0)
                 self.mw_regression_model_combo = QComboBox()
-                self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"])
+                self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)","Log 4-PL"])
                 self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 3)")
                 mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
                 self.predict_button = QPushButton("Predict Molecular Weight")
@@ -7117,36 +7191,49 @@ if __name__ == "__main__":
                     
                     self.update_live_view()
 
-            def _get_y_pos_from_mw(self, mw, coeffs, min_max_pos):
+            def _get_y_pos_from_mw(self, mw, model_data, min_max_pos):
                 """Calculates the image Y-position for a given MW using the inverse regression model."""
-                if mw <= 0 or coeffs is None or min_max_pos is None:
+                if mw <= 0 or model_data is None or min_max_pos is None:
                     return None
                 
                 min_pos, max_pos = min_max_pos
                 log_mw = np.log10(mw)
                 
-                # Solve for normalized distance: p(norm_dist) - log_mw = 0
-                poly_coeffs = list(coeffs)
-                poly_coeffs[-1] -= log_mw # Subtract from the constant term
-                
+                # --- START MODIFICATION: Handle different model types ---
+                model_type = model_data.get("model", "poly") # Default to 'poly' for backward compatibility
+                coeffs = model_data.get("coeffs")
+
+                if coeffs is None:
+                    return None
+
                 try:
-                    roots = np.roots(poly_coeffs)
-                    # Filter for real roots within a reasonable physical range (e.g., -0.5 to 1.5)
-                    # to account for extrapolation.
-                    valid_roots = [r.real for r in roots if np.isreal(r) and -0.5 <= r.real <= 1.5]
-                    
-                    if not valid_roots:
+                    norm_dist = None
+                    if model_type == "4-PL":
+                        if not SCIPY_AVAILABLE: return None
+                        a, b, c, d = coeffs
+                        # Inverse of y = d + (a - d) / (1 + (x / c)**b)  -->  x = c * (((a - d) / (y - d)) - 1)**(1/b)
+                        # Where y is log_mw and x is norm_dist
+                        if (a - d) == 0 or (log_mw - d) == 0: return None
+                        term = ((a - d) / (log_mw - d)) - 1
+                        if term < 0: return None # Result would be complex
+                        norm_dist = c * (term**(1/b))
+
+                    else: # Default to polynomial
+                        poly_coeffs = list(coeffs)
+                        poly_coeffs[-1] -= log_mw
+                        roots = np.roots(poly_coeffs)
+                        valid_roots = [r.real for r in roots if np.isreal(r) and -0.5 <= r.real <= 1.5]
+                        if not valid_roots: return None
+                        norm_dist = min(valid_roots, key=lambda r: abs(r - 0.5))
+
+                    if norm_dist is not None:
+                        y_pos = min_pos + norm_dist * (max_pos - min_pos)
+                        return y_pos
+                    else:
                         return None
-                    
-                    # If multiple valid roots, choose the one closest to the [0, 1] range.
-                    # This is a heuristic that works well for typical S-shaped curves.
-                    norm_dist = min(valid_roots, key=lambda r: abs(r - 0.5))
+                # --- END MODIFICATION ---
 
-                    # Convert normalized distance back to image Y-coordinate
-                    y_pos = min_pos + norm_dist * (max_pos - min_pos)
-                    return y_pos
-
-                except Exception:
+                except (ValueError, ZeroDivisionError, RuntimeError):
                     return None
                 
             def start_region_definition_session(self, region_type):
@@ -13770,7 +13857,7 @@ if __name__ == "__main__":
                 # self.live_view_label.rectangle_points = [] # This is likely for single rect, also clear
                 self.latest_calculated_quantities = []
                 self.quantities_peak_area_dict={}
-                self.last_mw_prediction_coeffs = None
+                self.last_mw_prediction_model = None
                 self.last_mw_prediction_min_max_pos = None
                 self.oligomer_products = []
                 self.last_mw_prediction_marker_x_ls = None
@@ -13981,7 +14068,7 @@ if __name__ == "__main__":
                 
                 if dialog.exec() == QDialog.Accepted:
                     model_data = dialog.get_final_prediction_model()
-                    self.last_mw_prediction_coeffs = model_data.get("coeffs")
+                    self.last_mw_prediction_model = model_data 
                     self.last_mw_prediction_min_max_pos = model_data.get("min_max_pos")
                     self.run_predict_MW = True
 
@@ -14004,7 +14091,7 @@ if __name__ == "__main__":
                                     self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
                     # --- END NEW LOGIC ---
                 else:
-                    self.last_mw_prediction_coeffs = None
+                    self.last_mw_prediction_model = None
                     self.last_mw_prediction_min_max_pos = None
                     if hasattr(self, "protein_location"): del self.protein_location
                     self.run_predict_MW = False
