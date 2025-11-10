@@ -186,7 +186,7 @@ if __name__ == "__main__":
         from io import BytesIO
         import io
         from PySide6.QtWidgets import (
-            QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle,
+            QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle, QRadioButton,
             QScrollArea, QInputDialog, QFrame, QApplication, QSizePolicy,
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
@@ -6124,21 +6124,54 @@ if __name__ == "__main__":
                 
             def start_auto_lane_marker(self):
                 self._reset_live_view_label_custom_handlers()
-                """Initiates the automatic lane marker placement process, allowing user to choose region type."""
+                """Initiates the automatic lane marker placement process using a single, dynamically created dialog."""
                 if not self.image or self.image.isNull():
                     QMessageBox.warning(self, "Error", "Please load an image first.")
                     return
 
-                # --- (User dialogs remain the same) ---
-                items_side = ["Left", "Right"]
-                side, ok_side = QInputDialog.getItem(self, "Select Marker Side", "Place markers on which side?", items_side, 0, False)
-                if not ok_side or not side: return
-                self.auto_marker_side = side.lower()
-                items_region = ["Rectangle (for straight lanes)", "Quadrilateral (for skewed lanes)"]
-                region_type_str, ok_region = QInputDialog.getItem(self, "Select Region Type", "How do you want to define the lane region?", items_region, 0, False)
-                if not ok_region or not region_type_str: return
+                # --- START: Create a simple dialog on-the-fly without a new class ---
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Automatic Lane Setup")
+                dialog.setMinimumWidth(350)
+                layout = QVBoxLayout(dialog)
 
-                # --- Clear all preview states ---
+                # --- Side Selection ---
+                side_group = QGroupBox("Select Marker Side")
+                side_layout = QHBoxLayout(side_group)
+                radio_left = QRadioButton("Left")
+                radio_right = QRadioButton("Right")
+                radio_left.setChecked(True)
+                side_layout.addWidget(radio_left)
+                side_layout.addWidget(radio_right)
+                side_layout.addStretch()
+                layout.addWidget(side_group)
+
+                # --- Region Type Selection ---
+                region_group = QGroupBox("Select Lane Region Type")
+                region_layout = QVBoxLayout(region_group)
+                radio_rect = QRadioButton("Rectangle (for straight lanes)")
+                radio_quad = QRadioButton("Quadrilateral (for skewed lanes)")
+                radio_rect.setChecked(True)
+                region_layout.addWidget(radio_rect)
+                region_layout.addWidget(radio_quad)
+                layout.addWidget(region_group)
+
+                # --- OK/Cancel Buttons ---
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(dialog.accept)
+                button_box.rejected.connect(dialog.reject)
+                layout.addWidget(button_box)
+
+                # --- Execute the dialog and get results ---
+                if dialog.exec() == QDialog.Accepted:
+                    side = "left" if radio_left.isChecked() else "right"
+                    region_type = "rectangle" if radio_rect.isChecked() else "quadrilateral"
+                    self.auto_marker_side = side
+                else:
+                    return # User cancelled
+                # --- END: On-the-fly dialog logic ---
+
+                # Clear all preview states (this part remains the same)
                 self.live_view_label.quad_points = []
                 self.live_view_label.current_preview_points = []
                 self.live_view_label.bounding_box_preview = None
@@ -6147,15 +6180,12 @@ if __name__ == "__main__":
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 self.live_view_label.setMouseTracking(True)
 
-                if "Rectangle" in region_type_str:
+                if region_type == "rectangle":
                     self.live_view_label.mode = 'auto_lane_rect'
-                    # --- START OF THE FIX ---
-                    # Use the simpler, general-purpose rectangle drawing handlers, not the multi-lane specific ones.
                     self.live_view_label._custom_left_click_handler_from_app = self.start_rectangle
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.update_rectangle_preview
-                    # --- END OF THE FIX ---
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_rectangle_for_auto_lane
-                elif "Quadrilateral" in region_type_str:
+                elif region_type == "quadrilateral":
                     self.live_view_label.mode = 'auto_lane_quad'
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_auto_lane_quad_click
 
@@ -9892,21 +9922,23 @@ if __name__ == "__main__":
                 main_layout.setSpacing(10)
 
                 # --- Group 1: Marker Data (Presets and Labels) ---
-                presets_group = QGroupBox("Marker Presets & Labels")
+                presets_group = QGroupBox("Marker Presets and Labels")
                 presets_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 presets_layout = QGridLayout(presets_group)
                 presets_layout.addWidget(QLabel("Preset:"), 0, 0)
                 self.combo_box = QComboBox(self)
                 if hasattr(self, 'presets_data') and self.presets_data: self.combo_box.addItems(sorted(self.presets_data.keys()))
                 self.combo_box.addItem("Custom"); self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
+                self.combo_box.setFixedWidth(450)
                 presets_layout.addWidget(self.combo_box, 0, 1)
                 self.rename_input = QLineEdit(self)
                 self.rename_input.setPlaceholderText("Enter new name to save preset..."); self.rename_input.setEnabled(False)
                 presets_layout.addWidget(self.rename_input, 0, 2)
                 self.save_button = QPushButton("Save"); self.save_button.setToolTip("Saves the current L/R, Top, Custom Markers/Shapes to the selected/new preset name.")
+                self.save_button.setFixedWidth(100)
                 self.save_button.clicked.connect(self.save_config)
                 presets_layout.addWidget(self.save_button, 0, 3)
-                self.remove_config_button = QPushButton("Remove"); self.remove_config_button.clicked.connect(self.remove_config)
+                self.remove_config_button = QPushButton("Remove"); self.remove_config_button.setFixedWidth(100); self.remove_config_button.clicked.connect(self.remove_config)
                 presets_layout.addWidget(self.remove_config_button, 0, 4)
                 self.load_custom_from_preset_checkbox = QCheckBox("Load Custom Markers/Shapes from Preset")
                 self.load_custom_from_preset_checkbox.setChecked(True) # Default to checked
@@ -11583,10 +11615,9 @@ if __name__ == "__main__":
                     "Spectra Multicolor Broad Range Protein Ladder (Thermo)": [260, 140, 100, 75, 60, 45, 35, 25, 15, 10],
                     # DNA (bp)
                     "1 kb DNA Ladder (NEB N3232)": [10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 500],
-                    "1 kb Plus DNA Ladder (Invitrogen)": [15000, 10000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100],
-                    "1 kb Plus DNA Ladder (Thermo)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 75],
-                    "TrackIt 1 Kb Plus DNA Ladder (Invitrogen 10488085)": [12000, 11000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100],
-                    "Lambda DNA/HindIII Marker (NEB N3012)": [23130, 9416, 6557, 4361, 2322, 2027, 564],
+                    "1 kb Plus DNA Ladder (Invitrogen 10787018)": [15000, 10000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 850, 650, 500, 400, 300, 200, 100],
+                    "GeneRuler 1 kb Plus DNA Ladder (Thermo SM1331)": [20000, 10000, 7000, 5000, 4000, 3000, 2000, 1500, 1000, 700, 500, 400, 300, 200, 75],
+                    "Lambda DNA/HindIII Marker (NEB N3012)": [23130, 9416, 6557, 4361, 2322, 2027, 564, 125],
                 }
                 # Generic default top labels
                 default_top_labels_generic = ["MWM", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "L11", "L12", "L13", "L14", "L15"]
