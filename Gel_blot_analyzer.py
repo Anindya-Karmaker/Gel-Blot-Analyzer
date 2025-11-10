@@ -2197,8 +2197,16 @@ if __name__ == "__main__":
                     initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
                     self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
 
-                old_plot_widget = self.plot_placeholder_history.layout().takeAt(0).widget()
-                if old_plot_widget: old_plot_widget.deleteLater()
+                # --- START OF FIX: Use a robust while loop to clear the layout ---
+                if self.plot_placeholder_history and self.plot_placeholder_history.layout():
+                    while self.plot_placeholder_history.layout().count() > 0:
+                        item = self.plot_placeholder_history.layout().takeAt(0)
+                        if item:
+                            widget = item.widget()
+                            if widget:
+                                widget.deleteLater()
+                # --- END OF FIX ---
+                
                 self.plot_placeholder_history.layout().addWidget(self.previous_plot_placeholder_label)
                 self.previous_plot_placeholder_label.setText("Select an analysis from the list to view details.")
                 self.previous_plot_placeholder_label.show()
@@ -2780,11 +2788,6 @@ if __name__ == "__main__":
                 self.accept()
                 
             def update_plot(self):
-                """
-                THIS IS THE METHOD WITH THE FIX.
-                The logic has been simplified to ALWAYS plot the densitometry profile
-                (where peaks are high values) directly, removing the confusing visual inversion.
-                """
                 if self.canvas is None: return
                 profile_to_plot_and_calc = self.profile_original_inverted
                 
@@ -2793,13 +2796,13 @@ if __name__ == "__main__":
                     bg_color, ax_bg_color = '#2D2D30', '#38383C'
                     text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
-                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5'
+                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5' # Blue line for baseline
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.5
                 else:
                     bg_color, ax_bg_color = 'white', 'white'
                     text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
-                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue'
+                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue' # Blue line for baseline
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
                 self.fig.clf()
@@ -2821,9 +2824,7 @@ if __name__ == "__main__":
                      self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
                      self.canvas.draw_idle(); return
                 
-                # --- START OF FIX: This profile is now ALWAYS plotted directly ---
                 profile_for_display = profile_to_plot_and_calc
-                # --- END OF FIX ---
 
                 if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
                     self.background = np.zeros_like(profile_to_plot_and_calc)
@@ -2854,10 +2855,13 @@ if __name__ == "__main__":
                         self.peak_areas_valley.append(0); self.peak_areas_straight_line.append(0); self.peak_areas_rolling_ball.append(0)
                         continue
                     
+                    # --- START OF FIX: Use np.trapezoid instead of np.trapz ---
+                    # Rolling Ball Area
                     baseline_rb = self.background
-                    area_rb = np.trapz(profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rb[start_handle:end_handle+1])
+                    area_rb = np.trapezoid(profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rb[start_handle:end_handle+1])
                     self.peak_areas_rolling_ball.append(max(0, area_rb))
                     
+                    # Straight Line Area (Global)
                     global_sl_baseline = None
                     if self.peak_regions:
                         trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
@@ -2868,14 +2872,16 @@ if __name__ == "__main__":
                     area_sl = 0.0
                     if global_sl_baseline is not None:
                         difference_sl = profile_to_plot_and_calc[start_handle:end_handle+1] - global_sl_baseline[start_handle:end_handle+1]
-                        area_sl = np.trapz(np.maximum(0, difference_sl))
+                        area_sl = np.trapezoid(np.maximum(0, difference_sl))
                     self.peak_areas_straight_line.append(max(0, area_sl))
 
+                    # ROLLING-VALLEY BASELINE LOGIC
                     y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
                     baseline_rv_local_straight = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
                     final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
-                    area_valley = np.trapz(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - final_rv_baseline))
+                    area_valley = np.trapezoid(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - final_rv_baseline))
                     self.peak_areas_valley.append(max(0, area_valley))
+                    # --- END OF FIX ---
 
                 total_area = 0
                 if self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
@@ -2896,14 +2902,12 @@ if __name__ == "__main__":
                         baseline_rv_local_straight = np.interp(x_region_rv, [start_handle, end_handle], y_baseline_rv_points)
                         final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
                         
-                        # --- START OF FIX: Use the calculated baselines directly for plotting ---
                         self.ax.fill_between(x_region_rv, final_rv_baseline, profile_for_display[x_region_rv], where=(profile_for_display[x_region_rv] >= final_rv_baseline), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True, zorder=1)
                         self.ax.plot(x_region_rv, final_rv_baseline, color=rv_line_color, lw=1.5, zorder=4)
 
                         if i == 0:
                             self.ax.get_lines()[-1].set_label("Valley BG")
                             self.ax.plot(np.arange(len(self.background)), self.background, color='magenta', ls=":", lw=1.0, label="RV Guide BG", zorder=3)
-                        # --- END OF FIX ---
                         
                         area_to_display = self.peak_areas_valley[i]
                     
@@ -2975,7 +2979,7 @@ if __name__ == "__main__":
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
-                self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.3)
+                self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.25)
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
@@ -4059,14 +4063,19 @@ if __name__ == "__main__":
                 QTableView, QTableWidget, QListView, QListWidget {
                     border: 1px solid #D0D5DB;
                     gridline-color: #EAEAEA;
-                    color: #333333;
                     selection-background-color: #5D98D4;
                     selection-color: white;
                 }
                 
-                QTableView QAbstractItemView, QTableWidget QAbstractItemView {
-                    background-color: #FFFFFF; 
+                QTableView::item, QTableWidget::item, QListView::item, QListWidget::item {
+                    color: #333333; /* Dark gray for readability on white background */
                 }
+
+                /* --- START OF FIX: Explicitly set the background of the item viewport to white --- */
+                QAbstractItemView {
+                    background-color: #FFFFFF;
+                }
+                /* --- END OF FIX --- */
 
                 QHeaderView {
                     background-color: #F0F2F5;
@@ -4656,6 +4665,7 @@ if __name__ == "__main__":
                 
                 self._apply_initial_theme('dark')
                 self._apply_initial_theme('light')
+                self._update_toolbar_icons()
             
             def _apply_initial_theme(self, current_theme):
                 """Applies the theme stylesheet based on the loaded preference."""
@@ -4692,7 +4702,9 @@ if __name__ == "__main__":
                     app.setStyleSheet(self.light_stylesheet)
                     self.current_theme = "light"
                 
-                # --- FIX: Add this line to refresh the histogram ---
+                # --- FIX: Call the helper method to regenerate icons with the new theme color ---
+                self._update_toolbar_icons()
+                
                 self._update_levels_histogram()
 
             # --- ADD THIS NEW METHOD ---
@@ -4982,110 +4994,66 @@ if __name__ == "__main__":
             
             def _create_actions(self):
                 """Create QAction objects for menus and toolbars."""
-                style = self.style() 
-                icon_size = QSize(30, 30) 
-                text_color = self.palette().color(QPalette.ButtonText) 
-
-                open_icon = create_text_icon("Wingdings",icon_size, text_color, "1") 
-                save_icon = create_text_icon("Wingdings",icon_size, text_color, "=")
-                save_svg_icon = create_text_icon("Wingdings",icon_size, text_color, "3")
-                undo_icon = create_text_icon("Wingdings 3",icon_size, text_color, "O")
-                redo_icon = create_text_icon("Wingdings 3",icon_size, text_color, "N")
-                paste_icon = create_text_icon("Wingdings 2",icon_size, text_color, "2")
-                copy_icon = create_text_icon("Wingdings",icon_size, text_color, "4")
-                reset_icon = create_text_icon("Wingdings 3",icon_size, text_color, "Q")
-                exit_icon = create_text_icon("Wingdings 2",icon_size, text_color, "V")
-                
-                zoom_in_icon = create_text_icon("Arial",icon_size, text_color, "+")
-                zoom_out_icon = create_text_icon("Arial",icon_size, text_color, "-")
-                pan_up_icon = create_text_icon("Arial",icon_size, text_color, "↑") 
-                pan_down_icon = create_text_icon("Arial",icon_size, text_color, "↓") 
-                pan_left_icon = create_text_icon("Arial",icon_size, text_color, "←") 
-                pan_right_icon = create_text_icon("Arial",icon_size, text_color, "→") 
-                bounding_box_icon = create_text_icon("Wingdings 2", icon_size, text_color, "0")
-                draw_line_icon = create_text_icon("Arial", icon_size, text_color, "__")
-                info_icon = create_text_icon("Wingdings", icon_size, text_color, "'")
-                copy_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "B")
-                paste_custom_icon = create_text_icon("Wingdings", icon_size, text_color, "A")
-                layout_top_icon = create_text_icon("Webdings", icon_size, text_color, "5")
-                layout_bottom_icon = create_text_icon("Webdings", icon_size, text_color, "6")
-                layout_left_icon = create_text_icon("Webdings", icon_size, text_color, "7")
-                layout_right_icon = create_text_icon("Webdings", icon_size, text_color, "8")
-                
-                # --- ADD THIS ACTION ---
-                theme_icon = create_text_icon("Webdings", icon_size, text_color, "N")
-                self.theme_action = QAction(theme_icon, "Toggle Dark/Light Mode", self)
-                self.theme_action.setCheckable(True)
-                self.theme_action.setToolTip("Switch between light and dark themes.")
-                self.theme_action.setToolTip("Switch between light and dark themes (Ctrl+Shift+D or Cmd+Shift+D).")
-                self.theme_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
-                self.theme_action.triggered.connect(self._toggle_theme)
-                # --- END ADD ---
-
-
+                # --- Actions are now created WITHOUT icons initially ---
                 # --- File Actions ---
-                self.load_action = QAction(open_icon, "&Load Image...", self)
-                self.save_action = QAction(save_icon, "&Save with Config", self)
-                # self.save_svg_action = QAction(save_svg_icon, "Save &SVG...", self)
-                self.reset_action = QAction(reset_icon, "&Reset Image", self)
-                self.exit_action = QAction(exit_icon, "E&xit", self)
+                self.load_action = QAction("&Load Image...", self)
+                self.save_action = QAction("&Save with Config", self)
+                self.reset_action = QAction("&Reset Image", self)
+                self.exit_action = QAction("E&xit", self)
 
                 # --- Edit Actions ---
-                self.undo_action = QAction(undo_icon, "&Undo", self) # Standard for now
-                self.redo_action = QAction(redo_icon, "&Redo", self) # Standard for now
-                self.copy_action = QAction(copy_icon, "&Copy Image", self)
-                self.paste_action = QAction(paste_icon, "&Paste Image", self)
+                self.undo_action = QAction("&Undo", self)
+                self.redo_action = QAction("&Redo", self)
+                self.copy_action = QAction("&Copy Image", self)
+                self.paste_action = QAction("&Paste Image", self)
 
-                # --- View Actions (using the created icons) ---
-                self.zoom_in_action = QAction(zoom_in_icon, "Zoom &In", self)
-                self.zoom_out_action = QAction(zoom_out_icon, "Zoom &Out", self)
-                self.pan_left_action = QAction(pan_left_icon, "Pan Left", self)
-                self.pan_right_action = QAction(pan_right_icon, "Pan Right", self)
-                self.pan_up_action = QAction(pan_up_icon, "Pan Up", self)
-                self.pan_down_action = QAction(pan_down_icon, "Pan Down", self)
-                # --- END: Add Panning Actions ---
-                self.auto_lane_action = QAction(create_text_icon("Arial", icon_size, text_color, "A"), "&Automatic Lane Markers", self)
+                # --- View Actions ---
+                self.zoom_in_action = QAction("Zoom &In", self)
+                self.zoom_out_action = QAction("Zoom &Out", self)
+                self.pan_left_action = QAction("Pan Left", self)
+                self.pan_right_action = QAction("Pan Right", self)
+                self.pan_up_action = QAction("Pan Up", self)
+                self.pan_down_action = QAction("Pan Down", self)
+                self.auto_lane_action = QAction("&Automatic Lane Markers", self)
 
-                self.layout_top_action = QAction(layout_top_icon, "Viewer on Top", self)
-                self.layout_bottom_action = QAction(layout_bottom_icon, "Viewer on Bottom", self)
-                self.layout_left_action = QAction(layout_left_icon, "Viewer on Left", self)
-                self.layout_right_action = QAction(layout_right_icon, "Viewer on Right", self)
+                # --- Layout Actions ---
+                self.layout_top_action = QAction("Viewer on Top", self)
+                self.layout_bottom_action = QAction("Viewer on Bottom", self)
+                self.layout_left_action = QAction("Viewer on Left", self)
+                self.layout_right_action = QAction("Viewer on Right", self)
                 layout_actions = [self.layout_top_action, self.layout_bottom_action, self.layout_left_action, self.layout_right_action]
                 self.layout_action_group = QActionGroup(self)
                 self.layout_action_group.setExclusive(True)
                 for action in layout_actions:
                     action.setCheckable(True)
                     self.layout_action_group.addAction(action)
-
                 self.layout_top_action.setChecked(True)
+
+                # --- Theme Action ---
+                self.theme_action = QAction("Toggle Dark/Light Mode", self)
+                self.theme_action.setCheckable(True)
+                self.theme_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
+
+                # --- Other Tool Actions ---
+                self.info_action = QAction("&Info/GitHub", self)
+                self.draw_bounding_box_action = QAction("Draw &Bounding Box", self)
+                self.draw_line_action = QAction("Draw &a line", self)
+                self.copy_custom_items_action = QAction("Copy Custom Markers/Shapes", self)
+                self.paste_custom_items_action = QAction("Paste Custom Markers/Shapes", self)
+
+                # --- FIX: Call the new helper method to set all icons ---
+                self._update_toolbar_icons()
+
+                # --- The rest of the method (tooltips, shortcuts, connections) is unchanged ---
                 self.layout_top_action.setToolTip("Place the image viewer above the settings tabs.")
                 self.layout_bottom_action.setToolTip("Place the image viewer below the settings tabs.")
                 self.layout_left_action.setToolTip("Place the image viewer to the left of the settings tabs.")
                 self.layout_right_action.setToolTip("Place the image viewer to the right of the settings tabs.")
                 self.auto_lane_action.setToolTip("Automatically detect and place lane markers based on a defined region.")
-                self.auto_lane_action.triggered.connect(self.start_auto_lane_marker)
-
-                
-                self.info_action = QAction(info_icon, "&Info/GitHub", self)
+                self.theme_action.setToolTip("Switch between light and dark themes (Ctrl+Shift+D or Cmd+Shift+D).")
                 self.info_action.setToolTip("Open Project GitHub Page")
-                self.info_action.triggered.connect(self.open_github)
-
-                # --- Set Shortcuts ---
-                self.load_action.setShortcut(QKeySequence.Open)
-                self.save_action.setShortcut(QKeySequence.Save)
-                self.copy_action.setShortcut(QKeySequence.Copy)
-                self.paste_action.setShortcut(QKeySequence.Paste)
-                self.undo_action.setShortcut(QKeySequence.Undo)
-                self.redo_action.setShortcut(QKeySequence.Redo)
-                self.zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
-                self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
-                # self.save_svg_action.setShortcut(QKeySequence("Ctrl+M"))
-                self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
-
-                # --- Set Tooltips ---
                 self.load_action.setToolTip("Load an image file (Ctrl+O)")
                 self.save_action.setToolTip("Save image and configuration (Ctrl+S)")
-                # self.save_svg_action.setToolTip("Save as SVG for Word/vector editing (Ctrl+M)")
                 self.reset_action.setToolTip("Reset image and all annotations (Ctrl+R)")
                 self.exit_action.setToolTip("Exit the application")
                 self.undo_action.setToolTip("Undo last action (Default Shortcut: OS dependent")
@@ -5094,24 +5062,27 @@ if __name__ == "__main__":
                 self.paste_action.setToolTip("Paste image from clipboard (Ctrl+V)")
                 self.zoom_in_action.setToolTip("Increase zoom level (Ctrl+= or mouse scroll bar)")
                 self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+- or mouse scroll bar)). Auto resets the zoom when reaches zero.")
-                # --- START: Set Tooltips for Panning Actions ---
                 self.pan_left_action.setToolTip("Pan the view left (when zoomed) (Arrow key left or mouse right click)")
                 self.pan_right_action.setToolTip("Pan the view right (when zoomed) (Arrow key right or mouse right click")
                 self.pan_up_action.setToolTip("Pan the view up (when zoomed) (Arrow key up or mouse right click)")
                 self.pan_down_action.setToolTip("Pan the view down (when zoomed) (Arrow key down or mouse right click")
-                self.draw_bounding_box_action = QAction(bounding_box_icon, "Draw &Bounding Box", self)
                 self.draw_bounding_box_action.setToolTip("Draw a bounding rectangle on the image. Use the marker tab, custom marker options for color and size")
-                self.draw_bounding_box_action.triggered.connect(self.enable_rectangle_drawing_mode)
-                
-                self.draw_line_action = QAction(draw_line_icon, "Draw &a line", self)
                 self.draw_line_action.setToolTip("Draw a line on the image. Use the marker tab, custom marker options for color and size")
-                self.draw_line_action.triggered.connect(self.enable_line_drawing_mode)
-                # --- END: Set Tooltips for Panning Actions ---
+                self.copy_custom_items_action.setToolTip("Copy all custom markers and shapes to the clipboard.")
+                self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
+                
+                self.load_action.setShortcut(QKeySequence.Open)
+                self.save_action.setShortcut(QKeySequence.Save)
+                self.copy_action.setShortcut(QKeySequence.Copy)
+                self.paste_action.setShortcut(QKeySequence.Paste)
+                self.undo_action.setShortcut(QKeySequence.Undo)
+                self.redo_action.setShortcut(QKeySequence.Redo)
+                self.zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
+                self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
+                self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
 
-                # --- Connect signals ---
                 self.load_action.triggered.connect(self.load_image)
                 self.save_action.triggered.connect(self.save_image)
-                # self.save_svg_action.triggered.connect(self.save_image_svg)
                 self.reset_action.triggered.connect(self.reset_image)
                 self.exit_action.triggered.connect(self.close)
                 self.undo_action.triggered.connect(self.undo_action_m)
@@ -5120,36 +5091,27 @@ if __name__ == "__main__":
                 self.paste_action.triggered.connect(self.paste_image)
                 self.zoom_in_action.triggered.connect(self.zoom_in)
                 self.zoom_out_action.triggered.connect(self.zoom_out)
-                # --- START: Connect Panning Action Signals ---
-                # Use lambda functions to directly modify the offset
-                pan_step = 30 # Define pan step size here or access from elsewhere if needed
+                pan_step = 30
                 self.pan_right_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() + pan_step) if self.live_view_label.zoom_level > 1.0 else None)
-                self.pan_right_action.triggered.connect(self.update_live_view) # Trigger update after offset change
-
+                self.pan_right_action.triggered.connect(self.update_live_view)
                 self.pan_left_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() - pan_step) if self.live_view_label.zoom_level > 1.0 else None)
                 self.pan_left_action.triggered.connect(self.update_live_view)
-
                 self.pan_down_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() + pan_step) if self.live_view_label.zoom_level > 1.0 else None)
                 self.pan_down_action.triggered.connect(self.update_live_view)
-
                 self.pan_up_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() - pan_step) if self.live_view_label.zoom_level > 1.0 else None)
                 self.pan_up_action.triggered.connect(self.update_live_view)
-                
-                self.copy_custom_items_action = QAction(copy_custom_icon, "Copy Custom Markers/Shapes", self)
-                self.copy_custom_items_action.setToolTip("Copy all custom markers and shapes to the clipboard.")
                 self.copy_custom_items_action.triggered.connect(self.copy_custom_items)
-
-                self.paste_custom_items_action = QAction(paste_custom_icon, "Paste Custom Markers/Shapes", self)
-                self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
                 self.paste_custom_items_action.triggered.connect(self.paste_custom_items)
                 self.layout_top_action.triggered.connect(lambda: self._transition_layout_change("Top"))
                 self.layout_bottom_action.triggered.connect(lambda: self._transition_layout_change("Bottom"))
                 self.layout_left_action.triggered.connect(lambda: self._transition_layout_change("Left"))
                 self.layout_right_action.triggered.connect(lambda: self._transition_layout_change("Right"))
-                
-                # --- END: Connect Panning Action Signals ---
+                self.auto_lane_action.triggered.connect(self.start_auto_lane_marker)
+                self.draw_line_action.triggered.connect(self.enable_line_drawing_mode)
+                self.draw_bounding_box_action.triggered.connect(self.enable_rectangle_drawing_mode)
+                self.info_action.triggered.connect(self.open_github)
+                self.theme_action.triggered.connect(self._toggle_theme)
 
-                # --- START: Initially Disable Panning Actions ---
                 self.pan_left_action.setEnabled(False)
                 self.pan_right_action.setEnabled(False)
                 self.pan_up_action.setEnabled(False)
@@ -6046,6 +6008,39 @@ if __name__ == "__main__":
             def open_github(self):
                 # Open the GitHub link in the default web browser
                 QDesktopServices.openUrl(QUrl("https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer"))
+                
+            def _update_toolbar_icons(self):
+                """Regenerates all toolbar icons based on the current theme's palette."""
+                icon_size = QSize(30, 30) 
+                # --- FIX: Get the text color from the CURRENT palette ---
+                text_color = self.palette().color(QPalette.Text) # Use QPalette.Text for better contrast guarantee
+
+                # Create and set icons for each action
+                self.load_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "1"))
+                self.save_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "="))
+                self.reset_action.setIcon(create_text_icon("Wingdings 3", icon_size, text_color, "Q"))
+                self.exit_action.setIcon(create_text_icon("Wingdings 2", icon_size, text_color, "V"))
+                self.undo_action.setIcon(create_text_icon("Wingdings 3", icon_size, text_color, "O"))
+                self.redo_action.setIcon(create_text_icon("Wingdings 3", icon_size, text_color, "N"))
+                self.copy_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "4"))
+                self.paste_action.setIcon(create_text_icon("Wingdings 2", icon_size, text_color, "2"))
+                self.zoom_in_action.setIcon(create_text_icon("Arial", icon_size, text_color, "+"))
+                self.zoom_out_action.setIcon(create_text_icon("Arial", icon_size, text_color, "-"))
+                self.pan_left_action.setIcon(create_text_icon("Arial", icon_size, text_color, "←"))
+                self.pan_right_action.setIcon(create_text_icon("Arial", icon_size, text_color, "→"))
+                self.pan_up_action.setIcon(create_text_icon("Arial", icon_size, text_color, "↑"))
+                self.pan_down_action.setIcon(create_text_icon("Arial", icon_size, text_color, "↓"))
+                self.auto_lane_action.setIcon(create_text_icon("Arial", icon_size, text_color, "A"))
+                self.layout_top_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "5"))
+                self.layout_bottom_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "6"))
+                self.layout_left_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "7"))
+                self.layout_right_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "8"))
+                self.theme_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "N"))
+                self.info_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "'"))
+                self.draw_bounding_box_action.setIcon(create_text_icon("Wingdings 2", icon_size, text_color, "0"))
+                self.draw_line_action.setIcon(create_text_icon("Arial", icon_size, text_color, "__"))
+                self.copy_custom_items_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "B"))
+                self.paste_custom_items_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "A"))
             
             def create_tool_bar(self):
                 """Create the main application toolbar."""
