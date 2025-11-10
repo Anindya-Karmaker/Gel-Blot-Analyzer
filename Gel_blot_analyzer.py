@@ -2125,19 +2125,30 @@ if __name__ == "__main__":
                 return lane_widget
             def _copy_active_lane_table_data(self):
                 table_to_copy = None
-                current_lane_widget = None
                 
-                # Check current tab's content
-                current_tab_content = self.results_display_layout_current.itemAt(0).widget() if self.results_display_layout_current.count() > 0 else None
-                if isinstance(current_tab_content, QTabWidget): # Multi-lane view
-                    current_lane_widget = current_tab_content.currentWidget()
-                elif isinstance(current_tab_content, QWidget): # Single-lane view
-                    current_lane_widget = current_tab_content
+                # Get the main container widget for the current analysis results
+                container_widget = self.results_display_layout_current.itemAt(0).widget() if self.results_display_layout_current.count() > 0 else None
                 
-                if current_lane_widget:
-                    table_widgets_in_lane = current_lane_widget.findChildren(QTableWidget)
-                    if table_widgets_in_lane:
-                        table_to_copy = table_widgets_in_lane[0]
+                if not container_widget:
+                    QMessageBox.information(self, "Copy Error", "No analysis results are currently displayed.")
+                    return
+
+                # Find the QTabWidget within the container, if it exists (for multi-lane view)
+                tab_widget = container_widget.findChild(QTabWidget)
+                
+                active_lane_widget = None
+                if tab_widget:
+                    # Multi-lane view: get the currently visible tab page
+                    active_lane_widget = tab_widget.currentWidget()
+                else:
+                    # Single-lane view: the container itself holds the lane data
+                    active_lane_widget = container_widget
+                
+                # Now find the QTableWidget within the active lane's widget
+                if active_lane_widget:
+                    table_widgets_found = active_lane_widget.findChildren(QTableWidget)
+                    if table_widgets_found:
+                        table_to_copy = table_widgets_found[0]
                 
                 if table_to_copy:
                     self._copy_table_data_generic(table_to_copy)
@@ -2145,20 +2156,31 @@ if __name__ == "__main__":
                     QMessageBox.information(self, "Copy Error", "Could not find the active lane's table to copy.")
             def _copy_active_history_lane_table_data(self):
                 table_to_copy = None
-                if hasattr(self, 'history_results_display_container'):
-                    active_content_widget = self.history_results_display_layout.itemAt(0).widget() if self.history_results_display_layout.count() > 0 else None
+                
+                # Get the main container widget for the history results
+                container_widget = self.history_results_display_layout.itemAt(0).widget() if self.history_results_display_layout.count() > 0 else None
+                
+                if not container_widget:
+                    QMessageBox.information(self, "Copy Error", "No history results are currently displayed.")
+                    return
 
-                    if isinstance(active_content_widget, QTabWidget):
-                        current_lane_hist_widget = active_content_widget.currentWidget()
-                        if current_lane_hist_widget:
-                            table_widgets_in_lane = current_lane_hist_widget.findChildren(QTableWidget)
-                            if table_widgets_in_lane:
-                                table_to_copy = table_widgets_in_lane[0]
-                    elif isinstance(active_content_widget, QWidget):
-                         table_widgets_in_lane = active_content_widget.findChildren(QTableWidget)
-                         if table_widgets_in_lane:
-                             table_to_copy = table_widgets_in_lane[0]
-
+                # Find the QTabWidget within the container, if it exists
+                tab_widget = container_widget.findChild(QTabWidget)
+                
+                active_lane_widget = None
+                if tab_widget:
+                    # Multi-lane history view
+                    active_lane_widget = tab_widget.currentWidget()
+                else:
+                    # Single-lane history view
+                    active_lane_widget = container_widget
+                
+                # Now find the QTableWidget within the active lane's widget
+                if active_lane_widget:
+                    table_widgets_found = active_lane_widget.findChildren(QTableWidget)
+                    if table_widgets_found:
+                        table_to_copy = table_widgets_found[0]
+                
                 if table_to_copy:
                     self._copy_table_data_generic(table_to_copy)
                 else:
@@ -2306,30 +2328,35 @@ if __name__ == "__main__":
                     table_widget.resizeColumnsToContents()
             def _copy_table_data_generic(self, table_widget_source):
                 if not table_widget_source: return
-                selected_ranges = table_widget_source.selectedRanges()
-                if not selected_ranges: 
-                    # If nothing selected, select all and then copy
-                    table_widget_source.selectAll()
-                    selected_ranges = table_widget_source.selectedRanges()
-                    if not selected_ranges: return
-                selected_range = selected_ranges[0]
-                start_row, end_row = selected_range.topRow(), selected_range.bottomRow()
-                start_col, end_col = selected_range.leftColumn(), selected_range.rightColumn()
+                
                 clipboard_string = ""
+                column_count = table_widget_source.columnCount()
+                row_count = table_widget_source.rowCount()
+
+                # --- START OF FIX: Copy all headers and all rows, ignoring selection ---
                 # Add headers to clipboard string
-                header_data = [table_widget_source.horizontalHeaderItem(c).text() for c in range(start_col, end_col + 1)]
+                header_data = [table_widget_source.horizontalHeaderItem(c).text() for c in range(column_count)]
                 clipboard_string += "\t".join(header_data) + "\n"
-                for r in range(start_row, end_row + 1):
+
+                # Add all data rows to clipboard string
+                for r in range(row_count):
                     row_data = []
-                    for c in range(start_col, end_col + 1):
+                    # Check for placeholder text spanning the whole row
+                    first_item = table_widget_source.item(r, 0)
+                    if first_item and table_widget_source.columnSpan(r, 0) > 1:
+                        if "No data" in first_item.text() or "Select an analysis" in first_item.text():
+                            continue # Skip placeholder rows
+                    
+                    for c in range(column_count):
                         item = table_widget_source.item(r, c)
-                        if table_widget_source.rowSpan(r,c) > 1 or table_widget_source.columnSpan(r,c) > 1:
-                            if "No data" in item.text() or "Select an analysis" in item.text():
-                                row_data.append(""); continue
                         row_data.append(item.text() if item else "")
+                    
                     if any(cell_text for cell_text in row_data):
                         clipboard_string += "\t".join(row_data) + "\n"
+                # --- END OF FIX ---
+                
                 QApplication.clipboard().setText(clipboard_string.strip())
+                QMessageBox.information(self, "Copied", "The active table's content has been copied to the clipboard.")
             def _export_to_excel_generic(self, results_data_for_export, analysis_name_for_filename_base="Analysis_Results", 
                                          standard_dict_for_export=None, is_multi_lane_data=False):
                 safe_analysis_name = str(analysis_name_for_filename_base).replace('.', '_').replace(' ', '_').replace(':', '-')
@@ -4015,7 +4042,7 @@ if __name__ == "__main__":
                 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
                 QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZHToPSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
                 QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
                 QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
                 QSlider::handle:horizontal { background: #5D98D4; border: 1px solid #4A78A9; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
@@ -4063,19 +4090,23 @@ if __name__ == "__main__":
                 QTableView, QTableWidget, QListView, QListWidget {
                     border: 1px solid #D0D5DB;
                     gridline-color: #EAEAEA;
-                    selection-background-color: #5D98D4;
-                    selection-color: white;
+                    selection-color: white; /* Text color for selected items */
                 }
                 
+                /* --- START OF FIX: Explicitly set item colors and selection highlight --- */
                 QTableView::item, QTableWidget::item, QListView::item, QListWidget::item {
                     color: #333333; /* Dark gray for readability on white background */
+                    background-color: #FFFFFF; /* Ensure item background is white */
                 }
-
-                /* --- START OF FIX: Explicitly set the background of the item viewport to white --- */
+                QTableView::item:selected, QTableWidget::item:selected, QListView::item:selected, QListWidget::item:selected {
+                    background-color: #5D98D4; /* Blue highlight color */
+                    color: white; /* White text on blue highlight */
+                }
+                /* --- END OF FIX --- */
+                
                 QAbstractItemView {
                     background-color: #FFFFFF;
                 }
-                /* --- END OF FIX --- */
 
                 QHeaderView {
                     background-color: #F0F2F5;
