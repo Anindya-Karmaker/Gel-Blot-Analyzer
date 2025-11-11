@@ -38,7 +38,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer V3.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer V3.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
@@ -186,7 +186,7 @@ if __name__ == "__main__":
         from io import BytesIO
         import io
         from PySide6.QtWidgets import (
-            QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle, QRadioButton,
+            QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle, QRadioButton, QButtonGroup,
             QScrollArea, QInputDialog, QFrame, QApplication, QSizePolicy,
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
@@ -806,6 +806,148 @@ if __name__ == "__main__":
                     "glycans_to_use": self.num_glycans_spinbox.value(),
                     "oligomers_to_use": self.num_oligomers_spinbox.value()
                 }
+            
+        class ScaleDialog(QDialog):
+            """A simple dialog to get a known length and its unit for image calibration."""
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Set Image Scale")
+                layout = QGridLayout(self)
+                
+
+                layout.addWidget(QLabel("Known Length:"), 0, 0)
+                self.length_spinbox = QDoubleSpinBox()
+                self.length_spinbox.setRange(0.0001, 1000000.0)
+                self.length_spinbox.setValue(1.0)
+                self.length_spinbox.setDecimals(4)
+                layout.addWidget(self.length_spinbox, 0, 1)
+
+                layout.addWidget(QLabel("Units:"), 1, 0)
+                self.unit_combo = QComboBox()
+                # --- START MODIFICATION: Added more units ---
+                self.unit_combo.addItems([
+                    "pixels",
+                    "µm (micrometers)",
+                    "mm (millimeters)",
+                    "cm (centimeters)",
+                    "m (meters)",
+                    "inches",
+                    "feet"
+                ])
+                # Set a common default
+                self.unit_combo.setCurrentText("mm (millimeters)")
+                # --- END MODIFICATION ---
+                layout.addWidget(self.unit_combo, 1, 1)
+
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(self.accept)
+                button_box.rejected.connect(self.reject)
+                layout.addWidget(button_box, 2, 0, 1, 2)
+
+            def get_values(self):
+                """Returns the entered length and selected unit (short form)."""
+                # --- START MODIFICATION: Return the short form of the unit ---
+                full_unit_text = self.unit_combo.currentText()
+                # Extract the short form (e.g., "mm" from "mm (millimeters)")
+                short_unit = full_unit_text.split(" ")[0]
+                return self.length_spinbox.value(), short_unit
+                # --- END MODIFICATION ---
+            
+        class MeasurementToolWindow(QDialog):
+            """A non-modal window to house all measurement tools and display results."""
+            # Signal emitted when a tool button is toggled. The string is the mode name or None.
+            tool_selected = Signal(str)
+            clear_requested = Signal()
+
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Measurement Tools")
+                # Non-modal: setWindowFlags to not block the main window
+                self.setWindowFlags(
+                    Qt.Window |
+                    Qt.CustomizeWindowHint |
+                    Qt.WindowMinimizeButtonHint |
+                    Qt.WindowCloseButtonHint
+                )
+                self.setMinimumWidth(350)
+                
+                layout = QGridLayout(self)
+                layout.setSpacing(10)
+
+                # --- Tool Buttons ---
+                self.btn_set_scale = QPushButton("1. Set Scale")
+                self.btn_set_scale.setToolTip("Calibrate by drawing a line on an object of known length.")
+                self.btn_set_scale.setCheckable(True)
+
+                self.btn_measure_distance = QPushButton("2. Measure Distance")
+                self.btn_measure_distance.setToolTip("Click two points to measure the distance between them.")
+                self.btn_measure_distance.setCheckable(True)
+                
+                self.btn_measure_area = QPushButton("3. Measure Area")
+                self.btn_measure_area.setToolTip("Click and drag to draw a freehand shape and calculate its area.")
+                self.btn_measure_area.setCheckable(True)
+
+                # Use a button group to ensure only one tool is active at a time
+                self.tool_button_group = QButtonGroup(self)
+                self.tool_button_group.setExclusive(True)
+                self.tool_button_group.addButton(self.btn_set_scale)
+                self.tool_button_group.addButton(self.btn_measure_distance)
+                self.tool_button_group.addButton(self.btn_measure_area)
+                self.tool_button_group.buttonClicked.connect(self._on_tool_button_clicked)
+
+                self.btn_clear_measurements = QPushButton("Clear All")
+                self.btn_clear_measurements.setToolTip("Clear the current scale and any measurement overlays.")
+                self.btn_clear_measurements.clicked.connect(self.clear_requested.emit)
+
+                layout.addWidget(self.btn_set_scale, 0, 0)
+                layout.addWidget(self.btn_measure_distance, 0, 1)
+                layout.addWidget(self.btn_measure_area, 1, 0)
+                layout.addWidget(self.btn_clear_measurements, 1, 1)
+
+                # --- Display Labels ---
+                self.scale_display_label = QLabel("<b>Scale:</b> Not Set")
+                self.measurement_result_label = QLabel("<b>Result:</b> N/A")
+                
+                layout.addWidget(self.scale_display_label, 2, 0, 1, 2)
+                layout.addWidget(self.measurement_result_label, 3, 0, 1, 2)
+            
+            def _on_tool_button_clicked(self, button):
+                """Internal slot to translate button clicks into signals."""
+                if not button.isChecked():
+                    # If user clicks an already active button, it un-checks it.
+                    self.tool_selected.emit(None) # Signal that no tool is active
+                    return
+
+                if button is self.btn_set_scale:
+                    self.tool_selected.emit('set_scale')
+                elif button is self.btn_measure_distance:
+                    self.tool_selected.emit('measure_distance')
+                elif button is self.btn_measure_area:
+                    self.tool_selected.emit('measure_area')
+
+            def uncheck_all_tools(self):
+                """Method to programmatically uncheck all tool buttons."""
+                # Temporarily disconnect the signal to prevent feedback loops
+                self.tool_button_group.buttonClicked.disconnect(self._on_tool_button_clicked)
+                checked_button = self.tool_button_group.checkedButton()
+                if checked_button:
+                    # Set exclusive to False, uncheck, then set back to True
+                    self.tool_button_group.setExclusive(False)
+                    checked_button.setChecked(False)
+                    self.tool_button_group.setExclusive(True)
+                # Reconnect the signal
+                self.tool_button_group.buttonClicked.connect(self._on_tool_button_clicked)
+
+            def update_scale_display(self, text):
+                self.scale_display_label.setText(f"<b>Scale:</b> {text}")
+
+            def update_result_display(self, text):
+                self.measurement_result_label.setText(f"<b>Result:</b> {text}")
+
+            def closeEvent(self, event):
+                """When the window is closed, signal that no tool is active."""
+                self.tool_selected.emit(None)
+                super().closeEvent(event)
     
         class AutoLaneTuneDialog(QDialog):
             """
@@ -4004,6 +4146,56 @@ if __name__ == "__main__":
                             for y_grid_ls in range(start_y_grid, int(view_origin_y_unzoomed + label_height_unzoomed + grid_size_label_space), grid_size_label_space):
                                 painter.drawLine(QPointF(view_origin_x_unzoomed, y_grid_ls), QPointF(view_origin_x_unzoomed + label_width_unzoomed, y_grid_ls))
 
+                if self.app_instance:
+                        # 1. Draw the finalized, persistent shape and its result label first
+                        if self.app_instance.finalized_measurement_shape:
+                            painter.save()
+                            final_pen = QPen(QColor(255, 255, 0, 220), max(1.0, 2.5 / self.zoom_level), Qt.SolidLine)
+                            painter.setPen(final_pen)
+                            painter.setBrush(QColor(255, 255, 0, 60) if self.app_instance.finalized_measurement_shape.isClosed() else Qt.NoBrush)
+                            painter.drawPolygon(self.app_instance.finalized_measurement_shape)
+    
+                            if self.app_instance.last_measurement_result_text:
+                                label_font = QFont("Arial", max(8, int(12 / self.zoom_level))); label_font.setBold(True)
+                                painter.setFont(label_font)
+                                text_rect = self.app_instance.finalized_measurement_shape.boundingRect()
+                                text_pos = text_rect.center()
+                                fm = QFontMetrics(label_font)
+                                text_bound = fm.boundingRect(self.app_instance.last_measurement_result_text).adjusted(-4,-2,4,2)
+                                text_bound.moveCenter(text_pos.toPoint())
+                                painter.setBrush(QColor(0, 0, 0, 150)); painter.setPen(Qt.NoPen)
+                                painter.drawRoundedRect(text_bound, 3, 3)
+                                painter.setPen(Qt.white)
+                                painter.drawText(text_bound, Qt.AlignCenter, self.app_instance.last_measurement_result_text)
+                            painter.restore()
+
+                        # 2. Draw the live, in-progress shape (markers and rubber-band line)
+                        if self.app_instance.measurement_mode and self.app_instance.measurement_points:
+                            painter.save()
+                            # Define pens and radius for previews
+                            preview_pen = QPen(QColor(0, 255, 255, 200), max(0.8, 2.0 / self.zoom_level), Qt.DotLine)
+                            marker_pen = QPen(QColor(0, 255, 255, 220), max(1.0, 2.0 / self.zoom_level), Qt.SolidLine)
+                            marker_radius = 5 / self.zoom_level if self.zoom_level > 0 else 5
+                            
+                            # Draw markers at each clicked point
+                            painter.setPen(marker_pen)
+                            for p in self.app_instance.measurement_points:
+                                painter.drawEllipse(p, marker_radius, marker_radius)
+                            
+                            # Draw the polyline connecting the clicked points
+                            painter.setPen(preview_pen)
+                            if len(self.app_instance.measurement_points) > 1:
+                                painter.drawPolyline(QPolygonF(self.app_instance.measurement_points))
+
+                            # Draw the "rubber-band" line from the last point to the current cursor position
+                            # 'current_preview_points' should contain only the live cursor position from mouseMove
+                            if self.app_instance.live_view_label.current_preview_points:
+                                last_clicked_point = self.app_instance.measurement_points[-1]
+                                cursor_point = self.app_instance.live_view_label.current_preview_points[0]
+                                painter.drawLine(last_clicked_point, cursor_point)
+                            
+                            painter.restore()
+
                 painter.restore()
             
             def leaveEvent(self, event):
@@ -4352,6 +4544,12 @@ if __name__ == "__main__":
                 self.screen_width, self.screen_height = self.screen.width(), self.screen.height()
                 self.hist_fig, self.hist_ax, self.hist_canvas = None, None, None
                 self.overlay_mode_active = False
+                self.measurement_mode = None  # Tracks current tool: 'set_scale', 'measure_distance', 'measure_area'
+                self.pixels_per_unit = None
+                self.scale_unit = "pixels"
+                self.measurement_points = []  # For drawing in-progress shapes
+                self.finalized_measurement_shape = None  # Stores the final QPolygonF for persistent drawing
+                self.last_measurement_result_text = ""
                 self.adjustment_context = "Main Image" # 'Main Image', 'Overlay 1', or 'Overlay 2'
                 self.image1_adjustments = {}
                 self.image2_adjustments = {}
@@ -4375,7 +4573,7 @@ if __name__ == "__main__":
                 self.preview_label_width_setting = 400  # A smaller base width for the minimum calculation
                 self.preview_label_max_height_setting = 300 # A smaller base height for the minimum calculation
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER V3.0"
+                self.window_title="GEL BLOT ANALYZER V3.5"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -6891,54 +7089,59 @@ if __name__ == "__main__":
                 main_layout = QVBoxLayout(tab)
                 main_layout.setSpacing(10)
 
-                # --- Group 1: Molecular Weight Prediction (Compact layout) ---
-                mw_group = QGroupBox("Molecular Weight Prediction")
+                # --- Group 1: Molecular Weight & Measurement Tools (Combined) ---
+                mw_group = QGroupBox("Molecular Weight and Measurements")
                 mw_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 mw_layout = QGridLayout(mw_group)
+                
+                # --- Row 1: MW Prediction ---
                 mw_layout.addWidget(QLabel("Regression Model:"), 0, 0)
                 self.mw_regression_model_combo = QComboBox()
                 self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)","Log 4-PL"])
                 self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 3)")
                 mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
+                
                 self.predict_button = QPushButton("Predict Molecular Weight")
-                self.predict_button.setToolTip("Click a point on a lane to predict its MW based on the active standard markers.\nShortcut: Ctrl+P")
+                self.predict_button.setToolTip("Click a point on a lane to predict its molecular weight/size based on the active standard markers.\nShortcut: Ctrl+P")
                 self.predict_button.setEnabled(False)
                 self.predict_button.clicked.connect(self.predict_molecular_weight)
                 mw_layout.addWidget(self.predict_button, 0, 2)
+
+                # --- Row 2: Protein Analysis & Measurement Button ---
                 self.open_glyco_mapper_button = QPushButton("Protein Analysis")
                 self.open_glyco_mapper_button.setToolTip("Analyze a protein sequence for modifications and oligomerization.")
                 self.open_glyco_mapper_button.clicked.connect(self.open_protein_analyzer)
                 mw_layout.addWidget(self.open_glyco_mapper_button, 0, 3)
+
+                self.btn_open_measure_window = QPushButton("Measurement Tools")
+                self.btn_open_measure_window.setToolTip("Opens a separate window for image calibration, distance, and area measurements.")
+                self.btn_open_measure_window.clicked.connect(self.open_measurement_window)
+                mw_layout.addWidget(self.btn_open_measure_window, 0, 4) # Moved here
+
                 mw_layout.setColumnStretch(1, 1)
                 self.show_oligomer_glyco_overlay_checkbox = QCheckBox("Show Oligomer/Glyco Overlay")
                 self.show_oligomer_glyco_overlay_checkbox.setToolTip("After predicting an MW, overlay potential oligomeric and glycosylated bands on the image.")
                 self.show_oligomer_glyco_overlay_checkbox.stateChanged.connect(self.update_live_view)
                 mw_layout.addWidget(self.show_oligomer_glyco_overlay_checkbox, 1, 0, 1, 4)
+                
                 main_layout.addWidget(mw_group)
 
                 # --- Group 2: Lane Quantification Workflow ---
                 quant_workflow_group = QGroupBox("Lane Quantification Workflow")
+                # ... (The rest of your analysis_tab code for the quantification workflow is unchanged) ...
                 quant_workflow_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 quant_workflow_layout = QVBoxLayout(quant_workflow_group)
                 quant_workflow_layout.setSpacing(8)
-
-                # -- Step 1: Define Regions (Grid layout for buttons) --
                 step1_group = QGroupBox("Define and Manage Analysis Regions")
-                # --- START OF THE FIX ---
-                # Switch to a QGridLayout for more robust, even spacing.
                 step1_layout = QGridLayout(step1_group)
-
                 self.btn_define_quad = QPushButton("Quadrilateral Region")
                 self.btn_define_quad.setToolTip("Start a session to define one or more skewed lane regions by clicking 4 corner points for each.\nPress ESC to finish the session.")
                 self.btn_define_quad.clicked.connect(lambda: self.start_region_definition_session('quad'))
-                # Set an expanding size policy to help the layout manager.
                 self.btn_define_quad.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
                 self.btn_define_rec = QPushButton("Rectangular Region")
                 self.btn_define_rec.setToolTip("Start a session to define one or more straight lane regions by clicking and dragging for each.\nPress ESC to finish the session.")
                 self.btn_define_rec.clicked.connect(lambda: self.start_region_definition_session('rectangle'))
                 self.btn_define_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                
                 self.btn_sel_rec = QPushButton("Move/Resize/Delete Area")
                 self.btn_sel_rec.setToolTip(
                     "Click a lane to select it. Then:\n"
@@ -6953,33 +7156,22 @@ if __name__ == "__main__":
                 )
                 self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
                 self.btn_sel_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                
-                # Add buttons to specific columns in the grid.
                 step1_layout.addWidget(self.btn_define_quad, 0, 0)
                 step1_layout.addWidget(self.btn_define_rec, 0, 1)
                 step1_layout.addWidget(self.btn_sel_rec, 0, 2)
-                # --- END OF THE FIX ---
-
                 quant_workflow_layout.addWidget(step1_group,0)
-
-                # -- Step 2: Process Regions & View Results --
-                step2_group = QGroupBox("Process Regions & View Results")
+                step2_group = QGroupBox("Process Regions and View Results")
                 step2_layout = QGridLayout(step2_group)
-                
                 process_buttons_layout = QHBoxLayout()
                 self.btn_process_std = QPushButton("Process Selected as Standard"); self.btn_process_std.setToolTip("Analyze a pre-defined and selected region as a single standard lane.")
                 self.btn_process_std.clicked.connect(self.process_standard)
                 self.btn_analyze_sample = QPushButton("Analyze as Sample(s)"); self.btn_analyze_sample.setToolTip("Analyze the defined region(s) as sample lane(s), using the standard curve if available.")
                 self.btn_analyze_sample.clicked.connect(self.process_sample)
-
                 self.btn_process_std.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.btn_analyze_sample.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
                 process_buttons_layout.addWidget(self.btn_process_std)
                 process_buttons_layout.addWidget(self.btn_analyze_sample)
-                
                 step2_layout.addLayout(process_buttons_layout, 0, 0, 1, 3)
-                
                 step2_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 step2_layout.addWidget(QLabel("Std. Quantities:"), 2, 0); self.standard_protein_values = QLineEdit(); self.standard_protein_values.setPlaceholderText("Known quantities (comma-separated)")
                 step2_layout.addWidget(self.standard_protein_values, 2, 1)
@@ -6991,42 +7183,228 @@ if __name__ == "__main__":
                 step2_layout.addWidget(QLabel("Sample Results:"), 4, 0, Qt.AlignTop); self.target_protein_areas_text = QTextEdit(); self.target_protein_areas_text.setPlaceholderText("Calculated peak areas and quantities will appear here for each lane.")
                 self.target_protein_areas_text.setReadOnly(True); self.target_protein_areas_text.setFixedHeight(60)
                 step2_layout.addWidget(self.target_protein_areas_text, 4, 1, 1, 2)
-
                 bottom_buttons_layout = QHBoxLayout()
                 self.table_export_button = QPushButton("View Full Results and History")
                 self.table_export_button.setToolTip("Open a new window to view, export, and manage current and past analysis results.")
                 self.table_export_button.clicked.connect(self.open_table_window)
-                
                 self.save_analysis_button = QPushButton("Save Analysis")
                 self.save_analysis_button.setToolTip("Saves all defined regions, standard curve data, and results to a config file associated with the current image.")
                 self.save_analysis_button.clicked.connect(self.save_analysis_to_config)
-                
                 self.load_analysis_button = QPushButton("Load Analysis")
                 self.load_analysis_button.setToolTip("Loads analysis regions and standard curve data from a config file.")
                 self.load_analysis_button.clicked.connect(self.load_analysis_from_config)
-
                 self.clear_predict_button = QPushButton("Reset Analysis")
                 self.clear_predict_button.setToolTip("Clears MW prediction line, all analysis regions, and standard curve data.\nShortcut: Ctrl+Shift+P")
                 self.clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
-
                 self.table_export_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.save_analysis_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.load_analysis_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.clear_predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                
                 bottom_buttons_layout.addWidget(self.table_export_button)
                 bottom_buttons_layout.addWidget(self.save_analysis_button)
                 bottom_buttons_layout.addWidget(self.load_analysis_button)
                 bottom_buttons_layout.addWidget(self.clear_predict_button)
-                
                 step2_layout.addLayout(bottom_buttons_layout, 5, 0, 1, 3)
-                
                 quant_workflow_layout.addWidget(step2_group)
                 main_layout.addWidget(quant_workflow_group)
 
                 main_layout.addStretch(1)
                 
                 return tab
+
+            
+            def open_measurement_window(self):
+                """Creates (if necessary) and shows the non-modal measurement tool window."""
+                if not hasattr(self, 'measurement_tool_window') or not self.measurement_tool_window:
+                    self.measurement_tool_window = MeasurementToolWindow(self)
+                    # Connect signals from the tool window to methods in the main app
+                    self.measurement_tool_window.tool_selected.connect(self.activate_measurement_tool)
+                    self.measurement_tool_window.clear_requested.connect(self.clear_measurement_mode)
+                    # When the dialog is closed, clean up the reference to it
+                    self.measurement_tool_window.finished.connect(lambda: setattr(self, 'measurement_tool_window', None))
+                
+                self.measurement_tool_window.show()
+                self.measurement_tool_window.raise_()
+                self.measurement_tool_window.activateWindow()
+
+            def activate_measurement_tool(self, mode):
+                """Central controller to activate a specific measurement tool."""
+                if mode == self.measurement_mode: # User clicked the same button again
+                    self._exit_current_tool_mode()
+                    return
+
+                if not self.image or self.image.isNull():
+                    QMessageBox.warning(self, "Error", "Please load an image first.")
+                    if self.measurement_tool_window:
+                        self.measurement_tool_window.uncheck_all_tools()
+                    return
+
+                # Clear previous interaction state, but keep results on screen
+                self._exit_current_tool_mode()
+                # If a new measurement is started, then we clear the old finalized shape
+                self.finalized_measurement_shape = None
+                self.last_measurement_result_text = ""
+
+                self.measurement_mode = mode
+                
+                # Setup mouse handlers and show instructions
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self._reset_live_view_label_custom_handlers()
+                self.live_view_label._custom_left_click_handler_from_app = self.handle_measurement_mouse_press
+                self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_measurement_mouse_move
+                
+                if mode == 'set_scale':
+                    QMessageBox.information(self, "Set Scale", "Click two points to define the calibration line.")
+                elif mode == 'measure_distance':
+                    QMessageBox.information(self, "Measure Distance", "Click two points to measure the distance.")
+                elif mode == 'measure_area':
+                    QMessageBox.information(self, "Measure Area", "Click points to draw a polygon.\nClick the first point again to close the shape and calculate the area.")
+
+            def _exit_current_tool_mode(self):
+                """Helper to reset the UI interaction state of any measurement tool."""
+                self.measurement_mode = None
+                self.measurement_points = []  # Clear temporary drawing points
+                self._reset_live_view_label_custom_handlers()
+                # If the tool window is open, tell it to uncheck its buttons
+                if hasattr(self, 'measurement_tool_window') and self.measurement_tool_window:
+                    self.measurement_tool_window.uncheck_all_tools()
+                self.update_live_view()
+
+            def clear_measurement_mode(self, clear_scale=True):
+                """Clears all measurement results, overlays, and exits any active tool mode."""
+                if clear_scale:
+                    self.pixels_per_unit = None
+                    self.scale_unit = "pixels"
+                    if hasattr(self, 'measurement_tool_window') and self.measurement_tool_window:
+                        self.measurement_tool_window.update_scale_display("Not Set")
+
+                # Clear the finalized results that are being displayed
+                self.finalized_measurement_shape = None
+                self.last_measurement_result_text = ""
+                if hasattr(self, 'measurement_tool_window') and self.measurement_tool_window:
+                    self.measurement_tool_window.update_result_display("N/A")
+
+                # Exit the active tool (resets cursor, mouse handlers, etc.)
+                self._exit_current_tool_mode()
+
+            def handle_measurement_mouse_press(self, event):
+                if not self.measurement_mode or event.button() != Qt.LeftButton:
+                    return
+
+                # --- START OF THE FIX ---
+                # Instead of recalculating the point from the event, we use the PREVIEW point
+                # that was calculated during the last mouse move. This is the point the user actually sees and intends to click.
+                if self.live_view_label.current_preview_points:
+                    # The preview point is already transformed, snapped, and constrained.
+                    final_click_point_ls = self.live_view_label.current_preview_points[0]
+                else:
+                    # This is a fallback for safety, in case a click happens without a preceding move event.
+                    point_ls = self.live_view_label.transform_point(event.position())
+                    final_click_point_ls = self.snap_point_to_grid(point_ls)
+                # --- END OF THE FIX ---
+
+                if self.measurement_mode == 'measure_area':
+                    if len(self.measurement_points) > 1:
+                        first_point = self.measurement_points[0]
+                        click_radius_threshold = 10 / self.live_view_label.zoom_level
+                        if (final_click_point_ls - first_point).manhattanLength() < click_radius_threshold:
+                            # If closing the shape, add the first point to ensure it's perfectly closed.
+                            self.measurement_points.append(first_point)
+                            self.finalize_measurement()
+                            return
+                    # Add the confirmed, constrained point to the list.
+                    self.measurement_points.append(final_click_point_ls)
+
+                else: # 'set_scale' or 'measure_distance' modes
+                    # Add the confirmed, constrained point to the list.
+                    self.measurement_points.append(final_click_point_ls)
+                    if len(self.measurement_points) == 2:
+                        self.finalize_measurement()
+                
+                self.update_live_view()
+
+            def handle_measurement_mouse_move(self, event):
+                """Handles mouse move for measurement previews, including Shift-key constraint for all modes."""
+                if not self.measurement_mode or not self.measurement_points:
+                    self.live_view_label.current_preview_points = []
+                    return
+                
+                current_point_ls = self.live_view_label.transform_point(event.position())
+                snapped_current_point = self.snap_point_to_grid(current_point_ls)
+                
+                # --- Unified Shift-key constraint logic ---
+                if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                    start_point = None
+                    if self.measurement_mode in ['set_scale', 'measure_distance']:
+                        start_point = self.measurement_points[0]
+                    elif self.measurement_mode == 'measure_area':
+                        start_point = self.measurement_points[-1]
+                    
+                    if start_point:
+                        delta_x = abs(snapped_current_point.x() - start_point.x())
+                        delta_y = abs(snapped_current_point.y() - start_point.y())
+
+                        if delta_x > delta_y:
+                            snapped_current_point.setY(start_point.y())
+                        else:
+                            snapped_current_point.setX(start_point.x())
+
+                # This list now ONLY contains the live, constrained cursor position for the rubber-band line.
+                self.live_view_label.current_preview_points = [snapped_current_point]
+                
+                self.update_live_view()
+
+            def finalize_measurement(self):
+                """Performs calculations, sets the final shape for display, and exits the tool's interaction mode."""
+                # This method's logic remains largely the same, but it's now called at the right time.
+                if not self.measurement_mode or not self.measurement_points:
+                    self._exit_current_tool_mode()
+                    return
+
+                self.finalized_measurement_shape = QPolygonF(self.measurement_points)
+                points_img = self._map_label_points_to_image_points(self.measurement_points)
+                if not points_img:
+                    self.clear_measurement_mode()
+                    return
+
+                if self.measurement_mode == 'set_scale':
+                    dialog = ScaleDialog(self)
+                    if dialog.exec() == QDialog.Accepted:
+                        known_length, unit = dialog.get_values()
+                        pixel_dist = np.linalg.norm(np.array(points_img[0].toTuple()) - np.array(points_img[-1].toTuple()))
+                        if pixel_dist > 1e-6 and known_length > 0:
+                            self.pixels_per_unit = pixel_dist / known_length
+                            self.scale_unit = unit
+                            if self.measurement_tool_window:
+                                self.measurement_tool_window.update_scale_display(f"{self.pixels_per_unit:.2f} px/{self.scale_unit}")
+                    self.last_measurement_result_text = ""
+                
+                elif self.measurement_mode == 'measure_distance':
+                    if self.pixels_per_unit and self.pixels_per_unit > 0:
+                        pixel_dist = np.linalg.norm(np.array(points_img[0].toTuple()) - np.array(points_img[-1].toTuple()))
+                        real_dist = pixel_dist / self.pixels_per_unit
+                        self.last_measurement_result_text = f"{real_dist:.3f} {self.scale_unit}"
+                        if self.measurement_tool_window:
+                            self.measurement_tool_window.update_result_display(self.last_measurement_result_text)
+                    else:
+                        self.last_measurement_result_text = "No Scale Set"
+                        if self.measurement_tool_window:
+                            self.measurement_tool_window.update_result_display("Set scale first")
+                
+                elif self.measurement_mode == 'measure_area':
+                    if self.pixels_per_unit and self.pixels_per_unit > 0:
+                        points_img_np = np.array([p.toTuple() for p in points_img], dtype=np.int32)
+                        area_px2 = cv2.contourArea(points_img_np)
+                        area_real2 = area_px2 / (self.pixels_per_unit ** 2)
+                        self.last_measurement_result_text = f"{area_real2:.3f} {self.scale_unit}\u00b2"
+                        if self.measurement_tool_window:
+                            self.measurement_tool_window.update_result_display(self.last_measurement_result_text)
+                    else:
+                        self.last_measurement_result_text = "No Scale Set"
+                        if self.measurement_tool_window:
+                            self.measurement_tool_window.update_result_display("Set scale first")
+                
+                self._exit_current_tool_mode()
             
             def save_analysis_to_config(self):
                 """
@@ -9990,7 +10368,7 @@ if __name__ == "__main__":
                 main_layout.addWidget(standard_group)
 
                 # --- Group 3: Custom Markers, Shapes & Grid ---
-                custom_group = QGroupBox("Custom Markers, Shapes & Grid")
+                custom_group = QGroupBox("Custom Markers, Shapes and Grid")
                 custom_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 custom_layout = QVBoxLayout(custom_group); custom_layout.setSpacing(6)
                 row1_layout = QHBoxLayout(); row1_layout.setSpacing(6)
@@ -10476,9 +10854,12 @@ if __name__ == "__main__":
                     a_mode_was_cancelled_or_view_reset = False
                     self._deactivate_all_previews()
 
-                    if self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.moving_multi_lane_index != -1:
+                    if self.measurement_mode:
+                        self.clear_measurement_mode()
+                        a_mode_was_cancelled_or_view_reset = True
+                    elif self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.moving_multi_lane_index != -1:
                         self.moving_multi_lane_index = -1; self._reset_to_selection_mode(); self.setFocus(); event.accept(); return 
-                    if self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
+                    elif self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                         self.cancel_custom_item_interaction_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.overlay_mode_active:
                         self.cancel_interactive_overlay_mode(); a_mode_was_cancelled_or_view_reset = True
@@ -13900,6 +14281,7 @@ if __name__ == "__main__":
                     del self.protein_location 
                 self.predict_size=False
                 self.bounding_boxes=[]
+                self.clear_measurement_mode()
                 self.bounding_box_start = None
                 # self.live_view_label.bounding_box_start = None # This is not an attribute of LiveViewLabel
                 # self.live_view_label.bounding_box_preview = None # Will be cleared below
