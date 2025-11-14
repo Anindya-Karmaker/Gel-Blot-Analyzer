@@ -521,6 +521,18 @@ if __name__ == "__main__":
                 self.absorbance_oxidized_display = QLineEdit(); self.absorbance_oxidized_display.setReadOnly(True)
                 self.absorbance_oxidized_display.setToolTip("Calculated as (Ext. Coeff. Oxidized) / (Molecular Weight).")
                 props_layout.addWidget(self.absorbance_oxidized_display, 5, 1)
+                props_layout.addWidget(QLabel("<b>Net Charge at pH:</b>"), 6, 0)
+                charge_layout = QHBoxLayout()
+                self.ph_input_spinbox = QDoubleSpinBox()
+                self.ph_input_spinbox.setRange(0.0, 14.0)
+                self.ph_input_spinbox.setDecimals(2)
+                self.ph_input_spinbox.setSingleStep(0.25)
+                self.ph_input_spinbox.setValue(7.0) # Default to physiological pH
+                self.ph_input_spinbox.valueChanged.connect(self._update_charge_display)
+                self.charge_display = QLineEdit(); self.charge_display.setReadOnly(True)
+                charge_layout.addWidget(self.ph_input_spinbox)
+                charge_layout.addWidget(self.charge_display)
+                props_layout.addLayout(charge_layout, 6, 1)
                 right_column_layout.addWidget(physicochem_group)
                 params_group = QGroupBox("Fragment Modeling Parameters")
                 params_layout = QGridLayout(params_group)
@@ -577,44 +589,69 @@ if __name__ == "__main__":
 
             # --- START MODIFICATION: pI Calculation using user-provided table ---
             def _calculate_isoelectric_point(self, sequence):
-                if not sequence or len(sequence) < 2:
+                """
+                Calculates the isoelectric point (pI) of a protein sequence using an iterative
+                method and pKa values from Bjellqvist et al. (1993, 1994).
+                """
+                if not sequence:
                     return None
 
-                # pKa values from the user-provided table 
-                # REFERENCE: https://www.peptideweb.com/images/pdf/pKa-and-pI-values-of-amino-acids.pdf
+                # pKa values from Bjellqvist et al., Electrophoresis 1993, 14, 1023-1031
+                # and Bjellqvist et al., Electrophoresis 1994, 15, 529-539.
+                # These values match the ExPASy pI/Mw calculator
                 PK_DATA = {
-                    'COOH': { 'A': 2.34, 'R': 2.17, 'N': 2.02, 'D': 2.09, 'C': 1.71, 'E': 2.19, 'Q': 2.17, 'G': 2.34, 'H': 1.82, 'I': 2.36, 'L': 2.36, 'K': 2.18, 'M': 2.28, 'F': 1.83, 'P': 1.99, 'S': 2.21, 'T': 2.09, 'W': 2.43, 'Y': 2.20, 'V': 2.32 },
-                    'NH3':  { 'A': 9.69, 'R': 9.04, 'N': 8.80, 'D': 9.82, 'C': 10.78, 'E': 9.67, 'Q': 9.13, 'G': 9.60, 'H': 9.17, 'I': 9.60, 'L': 9.60, 'K': 8.95, 'M': 9.21, 'F': 9.13, 'P': 10.60, 'S': 9.15, 'T': 9.10, 'W': 9.44, 'Y': 9.11, 'V': 9.62 },
-                    'Side': { 'R': 12.48, 'D': 3.86, 'C': 8.33, 'E': 4.25, 'H': 6.00, 'K': 10.79, 'Y': 10.07 }
+                    'COOH': {
+                        'A': 3.55, 'R': 3.55, 'N': 3.55, 'D': 4.55, 'C': 3.55, 
+                        'E': 4.75, 'Q': 3.55, 'G': 3.55, 'H': 3.55, 'I': 3.55, 
+                        'L': 3.55, 'K': 3.55, 'M': 3.55, 'F': 3.55, 'P': 3.55, 
+                        'S': 3.55, 'T': 3.55, 'W': 3.55, 'Y': 3.55, 'V': 3.55
+                    },
+                    'NH3': {
+                        'A': 7.59, 'R': 7.50, 'N': 7.22, 'D': 7.50, 'C': 7.50, 
+                        'E': 7.70, 'Q': 7.50, 'G': 7.50, 'H': 7.50, 'I': 7.50, 
+                        'L': 7.50, 'K': 7.50, 'M': 7.00, 'F': 7.50, 'P': 8.36, 
+                        'S': 6.93, 'T': 6.82, 'W': 7.50, 'Y': 7.50, 'V': 7.44
+                    },
+                    'Side': {
+                        'R': 12.0, 'D': 4.05, 'C': 9.0, 'E': 4.45, 
+                        'H': 5.98, 'K': 10.0, 'Y': 10.0
+                    }
                 }
                 
                 n_term_aa = sequence[0]
                 c_term_aa = sequence[-1]
 
-                pk_n_term = PK_DATA['NH3'].get(n_term_aa, 9.6) # Default if not found
-                pk_c_term = PK_DATA['COOH'].get(c_term_aa, 2.3) # Default if not found
+                pk_n_term = PK_DATA['NH3'].get(n_term_aa, 7.50)
+                pk_c_term = PK_DATA['COOH'].get(c_term_aa, 3.55)
 
                 aa_counts = {aa: sequence.count(aa) for aa in PK_DATA['Side']}
 
                 min_ph, max_ph = 0.0, 14.0
-                current_ph = 7.0 
+                current_ph = 7.0
                 
                 for _ in range(100):
-                    # Calculate charge contributions
+                    # Charge of N-terminus (positive)
                     charge_n = 1.0 / (1.0 + 10**(current_ph - pk_n_term))
+                    # Charge of C-terminus (negative)
                     charge_c = -1.0 / (1.0 + 10**(pk_c_term - current_ph))
                     
+                    # Charges of positive side chains
                     charge_k = aa_counts.get('K', 0) / (1.0 + 10**(current_ph - PK_DATA['Side']['K']))
                     charge_r = aa_counts.get('R', 0) / (1.0 + 10**(current_ph - PK_DATA['Side']['R']))
                     charge_h = aa_counts.get('H', 0) / (1.0 + 10**(current_ph - PK_DATA['Side']['H']))
                     
+                    # Charges of negative side chains
                     charge_d = -aa_counts.get('D', 0) / (1.0 + 10**(PK_DATA['Side']['D'] - current_ph))
                     charge_e = -aa_counts.get('E', 0) / (1.0 + 10**(PK_DATA['Side']['E'] - current_ph))
-                    charge_c = -aa_counts.get('C', 0) / (1.0 + 10**(PK_DATA['Side']['C'] - current_ph))
-                    charge_y = -aa_counts.get('Y', 0) / (1.0 + 10**(PK_DATA['Side']['Y'] - current_ph))
+                    charge_cys = -aa_counts.get('C', 0) / (1.0 + 10**(PK_DATA['Side']['C'] - current_ph))
+                    charge_tyr = -aa_counts.get('Y', 0) / (1.0 + 10**(PK_DATA['Side']['Y'] - current_ph))
                     
-                    net_charge = charge_n + charge_c + charge_k + charge_r + charge_h + charge_d + charge_e + charge_c + charge_y
+                    # Sum all charges
+                    net_charge = (charge_n + charge_c + 
+                                charge_k + charge_r + charge_h + 
+                                charge_d + charge_e + charge_cys + charge_tyr)
 
+                    # Bisection method to find pH where net_charge is zero
                     if abs(net_charge) < 1e-4:
                         break
 
@@ -626,6 +663,74 @@ if __name__ == "__main__":
                     current_ph = (min_ph + max_ph) / 2.0
 
                 return current_ph
+            
+            def _calculate_net_charge_at_ph(self, sequence, ph):
+                """Calculates the net charge of a protein sequence at a given pH value
+                using pKa values from Bjellqvist et al. (1993, 1994).
+                
+                Args:
+                    sequence: Protein amino acid sequence (string)
+                    ph: pH value at which to calculate charge (float)
+                
+                Returns:
+                    Net charge of the protein at the given pH (float)
+                """
+                if not sequence:
+                    return None
+                
+                if ph < 0 or ph > 14:
+                    raise ValueError("pH must be between 0 and 14")
+
+                # pKa values from Bjellqvist et al., matching ExPASy pI/Mw calculator
+                PK_DATA = {
+                    'COOH': {
+                        'A': 3.55, 'R': 3.55, 'N': 3.55, 'D': 4.55, 'C': 3.55, 
+                        'E': 4.75, 'Q': 3.55, 'G': 3.55, 'H': 3.55, 'I': 3.55, 
+                        'L': 3.55, 'K': 3.55, 'M': 3.55, 'F': 3.55, 'P': 3.55, 
+                        'S': 3.55, 'T': 3.55, 'W': 3.55, 'Y': 3.55, 'V': 3.55
+                    },
+                    'NH3': {
+                        'A': 7.59, 'R': 7.50, 'N': 7.22, 'D': 7.50, 'C': 7.50, 
+                        'E': 7.70, 'Q': 7.50, 'G': 7.50, 'H': 7.50, 'I': 7.50, 
+                        'L': 7.50, 'K': 7.50, 'M': 7.00, 'F': 7.50, 'P': 8.36, 
+                        'S': 6.93, 'T': 6.82, 'W': 7.50, 'Y': 7.50, 'V': 7.44
+                    },
+                    'Side': {
+                        'R': 12.0, 'D': 4.05, 'C': 9.0, 'E': 4.45, 
+                        'H': 5.98, 'K': 10.0, 'Y': 10.0
+                    }
+                }
+                
+                n_term_aa = sequence[0]
+                c_term_aa = sequence[-1]
+
+                pk_n_term = PK_DATA['NH3'].get(n_term_aa, 7.50)
+                pk_c_term = PK_DATA['COOH'].get(c_term_aa, 3.55)
+
+                aa_counts = {aa: sequence.count(aa) for aa in PK_DATA['Side']}
+
+                # Charge of N-terminus (positive)
+                charge_n = 1.0 / (1.0 + 10**(ph - pk_n_term))
+                # Charge of C-terminus (negative)
+                charge_c = -1.0 / (1.0 + 10**(pk_c_term - ph))
+                
+                # Charges of positive side chains
+                charge_k = aa_counts.get('K', 0) / (1.0 + 10**(ph - PK_DATA['Side']['K']))
+                charge_r = aa_counts.get('R', 0) / (1.0 + 10**(ph - PK_DATA['Side']['R']))
+                charge_h = aa_counts.get('H', 0) / (1.0 + 10**(ph - PK_DATA['Side']['H']))
+                
+                # Charges of negative side chains
+                charge_d = -aa_counts.get('D', 0) / (1.0 + 10**(PK_DATA['Side']['D'] - ph))
+                charge_e = -aa_counts.get('E', 0) / (1.0 + 10**(PK_DATA['Side']['E'] - ph))
+                charge_cys = -aa_counts.get('C', 0) / (1.0 + 10**(PK_DATA['Side']['C'] - ph))
+                charge_tyr = -aa_counts.get('Y', 0) / (1.0 + 10**(PK_DATA['Side']['Y'] - ph))
+                
+                # Sum all charges
+                net_charge = (charge_n + charge_c + 
+                            charge_k + charge_r + charge_h + 
+                            charge_d + charge_e + charge_cys + charge_tyr)
+
+                return net_charge
 
             def _on_mw_da_changed(self, text):
                 if self.base_protein_mw_input_da.signalsBlocked(): return
@@ -648,6 +753,24 @@ if __name__ == "__main__":
                     output.append(line)
                 
                 return "\n".join(output)
+            
+            def _update_charge_display(self):
+                """Calculates and displays the net charge at the user-specified pH."""
+                sequence = self.sequence_entry.toPlainText().strip().upper()
+                if not sequence:
+                    self.charge_display.clear()
+                    return
+                
+                try:
+                    ph = self.ph_input_spinbox.value()
+                    charge = self._calculate_net_charge_at_ph(sequence, ph)
+                    if charge is not None:
+                        self.charge_display.setText(f"{charge:+.2f}")
+                    else:
+                        self.charge_display.clear()
+                except Exception as e:
+                    self.charge_display.setText("Error")
+                    print(f"Error calculating charge: {e}")
 
             def _analyze_sequence(self):
                 self.sequence = self.sequence_entry.toPlainText().strip().upper()
@@ -699,6 +822,7 @@ if __name__ == "__main__":
                     self.sequence_analysis_text.setHtml("".join(display_html_parts))
                 except Exception as e: self.sequence_analysis_text.setPlainText(f"An error occurred: {e}")
                 self.update_potential_fragments()
+                self._update_charge_display()
 
             def _on_glycan_type_selected(self, text):
                 mass = GLYCAN_MASSES_KDA.get(text, 0.0)
@@ -10353,17 +10477,17 @@ if __name__ == "__main__":
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
                 left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
-                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: self.update_left_padding); self.left_padding_slider.valueChanged.connect(lambda: self.left_padding_slider.setFocus())
+                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: self.update_left_padding()); self.left_padding_slider.valueChanged.connect(lambda: self.left_padding_slider.setFocus())
                 standard_layout.addWidget(self.left_padding_slider, 2, 1)
                 duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
                 right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
                 right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
-                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: self.update_right_padding); self.right_padding_slider.valueChanged.connect(lambda: self.right_padding_slider.setFocus())
+                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: self.update_right_padding()); self.right_padding_slider.valueChanged.connect(lambda: self.right_padding_slider.setFocus())
                 standard_layout.addWidget(self.right_padding_slider, 3, 1)
                 duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
                 top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
                 top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
-                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: self.update_top_padding); self.top_padding_slider.valueChanged.connect(lambda: self.top_padding_slider.setFocus())
+                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: self.update_top_padding()); self.top_padding_slider.valueChanged.connect(lambda: self.top_padding_slider.setFocus())
                 standard_layout.addWidget(self.top_padding_slider, 4, 1)
                 main_layout.addWidget(standard_group)
 
