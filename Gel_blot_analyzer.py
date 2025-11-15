@@ -4912,8 +4912,8 @@ if __name__ == "__main__":
                 # self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
                 # self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger)
 
-                self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
-                self.reset_shortcut.activated.connect(self.reset_action.trigger)
+                #self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+                #self.reset_shortcut.activated.connect(self.reset_action.trigger)
 
                 self.predict_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
                 self.predict_shortcut.activated.connect(self.predict_molecular_weight)
