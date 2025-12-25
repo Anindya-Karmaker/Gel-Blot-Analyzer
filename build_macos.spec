@@ -14,7 +14,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
-SCRIPT_FILE = "PROTOTYPE.py"  # Assumes your script is named PROTOTYPE.py
+SCRIPT_FILE = "Gel_blot_analyzer.py"  
 ICON_FILE = "Icon.icns"      # For macOS builds
 BUNDLE_ID = "com.anindyakarmaker.gelblotanalyzer"
 
