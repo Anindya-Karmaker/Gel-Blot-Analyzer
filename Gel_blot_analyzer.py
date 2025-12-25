@@ -4695,6 +4695,15 @@ if __name__ == "__main__":
                 QMainWindow, QDialog { background-color: #2D2D30; }
                 QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #F1F1F1; }
                 
+                /* --- FIX: Force Dark Backgrounds on Containers --- */
+                QScrollArea { background-color: #2D2D30; border: none; }
+                QScrollArea > QWidget { background-color: #2D2D30; }
+                QScrollArea > QWidget > QWidget { background-color: #2D2D30; }
+                
+                QTabWidget { background-color: #2D2D30; }
+                QTabWidget::pane { border-top: 1px solid #505055; background-color: #2D2D30; }
+                /* ------------------------------------------------ */
+
                 QGroupBox { background-color: #38383C; border: 1px solid #505055; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
                 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #F1F1F1; background-color: #007ACC; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
                 
@@ -4766,7 +4775,6 @@ if __name__ == "__main__":
 
                 /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
                 
-                /* THIS IS THE CRITICAL FIX: Style the viewport area BEHIND the items */
                 QAbstractItemView {
                     background-color: #3C3C3F;
                 }
@@ -4779,12 +4787,10 @@ if __name__ == "__main__":
                     selection-color: white;
                 }
 
-                /* Style the entire header widget background */
                 QHeaderView {
                     background-color: #38383C;
                 }
 
-                /* Styles individual header sections (horizontal and vertical) */
                 QHeaderView::section {
                     background-color: #4A4A4F;
                     color: #F1F1F1;
@@ -4796,7 +4802,6 @@ if __name__ == "__main__":
                     font-weight: bold;
                 }
                 
-                /* Style the top-left corner button */
                 QTableCornerButton::section {
                     background-color: #4A4A4F;
                     border-right: 1px solid #606065;
@@ -4846,6 +4851,7 @@ if __name__ == "__main__":
                     background: none;
                 }
             """
+            
             def __init__(self):
                 super().__init__()
                 self.setAcceptDrops(True)
