@@ -110,8 +110,8 @@ app = BUNDLE(
     info_plist={
         'NSHighResolutionCapable': 'True',                     # Enables support for Retina displays.
         'LSMinimumSystemVersion': '10.15',                     # Sets minimum supported OS to macOS Catalina.
-        'CFBundleShortVersionString': '3.0.0',                 # Your app's version number.
-        'CFBundleVersion': '3.0',                              # Your app's build number.
-        'NSHumanReadableCopyright': 'Copyright © 2024 Anindya Karmaker. All rights reserved.',
+        'CFBundleShortVersionString': '4.0.0',                 # Your app's version number.
+        'CFBundleVersion': '4.0',                              # Your app's build number.
+        'NSHumanReadableCopyright': 'Copyright © 2025 Anindya Karmaker. All rights reserved.',
     }
 )
