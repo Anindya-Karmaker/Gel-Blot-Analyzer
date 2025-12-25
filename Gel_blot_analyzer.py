@@ -2,25 +2,19 @@ import sys
 import re
 import os
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
-                             QMessageBox) # QDesktopWidget removed here
+                             QMessageBox)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QScreen, QGuiApplication # QScreen added for desktop geometry
+from PySide6.QtGui import QFont, QScreen, QGuiApplication
 import logging
 import traceback
 
-
-# --- NEW Minimal Loading Dialog ---
 class MinimalLoadingDialog(QDialog):
-    """
-    A lightweight loading dialog with a clean white background.
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Loading...")
         self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
-        # --- FIX: Updated styling for white background and dark text ---
         self.setStyleSheet("""
             QDialog {
                 background-color: white;
@@ -28,17 +22,16 @@ class MinimalLoadingDialog(QDialog):
                 border-radius: 8px;
             }
             QLabel {
-                color: #333333; /* Dark gray text for readability */
+                color: #333333;
                 padding: 25px;
                 background-color: transparent;
             }
         """)
 
-        # --- Layout and Label ---
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer V3.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v4.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
@@ -47,12 +40,10 @@ class MinimalLoadingDialog(QDialog):
 
         self.setLayout(layout)
 
-        # --- Size and Position (Original size is fine without an icon) ---
         self.setFixedSize(320, 120)
         self.center_on_screen()
 
     def center_on_screen(self):
-        """Centers the dialog on the primary screen."""
         try:
             primary_screen = QGuiApplication.primaryScreen()
             if not primary_screen:
@@ -72,17 +63,12 @@ class MinimalLoadingDialog(QDialog):
             print(f"Warning: Could not center loading dialog: {e}")
             self.move(100, 100)
 
-
-# --- End Style Sheet Definition ---
-# Configure logging to write errors to a log file
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Construct the absolute path for the log file
 log_file_path = os.path.join(script_dir, "error_log.txt")
 
 
-# --- Configure logging ---
 logging.basicConfig(
-    filename=log_file_path, # Use the absolute path
+    filename=log_file_path,
     level=logging.ERROR,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -90,18 +76,16 @@ logging.basicConfig(
 try:
     logging.error("--- Logging initialized ---")
 except Exception as e:
-    print(f"ERROR: Could not write initial log message: {e}") # Print error if immediate logging fails
+    print(f"ERROR: Could not write initial log message: {e}")
 
 logger = logging.getLogger()
 logger.setLevel(logging.ERROR)
 
 try:
-    # Use append mode 'a' and specify utf-8 encoding
     handler = logging.FileHandler(log_file_path, 'a', 'utf-8')
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    # --- END FIX ---
     
     logging.error("--- Logging initialized ---")
 except Exception as e:
@@ -109,29 +93,20 @@ except Exception as e:
 
 
 def log_exception(exc_type, exc_value, exc_traceback):
-    """Log uncaught exceptions to the error log."""
     print("!!! log_exception called !!!")
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    # Log the exception
     try:
-        # --- START FIX: Explicitly flush the handler ---
-        # Log the error first
         logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
         
-        # Get the root logger's handlers and flush them.
-        # This forces the buffered log messages to be written to the file immediately,
-        # which is crucial in a crash scenario.
         for handler in logging.getLogger().handlers:
             handler.flush()
-        # --- END FIX ---
 
     except Exception as log_err:
         print(f"ERROR: Failed to log exception to file: {log_err}")
 
-    # Display a QMessageBox with the error details (this part is fine)
     try:
         error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n(Check error_log.txt for details)"
         QMessageBox.critical(
@@ -144,17 +119,21 @@ def log_exception(exc_type, exc_value, exc_traceback):
          print(f"ERROR: Failed to show QMessageBox: {q_err}")
 
 
-# Set the custom exception handler
 sys.excepthook = log_exception
 	
 if __name__ == "__main__":
-    app = None             # Initialize variable
-    loading_dialog = None  # Initialize variable
-    main_window = None     # Initialize variable
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+    app = None
+    loading_dialog = None
+    main_window = None
 
     try:
-        # --- Try to get an existing QApplication instance FIRST ---
-        # This helps in some environments or if the script is re-run partially
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv if hasattr(sys, 'argv') and len(sys.argv) > 0 else [])
@@ -162,27 +141,21 @@ if __name__ == "__main__":
             print("INFO: Using existing QApplication instance.")
 
         
-        # 2. Set the global font and apply the stylesheet
         app.setFont(QFont("Segoe UI", 10))
 
-        #background-color: white; border: 1px solid #CCCCCC;
-
-        # --- Create and Show Minimal Loading Screen IMMEDIATELY ---
         try:
             loading_dialog = MinimalLoadingDialog()
             loading_dialog.show()
-            if app: app.processEvents() # Crucial: Make the GUI update and show the dialog
+            if app: app.processEvents()
         except Exception as e_load_dialog:
             print(f"ERROR: Could not create/show minimal loading dialog: {e_load_dialog}")
-            # Proceed without loading screen if it fails, but log the error
-            loading_dialog = None #
+            loading_dialog = None
 
         import sys
-        #import svgwrite
         import tempfile
         from tempfile import NamedTemporaryFile
         import base64
-        from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps  # Import Pillow's ImageGrab for clipboard access
+        from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps
         from io import BytesIO
         import io
         from PySide6.QtWidgets import (
@@ -198,14 +171,14 @@ if __name__ == "__main__":
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
-            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer
+            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop
         )
         import json
         import os
         import numpy as np
         import matplotlib.pyplot as plt
-        import matplotlib.lines as mlines # For draggable lines
-        import matplotlib.patches as patches # For draggable handles
+        import matplotlib.lines as mlines
+        import matplotlib.patches as patches
         import platform
         import openpyxl
         from openpyxl.styles import Font
@@ -215,7 +188,7 @@ if __name__ == "__main__":
         from scipy.signal import find_peaks
         from scipy.ndimage import gaussian_filter1d
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
-        from scipy.interpolate import interp1d # Needed for interpolation
+        from scipy.interpolate import interp1d
         SCIPY_AVAILABLE = False
         try:
             from scipy.optimize import curve_fit
@@ -235,19 +208,26 @@ if __name__ == "__main__":
         }
 
         EXTINCTION_COEFFICIENTS = {
-            'W': 5500,  # Tryptophan (M⁻¹cm⁻¹)
-            'Y': 1490,  # Tyrosine (M⁻¹cm⁻¹)
-            'C': 125    # Cysteine in disulfide bond (M⁻¹cm⁻¹ per pair)
+            'W': 5500,
+            'Y': 1490,
+            'C': 125
         }
 
         
 
         GLYCAN_MASSES_KDA = {
             "--- Select Glycan Type ---": 0.0,
-            "N-linked High-Mannose (Man9)": 2.1,
-            "N-linked Complex (Sialylated)": 2.9,
-            "O-linked Core 1 (Simple)": 0.4,
-            "Custom...": -1.0 # Special value to indicate manual input
+            
+            # N-linked High Mannose
+            "N-linked High-Mannose (Man5)": 1.2,       # ~1235 Da
+            "N-linked High-Mannose (Man9)": 1.9,       # ~1883 Da
+            
+            # N-linked Complex (Sialylated)
+            "N-linked Complex (Bi-antennary A2G2S2)": 2.2,    # ~2224 Da (Standard "Complex")
+            "N-linked Complex (Tri-antennary A3G3S3)": 2.9,   # ~2880 Da
+            "N-linked Complex (Tetra-antennary A4G4S4)": 3.7, # ~3665 Da
+            
+            "Custom...": -1.0
         }
 
         def four_param_logistic(x, a, b, c, d):
@@ -282,16 +262,17 @@ if __name__ == "__main__":
 
         class PredictionResultDialog(QDialog):
             """
-            A dialog to display the molecular weight prediction plot, allowing for
-            interactive changing of the regression model.
+            A dialog to display the molecular weight prediction, allowing for
+            interactive changing of the regression model and internal standard calibration.
             """
             model_changed_in_dialog = Signal(str)
 
             def __init__(self, parent_app, all_marker_positions, all_marker_values, 
-                         active_marker_positions, active_marker_values, protein_y_image, active_set_name):
+                        active_marker_positions, active_marker_values, protein_y_image, active_set_name,
+                        initial_calibration=None):
                 super().__init__(parent_app)
-                self.setWindowTitle("Prediction Result")
-                self.setMinimumSize(550, 500)
+                self.setWindowTitle("Prediction & Calibration")
+                self.setMinimumSize(650, 700)
 
                 self.parent_app = parent_app
                 self.all_marker_positions = all_marker_positions
@@ -300,48 +281,138 @@ if __name__ == "__main__":
                 self.active_marker_values = active_marker_values
                 self.protein_y_image = protein_y_image
                 self.active_set_name = active_set_name
+                
                 self.final_model_type = "poly"
                 self.final_coeffs = None
                 self.final_min_max_pos = None
                 self.final_predicted_mw = 0.0
+                
+                # Calibration State
+                self.calibration_active = False
+                self.calib_slope = 1.0
+                self.calib_offset = 0.0
 
                 main_layout = QVBoxLayout(self)
+                
+                # --- Model Selection ---
                 controls_layout = QHBoxLayout()
                 controls_layout.addWidget(QLabel("Regression Model:"))
                 self.model_combo_dialog = QComboBox()
                 
-                # --- START MODIFICATION: Dynamically add models ---
                 model_items = ["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)"]
                 if SCIPY_AVAILABLE:
                     model_items.append("Log 4-PL")
                 self.model_combo_dialog.addItems(model_items)
-                # --- END MODIFICATION ---
 
                 self.model_combo_dialog.setCurrentText(self.parent_app.mw_regression_model_combo.currentText())
                 self.model_combo_dialog.currentTextChanged.connect(self._recalculate_and_redraw)
                 controls_layout.addWidget(self.model_combo_dialog, 1)
                 main_layout.addLayout(controls_layout)
 
+                # --- Plot ---
                 self.fig, self.ax = plt.subplots(figsize=(5, 4))
                 self.canvas = FigureCanvas(self.fig)
                 main_layout.addWidget(self.canvas)
 
+                # --- Results ---
                 self.mw_label = QLabel("Predicted MW: -")
                 self.r2_label = QLabel("Fit R²: -")
-                font = self.mw_label.font(); font.setBold(True); self.mw_label.setFont(font)
+                font = self.mw_label.font(); font.setBold(True); font.setPointSize(12); self.mw_label.setFont(font)
                 main_layout.addWidget(self.mw_label)
                 main_layout.addWidget(self.r2_label)
 
+                # --- INTERNAL CALIBRATION GROUP ---
+                calib_group = QGroupBox("Internal Standard Calibration (1-Point or 2-Point)")
+                calib_layout = QGridLayout(calib_group)
+                calib_layout.addWidget(QLabel("Use this if you know the exact MW of bands in this lane (e.g. MALDI/LC-MS)."), 0, 0, 1, 4)
+
+                # Point 1 Controls
+                self.chk_calib1 = QCheckBox("Point 1")
+                self.chk_calib1.stateChanged.connect(self._recalculate_and_redraw)
+                
+                self.spin_mw1 = QDoubleSpinBox()
+                self.spin_mw1.setRange(0, 1000000)
+                self.spin_mw1.setPrefix("Known MW: ")
+                self.spin_mw1.setValue(0)
+                self.spin_mw1.valueChanged.connect(self._recalculate_and_redraw)
+                
+                self.spin_y1 = QDoubleSpinBox()
+                self.spin_y1.setRange(0, 100000)
+                self.spin_y1.setPrefix("Y-Pos: ")
+                self.spin_y1.setDecimals(2)
+                self.spin_y1.setValue(self.protein_y_image) # Default to initial click
+                self.spin_y1.valueChanged.connect(self._recalculate_and_redraw)
+                
+                self.btn_pick1 = QPushButton("Pick from Image")
+                # Return special code 101 to indicate "Pick Point 1"
+                self.btn_pick1.clicked.connect(lambda: self.done(101))
+                
+                calib_layout.addWidget(self.chk_calib1, 1, 0)
+                calib_layout.addWidget(self.spin_mw1, 1, 1)
+                calib_layout.addWidget(self.spin_y1, 1, 2)
+                calib_layout.addWidget(self.btn_pick1, 1, 3)
+
+                # Point 2 Controls
+                self.chk_calib2 = QCheckBox("Point 2")
+                self.chk_calib2.stateChanged.connect(self._recalculate_and_redraw)
+                
+                self.spin_mw2 = QDoubleSpinBox()
+                self.spin_mw2.setRange(0, 1000000)
+                self.spin_mw2.setPrefix("Known MW: ")
+                self.spin_mw2.setValue(0)
+                self.spin_mw2.valueChanged.connect(self._recalculate_and_redraw)
+                
+                self.spin_y2 = QDoubleSpinBox()
+                self.spin_y2.setRange(0, 100000)
+                self.spin_y2.setPrefix("Y-Pos: ")
+                self.spin_y2.setDecimals(2)
+                self.spin_y2.valueChanged.connect(self._recalculate_and_redraw)
+                
+                self.btn_pick2 = QPushButton("Pick from Image")
+                # Return special code 102 to indicate "Pick Point 2"
+                self.btn_pick2.clicked.connect(lambda: self.done(102))
+                
+                calib_layout.addWidget(self.chk_calib2, 2, 0)
+                calib_layout.addWidget(self.spin_mw2, 2, 1)
+                calib_layout.addWidget(self.spin_y2, 2, 2)
+                calib_layout.addWidget(self.btn_pick2, 2, 3)
+                
+                main_layout.addWidget(calib_group)
+
+                # --- Standard Buttons ---
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok)
                 button_box.accepted.connect(self.accept)
                 main_layout.addWidget(button_box)
+
+                # --- RESTORE PREVIOUS STATE IF AVAILABLE ---
+                if initial_calibration:
+                    p1_data = initial_calibration.get("point1", {})
+                    p2_data = initial_calibration.get("point2", {})
+                    
+                    if p1_data.get("active", False):
+                        self.chk_calib1.setChecked(True)
+                        self.spin_mw1.setValue(p1_data.get("mw", 0))
+                        if "y" in p1_data and p1_data["y"] > 0:
+                            self.spin_y1.setValue(p1_data["y"])
+                    
+                    if p2_data.get("active", False):
+                        self.chk_calib2.setChecked(True)
+                        self.spin_mw2.setValue(p2_data.get("mw", 0))
+                        if "y" in p2_data and p2_data["y"] > 0:
+                            self.spin_y2.setValue(p2_data["y"])
+
                 self._recalculate_and_redraw()
 
             def _recalculate_and_redraw(self):
                 selected_model_text = self.model_combo_dialog.currentText()
                 min_pos_active = np.min(self.active_marker_positions)
                 max_pos_active = np.max(self.active_marker_positions)
-                normalized_distances = (self.active_marker_positions - min_pos_active) / (max_pos_active - min_pos_active)
+                
+                # Helper for normalization
+                def normalize(y_pixels):
+                    return (y_pixels - min_pos_active) / (max_pos_active - min_pos_active)
+
+                normalized_distances = normalize(self.active_marker_positions)
                 log_marker_values = np.log10(self.active_marker_values)
                 
                 coefficients = None
@@ -350,18 +421,17 @@ if __name__ == "__main__":
 
                 self.ax.clear()
 
-                # --- START MODIFICATION: Add logic for 4-PL model ---
+                # --- FIT THE STANDARD CURVE ---
                 if "4-PL" in selected_model_text:
                     self.final_model_type = "4-PL"
                     if not SCIPY_AVAILABLE:
-                        self.ax.text(0.5, 0.5, "SciPy library is required for 4-PL model.", ha='center', va='center', wrap=True, color='red')
+                        self.ax.text(0.5, 0.5, "SciPy required for 4-PL.", ha='center')
                         self.canvas.draw(); return
                     if len(normalized_distances) < 4:
-                        self.ax.text(0.5, 0.5, f"Not enough points ({len(normalized_distances)}) for 4-PL fit (min 4 required).", ha='center', va='center', wrap=True, color='red')
+                        self.ax.text(0.5, 0.5, f"Need 4+ points for 4-PL.", ha='center')
                         self.canvas.draw(); return
                     
                     try:
-                        # Initial parameter guesses: a=max, d=min, c=median_x, b=slope
                         p0 = [np.max(log_marker_values), 1.0, np.median(normalized_distances), np.min(log_marker_values)]
                         coefficients, _ = curve_fit(four_param_logistic, normalized_distances, log_marker_values, p0=p0, maxfev=10000)
                         
@@ -369,11 +439,8 @@ if __name__ == "__main__":
                         ss_res = np.sum(residuals**2)
                         ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
                         r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                        
-                        normalized_protein_position = (self.protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
-                        predicted_log10_weight = four_param_logistic(normalized_protein_position, *coefficients)
                     except RuntimeError:
-                        self.ax.text(0.5, 0.5, "4-PL model failed to converge.\nTry a polynomial model or different markers.", ha='center', va='center', wrap=True, color='red')
+                        self.ax.text(0.5, 0.5, "4-PL failed to converge.", ha='center')
                         self.canvas.draw(); return
 
                 else: # Polynomial models
@@ -383,7 +450,7 @@ if __name__ == "__main__":
                     elif "Degree 3" in selected_model_text: poly_degree = 3
 
                     if len(normalized_distances) <= poly_degree:
-                        self.ax.text(0.5, 0.5, f"Not enough points ({len(normalized_distances)}) for degree {poly_degree} fit.", ha='center', va='center', wrap=True, color='red')
+                        self.ax.text(0.5, 0.5, f"Not enough points.", ha='center')
                         self.canvas.draw(); return
 
                     coefficients = np.polyfit(normalized_distances, log_marker_values, poly_degree)
@@ -391,57 +458,130 @@ if __name__ == "__main__":
                     ss_res = np.sum(residuals**2)
                     ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
                     r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                    normalized_protein_position = (self.protein_y_image - min_pos_active) / (max_pos_active - min_pos_active)
-                    predicted_log10_weight = np.polyval(coefficients, normalized_protein_position)
-                # --- END MODIFICATION ---
 
-                predicted_weight = 10 ** predicted_log10_weight
+                # --- Helper to get Raw Prediction from Curve ---
+                def get_raw_log_mw(y_pos_px):
+                    norm_x = normalize(y_pos_px)
+                    if coefficients is None: return 0
+                    if self.final_model_type == "4-PL": return four_param_logistic(norm_x, *coefficients)
+                    else: return np.polyval(coefficients, norm_x)
+
+                # --- CALIBRATION CALCULATION ---
+                self.calibration_active = False
+                self.calib_slope = 1.0
+                self.calib_offset = 0.0
+
+                use_p1 = self.chk_calib1.isChecked() and self.spin_mw1.value() > 0
+                use_p2 = self.chk_calib2.isChecked() and self.spin_mw2.value() > 0 and use_p1
+
+                if use_p1 and coefficients is not None:
+                    self.calibration_active = True
+                    
+                    # Point 1
+                    obs_y1 = self.spin_y1.value()
+                    known_log_mw1 = np.log10(self.spin_mw1.value())
+                    pred_log_mw1 = get_raw_log_mw(obs_y1)
+
+                    if use_p2:
+                        # 2-Point Calibration (Slope + Offset)
+                        obs_y2 = self.spin_y2.value()
+                        known_log_mw2 = np.log10(self.spin_mw2.value())
+                        pred_log_mw2 = get_raw_log_mw(obs_y2)
+                        
+                        delta_known = known_log_mw2 - known_log_mw1
+                        delta_pred = pred_log_mw2 - pred_log_mw1
+                        
+                        if abs(delta_pred) > 1e-5:
+                            self.calib_slope = delta_known / delta_pred
+                        else:
+                            self.calib_slope = 1.0 
+                        
+                        # Offset = Known - (Slope * Pred)
+                        self.calib_offset = known_log_mw1 - (self.calib_slope * pred_log_mw1)
+                        
+                        # Visuals
+                        self.ax.plot(normalize(obs_y1), known_log_mw1, 'g^', markersize=10, label="Calib Pt 1")
+                        self.ax.plot(normalize(obs_y2), known_log_mw2, 'gv', markersize=10, label="Calib Pt 2")
+
+                    else:
+                        # 1-Point Calibration (Offset Only)
+                        self.calib_offset = known_log_mw1 - pred_log_mw1
+                        self.ax.plot(normalize(obs_y1), known_log_mw1, 'g^', markersize=10, label="Calib Pt 1")
+
+                # --- Final Calculation ---
+                raw_pred_log = get_raw_log_mw(self.protein_y_image)
+                # Apply Calibration: Final = Slope * Raw + Offset
+                final_log_mw = (self.calib_slope * raw_pred_log) + self.calib_offset
+                predicted_weight = 10 ** final_log_mw
                 
                 self.final_coeffs = coefficients
                 self.final_min_max_pos = (min_pos_active, max_pos_active)
                 self.final_predicted_mw = predicted_weight
 
-                self.mw_label.setText(f"Predicted MW: <b>{predicted_weight:.2f}</b> units")
-                self.r2_label.setText(f"Fit R² (on active set): {r_squared:.4f}")
+                # Update Labels
+                calib_str = ""
+                if self.calibration_active:
+                    calib_str = f" [Calibrated: 1-Pt]" if not use_p2 else f" [Calibrated: 2-Pt]"
                 
-                all_norm_distances_plot = (self.all_marker_positions.astype(float) - min_pos_active) / (max_pos_active - min_pos_active)
-                fit_line_x_dense_norm = np.linspace(np.min(normalized_distances), np.max(normalized_distances), 200)
-
-                # --- START MODIFICATION: Plotting based on model type ---
-                if "4-PL" in selected_model_text and coefficients is not None:
-                    fit_line_y_log_dense = four_param_logistic(fit_line_x_dense_norm, *coefficients)
-                elif coefficients is not None:
-                    fit_line_y_log_dense = np.polyval(coefficients, fit_line_x_dense_norm)
-                else: # Handle fit failure case
-                    fit_line_y_log_dense = np.array([])
+                self.mw_label.setText(f"Predicted MW: <b>{predicted_weight:.2f}</b> units {calib_str}")
+                self.r2_label.setText(f"Std Curve R²: {r_squared:.4f}")
                 
-                if fit_line_y_log_dense.any():
-                    fit_line_y_mw_dense = 10**fit_line_y_log_dense
-                    simple_model_name = selected_model_text.split('(')[0].strip()
-                    self.ax.plot(fit_line_x_dense_norm, fit_line_y_mw_dense, color="blue", label=f"Fit ({simple_model_name})", linewidth=1.5)
-                # --- END MODIFICATION ---
+                # --- Plotting ---
+                fit_line_x_dense_norm = np.linspace(0, 1, 200)
+                if coefficients is not None:
+                    if self.final_model_type == "4-PL": fit_y_log = four_param_logistic(fit_line_x_dense_norm, *coefficients)
+                    else: fit_y_log = np.polyval(coefficients, fit_line_x_dense_norm)
+                    
+                    # Plot Standard Curve
+                    self.ax.plot(fit_line_x_dense_norm, fit_y_log, color="blue", label="Std Curve", alpha=0.5, linestyle="--")
+                    
+                    # Plot Calibrated Curve
+                    if self.calibration_active:
+                        calib_y_log = (self.calib_slope * fit_y_log) + self.calib_offset
+                        self.ax.plot(fit_line_x_dense_norm, calib_y_log, color="green", label="Calibrated Curve", linewidth=1.5)
 
-                self.ax.scatter(all_norm_distances_plot, self.all_marker_values, color="grey", alpha=0.5, label="All Markers (Context)", s=25)
-                self.ax.scatter(normalized_distances, self.active_marker_values, color="red", label="Active Set Data", s=40, marker='o')
-                self.ax.axvline(normalized_protein_position, color="green", linestyle="--", label=f"Target Protein ({predicted_weight:.1f} units)", linewidth=1.5)
-                self.ax.set_xlabel(f"Normalized Distance (Relative to {self.active_set_name})", fontsize=9)
-                self.ax.set_ylabel("Molecular Weight (units)", fontsize=9)
-                self.ax.set_yscale("log")
+                self.ax.scatter(normalized_distances, log_marker_values, color="red", label="Std Markers", s=30)
+                
+                norm_protein_pos = normalize(self.protein_y_image)
+                self.ax.axvline(norm_protein_pos, color="orange", linestyle="-", label="Target")
+                self.ax.plot(norm_protein_pos, final_log_mw, 'o', color="orange", markersize=8)
+
+                self.ax.set_ylabel("Log(MW)")
+                self.ax.set_xlabel("Normalized Distance")
                 self.ax.legend(fontsize='x-small', loc='best')
-                self.ax.set_title(f"MW Prediction (Using: {selected_model_text})", fontsize=9, wrap=True)
-                self.ax.grid(True, which='both', linestyle=':', linewidth=0.5)
-                self.ax.tick_params(axis='both', which='major', labelsize=8)
+                self.ax.grid(True, linestyle=':', linewidth=0.5)
                 self.fig.tight_layout(pad=0.5)
                 self.canvas.draw()
                 self.model_changed_in_dialog.emit(selected_model_text)
 
             def get_final_prediction_model(self):
-                # --- START MODIFICATION: Return model type along with coefficients ---
-                return {"model": self.final_model_type, "coeffs": self.final_coeffs, "min_max_pos": self.final_min_max_pos}
-                # --- END MODIFICATION ---
+                # Convert numpy coeffs to list for JSON serialization
+                coeffs_safe = None
+                if self.final_coeffs is not None:
+                    coeffs_safe = self.final_coeffs.tolist() if isinstance(self.final_coeffs, np.ndarray) else list(self.final_coeffs)
+
+                return {
+                    "model": self.final_model_type, 
+                    "coeffs": coeffs_safe, 
+                    "min_max_pos": self.final_min_max_pos,
+                    "calibration": {
+                        "active": self.calibration_active,
+                        "slope": self.calib_slope,
+                        "offset": self.calib_offset,
+                        "point1": {
+                            "active": self.chk_calib1.isChecked(),
+                            "mw": self.spin_mw1.value(),
+                            "y": self.spin_y1.value()
+                        },
+                        "point2": {
+                            "active": self.chk_calib2.isChecked(),
+                            "mw": self.spin_mw2.value(),
+                            "y": self.spin_y2.value()
+                        }
+                    }
+                }
             
             def get_final_predicted_mw(self):
-                """Returns the final predicted molecular weight value."""
                 return self.final_predicted_mw
 
         class GlycosylationMapperDialog(QDialog):
@@ -1075,89 +1215,87 @@ if __name__ == "__main__":
     
         class AutoLaneTuneDialog(QDialog):
             """
-            Simplified dialog for tuning peak detection parameters for automatic lane markers.
-            Shows the intensity profile and detected peaks. Allows adjustment of detection parameters.
-            Does NOT handle area calculation or individual band boundary adjustments.
-
-            This dialog operates on a rectangular PIL.Image object provided as `pil_image_data`.
-            If this data comes from a warped quadrilateral region of an original image (i.e.,
-            the `pil_image_data` itself is the rectangular result of a warp), the detected
-            peak coordinates will be relative to this warped rectangular image. The calling
-            code is responsible for any geometric transformations to map these coordinates
-            back to the original image space if needed. The `is_from_quad_warp` parameter
-            can be used to indicate this context, which will adjust the dialog's title.
+            Updated dialog with Center-of-Mass refinement for sub-pixel accuracy
+            and robust 16-bit noise handling.
             """
-            def __init__(self, pil_image_data, initial_settings, parent=None, is_from_quad_warp=False): # Added is_from_quad_warp
+            def __init__(self, pil_image_data, initial_settings, parent=None, is_from_quad_warp=False):
                 super().__init__(parent)
 
-                # Set window title based on the source of the image data
                 if is_from_quad_warp:
                     self.setWindowTitle("Tune Peaks (Warped Region)")
                 else:
                     self.setWindowTitle("Tune Automatic Peak Detection")
 
-                self.setGeometry(50, 50, 800, 700) # Adjusted height
-                self.pil_image_for_display = pil_image_data
-                self.selected_peak_index = -1 # Stores the X-coordinate of the peak selected for deletion
-                self.deleted_peak_indices = set()
-                self._all_initial_peaks = np.array([])
-                self.add_peak_mode_active = False
+                # Dynamic Screen-Relative Sizing
+                screen_geo = QGuiApplication.primaryScreen().availableGeometry()
+                target_w = min(1000, int(screen_geo.width() * 0.75))
+                target_h = min(900, int(screen_geo.height() * 0.85))
+                self.resize(target_w, target_h)
 
-                # --- Display Inversion State ---
-                self.is_inverted = False
-
-                # --- Validate and Store Input Image ---
+                # --- 16-BIT DATA SANITIZATION ---
                 if not isinstance(pil_image_data, Image.Image):
                     raise TypeError("Input 'pil_image_data' must be a PIL Image object")
 
-                # Determine intensity range and create numpy array
-                self.intensity_array_original_range = None
-                self.original_max_value = 255.0 # Default
-                pil_mode = pil_image_data.mode
+                self.pil_image_for_display = pil_image_data
+                pil_mode = self.pil_image_for_display.mode
+                self.original_max_value = 255.0
+
                 try:
-                    # Invert the image data first, then sum, so dark bands become high values
-                    inverted_array = self.original_max_value - np.array(pil_image_data, dtype=np.float64)
-                    # This is the crucial change for correct densitometry.
+                    # Convert PIL to Numpy with handling for endianness
+                    if pil_mode == 'I;16B': 
+                        arr = np.array(self.pil_image_for_display, dtype='>u2')
+                        self.intensity_array_original_range = arr.astype(np.float64)
+                        self.original_max_value = 65535.0
+                    elif pil_mode in ['I', 'I;16', 'I;16L', 'I;16N']:
+                        arr = np.array(self.pil_image_for_display, dtype=np.uint16)
+                        self.intensity_array_original_range = arr.astype(np.float64)
+                        self.original_max_value = 65535.0
+                    elif pil_mode == 'F':
+                        self.intensity_array_original_range = np.array(self.pil_image_for_display, dtype=np.float64)
+                        max_val = np.max(self.intensity_array_original_range)
+                        self.original_max_value = max(1.0, max_val)
+                    else:
+                        # 8-bit fallback
+                        if pil_mode != 'L':
+                            self.pil_image_for_display = self.pil_image_for_display.convert('L')
+                        self.intensity_array_original_range = np.array(self.pil_image_for_display, dtype=np.uint8).astype(np.float64)
+                        self.original_max_value = 255.0
+
+                    # Handle multi-channel noise (if 16-bit RGBA slipped through)
+                    if self.intensity_array_original_range.ndim == 3:
+                        self.intensity_array_original_range = np.mean(self.intensity_array_original_range[:, :, :3], axis=2)
+
+                    # Generate initial inverted profile (Dark bands = High values)
+                    inverted_array = self.original_max_value - self.intensity_array_original_range
                     self.profile_original_inverted = np.sum(inverted_array, axis=1)
 
-                    if self.profile_original_inverted.ndim != 1:
-                        raise ValueError(f"Generated profile must be 1D, shape {self.profile_original_inverted.shape}")
-                    
-                    # Store display parameters from the original, non-inverted data
-                    original_data_for_display = np.array(pil_image_data, dtype=np.float64)
-                    if np.any(original_data_for_display):
-                        # Use percentiles to avoid extreme outliers affecting contrast
-                        self.display_vmin, self.display_vmax = np.percentile(original_data_for_display, (1, 99))
-                        if self.display_vmax <= self.display_vmin: # Fallback for low-contrast images
-                            self.display_vmin, self.display_vmax = np.min(original_data_for_display), np.max(original_data_for_display)
-                    else:
-                        self.display_vmin, self.display_vmax = 0, self.original_max_value
-
                 except Exception as e:
-                    raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
-                
-                self.profile = None # Scaled (0-255), SMOOTHED profile for detection
-                self.detected_peaks = np.array([]) # Store indices of detected peaks
+                    print(f"Error processing image data in AutoLaneTuneDialog: {e}")
+                    self.profile_original_inverted = np.zeros(100)
+                    self.intensity_array_original_range = np.zeros((100, 10))
 
-                # --- Settings and State ---
-                self.smoothing_sigma = initial_settings.get('smoothing_sigma', 0.0)
+                self.selected_peak_index = -1 
+                self.deleted_peak_indices = set()
+                self._all_initial_peaks = np.array([])
+                self.detected_peaks = np.array([]) 
+                self.add_peak_mode_active = False
+                self.is_inverted = False 
+
+                # --- ROBUST DEFAULTS ---
+                # Higher default smoothing for 16-bit images to kill static noise
+                default_sigma = 3.0 if self.original_max_value > 255 else 1.0
+                default_prominence = 0.05 
+
+                self.smoothing_sigma = initial_settings.get('smoothing_sigma', default_sigma)
                 self.peak_height_factor = initial_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = initial_settings.get('peak_distance', 10)
-                self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', 0.00)
+                self.peak_prominence_factor = initial_settings.get('peak_prominence_factor', default_prominence)
                 self._final_settings = initial_settings.copy()
-
-                if find_peaks is None or gaussian_filter1d is None:
-                    QMessageBox.critical(self, "Dependency Error",
-                                        "Missing SciPy library functions.\n"
-                                        "Peak detection and smoothing require SciPy.\n"
-                                        "Please install it (e.g., 'pip install scipy') and restart.")
-                    self.close()
 
                 self._setup_ui()
                 self.run_peak_detection_and_plot()
 
             def _setup_ui(self):
-                """Creates and arranges the UI elements, including image preview."""
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
 
@@ -1190,7 +1328,7 @@ if __name__ == "__main__":
                 self.smoothing_slider = QSlider(Qt.Horizontal)
                 self.smoothing_slider.setRange(0, 100)
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
-                self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
+                self.smoothing_slider.valueChanged.connect(lambda val: self.smoothing_label.setText(f"Smoothing Sigma ({val/10.0:.1f})"))
                 self.smoothing_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.smoothing_label, 1, 0)
                 controls_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
@@ -1199,7 +1337,7 @@ if __name__ == "__main__":
                 self.peak_prominence_slider = QSlider(Qt.Horizontal)
                 self.peak_prominence_slider.setRange(0, 100)
                 self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 100))
-                self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: lbl.setText(f"Min Prominence ({val/100.0:.2f})"))
+                self.peak_prominence_slider.valueChanged.connect(lambda val: self.peak_prominence_slider_label.setText(f"Min Prominence ({val/100.0:.2f})"))
                 self.peak_prominence_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.peak_prominence_slider_label, 2, 0)
                 controls_layout.addWidget(self.peak_prominence_slider, 2, 1, 1, 2)
@@ -1208,7 +1346,7 @@ if __name__ == "__main__":
                 self.peak_height_slider = QSlider(Qt.Horizontal)
                 self.peak_height_slider.setRange(0, 100)
                 self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
-                self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: lbl.setText(f"Min Height ({val/100.0:.2f})"))
+                self.peak_height_slider.valueChanged.connect(lambda val: self.peak_height_slider_label.setText(f"Min Height ({val/100.0:.2f})"))
                 self.peak_height_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.peak_height_slider_label, 3, 0)
                 controls_layout.addWidget(self.peak_height_slider, 3, 1, 1, 2)
@@ -1217,34 +1355,30 @@ if __name__ == "__main__":
                 self.peak_distance_slider = QSlider(Qt.Horizontal)
                 self.peak_distance_slider.setRange(1, 200)
                 self.peak_distance_slider.setValue(self.peak_distance)
-                self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: lbl.setText(f"Min Distance ({val}) px"))
+                self.peak_distance_slider.valueChanged.connect(lambda val: self.peak_distance_slider_label.setText(f"Min Distance ({val}) px"))
                 self.peak_distance_slider.valueChanged.connect(self.run_peak_detection_and_plot)
                 controls_layout.addWidget(self.peak_distance_slider_label, 4, 0)
                 controls_layout.addWidget(self.peak_distance_slider, 4, 1, 1, 2)
 
-                # --- Button Row ---
                 self.delete_peak_button = QPushButton("Delete Selected Peak")
                 self.delete_peak_button.setEnabled(False)
-                self.delete_peak_button.setToolTip("Click on a peak marker in the plot to select it, then click this.")
                 self.delete_peak_button.clicked.connect(self.delete_selected_peak)
 
                 self.add_peak_button = QPushButton("Add Peak at Click")
                 self.add_peak_button.setCheckable(True)
-                self.add_peak_button.setToolTip("Toggle: Click on the profile to add a new peak marker.")
                 self.add_peak_button.clicked.connect(self.toggle_add_peak_mode)
 
                 self.invert_display_button = QPushButton("Invert Image")
                 self.invert_display_button.setCheckable(True)
                 self.invert_display_button.toggled.connect(self._toggle_inversion_display)
-                self.invert_display_button.setToolTip("Invert the image preview and the profile plot.")
+                self.invert_display_button.setToolTip("Toggle if your bands are Light-on-Dark vs Dark-on-Light.")
                 
                 button_hbox = QHBoxLayout()
                 button_hbox.addWidget(self.delete_peak_button)
                 button_hbox.addWidget(self.add_peak_button)
                 button_hbox.addWidget(self.invert_display_button)
                 
-                controls_layout.addLayout(button_hbox, 5, 0, 1, 3) # Add button layout spanning all 3 columns
-
+                controls_layout.addLayout(button_hbox, 5, 0, 1, 3) 
                 controls_layout.setColumnStretch(1, 1)
                 main_layout.addWidget(controls_group)
 
@@ -1254,40 +1388,34 @@ if __name__ == "__main__":
                 main_layout.addWidget(button_box)
 
             def _toggle_inversion_display(self, checked):
-                """Toggles the display inversion for the profile plot and image preview."""
                 self.is_inverted = checked
-                self.run_peak_detection_and_plot() # Force a full redraw with the new display setting
-                    
+                self.run_peak_detection_and_plot()
+            
             def toggle_add_peak_mode(self, checked):
-                """Toggles the manual peak adding mode."""
                 self.add_peak_mode_active = checked
                 if checked:
                     self.canvas.setCursor(Qt.CrossCursor)
                     self.selected_peak_index = -1 
                     self.delete_peak_button.setEnabled(False)
                     self.update_plot_highlights()
-                    QMessageBox.information(self, "Add Peak", "Add Peak Mode: ON. Click on the profile plot to add a peak.")
+                    QMessageBox.information(self, "Add Peak", "Click on the profile plot to add a peak.")
                 else:
                     self.canvas.setCursor(Qt.ArrowCursor)
 
             def on_canvas_click(self, event):
-                """Handles clicks on the canvas for adding or selecting peaks."""
                 if event.inaxes != self.ax_profile or self.profile_original_inverted is None or event.button != 1:
                     return
-
-                clicked_x = int(round(event.xdata))
-
+                clicked_x = event.xdata # Keep float for accuracy
+                
                 if self.add_peak_mode_active:
-                    if 0 <= clicked_x < len(self.profile_original_inverted):
-                        self.add_manual_peak(clicked_x)
-                    else:
-                        print(f"Clicked X ({clicked_x}) is outside profile bounds.")
+                    clicked_int = int(round(clicked_x))
+                    if 0 <= clicked_int < len(self.profile_original_inverted):
+                        self.add_manual_peak(clicked_int)
                 else:
                     if len(self.detected_peaks) > 0:
                         distances = np.abs(self.detected_peaks - clicked_x)
                         min_dist_idx = np.argmin(distances)
-                        click_tolerance_x = max(5, self.peak_distance / 4)
-
+                        click_tolerance_x = max(5, self.peak_distance / 4.0)
                         if distances[min_dist_idx] <= click_tolerance_x:
                             self.selected_peak_index = self.detected_peaks[min_dist_idx]
                             self.delete_peak_button.setEnabled(True)
@@ -1301,78 +1429,119 @@ if __name__ == "__main__":
                         self.update_plot_highlights()
 
             def add_manual_peak(self, x_coord):
-                """Adds a new peak at the given x-coordinate if not already present or deleted."""
-                if x_coord in self.detected_peaks:
-                    print(f"Peak at {x_coord} already exists.")
-                    return
+                # Check for duplicates allowing for small float differences
+                if any(abs(p - x_coord) < 0.1 for p in self.detected_peaks): return
                 
-                if x_coord in self.deleted_peak_indices:
-                    reply = QMessageBox.question(self, "Undelete Peak?",
-                                                f"A peak at index {x_coord} was previously deleted. Undelete it?",
-                                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        self.deleted_peak_indices.discard(x_coord)
-                        self.detected_peaks = np.sort(np.append(self.detected_peaks, x_coord))
-                        print(f"Undeleted peak at {x_coord}.")
-                        self.update_plot_highlights()
-                    return
-
-                self.detected_peaks = np.sort(np.append(self.detected_peaks, x_coord))
-                
-                print(f"Manually added peak at index: {x_coord}")
+                self.detected_peaks = np.sort(np.append(self.detected_peaks, float(x_coord)))
                 self.update_plot_highlights()
 
+            def delete_selected_peak(self):
+                if self.selected_peak_index != -1:
+                    # Remove peaks that match the selected one closely (float comparison)
+                    self.detected_peaks = np.array([p for p in self.detected_peaks if abs(p - self.selected_peak_index) > 0.01])
+                    self.selected_peak_index = -1; self.delete_peak_button.setEnabled(False)
+                    self.update_plot_highlights()
+
+            def _refine_peak_positions_center_of_mass(self, profile, peak_indices, window_radius=3):
+                """
+                Calculates the Center of Mass (Centroid) for each peak to achieve sub-pixel accuracy.
+                """
+                refined_peaks = []
+                profile_len = len(profile)
+                
+                for peak_idx in peak_indices:
+                    # Define a small window around the integer peak index
+                    start = max(0, peak_idx - window_radius)
+                    end = min(profile_len, peak_idx + window_radius + 1)
+                    
+                    window_vals = profile[start:end]
+                    window_indices = np.arange(start, end)
+                    
+                    # Subtract local baseline to focus on the peak tip (optional but helpful)
+                    local_min = np.min(window_vals)
+                    weights = window_vals - local_min
+                    
+                    if np.sum(weights) > 0:
+                        centroid = np.sum(window_indices * weights) / np.sum(weights)
+                        refined_peaks.append(centroid)
+                    else:
+                        refined_peaks.append(float(peak_idx))
+                        
+                return np.array(refined_peaks)
+
             def run_peak_detection_and_plot(self):
-                """Generates profile, detects peaks, updates plot and image preview."""
-                self.deleted_peak_indices.clear()
                 self.selected_peak_index = -1
                 self.delete_peak_button.setEnabled(False)
 
                 if self.profile_original_inverted is None: return
-                if find_peaks is None or gaussian_filter1d is None: return
-
+                
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0
                 self.peak_height_factor = self.peak_height_slider.value() / 100.0
                 self.peak_distance = self.peak_distance_slider.value()
                 self.peak_prominence_factor = self.peak_prominence_slider.value() / 100.0
                 
-                # --- START OF CORRECTED PEAK CALCULATION LOGIC ---
+                smoothed_profile_base = self.profile_original_inverted.copy()
                 
-                # 1. Always start with the true, smoothed densitometry profile where peaks are high values.
-                smoothed_profile_base = self.profile_original_inverted
+                # --- FIX: ALWAYS apply smoothing for detection if 16-bit to kill noise ---
                 try:
                     current_sigma = self.smoothing_sigma
-                    if current_sigma > 0.1 and len(smoothed_profile_base) > int(3 * current_sigma) * 2 + 1:
+                    # Force a minimum smoothing of 1.0 for 16-bit unless user sets to 0
+                    if self.original_max_value > 255 and current_sigma < 0.1 and self.smoothing_slider.value() > 0:
+                         current_sigma = 1.0
+                         
+                    if current_sigma > 0.05:
                         smoothed_profile_base = gaussian_filter1d(smoothed_profile_base, sigma=current_sigma)
-                except Exception as smooth_err: print(f"AutoLaneTuneDialog: Error smoothing profile: {smooth_err}")
+                except Exception: pass
                 
-                # 2. Determine the profile to use for BOTH detection and plotting based on the inversion flag.
                 prof_min_base, prof_max_base = np.min(smoothed_profile_base), np.max(smoothed_profile_base)
-                profile_for_detection_and_plot = (prof_max_base + prof_min_base) - smoothed_profile_base if self.is_inverted else smoothed_profile_base
                 
-                # 3. Normalize the chosen profile (normal or inverted) for consistent parameter application.
-                prof_min_detect, prof_max_detect = np.min(profile_for_detection_and_plot), np.max(profile_for_detection_and_plot)
-                if prof_max_detect > prof_min_detect + 1e-6:
-                    self.profile = (profile_for_detection_and_plot - prof_min_detect) / (prof_max_detect - prof_min_detect) * 255.0
+                if self.is_inverted:
+                    profile_for_detection = (prof_max_base + prof_min_base) - smoothed_profile_base
                 else:
-                    self.profile = np.zeros_like(profile_for_detection_and_plot)
+                    profile_for_detection = smoothed_profile_base
+                
+                # Normalize using percentiles to ignore outliers (hot pixels)
+                p1, p99 = np.percentile(profile_for_detection, (1, 99))
+                if p99 > p1 + 1e-6:
+                    self.profile = np.clip((profile_for_detection - p1) / (p99 - p1), 0.0, 1.0) * 255.0
+                else:
+                    self.profile = np.zeros_like(profile_for_detection)
 
-                # 4. Calculate absolute parameters based on this potentially inverted, normalized profile.
-                profile_range_detect = np.ptp(self.profile); min_val_profile_detect = np.min(self.profile)
+                profile_range_detect = np.ptp(self.profile)
                 if profile_range_detect < 1e-6 : profile_range_detect = 1.0
-                min_height_abs = min_val_profile_detect + profile_range_detect * self.peak_height_factor
+                
+                min_height_abs = np.min(self.profile) + profile_range_detect * self.peak_height_factor
                 min_prominence_abs = profile_range_detect * self.peak_prominence_factor
 
-                # 5. Run `find_peaks` on the profile that the user is currently seeing.
                 try:
-                    peaks_indices, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
-                    self._all_initial_peaks = np.sort(peaks_indices)
-                    self.detected_peaks = np.array([p for p in self._all_initial_peaks if p not in self.deleted_peak_indices])
-                except Exception as e:
-                    self._all_initial_peaks = np.array([]); self.detected_peaks = np.array([])
+                    # 1. Find raw integer peaks
+                    peaks_indices_int, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
                     
-                # --- END OF CORRECTED PEAK CALCULATION LOGIC ---
+                    # 2. Refine to Sub-Pixel Accuracy (Center of Mass)
+                    # We use the smoothed profile for calculation to avoid noise affecting the centroid
+                    peaks_refined = self._refine_peak_positions_center_of_mass(self.profile, peaks_indices_int)
+                    
+                    self._all_initial_peaks = np.sort(peaks_refined)
+                    
+                    # Filter deleted peaks (check proximity)
+                    final_peaks = []
+                    for p in self._all_initial_peaks:
+                        # Check if this peak is close to any deleted peak index
+                        is_deleted = False
+                        for d in self.deleted_peak_indices:
+                            if abs(p - d) < 1.0: # Tolerance
+                                is_deleted = True
+                                break
+                        if not is_deleted:
+                            final_peaks.append(p)
+                            
+                    self.detected_peaks = np.array(final_peaks)
+                    
+                except Exception as e:
+                    print(f"Peak detection error: {e}")
+                    self._all_initial_peaks = np.array([]); self.detected_peaks = np.array([])
 
+                # 5. Plotting
                 is_dark_theme = self.parent() and hasattr(self.parent(), 'current_theme') and self.parent().current_theme == "dark"
                 if is_dark_theme:
                     bg_color, ax_bg_color, text_color, spine_color, grid_color = '#2D2D30', '#38383C', '#F1F1F1', '#707070', '#5A5A60'
@@ -1388,83 +1557,51 @@ if __name__ == "__main__":
                     axis.tick_params(axis='x', colors=text_color); axis.tick_params(axis='y', colors=text_color)
                     axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
 
-                if profile_for_detection_and_plot is not None and len(profile_for_detection_and_plot) > 0:
-                    self.ax_profile.plot(profile_for_detection_and_plot, label=f"Profile (Smoothed σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
+                if profile_for_detection is not None and len(profile_for_detection) > 0:
+                    self.ax_profile.plot(self.profile, label=f"Normalized Profile (σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
 
                     if len(self.detected_peaks) > 0:
-                        valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(profile_for_detection_and_plot))]
-                        if len(valid_peaks) > 0:
-                            peak_y_values = profile_for_detection_and_plot[valid_peaks]
-                            self.peak_plot_artist, = self.ax_profile.plot(valid_peaks, peak_y_values, "x", color=peak_marker_color, markersize=8, label=f"Active Peaks ({len(valid_peaks)})")
+                        # Interpolate Y values for float X positions for plotting
+                        peak_y_values = np.interp(self.detected_peaks, np.arange(len(self.profile)), self.profile)
+                        self.peak_plot_artist, = self.ax_profile.plot(self.detected_peaks, peak_y_values, "x", color=peak_marker_color, markersize=8, label=f"Peaks")
 
-                            if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
-                                idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
-                                if len(idx_in_valid) > 0:
-                                    self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected')
+                        if self.selected_peak_index != -1:
+                            # Highlight selected
+                            try:
+                                # Find nearest peak to selected index
+                                idx_in_valid = np.argmin(np.abs(self.detected_peaks - self.selected_peak_index))
+                                if abs(self.detected_peaks[idx_in_valid] - self.selected_peak_index) < 0.1:
+                                     self.ax_profile.plot(self.detected_peaks[idx_in_valid], peak_y_values[idx_in_valid], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none')
+                            except: pass
 
-                    ylabel_text = "Integrated Intensity (Display Inverted)" if self.is_inverted else "Integrated Intensity (Inverted)"
-                    self.ax_profile.set_ylabel(ylabel_text, fontsize=9)
-                    leg = self.ax_profile.legend(fontsize='x-small'); leg.get_frame().set_facecolor(ax_bg_color); [text.set_color(text_color) for text in leg.get_texts()]
-                    self.ax_profile.set_title("Intensity Profile and Detected Peaks", fontsize=10); self.ax_profile.grid(True, linestyle=':', alpha=0.6, color=grid_color)
-                    self.ax_profile.tick_params(axis='x', labelbottom=False)
-                    if np.max(profile_for_detection_and_plot) > 10000: self.ax_profile.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
-
+                    self.ax_profile.set_title("Intensity Profile (Normalized)", fontsize=10)
+                    self.ax_profile.grid(True, linestyle=':', alpha=0.6, color=grid_color)
+                    
                     try:
-                        rotated_pil_image = self.pil_image_for_display.rotate(90, expand=True); im_array_disp = np.array(rotated_pil_image)
-                        im_vmin, im_vmax, cmap_val = self.display_vmin, self.display_vmax, 'gray_r' if self.is_inverted else 'gray'
-                        profile_length = len(profile_for_detection_and_plot); extent = [0, profile_length - 1 if profile_length > 0 else 0, 0, rotated_pil_image.height]
-                        self.ax_image.imshow(im_array_disp, cmap=cmap_val, aspect='auto', extent=extent, vmin=im_vmin, vmax=im_vmax)
-                        self.ax_image.set_xlabel("Pixel Index along Profile Axis", fontsize=9); self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
-                    except Exception as img_e:
-                        self.ax_image.text(0.5, 0.5, 'Error displaying preview', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
-                        self.ax_image.set_xticks([]); self.ax_image.set_yticks([])
-                else:
-                    self.ax_profile.text(0.5, 0.5, "No Profile Data", ha='center', va='center', color=text_color, transform=self.ax_profile.transAxes)
-                    self.ax_image.text(0.5, 0.5, "No Image Data", ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
+                        arr = self.intensity_array_original_range
+                        if arr.ndim == 2:
+                            arr_rot = np.rot90(arr, k=1) 
+                            d_min, d_max = np.percentile(arr_rot, (1, 99))
+                            cmap_val = 'gray' 
+                            
+                            profile_length = len(profile_for_detection)
+                            extent = [0, profile_length - 1, 0, arr_rot.shape[0]]
+                            
+                            self.ax_image.imshow(arr_rot, cmap=cmap_val, aspect='auto', extent=extent, vmin=d_min, vmax=d_max)
+                            self.ax_image.set_xlabel("Pixel Index", fontsize=9); self.ax_image.set_yticks([])
+                            
+                            # Draw lines on image for sub-pixel peaks
+                            for p in self.detected_peaks:
+                                self.ax_image.axvline(p, color='red', alpha=0.5, linewidth=1)
+                                
+                    except Exception as e: 
+                        print(f"Preview error: {e}")
 
                 self.canvas.draw_idle()
-                plt.close(self.fig)
 
             def update_plot_highlights(self):
-                """Redraws only the peak markers and highlights without full recalculation."""
                 if not hasattr(self, 'ax_profile'): return
-
-                [artist.remove() for artist in self.ax_profile.lines + self.ax_profile.collections if artist.get_label() and ('Peaks' in artist.get_label() or 'Selected' in artist.get_label())]
-
-                # --- START FIX: Re-calculate the correct display profile ---
-                smoothed_profile_base = self.profile_original_inverted
-                try:
-                    current_sigma = self.smoothing_sigma
-                    if current_sigma > 0.1 and len(smoothed_profile_base) > int(3 * current_sigma) * 2 + 1:
-                        smoothed_profile_base = gaussian_filter1d(smoothed_profile_base, sigma=current_sigma)
-                except Exception: pass
-
-                prof_min_base, prof_max_base = np.min(smoothed_profile_base), np.max(smoothed_profile_base)
-                profile_for_display = (prof_max_base + prof_min_base) - smoothed_profile_base if self.is_inverted else smoothed_profile_base
-                # --- END FIX ---
-                
-                if len(self.detected_peaks) > 0:
-                    valid_peaks = self.detected_peaks[(self.detected_peaks >= 0) & (self.detected_peaks < len(profile_for_display))]
-                    if len(valid_peaks) > 0:
-                        # --- FIX: Get Y values from the correct display profile ---
-                        peak_y_values = profile_for_display[valid_peaks]
-                        self.peak_plot_artist, = self.ax_profile.plot(valid_peaks, peak_y_values, "rx", markersize=8, label=f"Active Peaks ({len(valid_peaks)})")
-                        if self.selected_peak_index != -1 and self.selected_peak_index in valid_peaks:
-                            idx_in_valid = np.where(valid_peaks == self.selected_peak_index)[0]
-                            if len(idx_in_valid) > 0:
-                                self.ax_profile.plot(self.selected_peak_index, peak_y_values[idx_in_valid[0]], 'o', markersize=12, markeredgecolor='blue', markerfacecolor='none', label='Selected')
-
-                handles, labels = self.ax_profile.get_legend_handles_labels(); by_label = dict(zip(labels, handles))
-                self.ax_profile.legend(by_label.values(), by_label.keys(), fontsize='x-small'); self.canvas.draw_idle()
-
-            def delete_selected_peak(self):
-                """Marks the selected peak as deleted and updates the plot."""
-                if self.selected_peak_index != -1:
-                    self.deleted_peak_indices.add(self.selected_peak_index)
-                    self.detected_peaks = np.array([p for p in self.detected_peaks if p != self.selected_peak_index])
-                    print(f"Deleted peak at index: {self.selected_peak_index}")
-                    self.selected_peak_index = -1; self.delete_peak_button.setEnabled(False)
-                    self.update_plot_highlights()
+                self.run_peak_detection_and_plot()
 
             def accept_and_return_peaks(self):
                 self._final_settings = {
@@ -1478,13 +1615,8 @@ if __name__ == "__main__":
                 }
                 self.accept()
 
-            def get_detected_peaks(self):
-                """Returns the FINAL list/array of detected peak Y-coordinates (indices), including manual adds and excluding deletes."""
-                return self.detected_peaks
-
-            def get_final_settings(self):
-                """Returns the final detection settings dictionary."""
-                return self._final_settings
+            def get_detected_peaks(self): return self.detected_peaks
+            def get_final_settings(self): return self._final_settings
             
         
         
@@ -1900,7 +2032,13 @@ if __name__ == "__main__":
                          parent_app_instance=None, peak_details_data=None):
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
-                self.setGeometry(50, 50, 750, 900) 
+                
+                # --- START FIX: Dynamic Sizing ---
+                screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
+                # Target 60% width, 80% height, constrained to available screen
+                w = min(int(screen_geometry.width() * 0.5), 1200)
+                h = min(int(screen_geometry.height() * 0.75), screen_geometry.height())
+                self.resize(max(600, w), max(500, h))
                 self.temp_clipboard_file_path = None
                 self.parent_app = parent_app_instance
                 self.current_results_data = {} 
@@ -2752,7 +2890,21 @@ if __name__ == "__main__":
                 super().__init__(parent)
                 self.parent_app = parent
                 self.setWindowTitle("Adjust Peak Regions and Calculate Areas")
-                self.setGeometry(50, 50, 900, 900)
+                
+                # --- START FIX: Dynamic Sizing ---
+                screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
+                screen_width = screen_geometry.width()
+                screen_height = screen_geometry.height()
+                
+                # Set size to 80% of screen width/height, but enforce minimums
+                dialog_width = max(600, int(screen_width * 0.6))
+                dialog_height = max(900, int(screen_height * 0.9))
+                
+                # Ensure it fits on the screen
+                dialog_width = min(dialog_width, screen_width)
+                dialog_height = min(dialog_height, screen_height)
+                
+                self.resize(dialog_width, dialog_height)
 
                 if not isinstance(cropped_data, Image.Image):
                     raise TypeError("Input 'cropped_data' must be a PIL Image object")
@@ -3084,22 +3236,27 @@ if __name__ == "__main__":
                 if self.canvas is None: return
                 profile_to_plot_and_calc = self.profile_original_inverted
                 
+                # --- Theme Colors (Unchanged) ---
                 is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
                 if is_dark_theme:
                     bg_color, ax_bg_color = '#2D2D30', '#38383C'
                     text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
-                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5' # Blue line for baseline
+                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.5
                 else:
                     bg_color, ax_bg_color = 'white', 'white'
                     text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
                     profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
-                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue' # Blue line for baseline
+                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
                 self.fig.clf()
-                gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.1, figure=self.fig)
+                
+                # --- FIX 1: Adjusted height_ratios (2:1) and increased hspace (0.5) ---
+                # This gives the bottom image more height and adds a larger gap between plots.
+                gs = GridSpec(2, 1, height_ratios=[2, 1], hspace=0.15, figure=self.fig)
+                
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
                 self.fig.patch.set_facecolor(bg_color)
@@ -3108,11 +3265,12 @@ if __name__ == "__main__":
                 for axis in [self.ax, self.ax_image]:
                     axis.patch.set_facecolor(ax_bg_color)
                     for spine in axis.spines.values(): spine.set_color(spine_color)
-                    axis.tick_params(axis='x', colors=text_color, labelsize=8); axis.tick_params(axis='y', colors=text_color, labelsize=8)
+                    axis.tick_params(axis='x', colors=text_color, labelsize=9)
+                    axis.tick_params(axis='y', colors=text_color, labelsize=9)
                     axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
                 
                 if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
-                     self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=9)
+                     self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=7)
                      self.ax.tick_params(axis='x', labelbottom=False)
                      self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
                      self.canvas.draw_idle(); return
@@ -3141,20 +3299,17 @@ if __name__ == "__main__":
                 max_y_for_plot_limit = np.max(profile_for_display) if len(profile_for_display) > 0 else 1
                 text_positions = []
 
-                # --- First pass: Calculate all areas for the current method ---
+                # --- First pass: Calculate all areas ---
                 for i in range(len(self.peak_regions)):
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
                     if start_handle >= end_handle or i >= len(self.peaks): 
                         self.peak_areas_valley.append(0); self.peak_areas_straight_line.append(0); self.peak_areas_rolling_ball.append(0)
                         continue
                     
-                    # --- START OF FIX: Use np.trapezoid instead of np.trapz ---
-                    # Rolling Ball Area
                     baseline_rb = self.background
                     area_rb = np.trapezoid(profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rb[start_handle:end_handle+1])
                     self.peak_areas_rolling_ball.append(max(0, area_rb))
                     
-                    # Straight Line Area (Global)
                     global_sl_baseline = None
                     if self.peak_regions:
                         trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
@@ -3168,13 +3323,11 @@ if __name__ == "__main__":
                         area_sl = np.trapezoid(np.maximum(0, difference_sl))
                     self.peak_areas_straight_line.append(max(0, area_sl))
 
-                    # ROLLING-VALLEY BASELINE LOGIC
                     y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
                     baseline_rv_local_straight = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
                     final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
                     area_valley = np.trapezoid(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - final_rv_baseline))
                     self.peak_areas_valley.append(max(0, area_valley))
-                    # --- END OF FIX ---
 
                 total_area = 0
                 if self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
@@ -3182,7 +3335,7 @@ if __name__ == "__main__":
                 elif self.method == "Straight Line": total_area = sum(self.peak_areas_straight_line)
                 if total_area < 1e-9: total_area = 0.0
 
-                # --- Second pass: Draw fills, baselines, and text labels ---
+                # --- Second pass: Draw fills and labels ---
                 for i in range(len(self.peak_regions)):
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
                     if start_handle >= end_handle or i >= len(self.peaks): continue
@@ -3243,15 +3396,19 @@ if __name__ == "__main__":
                 
                 handles, labels = self.ax.get_legend_handles_labels()
                 if handles:
-                    leg = self.fig.legend(handles, labels, loc='lower center', ncol=len(handles), bbox_to_anchor=(0.5, 0.01), fontsize='medium', facecolor=bg_color, edgecolor=spine_color)
+                    # Legend placed in the extra bottom space
+                    leg = self.fig.legend(handles, labels, loc='lower center', ncol=len(handles), bbox_to_anchor=(0.5, 0.01), fontsize='small', facecolor=bg_color, edgecolor=spine_color)
                     for text in leg.get_texts(): text.set_color(text_color)
                 
                 self.ax.set_ylabel("Intensity", fontsize=9)
-                self.ax.set_title(f"Profile & Peak Regions ({self.method})", fontsize=10, weight='bold')
+                self.ax.set_title(f"Profile & Peak Regions ({self.method})", fontsize=9, weight='bold')
                 self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+                
+                # --- FIX 2: Set X/Y limits with extra top padding for labels ---
                 if len(profile_to_plot_and_calc) > 1:
                     self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1)
-                    self.ax.set_ylim(bottom=min(0, np.min(profile_for_display)), top=max_y_for_plot_limit * 1.1)
+                    # Increased multiplier from 1.1 to 1.25 to prevent label cutoff
+                    self.ax.set_ylim(bottom=min(0, np.min(profile_for_display)), top=max_y_for_plot_limit * 1.25)
                 
                 if np.max(profile_to_plot_and_calc) > 10000:
                     self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
@@ -3266,13 +3423,18 @@ if __name__ == "__main__":
 
                     self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     self.ax_image.set_xlabel("Pixel Index", fontsize=9)
+                    
+                    # Draw handles on image
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
                         is_focused = peak_idx == self.selected_peak_for_ui_focus
                         line_color, zorder_val, lw = (focused_peak_color, 11, 2.0) if is_focused else ('blue', 10, 1.5)
                         start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
                 
-                self.fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.25)
+                # --- FIX 3: Adjusted Margins for Title, Axis Labels, and Legend ---
+                # top=0.85 (more room for title), bottom=0.22 (room for legend), left=0.15 (room for Y-label)
+                self.fig.subplots_adjust(left=0.1, right=0.9, top=0.92, bottom=0.25)
+                
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
@@ -4084,9 +4246,24 @@ if __name__ == "__main__":
                         painter.drawText(QPointF(predict_line_draw_start_x_ls, draw_y_mw_ls), line_symbol)
                     should_draw_oligomer_overlay = (self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_model is not None)
                     if should_draw_oligomer_overlay:
-                        line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]; text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
-                        text_font = QFont(self.app_instance.custom_font_type_dropdown.currentText()); text_font.setPixelSize(max(4, int(self.app_instance.custom_font_size_spinbox.value() / self.zoom_level))); text_font.setBold(True)
-                        painter.setFont(text_font); fm_text = QFontMetricsF(text_font); text_height = fm_text.height(); min_text_spacing = text_height * 1.2
+                        line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]
+                        text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
+                        
+                        # --- UPDATED: Use Standard Marker Font Settings ---
+                        # Uses app_instance.font_family/font_size instead of custom settings
+                        base_font_size = self.app_instance.font_size
+                        font_family = self.app_instance.font_family
+                        scaled_pixel_size = max(4, int(base_font_size / self.zoom_level))
+
+                        text_font = QFont(font_family)
+                        text_font.setPixelSize(scaled_pixel_size)
+                        text_font.setBold(True)
+                        painter.setFont(text_font)
+                        # --------------------------------------------------
+
+                        fm_text = QFontMetricsF(text_font)
+                        text_height = fm_text.height()
+                        min_text_spacing = text_height * 1.2
                         bands_to_draw = []
                         for i, mw in enumerate(self.app_instance.oligomer_products):
                             y_pos_img = self.app_instance._get_y_pos_from_mw(mw, self.app_instance.last_mw_prediction_model, self.app_instance.last_mw_prediction_min_max_pos)
@@ -4094,33 +4271,55 @@ if __name__ == "__main__":
                                 y_pos_ls = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
                                 bands_to_draw.append({'mw': mw, 'y_ls': y_pos_ls, 'color': line_colors[i % len(line_colors)], 'text_color': text_colors[i % len(text_colors)]})
                         if not bands_to_draw: painter.restore(); return
-                        bands_to_draw.sort(key=lambda b: b['y_ls']); last_text_y = -float('inf')
+                        bands_to_draw.sort(key=lambda b: b['y_ls'])
+                        
+                        last_text_y = -float('inf')
                         for band in bands_to_draw:
                             ideal_text_y = band['y_ls']
                             if ideal_text_y < last_text_y + min_text_spacing: band['text_y_ls'] = last_text_y + min_text_spacing
                             else: band['text_y_ls'] = ideal_text_y
                             last_text_y = band['text_y_ls']
+                        
                         arrow_line_width = max(0.8, 2.0 / self.zoom_level)
+                        
+                        # Determine Start X (Cursor location or Image Center)
+                        start_x = 0
+                        if self.mw_predict_preview_enabled and self.mw_predict_preview_position:
+                             start_x = self.mw_predict_preview_position.x()
+                        elif self.app_instance and hasattr(self.app_instance, "protein_location") and self.app_instance.protein_location:
+                             img_pt = self.app_instance.protein_location
+                             # Convert Image Space -> Label Space
+                             start_x = _app_image_coords_to_unzoomed_label_space(img_pt).x()
+                        else:
+                             start_x = _offset_x_img_in_label + _displayed_img_w_in_label / 2
+
                         for band in bands_to_draw:
                             pen = QPen(band['color']); pen.setWidthF(arrow_line_width); painter.setPen(pen)
-                            text = f"{band['mw']:.1f} kDa"; text_rect = fm_text.boundingRect(text); line_start_x = predict_line_draw_start_x_ls
-                            line_end_x = predict_line_draw_start_x_ls + predict_line_rect.width(); callout_start_point = QPointF(line_end_x, band['y_ls'])
-                            text_leader_start_x = line_end_x + (40 / self.zoom_level); callout_bend_point = QPointF(text_leader_start_x, band['text_y_ls'])
-                            text_start_x = callout_bend_point.x() + (5 / self.zoom_level); text_draw_y = band['text_y_ls'] - (text_rect.top() + text_rect.height() / 2.0)
+                            text = f"{band['mw']:.1f} kDa"; text_rect = fm_text.boundingRect(text)
                             
-                            # Draw connector lines first
-                            painter.drawLine(QPointF(line_start_x, band['y_ls']), callout_start_point)
-                            painter.drawLine(callout_start_point, callout_bend_point)
-                            painter.drawLine(callout_bend_point, QPointF(text_start_x, band['text_y_ls']))
+                            # Draw stepped lines
+                            line_len_1 = 30 / self.zoom_level
+                            elbow_x = start_x + line_len_1
+                            text_start_x = elbow_x + (5 / self.zoom_level)
+                            
+                            p_start = QPointF(start_x, band['y_ls'])
+                            p_elbow_1 = QPointF(elbow_x, band['y_ls'])
+                            p_elbow_2 = QPointF(elbow_x, band['text_y_ls'])
+                            p_text_anchor = QPointF(text_start_x, band['text_y_ls'])
+
+                            # Use Polyline for clean joints
+                            polyline_points = [p_start, p_elbow_1, p_elbow_2, p_text_anchor]
+                            painter.drawPolyline(QPolygonF(polyline_points))
+                            
+                            text_draw_y = band['text_y_ls'] - (text_rect.top() + text_rect.height() / 2.0)
                             
                             painter.setFont(text_font)
 
-                            glow_color = QColor(255, 255, 255, 90) # Semi-transparent white
+                            glow_color = QColor(255, 255, 255, 90)
                             glow_pen = QPen(glow_color)
-                            glow_pen.setWidth(2) # Make glow pen slightly thicker for a softer effect
+                            glow_pen.setWidth(2) 
                             painter.setPen(glow_pen)
                             
-                            # Define offsets for the glow, scaled by zoom level for consistency
                             glow_offset = max(0.5, 1.0 / self.zoom_level)
                             offsets = [
                                 (-glow_offset, -glow_offset), (glow_offset, -glow_offset),
@@ -4128,11 +4327,9 @@ if __name__ == "__main__":
                                 (0, -glow_offset), (0, glow_offset),
                                 (-glow_offset, 0), (glow_offset, 0)
                             ]
-                            # Draw the text multiple times at the offset positions
                             for dx, dy in offsets:
                                 painter.drawText(QPointF(text_start_x + dx, text_draw_y + dy), text)
 
-                            # Finally, draw the main, sharp text on top
                             painter.setPen(band['text_color'])
                             painter.drawText(QPointF(text_start_x, text_draw_y), text)
 
@@ -4651,6 +4848,7 @@ if __name__ == "__main__":
             """
             def __init__(self):
                 super().__init__()
+                self.setAcceptDrops(True)
                 # --- ADD THIS LINE AT THE START OF __init__ ---
                 # --- (The rest of your __init__ method continues as before) ---
                 self.current_theme='light'
@@ -4697,7 +4895,7 @@ if __name__ == "__main__":
                 self.preview_label_width_setting = 400  # A smaller base width for the minimum calculation
                 self.preview_label_max_height_setting = 300 # A smaller base height for the minimum calculation
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER V3.5"
+                self.window_title="GEL BLOT ANALYZER v4.0"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -5099,7 +5297,7 @@ if __name__ == "__main__":
 
                 try:
                     is_16bit = self.image_master.format() == QImage.Format_Grayscale16 if self.image_master else False
-                    hist_range = (0, 65536) if is_16bit else (0, 256)
+                    hist_range = (0, 65535) if is_16bit else (0, 255)
                     
                     black_point_slider_val = self.black_point_slider.value()
                     white_point_slider_val = self.white_point_slider.value()
@@ -5151,6 +5349,8 @@ if __name__ == "__main__":
                     np_img_full = self.qimage_to_numpy(temp_image)
                     if np_img_full is not None:
                         np_content = np_img_full
+                        is_16bit = np_content.dtype == np.uint16
+                        max_val = 65535.0 if is_16bit else 255.0
             
                         # Apply Channel Mixer
                         cm_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
@@ -5160,24 +5360,44 @@ if __name__ == "__main__":
                             np_float = np_content.astype(np.float32)
                             if is_mono:
                                 gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
-                                max_val = 65535 if np_content.dtype == np.uint16 else 255
                                 np_content = np.clip(gray, 0, max_val).astype(np_content.dtype)
                             else:
                                 np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
-                                max_val = 65535 if np_content.dtype == np.uint16 else 255
                                 np_content = np.clip(np_float, 0, max_val).astype(np_content.dtype)
             
-                        # Apply CLAHE
+                        # --- CLAHE FIX FOR 16-BIT COLOR ---
                         clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
                         if clahe_settings.get('clip_limit', 1.0) > 1.0:
-                            clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
-                            if np_content.ndim == 2: np_content = clahe.apply(np_content)
+                            tile_size = clahe_settings.get('tile_size', 8)
+                            effective_clip = clahe_settings['clip_limit'] * 256.0 if is_16bit else clahe_settings['clip_limit']
+                            clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
+                            
+                            if np_content.ndim == 2:
+                                np_content = clahe.apply(np_content)
                             elif np_content.ndim == 3:
-                                if np_content.shape[2] == 4:
-                                    bgr = np_content[...,:3]; lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-                                    lab[..., 0] = clahe.apply(lab[..., 0]); np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                                bgr = np_content[...,:3]
+                                alpha = np_content[..., 3] if np_content.shape[2] == 4 else None
+
+                                if is_16bit:
+                                    # Convert 16-bit Int -> 32-bit Float -> LAB -> CLAHE -> Back
+                                    bgr_float = bgr.astype(np.float32) / 65535.0
+                                    lab_float = cv2.cvtColor(bgr_float, cv2.COLOR_BGR2LAB)
+                                    l_channel = lab_float[..., 0]
+                                    l_uint16 = (l_channel / 100.0 * 65535.0).astype(np.uint16)
+                                    l_clahe = clahe.apply(l_uint16)
+                                    lab_float[..., 0] = (l_clahe.astype(np.float32) / 65535.0 * 100.0)
+                                    bgr_float_out = cv2.cvtColor(lab_float, cv2.COLOR_LAB2BGR)
+                                    bgr_out = np.clip(bgr_float_out * 65535.0, 0, 65535).astype(np.uint16)
+                                    
+                                    if alpha is not None: np_content = np.dstack((bgr_out, alpha))
+                                    else: np_content = bgr_out
                                 else:
-                                    lab = cv2.cvtColor(np_content, cv2.COLOR_BGR2LAB); lab[..., 0] = clahe.apply(lab[..., 0]); np_content = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                                    # 8-bit path
+                                    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                                    lab[..., 0] = clahe.apply(lab[..., 0])
+                                    bgr_out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                                    if alpha is not None: np_content = np.dstack((bgr_out, alpha))
+                                    else: np_content = bgr_out
                         
                         # Apply Unsharp Mask
                         usm_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
@@ -5191,12 +5411,13 @@ if __name__ == "__main__":
                     else:
                         source_image_for_hist = temp_image
                 
+                # ... (The rest of the function for plotting the histogram remains unchanged) ...
                 # Ensure the plot canvas exists and there's an image to analyze.
                 if not self.hist_ax or not source_image_for_hist or source_image_for_hist.isNull():
                     if self.hist_ax:
                         self.hist_ax.clear()
                         # Set background color based on theme
-                        bg_color = '#38383C' if self.current_theme == 'dark' else 'white'
+                        bg_color = '#38383C' if self.current_theme == 'dark' else '#F0F2F5' # Match main window bg
                         self.hist_fig.patch.set_facecolor(bg_color)
                         self.hist_ax.patch.set_facecolor(bg_color)
                         text_color = '#A0A0A0' if self.current_theme == 'dark' else 'gray'
@@ -5217,10 +5438,12 @@ if __name__ == "__main__":
                         gray_np = np_img
                     
                     is_16bit = gray_np.dtype == np.uint16
-                    bins = 256
-                    hist_range = (0, 65536) if is_16bit else (0, 256)
+                    bins = 255
+                    hist_range = (0, 65535) if is_16bit else (0, 255)
                     
+                    # Calculate Histogram
                     hist, bin_edges = np.histogram(gray_np.ravel(), bins=bins, range=hist_range)
+                    # Add 1 to avoid log(0)
                     log_hist = np.log1p(hist)
                     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
@@ -5229,53 +5452,84 @@ if __name__ == "__main__":
                     # Set colors based on the current theme
                     if self.current_theme == 'dark':
                         bg_color = '#38383C'
-                        line_color = '#E0E0E0'
-                        fill_color = '#5A5A60'
-                        text_color = '#F1F1F1'
-                        spine_color = '#707070'
-                        marker_color = '#E53935' # A brighter red
+                        plot_bg_color = '#2D2D30'
+                        line_color = '#64B5F6' # Soft Blue
+                        fill_color = '#64B5F6'
+                        fill_alpha = 0.3
+                        text_color = '#E0E0E0'
+                        grid_color = '#505050'
+                        marker_color = '#FF5252' # Red Accent
                     else:
-                        bg_color = 'white'
-                        line_color = 'black'
-                        fill_color = '#cccccc'
-                        text_color = 'black'
-                        spine_color = '#555555'
-                        marker_color = 'red'
+                        bg_color = '#F0F2F5'
+                        plot_bg_color = '#FFFFFF'
+                        line_color = '#1976D2' # Darker Blue
+                        fill_color = '#2196F3'
+                        fill_alpha = 0.3
+                        text_color = '#333333'
+                        grid_color = '#E0E0E0'
+                        marker_color = '#D32F2F' # Dark Red
 
                     self.hist_fig.patch.set_facecolor(bg_color)
-                    self.hist_ax.patch.set_facecolor(bg_color)
+                    self.hist_ax.patch.set_facecolor(plot_bg_color)
                     
+                    # Draw Data
                     self.hist_ax.plot(bin_centers, log_hist, color=line_color, linewidth=1.0)
-                    self.hist_ax.fill_between(bin_centers, 0, log_hist, color=fill_color, alpha=1.0)
+                    self.hist_ax.fill_between(bin_centers, 0, log_hist, color=fill_color, alpha=fill_alpha)
                     
-                    self.hist_ax.set_yticks([]); self.hist_ax.set_xticks([])
-                    self.hist_ax.text(0.02, 0.95, 'Histogram (log)', transform=self.hist_ax.transAxes, fontsize=9, verticalalignment='top', horizontalalignment='left', weight='bold', color=text_color)
+                    # --- AXIS FORMATTING ---
+                    self.hist_ax.grid(True, linestyle=':', alpha=0.6, color=grid_color)
                     
-                    self.hist_ax.spines['top'].set_visible(False)
-                    self.hist_ax.spines['right'].set_visible(False)
-                    self.hist_ax.spines['left'].set_visible(False)
-                    self.hist_ax.spines['bottom'].set_linewidth(1.5)
-                    self.hist_ax.spines['bottom'].set_color(spine_color)
+                    # X-Axis Labels
+                    x_ticks = np.linspace(hist_range[0], hist_range[1], 5)
+                    self.hist_ax.set_xticks(x_ticks)
+                    
+                    if is_16bit:
+                        # Format 16-bit ticks (e.g., 0, 16k, 32k, 48k, 64k)
+                        labels = [f"{int(x/1000)}k" if x > 0 else "0" for x in x_ticks]
+                        self.hist_ax.set_xticklabels(labels, fontsize=7, color=text_color)
+                    else:
+                        self.hist_ax.set_xticklabels([f"{int(x)}" for x in x_ticks], fontsize=7, color=text_color)
+
+                    # Y-Axis (Log Density)
+                    self.hist_ax.set_yticks([]) # Hide Y ticks as log values aren't intuitive for users here
+                    self.hist_ax.set_ylabel("Log Density", fontsize=7, color=text_color)
+                    
+                    # Title
+                    title_str = 'Intensity Histogram (16-bit)' if is_16bit else 'Intensity Histogram (8-bit)'
+                    self.hist_ax.set_title(title_str, fontsize=8, pad=3, color=text_color, fontweight='bold')
+                    
+                    # Spines
+                    for spine in self.hist_ax.spines.values():
+                        spine.set_color(grid_color)
+                        spine.set_linewidth(0.5)
 
                     self.hist_ax.set_xlim(hist_range[0], hist_range[1])
                     self.hist_ax.set_ylim(bottom=0)
                     
+                    # --- LEVEL MARKERS ---
                     black_point_slider_val = self.black_point_slider.value()
                     white_point_slider_val = self.white_point_slider.value()
                     slider_max = self.black_point_slider.maximum()
-                    black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
-                    white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
                     
-                    self.hist_black_line = self.hist_ax.axvline(black_point_pos, color=marker_color, lw=1.0)
-                    self.hist_white_line = self.hist_ax.axvline(white_point_pos, color=marker_color, lw=1.0)
-                    self.hist_black_marker = self.hist_ax.plot(black_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)[0]
-                    self.hist_white_marker = self.hist_ax.plot(white_point_pos, 0, marker='^', color=marker_color, markersize=6, clip_on=False)[0]
+                    # Map slider (0-65535) to current hist range
+                    scale = hist_range[1] / 65535.0
+                    black_point_pos = black_point_slider_val * scale
+                    white_point_pos = white_point_slider_val * scale
                     
-                    self.hist_fig.subplots_adjust(left=0.01, right=0.99, top=1.0, bottom=0.15)
+                    # Draw Lines
+                    self.hist_black_line = self.hist_ax.axvline(black_point_pos, color=text_color, lw=1.0, linestyle='--')
+                    self.hist_white_line = self.hist_ax.axvline(white_point_pos, color=text_color, lw=1.0, linestyle='--')
+                    
+                    # Draw Triangles at bottom
+                    self.hist_black_marker = self.hist_ax.plot(black_point_pos, 0, marker='^', color='black', markeredgecolor='white', markersize=8, clip_on=False, zorder=10)[0]
+                    self.hist_white_marker = self.hist_ax.plot(white_point_pos, 0, marker='^', color='white', markeredgecolor='black', markersize=8, clip_on=False, zorder=10)[0]
+                    
+                    # Adjust margins to fit labels
+                    self.hist_fig.subplots_adjust(left=0.12, right=0.95, top=0.88, bottom=0.25)
                     self.hist_canvas.draw_idle()
                 except Exception as e:
                     print(f"Error updating levels histogram: {e}")
-                    traceback.print_exc()
+                    # traceback.print_exc()
                 
             def update_mouse_coords_in_statusbar(self, label_pos: QPointF, image_pos: QPointF = None):
                 if image_pos is not None:
@@ -5472,35 +5726,58 @@ if __name__ == "__main__":
 
             def _update_main_layout(self, position: str):
                 """
-                Rebuilds the main window's layout, applying a fixed size to the
-                controls area (QTabWidget) based on the layout orientation.
+                Rebuilds the main window's layout.
+                - Viewer is FIXED size (550x350) to prevent issues.
+                - Controls area dynamically sizes to fill the rest of the screen 
+                  to minimize scrollbar usage.
+                - Left/Right modes now maximize vertical height usage.
                 """
                 # --- START OF MODIFICATION ---
-                # Define the desired fixed sizes for the controls area
-                CONTROLS_FIXED_WIDTH = 1000   # Use this for Left/Right layouts
-                CONTROLS_FIXED_HEIGHT = 600  # Use this for Top/Bottom layouts
+                # Fixed dimensions for the viewer as requested
                 VIEWER_FIXED_WIDTH = 550
                 VIEWER_FIXED_HEIGHT = 350
-                QWIDGETSIZE_MAX = 16777215   # A very large number to represent "unconstrained"
+                
+                # Get available screen geometry
+                screen_geo = QGuiApplication.primaryScreen().availableGeometry()
+                screen_w = screen_geo.width()
+                screen_h = screen_geo.height()
 
                 new_main_widget = QWidget()
                 new_layout = None
 
+                # Create a ScrollArea for the Tab Widget (Controls) if needed
+                if not hasattr(self, 'controls_scroll_area'):
+                    self.controls_scroll_area = QScrollArea()
+                    
+                self.controls_scroll_area.setWidget(self.tab_widget)
+                self.controls_scroll_area.setWidgetResizable(True)
+                self.controls_scroll_area.setFrameShape(QFrame.NoFrame)
+
+                # --- 1. Enforce Fixed Viewer Size ---
+                self.live_view_label.setFixedSize(VIEWER_FIXED_WIDTH, VIEWER_FIXED_HEIGHT)
+                self.live_view_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+                # --- 2. Unconstrain Tab Widget ---
+                self.tab_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+                self.tab_widget.setMinimumSize(0, 0)
+                self.tab_widget.setMaximumSize(16777215, 16777215)
+
                 if position in ["Top", "Bottom"]:
-                    # For vertical layouts, we want a fixed HEIGHT for the controls
                     new_layout = QVBoxLayout(new_main_widget)
-                    self.tab_widget.setFixedHeight(CONTROLS_FIXED_HEIGHT)
-                    # Unset any fixed width from a previous Left/Right layout
-                    self.tab_widget.setFixedWidth(CONTROLS_FIXED_WIDTH)
-                    self.live_view_label.setFixedHeight(VIEWER_FIXED_HEIGHT)
-                    self.live_view_label.setFixedWidth(VIEWER_FIXED_WIDTH)
+                    
+                    # Vertical Layout: Calculate remaining height for controls
+                    # Screen Height - Fixed Viewer Height - Window Margins (~120px)
+                    available_height = max(400, screen_h - VIEWER_FIXED_HEIGHT - 150)
+                    
+                    self.controls_scroll_area.setMinimumHeight(available_height)
+                    self.controls_scroll_area.setMinimumWidth(0)
                     
                     if position == "Top":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(self.create_separator())
-                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(self.controls_scroll_area, 1)
                     else:  # Bottom
-                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(self.controls_scroll_area, 1)
                         new_layout.addWidget(self.create_separator())
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                 
@@ -5508,22 +5785,26 @@ if __name__ == "__main__":
                     separator = QFrame()
                     separator.setFrameShape(QFrame.VLine)
                     separator.setFrameShadow(QFrame.Sunken)
-                    # For horizontal layouts, we want a fixed WIDTH for the controls
                     new_layout = QHBoxLayout(new_main_widget)
-                    self.tab_widget.setFixedWidth(CONTROLS_FIXED_WIDTH)
-                    # Unset any fixed height from a previous Top/Bottom layout
-                    self.tab_widget.setFixedHeight(CONTROLS_FIXED_HEIGHT)
-                    self.live_view_label.setFixedHeight(VIEWER_FIXED_HEIGHT)
-                    self.live_view_label.setFixedWidth(VIEWER_FIXED_WIDTH)
-
+                    
+                    # Horizontal Layout Width: Screen Width - Fixed Viewer Width - Margins (~60px)
+                    available_width = max(450, screen_w - VIEWER_FIXED_WIDTH - 60)
+                    
+                    # Horizontal Layout Height: Use almost full screen height to minimize vertical scrolling
+                    # Screen Height - Window Titlebar/Taskbar buffer (~100px)
+                    available_height = max(600, screen_h - VIEWER_FIXED_HEIGHT - 150)
+                    
+                    self.controls_scroll_area.setMinimumWidth(available_width)
+                    self.controls_scroll_area.setMinimumHeight(available_height) # Maximize height usage
+                    
                     if position == "Left":
-                        new_layout.addWidget(self.live_view_label, 0)
+                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(separator)
-                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(self.controls_scroll_area, 1) # Controls take remaining width
                     else:  # Right
-                        new_layout.addWidget(self.tab_widget, 0) # Stretch factor 0
+                        new_layout.addWidget(self.controls_scroll_area, 1) # Controls take remaining width
                         new_layout.addWidget(separator)
-                        new_layout.addWidget(self.live_view_label, 0)
+                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                 # --- END OF MODIFICATION ---
 
                 if new_layout:
@@ -6005,173 +6286,118 @@ if __name__ == "__main__":
                     
             def qimage_to_numpy(self, qimage: QImage) -> np.ndarray:
                 """Converts QImage to NumPy array, preserving format and handling row padding."""
-                if qimage.isNull():
-                    return None
+                if qimage.isNull(): return None
 
                 img_format = qimage.format()
                 height = qimage.height()
                 width = qimage.width()
-                bytes_per_line = qimage.bytesPerLine() # Actual bytes per row (includes padding)
-
+                
+                # PySide6/Qt6 uses sizeInBytes()
+                try: expected_total_bytes = qimage.sizeInBytes()
+                except AttributeError: expected_total_bytes = qimage.byteCount()
 
                 ptr = qimage.constBits()
-                if not ptr:
-                    return None
+                if not ptr: return None
+                
+                try: ptr.setsize(expected_total_bytes)
+                except AttributeError: pass
+                
+                buffer_data = bytes(ptr)
 
-                # Ensure ptr is treated as a bytes object of the correct size
-                # ptr is a sip.voidptr, needs explicit size setting for buffer protocol
-                try:
-                    # PySide6/Qt6 uses sizeInBytes()
-                    expected_total_bytes = qimage.sizeInBytes()
-                    ptr.setsize(expected_total_bytes)
-                except AttributeError: # Fallback for older Qt/PyQt where setsize might not be needed or byteCount was used
-                    try:
-                        expected_total_bytes = qimage.byteCount() # Try PyQt5 way if sizeInBytes fails
-                        ptr.setsize(expected_total_bytes)
-                    except AttributeError: # If both fail, proceed with caution
-                        expected_total_bytes = height * bytes_per_line # Estimate
-                        pass # Continue, hoping buffer protocol works
-
-                buffer_data = bytes(ptr) # Create a bytes object from the pointer
-
-                # Use sizeInBytes() for PySide6
-                current_total_bytes = qimage.sizeInBytes()
-                if len(buffer_data) != current_total_bytes:
-                     print(f"qimage_to_numpy: Warning - Buffer size mismatch. Expected {current_total_bytes}, got {len(buffer_data)}.")
-                     # Fallback or error? Let's try to continue but warn.
-
-                # --- Grayscale Formats ---
+                # --- 16-bit Grayscale ---
                 if img_format == QImage.Format_Grayscale16:
-                    bytes_per_pixel = 2
-                    dtype = np.uint16
-                    expected_bytes_per_line = width * bytes_per_pixel
+                    bytes_per_line = qimage.bytesPerLine()
+                    expected_bytes_per_line = width * 2
                     if bytes_per_line == expected_bytes_per_line:
-                        # No padding, simple reshape
-                        arr = np.frombuffer(buffer_data, dtype=dtype).reshape(height, width)
-                        return arr.copy() # Return a copy
+                        arr = np.frombuffer(buffer_data, dtype=np.uint16).reshape(height, width)
+                        return arr.copy()
                     else:
-                        # Handle padding
-                        arr = np.zeros((height, width), dtype=dtype)
+                        arr = np.zeros((height, width), dtype=np.uint16)
                         for y in range(height):
                             start = y * bytes_per_line
                             row_data = buffer_data[start : start + expected_bytes_per_line]
-                            if len(row_data) == expected_bytes_per_line:
-                                arr[y] = np.frombuffer(row_data, dtype=dtype)
-                            else:
-                                print(f"qimage_to_numpy (Grayscale16): Row data length mismatch for row {y}. Skipping row.") # Error handling
+                            arr[y] = np.frombuffer(row_data, dtype=np.uint16)
                         return arr
-            
+
+                # --- FIX: 16-bit RGBA (RGBA64) Handling ---
+                elif img_format in [QImage.Format_RGBA64, QImage.Format_RGBX64]:
+                    bytes_per_pixel = 8 # 4 channels * 2 bytes
+                    bytes_per_line = qimage.bytesPerLine()
+                    expected_bytes_per_line = width * bytes_per_pixel
+                    
+                    if bytes_per_line == expected_bytes_per_line:
+                        # Direct reshape if no padding
+                        arr = np.frombuffer(buffer_data, dtype=np.uint16).reshape(height, width, 4)
+                        return arr.copy()
+                    else:
+                        # Handle row padding
+                        arr = np.zeros((height, width, 4), dtype=np.uint16)
+                        for y in range(height):
+                            start = y * bytes_per_line
+                            # Read exactly the bytes for the width, ignore padding
+                            row_data = buffer_data[start : start + expected_bytes_per_line]
+                            arr[y] = np.frombuffer(row_data, dtype=np.uint16).reshape(width, 4)
+                        return arr
+
+                # --- 8-bit Grayscale ---
                 elif img_format == QImage.Format_Grayscale8:
                     bytes_per_pixel = 1
-                    dtype = np.uint8
-                    expected_bytes_per_line = width * bytes_per_pixel
-                    if bytes_per_line == expected_bytes_per_line:
-                        arr = np.frombuffer(buffer_data, dtype=dtype).reshape(height, width)
-                        return arr.copy()
+                    bytes_per_line = qimage.bytesPerLine()
+                    if bytes_per_line == width:
+                        return np.frombuffer(buffer_data, dtype=np.uint8).reshape(height, width).copy()
                     else:
-                        arr = np.zeros((height, width), dtype=dtype)
+                        arr = np.zeros((height, width), dtype=np.uint8)
                         for y in range(height):
-                            start = y * bytes_per_line
-                            row_data = buffer_data[start : start + expected_bytes_per_line]
-                            if len(row_data) == expected_bytes_per_line:
-                                arr[y] = np.frombuffer(row_data, dtype=dtype)
-                            else:
-                                print(f"qimage_to_numpy (Grayscale8): Row data length mismatch for row {y}. Skipping row.")
+                            s = y * bytes_per_line
+                            arr[y] = np.frombuffer(buffer_data[s : s + width], dtype=np.uint8)
                         return arr
-            
-                # --- Color Formats ---
-                # ARGB32 (often BGRA in memory) & RGBA8888 (often RGBA in memory)
-                elif img_format in (QImage.Format_ARGB32, QImage.Format_RGBA8888, QImage.Format_ARGB32_Premultiplied):
+
+                # --- 8-bit Color (ARGB32/RGB32/RGB888) ---
+                elif img_format in (QImage.Format_ARGB32, QImage.Format_RGBA8888, QImage.Format_ARGB32_Premultiplied, QImage.Format_RGB32):
                     bytes_per_pixel = 4
-                    dtype = np.uint8
-                    expected_bytes_per_line = width * bytes_per_pixel
+                    bytes_per_line = qimage.bytesPerLine()
+                    expected_bytes_per_line = width * 4
                     if bytes_per_line == expected_bytes_per_line:
-                        arr = np.frombuffer(buffer_data, dtype=dtype).reshape(height, width, 4)
-                        return arr.copy()
+                        return np.frombuffer(buffer_data, dtype=np.uint8).reshape(height, width, 4).copy()
                     else:
-                        arr = np.zeros((height, width, 4), dtype=dtype)
+                        arr = np.zeros((height, width, 4), dtype=np.uint8)
                         for y in range(height):
-                            start = y * bytes_per_line
-                            row_data = buffer_data[start : start + expected_bytes_per_line]
-                            if len(row_data) == expected_bytes_per_line:
-                                arr[y] = np.frombuffer(row_data, dtype=dtype).reshape(width, 4)
-                            else:
-                                print(f"qimage_to_numpy ({img_format}): Row data length mismatch for row {y}. Skipping row.")
+                            s = y * bytes_per_line
+                            arr[y] = np.frombuffer(buffer_data[s : s + expected_bytes_per_line], dtype=np.uint8).reshape(width, 4)
                         return arr
-            
-                # RGB32 (often BGRX or RGBX in memory) & RGBX8888
-                elif img_format in (QImage.Format_RGB32, QImage.Format_RGBX8888):
-                    bytes_per_pixel = 4 # Stored with an ignored byte
-                    dtype = np.uint8
-                    expected_bytes_per_line = width * bytes_per_pixel
-                    if bytes_per_line == expected_bytes_per_line:
-                        arr = np.frombuffer(buffer_data, dtype=dtype).reshape(height, width, 4)
-                        return arr.copy()
-                    else:
-                        arr = np.zeros((height, width, 4), dtype=dtype)
-                        for y in range(height):
-                            start = y * bytes_per_line
-                            row_data = buffer_data[start : start + expected_bytes_per_line]
-                            if len(row_data) == expected_bytes_per_line:
-                                arr[y] = np.frombuffer(row_data, dtype=dtype).reshape(width, 4)
-                            else:
-                                print(f"qimage_to_numpy ({img_format}): Row data length mismatch for row {y}. Skipping row.")
-                        return arr
-            
-                # RGB888 (Tightly packed RGB)
+                
                 elif img_format == QImage.Format_RGB888:
                     bytes_per_pixel = 3
-                    dtype = np.uint8
-                    expected_bytes_per_line = width * bytes_per_pixel
+                    bytes_per_line = qimage.bytesPerLine()
+                    expected_bytes_per_line = width * 3
                     if bytes_per_line == expected_bytes_per_line:
-                        arr = np.frombuffer(buffer_data, dtype=dtype).reshape(height, width, 3)
-                        return arr.copy()
+                        return np.frombuffer(buffer_data, dtype=np.uint8).reshape(height, width, 3).copy()
                     else:
-                        arr = np.zeros((height, width, 3), dtype=dtype)
+                        arr = np.zeros((height, width, 3), dtype=np.uint8)
                         for y in range(height):
-                            start = y * bytes_per_line
-                            row_data = buffer_data[start : start + expected_bytes_per_line]
-                            if len(row_data) == expected_bytes_per_line:
-                                arr[y] = np.frombuffer(row_data, dtype=dtype).reshape(width, 3)
-                            else:
-                                print(f"qimage_to_numpy (RGB888): Row data length mismatch for row {y}. Skipping row.")
+                            s = y * bytes_per_line
+                            arr[y] = np.frombuffer(buffer_data[s : s + expected_bytes_per_line], dtype=np.uint8).reshape(width, 3)
                         return arr
-            
-                # --- Fallback / Conversion Attempt ---
+
+                # Fallback conversion
                 else:
                     try:
                         qimage_conv = qimage.convertToFormat(QImage.Format_ARGB32)
-                        if qimage_conv.isNull():
-                            print("qimage_to_numpy: Fallback conversion to ARGB32 failed.")
-                            qimage_conv_gray = qimage.convertToFormat(QImage.Format_Grayscale8)
-                            if qimage_conv_gray.isNull():
-                                 return None
-                            else:
-                                return self.qimage_to_numpy(qimage_conv_gray)
-            
                         return self.qimage_to_numpy(qimage_conv)
-                    except Exception as e:
-                        print(f"qimage_to_numpy: Error during fallback conversion: {e}")
-                        return None
+                    except: return None
 
             def numpy_to_qimage(self, array: np.ndarray) -> QImage:
                 """Converts NumPy array to QImage, selecting appropriate format."""
-                if array is None:
-                    return QImage() # Return invalid QImage
-            
-                if not isinstance(array, np.ndarray):
-                    return QImage()
+                if array is None: return QImage()
+                if not isinstance(array, np.ndarray): return QImage()
             
                 try:
                     if array.ndim == 2: # Grayscale
                         height, width = array.shape
                         if array.dtype == np.uint16:
                             bytes_per_line = width * 2
-                            # Ensure data is contiguous
                             contiguous_array = np.ascontiguousarray(array)
-                            # Create QImage directly from contiguous data buffer
                             qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_Grayscale16)
-                            # Important: QImage doesn't own the buffer by default. Return a copy.
                             return qimg.copy()
                         elif array.dtype == np.uint8:
                             bytes_per_line = width * 1
@@ -6179,56 +6405,51 @@ if __name__ == "__main__":
                             qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
                             return qimg.copy()
                         elif np.issubdtype(array.dtype, np.floating):
-                             # Assume float is in 0-1 range, scale to uint8
                              img_norm = np.clip(array * 255.0, 0, 255).astype(np.uint8)
                              bytes_per_line = width * 1
                              contiguous_array = np.ascontiguousarray(img_norm)
                              qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
                              return qimg.copy()
-                        else:
-                            raise TypeError(f"Unsupported grayscale NumPy dtype: {array.dtype}")
             
                     elif array.ndim == 3: # Color
                         height, width, channels = array.shape
-                        if channels == 3 and array.dtype == np.uint8:
-                            # Assume input is BGR (common from OpenCV), convert to RGB for QImage.Format_RGB888
-                            # Make a contiguous copy before conversion
-                            contiguous_array_bgr = np.ascontiguousarray(array)
-                            rgb_image = cv2.cvtColor(contiguous_array_bgr, cv2.COLOR_BGR2RGB)
-                            # rgb_image is now contiguous RGB
-                            bytes_per_line = width * 3
-                            qimg = QImage(rgb_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
-                            return qimg.copy()
-                        elif channels == 4 and array.dtype == np.uint8:
-                            # Assume input is BGRA (matches typical QImage.Format_ARGB32 memory layout)
-                            contiguous_array_bgra = np.ascontiguousarray(array)
-                            bytes_per_line = width * 4
-                            qimg = QImage(contiguous_array_bgra.data, width, height, bytes_per_line, QImage.Format_ARGB32)
-                            return qimg.copy()
-                        # Add handling for 16-bit color if needed (less common for display)
-                        elif channels == 3 and array.dtype == np.uint16:
-                             # Downscale to 8-bit for display format
-                             array_8bit = (array / 257.0).astype(np.uint8)
-                             contiguous_array_bgr = np.ascontiguousarray(array_8bit)
-                             rgb_image = cv2.cvtColor(contiguous_array_bgr, cv2.COLOR_BGR2RGB)
-                             bytes_per_line = width * 3
-                             qimg = QImage(rgb_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+                        
+                        if channels == 3 and array.dtype == np.uint16:
+                             # FIX: Support 16-bit Color via RGBA64
+                             # QImage doesn't have a simple RGB48 format, so we use RGBA64.
+                             # We must add an alpha channel (opaque 65535).
+                             alpha = np.full((height, width, 1), 65535, dtype=np.uint16)
+                             rgba_16 = np.concatenate((array, alpha), axis=2)
+                             contiguous_array = np.ascontiguousarray(rgba_16)
+                             bytes_per_line = width * 8 # 4 channels * 2 bytes
+                             qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_RGBA64)
                              return qimg.copy()
+
                         elif channels == 4 and array.dtype == np.uint16:
-                             # Downscale color channels, keep alpha potentially?
-                             array_8bit = (array / 257.0).astype(np.uint8) # Downscales all channels including alpha
-                             contiguous_array_bgra = np.ascontiguousarray(array_8bit)
-                             bytes_per_line = width * 4
-                             qimg = QImage(contiguous_array_bgra.data, width, height, bytes_per_line, QImage.Format_ARGB32)
+                             # FIX: Support 16-bit RGBA directly
+                             contiguous_array = np.ascontiguousarray(array)
+                             bytes_per_line = width * 8 # 4 channels * 2 bytes
+                             qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_RGBA64)
                              return qimg.copy()
-                        else:
-                             raise TypeError(f"Unsupported color NumPy dtype/channel combination: {array.dtype} / {channels} channels")
-                    else:
-                        raise ValueError(f"Unsupported array dimension: {array.ndim}")
+
+                        elif channels == 3 and array.dtype == np.uint8:
+                            contiguous_array = np.ascontiguousarray(array)
+                            bytes_per_line = width * 3
+                            qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
+                            return qimg.copy()
+
+                        elif channels == 4 and array.dtype == np.uint8:
+                            contiguous_array = np.ascontiguousarray(array)
+                            bytes_per_line = width * 4
+                            qimg = QImage(contiguous_array.data, width, height, bytes_per_line, QImage.Format_ARGB32)
+                            return qimg.copy()
+                    
+                    return QImage()
             
                 except Exception as e:
+                    print(f"Error in numpy_to_qimage: {e}")
                     traceback.print_exc()
-                    return QImage() # Return invalid QImage on error
+                    return QImage()
 
             def get_image_format(self, image=None):
                 """Helper to safely get the format of self.image or a provided image."""
@@ -7040,6 +7261,7 @@ if __name__ == "__main__":
                     self.undo_stack.pop(0)
 
                 state = {
+                    "selected_preset": self.combo_box.currentText() if hasattr(self, 'combo_box') else "Custom",
                     # --- Core Image ---
                     "image_master": self.image_master.copy(),
 
@@ -7094,22 +7316,33 @@ if __name__ == "__main__":
                 self.redo_stack.clear()
 
             def _restore_state_from_dict(self, state_dict):
-                """
-                Restores the entire application state from a snapshot dictionary.
-                This method updates both internal variables and the UI controls.
-                """
-                self._is_restoring_state = True
+                self._is_restoring_state = True # LOCK state saving
 
                 try:
-                    # --- Restore Core Image & Annotations ---
+                    # 1. Restore Data Variables
                     self.image_master = state_dict['image_master'].copy()
                     self.left_markers = state_dict['left_markers']
                     self.right_markers = state_dict['right_markers']
                     self.top_markers = state_dict['top_markers']
                     self.custom_markers = state_dict['custom_markers']
                     self.custom_shapes = state_dict['custom_shapes']
+                    
+                    self.left_marker_shift_added = state_dict['left_marker_shift_added']
+                    self.right_marker_shift_added = state_dict['right_marker_shift_added']
+                    self.top_marker_shift_added = state_dict['top_marker_shift_added']
+                    
+                    self.font_family = state_dict['font_family']
+                    self.font_size = state_dict['font_size']
+                    self.font_color = QColor(state_dict['font_color'])
+                    self.font_rotation = state_dict['font_rotation']
 
-                    # --- ANALYSIS REGIONS (THE FIX) ---
+                    self.main_image_is_inverted = state_dict['main_image_is_inverted']
+                    self.channel_mixer_data = state_dict['channel_mixer_data']
+                    self.unsharp_mask_data = state_dict['unsharp_mask_data']
+                    self.clahe_data = state_dict['clahe_data']
+                    self.image_padded = state_dict['image_padded']
+
+                    # Restore Analysis Regions
                     serialized_defs = state_dict.get("multi_lane_definitions", [])
                     self.multi_lane_definitions = []
                     for d in serialized_defs:
@@ -7124,45 +7357,84 @@ if __name__ == "__main__":
                     serialized_quad = state_dict.get("single_quad_points", [])
                     self.live_view_label.quad_points = [QPointF(x, y) for x, y in serialized_quad]
                     self.live_view_label.bounding_box_preview = state_dict.get("single_bounding_box", None)
-                    # --- END OF FIX ---
 
-                    # --- Restore Marker Alignment & Font ---
-                    self.left_marker_shift_added = state_dict['left_marker_shift_added']
-                    self.right_marker_shift_added = state_dict['right_marker_shift_added']
-                    self.top_marker_shift_added = state_dict['top_marker_shift_added']
-                    self.font_family = state_dict['font_family']
-                    self.font_size = state_dict['font_size']
-                    self.font_color = QColor(state_dict['font_color'])
-                    self.font_rotation = state_dict['font_rotation']
-                    
-                    # --- Restore Image Adjustments ---
-                    self.main_image_is_inverted = state_dict['main_image_is_inverted']
-                    self.channel_mixer_data = state_dict['channel_mixer_data']
-                    self.unsharp_mask_data = state_dict['unsharp_mask_data']
-                    self.clahe_data = state_dict['clahe_data']
-                    self.image_padded = state_dict['image_padded']
-                    
-                    # --- UPDATE UI CONTROLS ---
-                    self._update_marker_slider_ranges()
-                    self.left_padding_slider.blockSignals(True); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.blockSignals(False)
-                    self.right_padding_slider.blockSignals(True); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.blockSignals(False)
-                    self.top_padding_slider.blockSignals(True); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.blockSignals(False)
+                    # 2. Restore UI - Adjustment Sliders (Safe to do early)
                     self._load_adjustments_to_ui("Main Image")
                     lg_settings = state_dict['levels_gamma']
                     self.black_point_slider.setValue(lg_settings.get('black_point', 0))
                     self.white_point_slider.setValue(lg_settings.get('white_point', 65535))
                     self.gamma_slider.setValue(lg_settings.get('gamma', 100))
-                    self.font_combo_box.setCurrentFont(QFont(self.font_family))
-                    self.font_size_spinner.setValue(self.font_size)
-                    self._update_color_button_style(self.font_color_button, self.font_color)
-                    self.font_rotation_input.setValue(self.font_rotation)
+
+                    # 3. CRITICAL: Generate the full image NOW so we have correct dimensions
+                    self.apply_all_adjustments() 
+
+                    # 4. CRITICAL: Update Slider Ranges based on the restored image size
+                    self._update_marker_slider_ranges()
+
+                    # 5. CRITICAL: Restore Marker Sliders WITHOUT triggering signals
+                    # (Triggering signals now would overwrite the variables we just restored)
+                    if hasattr(self, 'left_padding_slider'):
+                        self.left_padding_slider.setEnabled(True)
+                        self.left_padding_slider.blockSignals(True)
+                        self.left_padding_slider.setValue(self.left_marker_shift_added)
+                        self.left_padding_slider.blockSignals(False)
                     
-                    # --- Finalize ---
+                    if hasattr(self, 'right_padding_slider'):
+                        self.right_padding_slider.setEnabled(True)
+                        self.right_padding_slider.blockSignals(True)
+                        self.right_padding_slider.setValue(self.right_marker_shift_added)
+                        self.right_padding_slider.blockSignals(False)
+                        
+                    if hasattr(self, 'top_padding_slider'):
+                        self.top_padding_slider.setEnabled(True)
+                        self.top_padding_slider.blockSignals(True)
+                        self.top_padding_slider.setValue(self.top_marker_shift_added)
+                        self.top_padding_slider.blockSignals(False)
+
+                    # 6. Restore Font UI
+                    self.font_combo_box.blockSignals(True)
+                    self.font_combo_box.setCurrentFont(QFont(self.font_family))
+                    self.font_combo_box.blockSignals(False)
+                    
+                    self.font_size_spinner.blockSignals(True)
+                    self.font_size_spinner.setValue(self.font_size)
+                    self.font_size_spinner.blockSignals(False)
+                    
+                    self.font_rotation_input.blockSignals(True)
+                    self.font_rotation_input.setValue(self.font_rotation)
+                    self.font_rotation_input.blockSignals(False)
+                    
+                    self._update_color_button_style(self.font_color_button, self.font_color)
+
+                    # 7. NEW: Restore Preset Selection (Prevent "Bio-Rad" from overwriting "Custom")
+                    saved_preset = state_dict.get("selected_preset", "Custom")
+                    if hasattr(self, 'combo_box'):
+                        self.combo_box.blockSignals(True)
+                        index = self.combo_box.findText(saved_preset)
+                        if index != -1:
+                            self.combo_box.setCurrentIndex(index)
+                        else:
+                            # If saved preset not found, default to Custom to preserve markers
+                            custom_idx = self.combo_box.findText("Custom")
+                            if custom_idx != -1: self.combo_box.setCurrentIndex(custom_idx)
+                        self.combo_box.blockSignals(False)
+                        
+                        # Manually trigger UI updates for preset text boxes without saving state
+                        if saved_preset == "Custom":
+                            self.marker_values_textbox.setEnabled(True)
+                            self.rename_input.setEnabled(True)
+                        else:
+                            self.marker_values_textbox.setEnabled(False)
+                            self.rename_input.setEnabled(False)
+
                     self._update_status_bar()
-                    self.apply_all_adjustments()
 
                 except KeyError as e:
-                    QMessageBox.critical(self, "Undo/Redo Error", f"Cannot restore state. Data for '{e}' is missing. The undo history may be corrupted.")
+                    print(f"Undo Error: Missing key {e}")
+                except Exception as e:
+                    print(f"Undo Error: {e}")
+                    import traceback
+                    traceback.print_exc()
                 finally:
                     self._is_restoring_state = False
                     self.update_live_view()
@@ -7222,7 +7494,7 @@ if __name__ == "__main__":
                 mw_layout.addWidget(QLabel("Regression Model:"), 0, 0)
                 self.mw_regression_model_combo = QComboBox()
                 self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)","Log 4-PL"])
-                self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 3)")
+                self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 2)")
                 mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
                 
                 self.predict_button = QPushButton("Predict Molecular Weight")
@@ -7613,6 +7885,11 @@ if __name__ == "__main__":
                     self.num_oligomers_to_model = int(protein_analysis_data.get("num_oligomers_to_model", 1))
                     self.num_glycans_to_model = int(protein_analysis_data.get("num_glycans_to_model", 0))
                     self.last_predicted_mw = float(protein_analysis_data.get("last_predicted_mw", 0.0))
+                    self.last_mw_prediction_model = protein_analysis_data.get("last_mw_prediction_model", None)
+                    if self.last_mw_prediction_model and "coeffs" in self.last_mw_prediction_model:
+                        c = self.last_mw_prediction_model["coeffs"]
+                        if isinstance(c, list):
+                            self.last_mw_prediction_model["coeffs"] = np.array(c)
                     
                     self.is_modified = True
                     self.update_live_view()
@@ -7750,33 +8027,36 @@ if __name__ == "__main__":
                     self.update_live_view()
 
             def _get_y_pos_from_mw(self, mw, model_data, min_max_pos):
-                """Calculates the image Y-position for a given MW using the inverse regression model."""
-                if mw <= 0 or model_data is None or min_max_pos is None:
-                    return None
-                
+                """Calculates the image Y-position for a given MW using the inverse regression model + calibration."""
+                if mw <= 0 or model_data is None: return None
+                if min_max_pos is None: min_max_pos = model_data.get("min_max_pos")
+                if min_max_pos is None: return None
+
                 min_pos, max_pos = min_max_pos
                 log_mw = np.log10(mw)
                 
-                # --- START MODIFICATION: Handle different model types ---
-                model_type = model_data.get("model", "poly") # Default to 'poly' for backward compatibility
+                # --- APPLY CALIBRATION INVERSE ---
+                calibration = model_data.get("calibration", {})
+                if calibration.get("active", False):
+                    slope = calibration.get("slope", 1.0)
+                    offset = calibration.get("offset", 0.0)
+                    if abs(slope) > 1e-9:
+                        log_mw = (log_mw - offset) / slope
+                
+                model_type = model_data.get("model", "poly")
                 coeffs = model_data.get("coeffs")
-
-                if coeffs is None:
-                    return None
+                if coeffs is None: return None
 
                 try:
                     norm_dist = None
                     if model_type == "4-PL":
                         if not SCIPY_AVAILABLE: return None
                         a, b, c, d = coeffs
-                        # Inverse of y = d + (a - d) / (1 + (x / c)**b)  -->  x = c * (((a - d) / (y - d)) - 1)**(1/b)
-                        # Where y is log_mw and x is norm_dist
                         if (a - d) == 0 or (log_mw - d) == 0: return None
                         term = ((a - d) / (log_mw - d)) - 1
-                        if term < 0: return None # Result would be complex
+                        if term < 0: return None 
                         norm_dist = c * (term**(1/b))
-
-                    else: # Default to polynomial
+                    else: # Polynomial
                         poly_coeffs = list(coeffs)
                         poly_coeffs[-1] -= log_mw
                         roots = np.roots(poly_coeffs)
@@ -7785,12 +8065,8 @@ if __name__ == "__main__":
                         norm_dist = min(valid_roots, key=lambda r: abs(r - 0.5))
 
                     if norm_dist is not None:
-                        y_pos = min_pos + norm_dist * (max_pos - min_pos)
-                        return y_pos
-                    else:
-                        return None
-                # --- END MODIFICATION ---
-
+                        return min_pos + norm_dist * (max_pos - min_pos)
+                    return None
                 except (ValueError, ZeroDivisionError, RuntimeError):
                     return None
                 
@@ -8536,59 +8812,62 @@ if __name__ == "__main__":
             def convert_qimage_to_grayscale_pil(self, qimg):
                 """
                 Converts a QImage (any format) to a suitable Grayscale PIL Image ('L' or 'I;16')
-                for use with PeakAreaDialog. Returns None on failure.
+                for use with PeakAreaDialog. Handles 64-bit (16-bit RGBA) correctly by averaging channels.
                 """
                 if not qimg or qimg.isNull():
                     return None
 
                 fmt = qimg.format()
-                pil_img = None
-
+                
                 try:
-                    # Already grayscale? Convert directly if possible.
+                    # 1. Handle 64-bit / 16-bit RGBA explicitly
+                    if fmt in [QImage.Format_RGBA64, QImage.Format_RGBX64]:
+                        np_array = self.qimage_to_numpy(qimg) # Returns (H, W, 4) uint16
+                        if np_array is not None and np_array.ndim == 3 and np_array.shape[2] == 4:
+                            # Convert 16-bit RGBA to 16-bit Grayscale
+                            # We take the max or mean of RGB channels, ignoring Alpha (index 3)
+                            # Using max helps preserve faint bands in gels.
+                            # Slice: [All rows, All cols, First 3 channels (R,G,B)]
+                            rgb_data = np_array[..., :3]
+                            grayscale_16 = np.max(rgb_data, axis=2).astype(np.uint16)
+                            return Image.fromarray(grayscale_16, mode='I;16')
+
+                    # 2. Already grayscale? Convert directly if possible.
                     if fmt == QImage.Format_Grayscale16:
                         np_array = self.qimage_to_numpy(qimg)
                         if np_array is not None and np_array.dtype == np.uint16:
-                            pil_img = Image.fromarray(np_array) # FIX: Removed mode='I;16'
-                        else: raise ValueError("Failed NumPy conversion for Grayscale16")
+                            return Image.fromarray(np_array, mode='I;16')
                     elif fmt == QImage.Format_Grayscale8:
-                        # Try direct conversion first
-                        try:
-                            pil_img = ImageQt.fromqimage(qimg).convert('L')
-                            if pil_img is None: raise ValueError("Direct QImage->PIL(L) failed.")
-                        except Exception as e_direct:
-                            np_array = self.qimage_to_numpy(qimg)
-                            if np_array is not None and np_array.dtype == np.uint8:
-                                pil_img = Image.fromarray(np_array) # FIX: Removed mode='L'
-                            else: raise ValueError("Failed NumPy conversion for Grayscale8")
-                    else: # Color or other format
-                        # Use NumPy for robust conversion to 16-bit grayscale intermediate
-                        np_img = self.qimage_to_numpy(qimg)
-                        if np_img is None: raise ValueError("NumPy conversion failed for color.")
-                        if np_img.ndim == 3:
-                            gray_np = cv2.cvtColor(np_img[...,:3], cv2.COLOR_BGR2GRAY) # Assume BGR/BGRA input
-                            # Convert to 16-bit PIL
-                            gray_np_16bit = (gray_np / 255.0 * 65535.0).astype(np.uint16)
-                            pil_img = Image.fromarray(gray_np_16bit) # FIX: Removed mode='I;16'
-                        elif np_img.ndim == 2: # Should have been caught by Grayscale checks, but handle anyway
-                             if np_img.dtype == np.uint16:
-                                 pil_img = Image.fromarray(np_img) # FIX: Removed mode='I;16'
-                             else: # Assume uint8 or other, convert to L
-                                 pil_img = Image.fromarray(np_img).convert('L')
-                        else:
-                             raise ValueError(f"Unsupported array dimensions: {np_img.ndim}")
+                        np_array = self.qimage_to_numpy(qimg)
+                        if np_array is not None and np_array.dtype == np.uint8:
+                            return Image.fromarray(np_array, mode='L')
+                    
+                    # 3. Fallback: Color 8-bit or other formats
+                    # Use NumPy for robust conversion
+                    np_img = self.qimage_to_numpy(qimg)
+                    if np_img is None: raise ValueError("NumPy conversion failed for color.")
+                    
+                    if np_img.ndim == 3:
+                        # Convert using OpenCV (Standard BGR/RGB -> Gray)
+                        # Note: qimage_to_numpy returns RGBA order usually for Qt6
+                        # Simple average or cv2 conversion
+                        gray_np = cv2.cvtColor(np_img[...,:3], cv2.COLOR_BGR2GRAY) 
+                        
+                        # If we want to simulate 16-bit range for consistent processing downstream
+                        gray_np_16bit = (gray_np.astype(np.float32) / 255.0 * 65535.0).astype(np.uint16)
+                        return Image.fromarray(gray_np_16bit, mode='I;16')
+                        
+                    elif np_img.ndim == 2: 
+                         # Assume uint8 or other, convert to L
+                         return Image.fromarray(np_img).convert('L')
 
-                    if pil_img is None:
-                        raise ValueError("PIL Image creation failed.")
-
-                    return pil_img
+                    raise ValueError(f"Unsupported array dimensions: {np_img.ndim}")
 
                 except Exception as e:
+                    print(f"Error converting QImage to Grayscale PIL: {e}")
                     traceback.print_exc()
-                    return None         
+                    return None     
                 
-                
-                    
             def combine_image_tab(self):
                 tab = QWidget()
                 main_layout = QVBoxLayout(tab)
@@ -8704,14 +8983,16 @@ if __name__ == "__main__":
                 self.load_overlay_button = QPushButton("Load Overlay (Image 2)")
                 self.load_overlay_button.setToolTip("Loads a second image from a file into the 'Image 2' buffer and places it as the top layer.")
                 self.load_overlay_button.clicked.connect(self.load_overlay_image)
-                self.load_overlay_button.setEnabled(False) # Still disabled until a base is set
+                self.load_overlay_button.setEnabled(False)
                 global_controls_layout.addWidget(self.load_overlay_button, 0, 3, 1, 2)
                 
-                global_controls_layout.addWidget(QLabel("Blend:"), 1, 0)
+                # --- Mixing Controls ---
+                # FIX: Updated Label text to be explicit about mixing
+                global_controls_layout.addWidget(QLabel("Mixing % (Overlay):"), 1, 0)
                 self.blend_slider = QSlider(Qt.Horizontal)
                 self.blend_slider.setRange(0, 100); self.blend_slider.setValue(50)
-                self.blend_slider.setToolTip("Adjust the transparency between Image 1 (Base) and Image 2 (Overlay).")
-                self.blend_slider.valueChanged.connect(lambda: self.update_live_view); self.blend_slider.valueChanged.connect(lambda: self.blend_slider.setFocus())
+                self.blend_slider.setToolTip("Sets the mixing percentage for Image 2 (Overlay).\n0% = Overlay invisible (100% Base)\n50% = 50% Overlay / 50% Base\n100% = Overlay opaque (0% Base)")
+                self.blend_slider.valueChanged.connect(lambda: self.update_live_view()); self.blend_slider.valueChanged.connect(lambda: self.blend_slider.setFocus())
                 global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 4)
 
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
@@ -8754,6 +9035,7 @@ if __name__ == "__main__":
                         QMessageBox.warning(self, "Error", f"Failed to load overlay image: {e}")
                         return
                 
+                # --- Handle main image transparency setup (existing code) ---
                 if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull():
                     width = self.image_master.width()
                     height = self.image_master.height()
@@ -8777,6 +9059,12 @@ if __name__ == "__main__":
 
                 self.image2_adjustments = self._get_default_adjustments()
                 self.image2_original = overlay_image
+
+                # --- ADDED: Auto-invert 16-bit overlay ---
+                if self.image2_original.format() == QImage.Format_Grayscale16:
+                    self.image2_adjustments['is_inverted'] = True
+                # -----------------------------------------
+
                 self._update_overlay_preview(2)
                 self.place_image2()
                 self.adjustment_context_combo.model().item(2).setEnabled(True)
@@ -8914,7 +9202,7 @@ if __name__ == "__main__":
             
             
             def finalize_combined_image(self):
-                """ Rasterizes placed overlays onto a new opaque canvas, baking in their individual adjustments. """
+                """ Rasterizes placed overlays onto a new canvas, baking in their individual adjustments. """
                 has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
                 has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
                 
@@ -8927,67 +9215,99 @@ if __name__ == "__main__":
 
                 self.save_state()
 
-                if not self.image_master or self.image_master.isNull():
-                    QMessageBox.warning(self, "Rasterize Error", "Cannot rasterize without a valid master image to define the canvas size.")
-                    return
+                # Get the adjusted previews (which contain the visual state including inversions)
+                adjusted_img1 = getattr(self, 'image1_adjusted_preview', None)
+                adjusted_img2 = getattr(self, 'image2_adjusted_preview', None)
 
-                final_canvas = QImage(self.image_master.size(), QImage.Format_ARGB32_Premultiplied)
-                final_canvas.fill(Qt.white) 
+                # --- 1. Determine Output Bit Depth ---
+                # "If one image is 16 bit and another is 8 bit then final should be 8 bit but if both 16 bit then 16 bit"
+                
+                is_img1_16 = False
+                if has_img1 and adjusted_img1:
+                    is_img1_16 = adjusted_img1.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
+                
+                is_img2_16 = False
+                if has_img2 and adjusted_img2:
+                    is_img2_16 = adjusted_img2.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
+
+                # Determine if we go high depth (16-bit)
+                # If only one image exists, respect its depth. If both exist, BOTH must be 16-bit.
+                target_16_bit = False
+                if has_img1 and has_img2:
+                    target_16_bit = is_img1_16 and is_img2_16
+                elif has_img1:
+                    target_16_bit = is_img1_16
+                elif has_img2:
+                    target_16_bit = is_img2_16
+
+                canvas_format = QImage.Format_RGBA64 if target_16_bit else QImage.Format_ARGB32_Premultiplied
+                
+                # --- 2. Setup Canvas ---
+                # Use master size, or if master is hidden/replaced by overlay flow, use Img1 size
+                canvas_w = self.image_master.width()
+                canvas_h = self.image_master.height()
+                
+                final_canvas = QImage(canvas_w, canvas_h, canvas_format)
+                # Fill with white (standard for gels) or transparent. 
+                # Transparent allows checking if alignment leaves gaps.
+                final_canvas.fill(Qt.transparent) 
 
                 painter = QPainter(final_canvas)
-                
-                # Render the main image display cache first
-                if self.image and not self.image.isNull():
-                    painter.drawImage(0, 0, self.image)
-                
-                is_blending = has_img1 and has_img2
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, False) # Preserves pixel data better
+                painter.setRenderHint(QPainter.Antialiasing, True)
+
                 blend_value = self.blend_slider.value()
 
-                # Draw Image 1
-                if has_img1:
-                    adjusted_img1 = self.image1_adjusted_preview
-                    if adjusted_img1 and not adjusted_img1.isNull():
-                        if is_blending: painter.setOpacity((100 - blend_value) / 100.0)
-                        rect1_native = QRectF(QPointF(*self.image1_position), QSizeF(adjusted_img1.width() * (self.image1_resize_slider.value()/100.0), adjusted_img1.height() * (self.image1_resize_slider.value()/100.0)))
-                        rotation1 = self.image1_rotation_slider.value() / 10.0
-                        if abs(rotation1) > 0.01:
-                            center_point = rect1_native.center()
-                            painter.save(); painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
-                            painter.drawImage(rect1_native, adjusted_img1)
-                            painter.restore()
-                        else:
-                            painter.drawImage(rect1_native, adjusted_img1)
-                        painter.setOpacity(1.0)
+                # --- 3. Draw Image 1 (Base) ---
+                if has_img1 and adjusted_img1:
+                    # Base image drawn at 100% opacity to ensure visibility
+                    painter.setOpacity(1.0)
+                    
+                    rect1_native = QRectF(
+                        QPointF(*self.image1_position), 
+                        QSizeF(adjusted_img1.width() * (self.image1_resize_slider.value()/100.0), 
+                               adjusted_img1.height() * (self.image1_resize_slider.value()/100.0))
+                    )
+                    rotation1 = self.image1_rotation_slider.value() / 10.0
+                    if abs(rotation1) > 0.01:
+                        center_point = rect1_native.center()
+                        painter.save(); painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
+                        painter.drawImage(rect1_native, adjusted_img1)
+                        painter.restore()
+                    else:
+                        painter.drawImage(rect1_native, adjusted_img1)
                 
-                # Draw Image 2
-                if has_img2:
-                    adjusted_img2 = self.image2_adjusted_preview
-                    if adjusted_img2 and not adjusted_img2.isNull():
-                        if is_blending: painter.setOpacity(blend_value / 100.0)
-                        rect2_native = QRectF(QPointF(*self.image2_position), QSizeF(adjusted_img2.width() * (self.image2_resize_slider.value()/100.0), adjusted_img2.height() * (self.image2_resize_slider.value()/100.0)))
-                        rotation2 = self.image2_rotation_slider.value() / 10.0
-                        if abs(rotation2) > 0.01:
-                            center_point = rect2_native.center()
-                            painter.save(); painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
-                            painter.drawImage(rect2_native, adjusted_img2)
-                            painter.restore()
-                        else:
-                            painter.drawImage(rect2_native, adjusted_img2)
-                        painter.setOpacity(1.0)
+                # --- 4. Draw Image 2 (Overlay) ---
+                if has_img2 and adjusted_img2:
+                    # Overlay blended on top. 0% blend = Invisible, 100% blend = Opaque
+                    painter.setOpacity(blend_value / 100.0)
+                    
+                    rect2_native = QRectF(
+                        QPointF(*self.image2_position), 
+                        QSizeF(adjusted_img2.width() * (self.image2_resize_slider.value()/100.0), 
+                               adjusted_img2.height() * (self.image2_resize_slider.value()/100.0))
+                    )
+                    rotation2 = self.image2_rotation_slider.value() / 10.0
+                    if abs(rotation2) > 0.01:
+                        center_point = rect2_native.center()
+                        painter.save(); painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
+                        painter.drawImage(rect2_native, adjusted_img2)
+                        painter.restore()
+                    else:
+                        painter.drawImage(rect2_native, adjusted_img2)
 
                 painter.end()
                 
-                result_image = final_canvas
-
-                self.image_master = result_image.copy()
+                # --- 5. Update App State ---
+                self.image_master = final_canvas.copy()
                 self.image_before_contrast = self.image_master.copy()
                 self.image_contrasted = self.image_master.copy()
                 self.image_before_padding = self.image_master.copy()
                 self.image_padded = False
                 self.is_modified = True
                 
-                self.image = result_image.copy()
-                self.main_image_is_inverted = False
+                self.image = final_canvas.copy()
+                self.main_image_is_inverted = False 
 
                 self.remove_image1(); self.remove_image2()
                 self.adjustment_context_combo.model().item(1).setEnabled(False)
@@ -9213,12 +9533,12 @@ if __name__ == "__main__":
                 levels_group = QGroupBox("Levels and Gamma"); levels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 levels_layout = QGridLayout(levels_group)
                 from matplotlib.figure import Figure
-                self.hist_fig = Figure(figsize=(5, 1.5), dpi=72)
+                self.hist_fig = Figure(figsize=(5, 1.8), dpi=100)
                 self.hist_fig.patch.set_facecolor('none')
                 self.hist_ax = self.hist_fig.add_subplot(111)
                 self.hist_ax.patch.set_facecolor('white')
                 self.hist_canvas = FigureCanvas(self.hist_fig)
-                self.hist_canvas.setFixedHeight(80) 
+                self.hist_canvas.setFixedHeight(120) 
                 self._update_levels_histogram() 
                 levels_layout.addWidget(self.hist_canvas, 0, 0, 1, 3) 
                 
@@ -9279,62 +9599,85 @@ if __name__ == "__main__":
                 right_column_layout.addWidget(clahe_group)
                 right_column_layout.addStretch(); main_layout.addLayout(right_column_layout, 1)
 
-                # --- START OF CONNECTION LOGIC FIX ---
-                # Helper lambda to save state and then apply adjustments.
-                save_and_apply = lambda: (self.save_state(), self.apply_all_adjustments())
+                # --- UPDATED CONNECTION LOGIC ---
+                
+                # Helper lambdas
+                # Live preview: Update image, don't save to undo stack
+                preview_update = lambda: self.apply_all_adjustments(save_history=False)
+                # Commit: Save to undo stack (and ensure image is updated)
+                commit_update = lambda: self.apply_all_adjustments(save_history=True)
 
-                # Levels and Gamma: Save state on release, update live preview on value change.
-                self.black_point_slider.sliderReleased.connect(save_and_apply)
-                self.white_point_slider.sliderReleased.connect(save_and_apply)
+                # --- Levels and Gamma ---
+                # valueChanged: Updates histogram markers AND live preview (fixes arrow keys)
                 self.black_point_slider.valueChanged.connect(self._update_histogram_markers_only)
+                self.black_point_slider.valueChanged.connect(preview_update)
+                self.black_point_slider.valueChanged.connect(lambda: self.black_point_slider.setFocus())
+                self.black_point_slider.sliderReleased.connect(commit_update)
+
                 self.white_point_slider.valueChanged.connect(self._update_histogram_markers_only)
+                self.white_point_slider.valueChanged.connect(preview_update)
+                self.white_point_slider.valueChanged.connect(lambda: self.white_point_slider.setFocus())
+                self.white_point_slider.sliderReleased.connect(commit_update)
 
-                # Gamma: Updates image live (as before).
-                self.gamma_slider.valueChanged.connect(self.apply_all_adjustments)
-                self.gamma_slider.sliderReleased.connect(self.save_state)
+                self.gamma_slider.valueChanged.connect(preview_update)
+                self.gamma_slider.valueChanged.connect(lambda: self.gamma_slider.setFocus())
+                self.gamma_slider.sliderReleased.connect(commit_update)
 
-                # Value labels (live feedback for all).
+                # Labels (Live update)
                 self.black_point_slider.valueChanged.connect(lambda val: self.black_point_value_label.setText(f"{val}"))
                 self.white_point_slider.valueChanged.connect(lambda val: self.white_point_value_label.setText(f"{val}"))
                 self.gamma_slider.valueChanged.connect(lambda val: self.gamma_value_label.setText(f"{val/100.0:.2f}"))
 
-                # Channel Mixer: Save state on release/toggle, update live on change.
-                self.cm_red_slider.sliderReleased.connect(save_and_apply)
-                self.cm_green_slider.sliderReleased.connect(save_and_apply)
-                self.cm_blue_slider.sliderReleased.connect(save_and_apply)
-                self.cm_mono_checkbox.stateChanged.connect(save_and_apply)
+                # --- Channel Mixer ---
+                self.cm_red_slider.valueChanged.connect(preview_update)
+                self.cm_red_slider.sliderReleased.connect(commit_update)
+                self.cm_red_slider.sliderReleased.connect(lambda: self.cm_red_slider.setFocus())
 
-                self.cm_red_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.cm_red_slider.sliderReleased.connect(lambda: self.cm_red_slider.setFocus())
-                self.cm_green_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.cm_green_slider.sliderReleased.connect(lambda: self.cm_green_slider.setFocus())
-                self.cm_blue_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.cm_blue_slider.sliderReleased.connect(lambda: self.cm_blue_slider.setFocus())
+                self.cm_green_slider.valueChanged.connect(preview_update)
+                self.cm_green_slider.sliderReleased.connect(commit_update)
+                self.cm_green_slider.sliderReleased.connect(lambda: self.cm_green_slider.setFocus())
+
+                self.cm_blue_slider.valueChanged.connect(preview_update)
+                self.cm_blue_slider.sliderReleased.connect(commit_update)
+                self.cm_blue_slider.sliderReleased.connect(lambda: self.cm_blue_slider.setFocus())
                 
+                self.cm_mono_checkbox.stateChanged.connect(commit_update) # Checkboxes are instant commits
+
+                # Labels
                 self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
                 self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
                 self.cm_blue_slider.valueChanged.connect(lambda v: self.cm_blue_label.setText(f"{v}%"))
 
-                # Unsharp Mask: Save state on release, update live on change.
-                self.usm_amount_slider.sliderReleased.connect(save_and_apply)
-                self.usm_radius_slider.sliderReleased.connect(save_and_apply)
-                self.usm_threshold_slider.sliderReleased.connect(save_and_apply)
-                
-                self.usm_amount_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.usm_amount_slider.sliderReleased.connect(lambda: self.usm_amount_slider.setFocus())
-                self.usm_radius_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.usm_radius_slider.sliderReleased.connect(lambda: self.usm_radius_slider.setFocus())
-                self.usm_threshold_slider.sliderReleased.connect(lambda: self.apply_all_adjustments); self.usm_threshold_slider.sliderReleased.connect(lambda: self.usm_threshold_slider.setFocus())
-                
+                # --- Unsharp Mask ---
+                self.usm_amount_slider.valueChanged.connect(preview_update)
+                self.usm_amount_slider.sliderReleased.connect(commit_update)
+                self.usm_amount_slider.sliderReleased.connect(lambda: self.usm_amount_slider.setFocus())
+
+                self.usm_radius_slider.valueChanged.connect(preview_update)
+                self.usm_radius_slider.sliderReleased.connect(commit_update)
+                self.usm_radius_slider.sliderReleased.connect(lambda: self.usm_radius_slider.setFocus())
+
+                self.usm_threshold_slider.valueChanged.connect(preview_update)
+                self.usm_threshold_slider.sliderReleased.connect(commit_update)
+                self.usm_threshold_slider.sliderReleased.connect(lambda: self.usm_threshold_slider.setFocus())
+
+                # Labels
                 self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
                 self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
                 self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
 
-                # CLAHE: Save state on release, update live on change.
-                self.clahe_clip_slider.sliderReleased.connect(lambda: save_and_apply); self.clahe_clip_slider.sliderReleased.connect(lambda: self.clahe_clip_slider.setFocus())
-                self.clahe_tile_slider.sliderReleased.connect(lambda: save_and_apply); self.clahe_tile_slider.sliderReleased.connect(lambda: self.clahe_tile_slider.setFocus())
+                # --- CLAHE ---
+                self.clahe_clip_slider.valueChanged.connect(preview_update)
+                self.clahe_clip_slider.sliderReleased.connect(commit_update)
+                self.clahe_clip_slider.sliderReleased.connect(lambda: self.clahe_clip_slider.setFocus())
 
-                self.clahe_clip_slider.sliderReleased.connect(self.apply_all_adjustments)
-                self.clahe_tile_slider.sliderReleased.connect(self.apply_all_adjustments)
+                self.clahe_tile_slider.valueChanged.connect(preview_update)
+                self.clahe_tile_slider.sliderReleased.connect(commit_update)
+                self.clahe_tile_slider.sliderReleased.connect(lambda: self.clahe_tile_slider.setFocus())
 
+                # Labels
                 self.clahe_clip_slider.valueChanged.connect(lambda v: self.clahe_clip_label.setText(f"{(v/10.0):.1f}"))
                 self.clahe_tile_slider.valueChanged.connect(lambda v: self.clahe_tile_label.setText(f"{v}x{v}"))
-                # --- END OF CONNECTION LOGIC FIX ---
 
                 return tab
             
@@ -9496,13 +9839,13 @@ if __name__ == "__main__":
                     # If the overlay doesn't exist, clear its cache
                     setattr(self, f'image{overlay_index}_adjusted_preview', None)
 
-            def apply_all_adjustments(self):
+            def apply_all_adjustments(self, save_history=True):
                 """A single function to apply all adjustments in order, respecting transparency."""
                 # Save UI state to the current context's dictionary first
                 self._save_current_ui_adjustments()
                 
-                # Only save to the undo stack if this is a direct user action, NOT a restoration.
-                if not self._is_restoring_state:
+                # Only save to the undo stack if requested and not restoring
+                if save_history and not self._is_restoring_state:
                     self.save_state()
 
                 if self.adjustment_context == "Main Image":
@@ -9527,7 +9870,6 @@ if __name__ == "__main__":
                 """Applies a full suite of adjustments from a settings dict to a source QImage."""
                 if not source_image or source_image.isNull(): return source_image
                 
-                # --- START OF THE CRITICAL FIX ---
                 # 1. Apply inversion FIRST if the flag is set.
                 temp_image = source_image.copy()
                 is_inverted = settings_dict.get('is_inverted', False)
@@ -9536,11 +9878,12 @@ if __name__ == "__main__":
                 
                 # 2. All subsequent operations now use the (potentially) inverted temp_image.
                 np_img_full = self.qimage_to_numpy(temp_image)
-                # --- END OF THE CRITICAL FIX ---
 
                 if np_img_full is None: return source_image
 
-                # ... (The rest of the adjustment logic remains the same, but now operates on the correctly inverted source) ...
+                # --- DETERMINE BIT DEPTH AND MAX VALUE ---
+                is_16bit = np_img_full.dtype == np.uint16
+                max_val = 65535.0 if is_16bit else 255.0
                 
                 content_rect = None
                 has_alpha = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
@@ -9556,48 +9899,127 @@ if __name__ == "__main__":
                 else:
                     np_content = np_img_full
 
+                # --- CHANNEL MIXER ---
                 channel_mixer_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
-                if np_content.ndim == 3:
-                    is_mono = channel_mixer_settings.get('mono', False)
-                    r, g, b = channel_mixer_settings.get('r',100)/100.0, channel_mixer_settings.get('g',100)/100.0, channel_mixer_settings.get('b',100)/100.0
-                    np_float = np_content.astype(np.float32)
-                    if is_mono:
-                        gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
-                        np_content = np.clip(gray, 0, 255).astype(np.uint8)
-                    else:
-                        np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
-                        np_content = np.clip(np_float, 0, 255).astype(np.uint8)
+                
+                # Check if mixer is active or we need to promote grayscale
+                is_mono = channel_mixer_settings.get('mono', False)
+                r_val = channel_mixer_settings.get('r', 100)
+                g_val = channel_mixer_settings.get('g', 100)
+                b_val = channel_mixer_settings.get('b', 100)
+                
+                # If image is grayscale (2D) and settings are non-default, promote to RGB
+                if np_content.ndim == 2 and (not is_mono and (r_val != 100 or g_val != 100 or b_val != 100)):
+                    np_content = np.stack((np_content,)*3, axis=-1)
 
+                if np_content.ndim == 3:
+                    r_scale = r_val / 100.0
+                    g_scale = g_val / 100.0
+                    b_scale = b_val / 100.0
+                    np_float = np_content.astype(np.float32)
+                    
+                    if is_mono:
+                        gray = cv2.transform(np_float[...,:3], np.array([[b_scale],[g_scale],[r_scale]]).T)
+                        np_content = np.clip(gray, 0, max_val).astype(np_content.dtype)
+                    else:
+                        if np_content.shape[2] == 4: # BGRA
+                            np_float[..., 0] *= b_scale; np_float[..., 1] *= g_scale; np_float[..., 2] *= r_scale
+                        else: # RGB/BGR
+                            np_float[..., 0] *= r_scale; np_float[..., 1] *= g_scale; np_float[..., 2] *= b_scale
+                        np_content = np.clip(np_float, 0, max_val).astype(np_content.dtype)
+
+                # --- CLAHE FIX FOR 16-BIT COLOR ---
                 clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
                 clip_limit = clahe_settings.get('clip_limit', 1.0)
                 if clip_limit > 1.0:
                     tile_size = clahe_settings.get('tile_size', 8)
-                    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
-                    if np_content.ndim == 2: np_content = clahe.apply(np_content)
-                    elif np_content.ndim == 3:
-                        if np_content.shape[2] == 4: # BGRA
-                            bgr = np_content[...,:3]; lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-                            lab[..., 0] = clahe.apply(lab[..., 0]); np_content[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                        else: # BGR
-                            lab = cv2.cvtColor(np_content, cv2.COLOR_BGR2LAB); lab[..., 0] = clahe.apply(lab[..., 0]); np_content = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                    # Scale clip limit for 16-bit range if we apply it to 16-bit integers directly
+                    # However, logic below converts L to 16-bit int, so we scale it.
+                    effective_clip = clip_limit * 256.0 if is_16bit else clip_limit
+                    clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
+                    
+                    if np_content.ndim == 2: # Grayscale (Works fine for 16-bit Int)
+                        np_content = clahe.apply(np_content)
+                    
+                    elif np_content.ndim == 3: # Color
+                        # Separate Alpha if present
+                        bgr = np_content[..., :3]
+                        alpha = np_content[..., 3] if np_content.shape[2] == 4 else None
+
+                        if is_16bit:
+                            # --- CRITICAL FIX START ---
+                            # OpenCV's cvtColor(BGR2LAB) DOES NOT support uint16. 
+                            # We MUST convert to float32 (0.0 - 1.0) first.
+                            
+                            # 1. Convert 16-bit Int to 32-bit Float
+                            bgr_float = bgr.astype(np.float32) / 65535.0
+                            
+                            # 2. Convert Float BGR to Float LAB
+                            lab_float = cv2.cvtColor(bgr_float, cv2.COLOR_BGR2LAB)
+                            
+                            # 3. Extract L channel (Float range 0.0 - 100.0 in OpenCV LAB)
+                            l_channel = lab_float[..., 0]
+                            
+                            # 4. Map Float L (0-100) to UInt16 (0-65535) for CLAHE
+                            l_uint16 = (l_channel / 100.0 * 65535.0).astype(np.uint16)
+                            
+                            # 5. Apply CLAHE to the 16-bit L channel
+                            l_clahe = clahe.apply(l_uint16)
+                            
+                            # 6. Map back to Float L (0-100)
+                            lab_float[..., 0] = (l_clahe.astype(np.float32) / 65535.0 * 100.0)
+                            
+                            # 7. Convert Float LAB back to Float BGR
+                            bgr_float_out = cv2.cvtColor(lab_float, cv2.COLOR_LAB2BGR)
+                            
+                            # 8. Convert Float BGR back to UInt16
+                            bgr_out = np.clip(bgr_float_out * 65535.0, 0, 65535).astype(np.uint16)
+                            # --- CRITICAL FIX END ---
+                            
+                            # Recombine with alpha
+                            if alpha is not None:
+                                np_content = np.dstack((bgr_out, alpha))
+                            else:
+                                np_content = bgr_out
+
+                        else: # 8-bit Color (Standard path, works with uint8)
+                            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                            lab[..., 0] = clahe.apply(lab[..., 0])
+                            bgr_out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                            if alpha is not None:
+                                np_content = np.dstack((bgr_out, alpha))
+                            else:
+                                np_content = bgr_out
                 
+                # --- RECOMBINE WITH PADDING IF NEEDED ---
                 if content_rect:
                     np_img = np_img_full.copy()
                     xmin, ymin, w, h = content_rect
                     if np_content.ndim == 2 and np_img.ndim == 3:
                         if np_img.shape[2] == 4: np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
                         else: np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
-                    else: np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                    elif np_content.ndim == 3 and np_img.ndim == 2:
+                        np_img = np.stack((np_img,)*3, axis=-1) if np_content.shape[2]==3 else cv2.cvtColor(np_img, cv2.COLOR_GRAY2BGRA)
+                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                    else:
+                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
                 else: np_img = np_content
                 
+                # --- UNSHARP MASK ---
                 unsharp_mask_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
                 amount = unsharp_mask_settings.get('amount', 0) / 100.0
                 if amount > 0:
                     radius = unsharp_mask_settings.get('radius', 1.0)
+                    threshold = unsharp_mask_settings.get('threshold', 0)
+                    if is_16bit: threshold = threshold * 256
                     sigma = max(0.1, radius)
-                    blurred = cv2.GaussianBlur(np_img, (0, 0), sigma)
-                    sharpened = cv2.addWeighted(np_img, 1.0 + amount, blurred, -amount, 0)
-                    np_img = sharpened
+                    img_float = np_img.astype(np.float32)
+                    blurred = cv2.GaussianBlur(img_float, (0, 0), sigma)
+                    mask = np.abs(img_float - blurred) > threshold
+                    sharpened = np.zeros_like(img_float)
+                    sharpened[~mask] = img_float[~mask]
+                    sharpened[mask] = img_float[mask] + (img_float[mask] - blurred[mask]) * amount
+                    np_img = np.clip(sharpened, 0, max_val).astype(np_img.dtype)
 
                 temp_image_after_effects = self.numpy_to_qimage(np_img)
 
@@ -9653,102 +10075,74 @@ if __name__ == "__main__":
                     img_array = self.qimage_to_numpy(qimage_base)
                     if img_array is None: raise ValueError("NumPy conversion failed.")
 
-                    img_array_float = img_array.astype(np.float64) # Work with float for calculations
-                    original_dtype = img_array.dtype # Preserve original dtype for output
+                    img_array_float = img_array.astype(np.float64)
+                    original_dtype = img_array.dtype
 
-                    # --- Determine max_dtype_val based on the actual NumPy array's dtype ---
+                    # Determine max pixel value of the image type
                     if original_dtype == np.uint16:
                         max_dtype_val = 65535.0
                     elif original_dtype == np.uint8:
                         max_dtype_val = 255.0
                     elif np.issubdtype(original_dtype, np.floating):
-                        if np.max(img_array_float) <= 1.0 and np.min(img_array_float) >= 0.0:
-                            print("Warning: Applying levels/gamma to float (0-1) image. Converting to 8-bit for levels.")
-                            img_array_float = (img_array_float * 255.0).astype(np.float64)
-                            original_dtype = np.uint8 # Treat as 8-bit for the rest of this function
-                            max_dtype_val = 255.0
-                        else: 
-                            max_dtype_val = np.max(img_array_float) if np.any(img_array_float) else 1.0
+                        max_dtype_val = np.max(img_array_float) if np.any(img_array_float) else 1.0
                     else:
-                        print(f"Warning: Unexpected original_dtype '{original_dtype}' in apply_levels_gamma. Assuming 8-bit range (0-255).")
                         max_dtype_val = 255.0
 
-                    if max_dtype_val == 0: max_dtype_val = 1.0 # Avoid division by zero if image is all black
+                    if max_dtype_val == 0: max_dtype_val = 1.0 
 
-                    scale_factor_slider_to_img_range = max_dtype_val / 65535.0
+                    # Scale slider logic (0-65535 or 0-255) to image range
+                    slider_max = 65535.0 
+                    if hasattr(self, 'black_point_slider'):
+                        slider_max = float(self.black_point_slider.maximum())
+                    if slider_max == 0: slider_max = 1.0
+                    
+                    scale_factor_slider_to_img = max_dtype_val / slider_max
 
-                    current_black = float(black_point_ui) * scale_factor_slider_to_img_range
-                    current_white = float(white_point_ui) * scale_factor_slider_to_img_range
+                    current_black = float(black_point_ui) * scale_factor_slider_to_img
+                    current_white = float(white_point_ui) * scale_factor_slider_to_img
 
                     if current_black >= current_white:
-                        if current_black >= max_dtype_val -1 :
-                            current_black = max_dtype_val - (2.0 if max_dtype_val > 1 else 0.1)
-                            current_white = max_dtype_val - (1.0 if max_dtype_val > 1 else 0.05)
+                        if current_black >= max_dtype_val - 1:
+                            current_black = max_dtype_val - 2.0; current_white = max_dtype_val
                         else:
-                            current_white = current_black + (1.0 if max_dtype_val > 1 else 0.05)
-
-                        if current_white > max_dtype_val:
-                            current_white = max_dtype_val
-                        if current_black >= current_white:
-                             current_black = current_white - (1.0 if max_dtype_val > 1 else 0.05)
-                        current_black = max(0, current_black)
-
+                            current_white = current_black + 1.0
 
                     denominator = current_white - current_black
-                    if abs(denominator) < 1e-9:
-                        denominator = 1e-9 if denominator >= 0 else -1e-9
+                    if abs(denominator) < 1e-9: denominator = 1e-9
 
-
-                    if img_array_float.ndim == 3: # Color image
+                    # --- Process Channels ---
+                    if img_array_float.ndim == 3: # Color
                         processed_channels = []
                         num_channels = img_array_float.shape[2]
                         channels_to_adjust = min(num_channels, 3)
 
                         for i in range(channels_to_adjust):
                             channel_data = img_array_float[..., i]
-                            channel_levels_adjusted = (channel_data - current_black) / denominator
-                            channel_levels_adjusted = np.clip(channel_levels_adjusted, 0.0, 1.0)
-
-                            safe_gamma = max(0.01, gamma_ui_factor)
-                            channel_gamma_adjusted = np.power(channel_levels_adjusted, safe_gamma)
-                            channel_gamma_adjusted = np.clip(channel_gamma_adjusted, 0.0, 1.0)
-                            
-                            processed_channels.append(channel_gamma_adjusted * max_dtype_val)
+                            channel_levels = (channel_data - current_black) / denominator
+                            channel_levels = np.clip(channel_levels, 0.0, 1.0)
+                            channel_gamma = np.power(channel_levels, max(0.01, gamma_ui_factor))
+                            processed_channels.append(np.clip(channel_gamma, 0.0, 1.0) * max_dtype_val)
 
                         img_array_final_float = np.stack(processed_channels, axis=-1)
-
                         if num_channels == 4:
-                            alpha_channel = img_array_float[..., 3]
-                            img_array_final_float = np.dstack((img_array_final_float, alpha_channel))
+                            img_array_final_float = np.dstack((img_array_final_float, img_array_float[..., 3]))
 
-                    elif img_array_float.ndim == 2: # Grayscale image
-                        img_levels_adjusted = (img_array_float - current_black) / denominator
-                        img_levels_adjusted = np.clip(img_levels_adjusted, 0.0, 1.0)
-
-                        safe_gamma = max(0.01, gamma_ui_factor)
-                        img_gamma_adjusted = np.power(img_levels_adjusted, safe_gamma)
-                        img_gamma_adjusted = np.clip(img_gamma_adjusted, 0.0, 1.0)
-
-                        img_array_final_float = img_gamma_adjusted * max_dtype_val
+                    elif img_array_float.ndim == 2: # Grayscale
+                        img_levels = (img_array_float - current_black) / denominator
+                        img_levels = np.clip(img_levels, 0.0, 1.0)
+                        img_gamma = np.power(img_levels, max(0.01, gamma_ui_factor))
+                        img_array_final_float = np.clip(img_gamma, 0.0, 1.0) * max_dtype_val
                     else:
                         return qimage_base
 
-                    # --- START OF MODIFICATION ---
-                    # Instead of converting back to the original dtype, we will always
-                    # create an 8-bit version for fast rendering in the UI.
+                    # --- FIX: Preserve Bit Depth ---
+                    if original_dtype == np.uint16:
+                        img_array_final = img_array_final_float.astype(np.uint16)
+                    else:
+                        img_array_final = img_array_final_float.astype(np.uint8)
 
-                    if max_dtype_val > 255.0: # If the source was 16-bit or higher
-                        # Re-normalize the float data (which is in 0-65535 range) to the 0-255 range
-                        img_array_final_8bit = (img_array_final_float / max_dtype_val * 255.0).astype(np.uint8)
-                    else: # Source was already 8-bit or float (which was converted to 8-bit range)
-                        img_array_final_8bit = img_array_final_float.astype(np.uint8)
-
-                    # Now, create the QImage from the final 8-bit NumPy array.
-                    result_qimage = self.numpy_to_qimage(img_array_final_8bit)
-                    # --- END OF MODIFICATION ---
-
-                    if result_qimage.isNull():
-                        raise ValueError("Conversion back to QImage failed after levels/gamma.")
+                    result_qimage = self.numpy_to_qimage(img_array_final)
+                    if result_qimage.isNull(): raise ValueError("Conversion back to QImage failed.")
                     return result_qimage
 
                 except Exception as e:
@@ -9775,8 +10169,10 @@ if __name__ == "__main__":
                 # Use NumPy for the next series of transformations
                 np_adjusted_hq = self.qimage_to_numpy(adjusted_master_copy)
                 if np_adjusted_hq is None:
-                    # If numpy fails, at least return the inverted image
                     return adjusted_master_copy 
+
+                is_16bit = np_adjusted_hq.dtype == np.uint16
+                max_val = 65535.0 if is_16bit else 255.0
 
                 # Channel Mixer
                 cm_settings = self.channel_mixer_data
@@ -9789,29 +10185,41 @@ if __name__ == "__main__":
                     else:
                         r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
                         np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
-                        max_val = 65535 if np_adjusted_hq.dtype == np.uint16 else 255
                         np_adjusted_hq = np.clip(np_float, 0, max_val).astype(np_adjusted_hq.dtype)
 
-                # --- START OF THE BUG FIX ---
-                # The previous version was missing the 'elif np_adjusted_hq.ndim == 3:' block.
-                # This corrected version includes the full logic for both grayscale and color images.
+                # --- CLAHE FIX FOR 16-BIT COLOR ---
                 clahe_settings = self.clahe_data
                 if clahe_settings.get('clip_limit', 1.0) > 1.0:
-                    clahe = cv2.createCLAHE(clipLimit=clahe_settings['clip_limit'], tileGridSize=(clahe_settings['tile_size'], clahe_settings['tile_size']))
+                    tile_size = clahe_settings.get('tile_size', 8)
+                    effective_clip = clahe_settings['clip_limit'] * 256.0 if is_16bit else clahe_settings['clip_limit']
+                    clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
+                    
                     if np_adjusted_hq.ndim == 2:
                         np_adjusted_hq = clahe.apply(np_adjusted_hq)
                     elif np_adjusted_hq.ndim == 3:
-                        # This logic was missing before
-                        if np_adjusted_hq.shape[2] == 4: # BGRA
-                            bgr = np_adjusted_hq[...,:3]
+                        bgr = np_adjusted_hq[...,:3]
+                        alpha = np_adjusted_hq[..., 3] if np_adjusted_hq.shape[2] == 4 else None
+
+                        if is_16bit:
+                            # 16-bit Int -> 32-bit Float -> LAB -> CLAHE -> Back
+                            bgr_float = bgr.astype(np.float32) / 65535.0
+                            lab_float = cv2.cvtColor(bgr_float, cv2.COLOR_BGR2LAB)
+                            l_channel = lab_float[..., 0]
+                            l_uint16 = (l_channel / 100.0 * 65535.0).astype(np.uint16)
+                            l_clahe = clahe.apply(l_uint16)
+                            lab_float[..., 0] = (l_clahe.astype(np.float32) / 65535.0 * 100.0)
+                            bgr_float_out = cv2.cvtColor(lab_float, cv2.COLOR_LAB2BGR)
+                            bgr_out = np.clip(bgr_float_out * 65535.0, 0, 65535).astype(np.uint16)
+                            
+                            if alpha is not None: np_adjusted_hq = np.dstack((bgr_out, alpha))
+                            else: np_adjusted_hq = bgr_out
+                        else:
+                            # 8-bit
                             lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
                             lab[..., 0] = clahe.apply(lab[..., 0])
-                            np_adjusted_hq[...,:3] = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                        else: # BGR
-                            lab = cv2.cvtColor(np_adjusted_hq, cv2.COLOR_BGR2LAB)
-                            lab[..., 0] = clahe.apply(lab[..., 0])
-                            np_adjusted_hq = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                # --- END OF THE BUG FIX ---
+                            bgr_out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                            if alpha is not None: np_adjusted_hq = np.dstack((bgr_out, alpha))
+                            else: np_adjusted_hq = bgr_out
                 
                 # Unsharp Mask
                 usm_settings = self.unsharp_mask_data
@@ -9894,42 +10302,36 @@ if __name__ == "__main__":
             
             def _update_level_slider_ranges_and_defaults(self):
                 """
-                Sets the Black/White Point slider default values based on the master image's format.
-                Black point defaults to 0. White point defaults to 65535 for 16-bit/color images
-                and 255 for 8-bit grayscale images. The slider ranges are fixed at 0-65535.
+                Sets the Black/White Point slider ranges and default values based on the master image's format.
+                8-bit images get 0-255. 16-bit/Color images get 0-65535.
                 """
-                default_white_point_slider_value = 65535 # Default to full 16-bit range
-
-                # --- START OF BUG FIX ---
-                # The sliders' default values must be based on the high-fidelity master image's
-                # bit depth, not the 8-bit display cache (self.image).
-                img_to_check_format = self.image_master
-                if img_to_check_format and not img_to_check_format.isNull():
-                    current_format = img_to_check_format.format()
-                    
-                    # If the master image is 8-bit grayscale, the default white point should be 255.
-                    if current_format == QImage.Format_Grayscale8:
-                        default_white_point_slider_value = 255
-                    # For all other formats (16-bit grayscale, color, etc.), the slider should
-                    # default to the full 16-bit range (0-65535), as this is the internal
-                    # working range for the levels/gamma function.
-                    else:
-                        default_white_point_slider_value = 65535
-                # --- END OF BUG FIX ---
-
-                # Black point slider: Range is 0-65535, Value defaults to 0
+                # Default for 16-bit or unknown
+                new_max = 65535
+                
+                img_to_check = self.image_master
+                if img_to_check and not img_to_check.isNull():
+                    current_format = img_to_check.format()
+                    # Check for 8-bit formats
+                    if current_format in [QImage.Format_Grayscale8, QImage.Format_Indexed8]:
+                        new_max = 255
+                
+                # Update Black Point Slider
                 if hasattr(self, 'black_point_slider'):
                     self.black_point_slider.blockSignals(True)
+                    self.black_point_slider.setRange(0, new_max)
                     self.black_point_slider.setValue(0)
                     self.black_point_slider.blockSignals(False)
-                    if hasattr(self, 'black_point_value_label'): self.black_point_value_label.setText("0")
+                    if hasattr(self, 'black_point_value_label'): 
+                        self.black_point_value_label.setText("0")
 
-                # White point slider: Range is 0-65535, Value defaults based on the logic above
+                # Update White Point Slider
                 if hasattr(self, 'white_point_slider'):
                     self.white_point_slider.blockSignals(True)
-                    self.white_point_slider.setValue(default_white_point_slider_value)
+                    self.white_point_slider.setRange(0, new_max)
+                    self.white_point_slider.setValue(new_max)
                     self.white_point_slider.blockSignals(False)
-                    if hasattr(self, 'white_point_value_label'): self.white_point_value_label.setText(str(default_white_point_slider_value))
+                    if hasattr(self, 'white_point_value_label'): 
+                        self.white_point_value_label.setText(str(new_max))
 
             
             def _update_color_button_style(self, button, color):
@@ -11719,6 +12121,9 @@ if __name__ == "__main__":
                 
             def on_combobox_changed(self):
                 preset_name = self.combo_box.currentText()
+
+                if not self._is_restoring_state and (self.is_modified or preset_name != "Custom"):
+                    self.save_state()
                 
                 if self.is_modified or preset_name != "Custom":
                     self.save_state()
@@ -12267,13 +12672,9 @@ if __name__ == "__main__":
                             if loaded_image.isNull():
                                 try:
                                     pil_image = Image.open(file_path)
-                                    # --- START OF BUG FIX ---
-                                    # Replace the problematic ImageQt conversion with the robust NumPy bridge
-                                    # that correctly handles 16-bit data. This makes the logic identical
-                                    # to the successful path in the main load_image function.
+                                    # Use our numpy converter which correctly handles 16-bit arrays
                                     np_array = np.array(pil_image)
                                     loaded_image = self.numpy_to_qimage(np_array)
-                                    # --- END OF BUG FIX ---
                                     if loaded_image.isNull():
                                         loaded_image = None # Ensure it's None if conversion failed
                                     else:
@@ -12282,7 +12683,7 @@ if __name__ == "__main__":
                                     QMessageBox.warning(self, "File Load Error", f"Could not load image from file '{os.path.basename(file_path)}':\n{e}")
                                     loaded_image = None
 
-                            # --- *** ADDED: CONFIG FILE LOADING FOR PASTED FILE *** ---
+                            # --- CONFIG FILE LOADING FOR PASTED FILE ---
                             if loaded_image and not loaded_image.isNull():
                                 self.image_path = file_path # Store the path early for config lookup
                                 base_name_no_ext = os.path.splitext(os.path.basename(file_path))[0]
@@ -12298,8 +12699,6 @@ if __name__ == "__main__":
                                         config_loaded_from_paste = True # Set flag
                                     except Exception as e:
                                         QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply associated config file '{os.path.basename(config_path)}': {e}")
-
-                            # --- *** END OF ADDED CONFIG LOADING *** ---
 
 
                 # --- PRIORITY 2: Check for Raw Image Data (if no valid file was loaded) ---
@@ -12326,6 +12725,14 @@ if __name__ == "__main__":
                     self.is_modified = True
                     self.image = loaded_image
 
+                    # --- ADDED: Auto-invert 16-bit (Only if no config loaded) ---
+                    if not config_loaded_from_paste:
+                        if self.image.format() == QImage.Format_Grayscale16:
+                            self.main_image_is_inverted = True
+                        else:
+                            self.main_image_is_inverted = False
+                    # -----------------------------------------------------------
+
                     # Initialize backups
                     self.image_master = self.image.copy()
                     self.original_image = self.image.copy()
@@ -12345,10 +12752,6 @@ if __name__ == "__main__":
                         ratio=w/h if h > 0 else 1
                         target_width = int(self.label_size) # Use current label_size setting
                         target_height = int(target_width / ratio)
-                        # Optional: Apply max height constraint
-                        # if hasattr(self, 'preview_label_max_height_setting') and target_height > self.preview_label_max_height_setting:
-                        #     target_height = self.preview_label_max_height_setting
-                        #     target_width = int(target_height * ratio)
 
                         # Update slider ranges based on *new* label size
                         render_scale = 3
@@ -12371,7 +12774,11 @@ if __name__ == "__main__":
 
                     except Exception as e:
                         QMessageBox.warning(self, "UI Update Error", f"Could not update UI elements after pasting: {e}")
-                        
+                    
+                    # --- ADDED: Apply adjustments ---
+                    self.apply_all_adjustments()
+                    # ------------------------------
+
                     enable_pan = self.live_view_label.zoom_level > 1.0
                     if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
@@ -12423,108 +12830,151 @@ if __name__ == "__main__":
                     self.font_color = color  # Store the selected color   
                     self.update_font()
                 self._update_color_button_style(self.font_color_button, self.font_color)
+
+            def dragEnterEvent(self, event):
+                """Handle file dragging into the window."""
+                if event.mimeData().hasUrls():
+                    urls = event.mimeData().urls()
+                    if urls and urls[0].isLocalFile():
+                        file_path = urls[0].toLocalFile().lower()
+                        # Check if the file has a valid image extension
+                        if file_path.endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
+                            event.acceptProposedAction()
+                            return
+                event.ignore()
+
+            def dropEvent(self, event):
+                """Handle dropping the file."""
+                urls = event.mimeData().urls()
+                if urls and urls[0].isLocalFile():
+                    file_path = urls[0].toLocalFile()
+                    
+                    # Check for unsaved changes before loading the new file
+                    if not self.prompt_save_if_needed():
+                        return 
+                        
+                    self.open_image_from_path(file_path)
                     
             def load_image(self):
-                self.prompt_save_if_needed()
-                # self.undo_stack = []
-                # self.redo_stack = []
-                self.reset_image() # Clear previous state
+                """Opens file dialog to select an image."""
+                # Check for unsaved changes
+                if not self.prompt_save_if_needed():
+                    return
 
                 options = QFileDialog.Options()
                 file_path, _ = QFileDialog.getOpenFileName(
                     self, "Open Image File", "", "Image Files (*.png *.jpg *.bmp *.tif *.tiff)", options=options
                 )
+                
                 if file_path:
-                    self.image_path = file_path
-                    loaded_image = QImage(self.image_path)                    
+                    self.open_image_from_path(file_path)
 
-                    if loaded_image.isNull():
-                        # Try loading with Pillow as fallback
-                        try:
-                            pil_image = Image.open(self.image_path)
-                            # Use our numpy converter which correctly handles 16-bit arrays
-                            np_array = np.array(pil_image)
-                            loaded_image = self.numpy_to_qimage(np_array)
-                            if loaded_image.isNull():
-                                raise ValueError("Pillow/NumPy could not convert to QImage.")
-                        except Exception as e_pil:
-                            print(f"Pillow/NumPy load failed: {e_pil}. Falling back to Qt loader.")
-                            # Fallback to Qt's loader if Pillow fails
-                            loaded_image = QImage(self.image_path)
-                            if loaded_image.isNull():
-                                QMessageBox.warning(self, "Error", f"Failed to load image '{os.path.basename(file_path)}' with both Pillow and Qt.")
-                                self.image_path = None
-                                return
+            def open_image_from_path(self, file_path):
+                """Loads the image from a specific path (Used by Load Action and Drag & Drop)."""
+                self.reset_image() # Clear previous state
 
-                    # --- Keep the loaded image format ---
-                    self.image = loaded_image
-                    self._update_overlay_slider_ranges()
+                self.image_path = file_path
+                loaded_image = QImage(self.image_path)                    
 
-                    # --- Initialize backups with the loaded format ---
-                    if not self.image.isNull():
-                        self.original_image = self.image.copy() # Keep a pristine copy of the initially loaded image
-                        self.image_master = self.image.copy()   # Master copy for resets
-                        self.image_before_padding = None        # Reset padding state
-                        self.image_contrasted = self.image.copy() # Backup for contrast
-                        self.image_before_contrast = self.image.copy()
-                        self.image_padded = False               # Reset flag
+                if loaded_image.isNull():
+                    # Try loading with Pillow as fallback
+                    try:
+                        pil_image = Image.open(self.image_path)
+                        # Use our numpy converter which correctly handles 16-bit arrays
+                        np_array = np.array(pil_image)
+                        loaded_image = self.numpy_to_qimage(np_array)
+                        if loaded_image.isNull():
+                            raise ValueError("Pillow/NumPy could not convert to QImage.")
+                    except Exception as e_pil:
+                        print(f"Pillow/NumPy load failed: {e_pil}. Falling back to Qt loader.")
+                        # Fallback to Qt's loader if Pillow fails
+                        loaded_image = QImage(self.image_path)
+                        if loaded_image.isNull():
+                            QMessageBox.warning(self, "Error", f"Failed to load image '{os.path.basename(file_path)}' with both Pillow and Qt.")
+                            self.image_path = None
+                            return
 
-                        self.setWindowTitle(f"{self.window_title}::{self.image_path}")
+                # --- Keep the loaded image format ---
+                self.image = loaded_image
+                self._update_overlay_slider_ranges()
 
-                        # --- Load Associated Config File (Logic remains the same) ---
-                        self.base_name = os.path.splitext(os.path.basename(file_path))[0]
-                        config_name = ""
-                        if self.base_name.endswith("_original"):
-                            config_name = self.base_name.replace("_original", "_config.txt")
-                        else:
-                            config_name = self.base_name + "_config.txt"
-
-                        config_path = os.path.join(os.path.dirname(file_path), config_name)
-
-                        if os.path.exists(config_path):
-                            try:
-                                with open(config_path, "r") as config_file:
-                                    config_data = json.load(config_file)
-                                self.apply_config(config_data, load_analysis=False) # Apply loaded settings
-                            except Exception as e:
-                                QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
-                        # --- End Config File Loading ---
-                        self.is_modified = True # Mark as modified when loading new image
+                # --- Initialize backups with the loaded format ---
+                if not self.image.isNull():
+                    # --- ADDED: Auto-invert 16-bit grayscale ---
+                    # 16-bit gel images often have inverted intensities (0=white, 65535=black data).
+                    if self.image.format() == QImage.Format_Grayscale16:
+                        self.main_image_is_inverted = True
                     else:
-                         QMessageBox.critical(self, "Load Error", "Failed to initialize image object after loading.")
-                         return
+                        self.main_image_is_inverted = False
+                    # -------------------------------------------
 
-                    # --- Update UI Elements (Label size, sliders) ---
-                    if self.image and not self.image.isNull():
+                    self.original_image = self.image.copy() # Keep a pristine copy of the initially loaded image
+                    self.image_master = self.image.copy()   # Master copy for resets
+                    self.image_before_padding = None        # Reset padding state
+                    self.image_contrasted = self.image.copy() # Backup for contrast
+                    self.image_before_contrast = self.image.copy()
+                    self.image_padded = False               # Reset flag
+
+                    self.setWindowTitle(f"{self.window_title}::{self.image_path}")
+
+                    # --- Load Associated Config File ---
+                    self.base_name = os.path.splitext(os.path.basename(file_path))[0]
+                    config_name = ""
+                    if self.base_name.endswith("_original"):
+                        config_name = self.base_name.replace("_original", "_config.txt")
+                    else:
+                        config_name = self.base_name + "_config.txt"
+
+                    config_path = os.path.join(os.path.dirname(file_path), config_name)
+
+                    if os.path.exists(config_path):
                         try:
-                            # (UI update logic remains the same as before)
-
-                            render_scale = 3
-                            render_width = self.live_view_label.width() * render_scale
-                            render_height = self.live_view_label.height() * render_scale
-                            self._update_marker_slider_ranges()
-
-
-                            if not os.path.exists(config_path):
-                                self.left_padding_input.setText(str(int(self.image.width()*0.1)))
-                                self.right_padding_input.setText(str(int(self.image.width()*0.1)))
-                                self.top_padding_input.setText(str(int(self.image.height()*0.15)))
-                                self.bottom_padding_input.setText("0")
-
+                            with open(config_path, "r") as config_file:
+                                config_data = json.load(config_file)
+                            # Apply loaded settings (this will overwrite main_image_is_inverted if defined in config)
+                            self.apply_config(config_data, load_analysis=False) 
                         except Exception as e:
-                            pass
-                    # --- End UI Element Update ---
+                            QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
+                    # --- End Config File Loading ---
                     
+                    self.is_modified = True # Mark as modified when loading new image
                     
-                    self._update_status_bar() # <--- Add this
-                    enable_pan = self.live_view_label.zoom_level > 1.0
-                    if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
-                    if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
-                    if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
-                    if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
-                    QTimer.singleShot(0, self.update_live_view)
-                    self._update_levels_histogram() # Update histogram for new image
-                    self.save_state()
+                    # --- ADDED: Apply adjustments ---
+                    # Ensure the display reflects the inversion (or config settings) immediately
+                    self.apply_all_adjustments()
+                    # ------------------------------
+
+                else:
+                        QMessageBox.critical(self, "Load Error", "Failed to initialize image object after loading.")
+                        return
+
+                # --- Update UI Elements (Label size, sliders) ---
+                if self.image and not self.image.isNull():
+                    try:
+                        render_scale = 3
+                        render_width = self.live_view_label.width() * render_scale
+                        render_height = self.live_view_label.height() * render_scale
+                        self._update_marker_slider_ranges()
+
+                        if not os.path.exists(config_path):
+                            self.left_padding_input.setText(str(int(self.image.width()*0.1)))
+                            self.right_padding_input.setText(str(int(self.image.width()*0.1)))
+                            self.top_padding_input.setText(str(int(self.image.height()*0.15)))
+                            self.bottom_padding_input.setText("0")
+
+                    except Exception as e:
+                        pass
+                # --- End UI Element Update ---
+                
+                self._update_status_bar()
+                enable_pan = self.live_view_label.zoom_level > 1.0
+                if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
+                if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
+                if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
+                if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
+                QTimer.singleShot(0, self.update_live_view)
+                self._update_levels_histogram() 
+                self.save_state()
             
             def apply_config(self, config_data,load_analysis=False):
                 # --- 1. Load data from config_data into self attributes ---
@@ -12869,6 +13319,7 @@ if __name__ == "__main__":
                     "num_oligomers_to_model": self.num_oligomers_to_model,
                     "num_glycans_to_model": self.num_glycans_to_model,
                     "last_predicted_mw": self.last_predicted_mw,
+                    "last_mw_prediction_model": self.last_mw_prediction_model,
                 }
 
                 config["peak_dialog_settings"] = self.peak_dialog_settings
@@ -13055,6 +13506,7 @@ if __name__ == "__main__":
                     padding_right = max(0, int(self.right_padding_input.text()))
                     padding_top = max(0, int(self.top_padding_input.text()))
                     padding_bottom = max(0, int(self.bottom_padding_input.text()))
+                    # Normalize text fields
                     self.left_padding_input.setText(str(padding_left))
                     self.right_padding_input.setText(str(padding_right))
                     self.top_padding_input.setText(str(padding_top))
@@ -13070,8 +13522,10 @@ if __name__ == "__main__":
                 self.save_state()
 
                 try:
+                    # 1. Update internal marker coordinates first
                     self.adjust_elements_for_padding(padding_left, padding_top)
 
+                    # 2. Perform Padding on Image Data
                     np_img = self.qimage_to_numpy(self.image_master)
                     if np_img is None:
                         raise ValueError("Failed to convert source image to NumPy array for padding.")
@@ -13082,7 +13536,6 @@ if __name__ == "__main__":
                     target_dtype = np_img.dtype
 
                     padded_shape = (new_height, new_width, 4) if np_img.ndim == 3 else (new_height, new_width)
-                    # Use a transparent background for the new canvas
                     padded_np = np.zeros(padded_shape, dtype=target_dtype)
 
                     target_slice = padded_np[padding_top:padding_top + original_height, padding_left:padding_left + original_width]
@@ -13091,36 +13544,38 @@ if __name__ == "__main__":
                         target_slice[:, :] = np_img
                     elif np_img.ndim == 3:
                         target_slice[:, :, :] = np_img
-                    else:
-                        raise ValueError(f"Unsupported image dimension for padding: {np_img.ndim}")
                     
                     padded_image = self.numpy_to_qimage(padded_np)
                     if padded_image.isNull():
-                        raise ValueError("Conversion back to QImage failed after padding with NumPy.")
+                        raise ValueError("Conversion back to QImage failed after padding.")
 
-                    # --- BUG FIX: Replace call to _finalize_permanent_transformation ---
-                    # with custom logic that preserves visual adjustments.
+                    # 3. Update Master Image State
                     self.image_master = padded_image.copy()
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
                     self.image_before_padding = None
                     self.image_padded = True
                     self.is_modified = True
-                    # CRUCIALLY, we do NOT touch self.main_image_is_inverted or other adjustment dictionaries.
                     
-                    # Update UI related to new image dimensions
+                    # 4. CRITICAL FIX: Refresh self.image (display image) so it has NEW DIMENSIONS
+                    # This must happen BEFORE updating slider ranges.
+                    self.apply_all_adjustments()
+
+                    # 5. Now update ranges (uses new self.image dimensions) and sync slider values
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
 
-                    # Re-sync slider values with the newly adjusted internal shift values
-                    for slider, value_to_set in [(self.left_padding_slider, self.left_marker_shift_added), (self.right_padding_slider, self.right_marker_shift_added), (self.top_padding_slider, self.top_marker_shift_added)]:
+                    # Force sliders to the new adjusted values (which now fit in the new ranges)
+                    for slider, value_to_set in [
+                        (self.left_padding_slider, self.left_marker_shift_added), 
+                        (self.right_padding_slider, self.right_marker_shift_added), 
+                        (self.top_padding_slider, self.top_marker_shift_added)
+                    ]:
                         if slider:
-                            slider.blockSignals(True); slider.setValue(value_to_set); slider.blockSignals(False)
-
-                    # Re-apply all existing visual adjustments (like inversion) to the new master image
-                    self.apply_all_adjustments()
-                    # --- END BUG FIX ---
+                            slider.blockSignals(True)
+                            slider.setValue(value_to_set)
+                            slider.blockSignals(False)
 
                 except Exception as e:
                     QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
@@ -13436,7 +13891,10 @@ if __name__ == "__main__":
                 painter.setRenderHint(QPainter.Antialiasing, True)
                 painter.setRenderHint(QPainter.TextAntialiasing, True)
 
+                # --- 1. Logic for Isolated Edit Mode ---
+                # (Viewing just one overlay while adjusting its settings)
                 if self.is_in_dedicated_edit_mode:
+                    image_to_draw = None
                     if self.adjustment_context == "Overlay 1 (Base)":
                         image_to_draw = getattr(self, 'image1_adjusted_preview', None)
                     elif self.adjustment_context == "Overlay 2 (Overlay)":
@@ -13447,63 +13905,99 @@ if __name__ == "__main__":
                     if not image_to_draw or image_to_draw.isNull():
                          painter.end(); return
 
+                    # Draw the single image centered and scaled to fit the view
                     scaled_overlay_for_view = image_to_draw.scaled(canvas.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     x_offset = (canvas.width() - scaled_overlay_for_view.width()) // 2
                     y_offset = (canvas.height() - scaled_overlay_for_view.height()) // 2
-                    self.x_offset_s=x_offset
-                    self.y_offset_s=y_offset
+                    self.x_offset_s = x_offset
+                    self.y_offset_s = y_offset
                     painter.drawImage(x_offset, y_offset, scaled_overlay_for_view)
+                
+                # --- 2. Logic for Main View (Combined) ---
                 else:
+                    # Draw the base container image centered
                     x_offset = (canvas.width() - scaled_image.width()) // 2
                     y_offset = (canvas.height() - scaled_image.height()) // 2
-                    self.x_offset_s=x_offset
-                    self.y_offset_s=y_offset
+                    self.x_offset_s = x_offset
+                    self.y_offset_s = y_offset
                     painter.drawImage(x_offset, y_offset, scaled_image)
 
-                    is_blending = (hasattr(self, 'image1_adjusted_preview') and self.image1_adjusted_preview and hasattr(self, 'image1_position')) and \
-                                  (hasattr(self, 'image2_adjusted_preview') and self.image2_adjusted_preview and hasattr(self, 'image2_position'))
-                    blend_value = self.blend_slider.value() if hasattr(self, 'blend_slider') else 50
+                    # Check which overlays are active
+                    has_img1 = hasattr(self, 'image1_adjusted_preview') and self.image1_adjusted_preview and hasattr(self, 'image1_position')
+                    has_img2 = hasattr(self, 'image2_adjusted_preview') and self.image2_adjusted_preview and hasattr(self, 'image2_position')
+                    
+                    # Get mixing value (0.0 to 1.0)
+                    # 0% = Overlay invisible, 100% = Overlay opaque
+                    blend_value = (self.blend_slider.value() / 100.0) if hasattr(self, 'blend_slider') else 0.5
 
-                    adjusted_img1 = getattr(self, 'image1_adjusted_preview', None)
-                    if adjusted_img1 and not adjusted_img1.isNull() and hasattr(self, 'image1_position'):
-                        if is_blending: painter.setOpacity((100 - blend_value) / 100.0)
-                        
-                        rect_in_label_space = self._get_overlay_rect_in_label_space(1)
-                        if rect_in_label_space:
-                            rect_in_canvas_space = QRectF(rect_in_label_space.left() * render_scale, rect_in_label_space.top() * render_scale, rect_in_label_space.width() * render_scale, rect_in_label_space.height() * render_scale)
-                            rotation1 = self.image1_rotation_slider.value() / 10.0 if hasattr(self, 'image1_rotation_slider') else 0.0
+                    # --- Draw Image 1 (Base) ---
+                    # Always drawn at 100% opacity to act as the "A" in the mixing equation
+                    if has_img1:
+                        adjusted_img1 = getattr(self, 'image1_adjusted_preview', None)
+                        if adjusted_img1:
+                            painter.setOpacity(1.0) # Base is opaque
+                            
+                            rect_in_label_space = self._get_overlay_rect_in_label_space(1)
+                            if rect_in_label_space:
+                                # Scale rect to high-res canvas coordinates
+                                rect_in_canvas_space = QRectF(
+                                    rect_in_label_space.left() * render_scale, 
+                                    rect_in_label_space.top() * render_scale, 
+                                    rect_in_label_space.width() * render_scale, 
+                                    rect_in_label_space.height() * render_scale
+                                )
+                                rotation1 = self.image1_rotation_slider.value() / 10.0 if hasattr(self, 'image1_rotation_slider') else 0.0
 
-                            if abs(rotation1) > 0.01:
-                                center_point_canvas = rect_in_canvas_space.center()
-                                painter.save(); painter.translate(center_point_canvas); painter.rotate(rotation1); painter.translate(-center_point_canvas)
-                                painter.drawImage(rect_in_canvas_space, adjusted_img1)
-                                painter.restore()
-                            else:
-                                painter.drawImage(rect_in_canvas_space, adjusted_img1)
-                                
-                        painter.setOpacity(1.0)
+                                if abs(rotation1) > 0.01:
+                                    center_point_canvas = rect_in_canvas_space.center()
+                                    painter.save()
+                                    painter.translate(center_point_canvas)
+                                    painter.rotate(rotation1)
+                                    painter.translate(-center_point_canvas)
+                                    painter.drawImage(rect_in_canvas_space, adjusted_img1)
+                                    painter.restore()
+                                else:
+                                    painter.drawImage(rect_in_canvas_space, adjusted_img1)
 
-                    adjusted_img2 = getattr(self, 'image2_adjusted_preview', None)
-                    if adjusted_img2 and not adjusted_img2.isNull() and hasattr(self, 'image2_position'):
-                        if is_blending: painter.setOpacity(blend_value / 100.0)
+                    # --- Draw Image 2 (Overlay) ---
+                    # Drawn with opacity = blend_value to act as the "B" in the mixing equation
+                    # Result = A * (1-alpha) + B * alpha (Standard painter composition)
+                    if has_img2:
+                        adjusted_img2 = getattr(self, 'image2_adjusted_preview', None)
+                        if adjusted_img2:
+                            # Apply mixing percentage
+                            painter.setOpacity(blend_value)
 
-                        rect_in_label_space = self._get_overlay_rect_in_label_space(2)
-                        if rect_in_label_space:
-                            rect_in_canvas_space = QRectF(rect_in_label_space.left() * render_scale, rect_in_label_space.top() * render_scale, rect_in_label_space.width() * render_scale, rect_in_label_space.height() * render_scale)
-                            rotation2 = self.image2_rotation_slider.value() / 10.0 if hasattr(self, 'image2_rotation_slider') else 0.0
+                            rect_in_label_space = self._get_overlay_rect_in_label_space(2)
+                            if rect_in_label_space:
+                                rect_in_canvas_space = QRectF(
+                                    rect_in_label_space.left() * render_scale, 
+                                    rect_in_label_space.top() * render_scale, 
+                                    rect_in_label_space.width() * render_scale, 
+                                    rect_in_label_space.height() * render_scale
+                                )
+                                rotation2 = self.image2_rotation_slider.value() / 10.0 if hasattr(self, 'image2_rotation_slider') else 0.0
 
-                            if abs(rotation2) > 0.01:
-                                center_point_canvas = rect_in_canvas_space.center()
-                                painter.save(); painter.translate(center_point_canvas); painter.rotate(rotation2); painter.translate(-center_point_canvas)
-                                painter.drawImage(rect_in_canvas_space, adjusted_img2)
-                                painter.restore()
-                            else:
-                                painter.drawImage(rect_in_canvas_space, adjusted_img2)
-                        painter.setOpacity(1.0)
+                                if abs(rotation2) > 0.01:
+                                    center_point_canvas = rect_in_canvas_space.center()
+                                    painter.save()
+                                    painter.translate(center_point_canvas)
+                                    painter.rotate(rotation2)
+                                    painter.translate(-center_point_canvas)
+                                    painter.drawImage(rect_in_canvas_space, adjusted_img2)
+                                    painter.restore()
+                                else:
+                                    painter.drawImage(rect_in_canvas_space, adjusted_img2)
+                            
+                            # Reset opacity for subsequent drawing operations
+                            painter.setOpacity(1.0)
                 
+                # --- 3. Draw Guide Lines ---
                 if draw_guides and hasattr(self, 'show_guides_checkbox') and self.show_guides_checkbox.isChecked():
-                    pen_guides = QPen(Qt.red, 2 * render_scale); painter.setPen(pen_guides)
-                    center_x_canvas = canvas.width() // 2; center_y_canvas = canvas.height() // 2
+                    pen_guides = QPen(Qt.red, 2 * render_scale)
+                    painter.setPen(pen_guides)
+                    center_x_canvas = canvas.width() // 2
+                    center_y_canvas = canvas.height() // 2
                     painter.drawLine(center_x_canvas, 0, center_x_canvas, canvas.height())
                     painter.drawLine(0, center_y_canvas, canvas.width(), center_y_canvas)
             
@@ -13678,39 +14172,47 @@ if __name__ == "__main__":
                     traceback.print_exc()
             
             def _update_marker_slider_ranges(self):
+                """
+                Updates slider ranges based on image size AND current marker positions.
+                Ensures the range always encompasses the current marker shift values.
+                """
                 if not self.image or self.image.isNull() or not self.live_view_label:
-                    min_abs, max_abs_w, max_abs_h = -100, 1000, 800 # Default absolute pixel values
+                    min_abs, max_abs_w, max_abs_h = -100, 1000, 800
                 else:
                     try:
-                        # Ranges are based on the NATIVE dimensions of the CURRENT self.image
                         native_img_width = self.image.width()
                         native_img_height = self.image.height()
+                        margin = 100 
 
-                        margin = 100 # Allow markers to be set slightly outside the image bounds
-
+                        # Base ranges on image dimensions
                         min_abs_x = -margin
                         max_abs_x = native_img_width + margin
                         min_abs_y = -margin
                         max_abs_y = native_img_height + margin
 
-                        # Fallbacks if dimensions are invalid
-                        if native_img_width <= 0: max_abs_x = 1000; min_abs_x = -100
-                        if native_img_height <= 0: max_abs_y = 800; min_abs_y = -100
-                        
-                        max_abs_w = max_abs_x # For horizontal sliders (left/right markers)
-                        max_abs_h = max_abs_y # For Y-offsets (top markers)
-                        min_abs = min(min_abs_x, min_abs_y) # Common minimum
+                        # Expand ranges if current shift values are outside bounds
+                        # (e.g. if a crop moved the origin significantly)
+                        current_left = getattr(self, 'left_marker_shift_added', 0)
+                        current_right = getattr(self, 'right_marker_shift_added', 0)
+                        current_top = getattr(self, 'top_marker_shift_added', 0)
+
+                        min_abs_x = min(min_abs_x, current_left - margin, current_right - margin)
+                        max_abs_x = max(max_abs_x, current_left + margin, current_right + margin)
+                        min_abs_y = min(min_abs_y, current_top - margin)
+                        max_abs_y = max(max_abs_y, current_top + margin)
+
+                        max_abs_w = max_abs_x
+                        max_abs_h = max_abs_y
+                        min_abs = min(min_abs_x, min_abs_y)
 
                     except Exception as e:
                         print(f"Warning: Error calculating slider ranges: {e}. Using defaults.")
                         min_abs, max_abs_w, max_abs_h = -100, 1000, 800
 
-                # Store the calculated ranges internally (optional, but good for reference)
                 self.left_slider_range = [min_abs, max_abs_w]
                 self.right_slider_range = [min_abs, max_abs_w]
                 self.top_slider_range = [min_abs, max_abs_h]
 
-                # Update sliders: setRange, then re-apply current value (which might get clamped)
                 sliders_and_ranges = [
                     (getattr(self, 'left_padding_slider', None), self.left_slider_range),
                     (getattr(self, 'right_padding_slider', None), self.right_slider_range),
@@ -13719,10 +14221,12 @@ if __name__ == "__main__":
 
                 for slider, new_range in sliders_and_ranges:
                     if slider:
-                        current_val = slider.value() # Get current value BEFORE changing range
+                        current_val = slider.value()
                         slider.blockSignals(True)
                         slider.setRange(new_range[0], new_range[1])
-                        slider.setValue(current_val) # Re-apply; Qt will clamp if current_val is outside new_range
+                        # Only re-apply if we aren't about to overwrite it externally
+                        # (This preserves value if range shrinks/grows around it)
+                        slider.setValue(current_val) 
                         slider.blockSignals(False)
                     
                 
@@ -13733,26 +14237,30 @@ if __name__ == "__main__":
                     return
 
                 try:
-                    # (The first part calculating crop dimensions and adjusting markers remains the same)
                     img_x_intent, img_y_intent, img_w_intent, img_h_intent = self.crop_rectangle_coords
                     original_image_width_before_crop = self.image_master.width()
                     original_image_height_before_crop = self.image_master.height()
+                    
                     crop_x_start = max(0, int(round(img_x_intent)))
-                    # ... (rest of the coordinate calculation and marker/shape adjustments)
                     crop_y_start = max(0, int(round(img_y_intent)))
                     crop_width = max(1, min(int(round(img_w_intent)), original_image_width_before_crop - crop_x_start))
                     crop_height = max(1, min(int(round(img_h_intent)), original_image_height_before_crop - crop_y_start))
+                    
                     if crop_width <= 0 or crop_height <= 0: return
 
                     self.save_state()
-                    # (All marker/shape coordinate adjustment logic is still here)
-                    # ...
+
+                    # --- Adjust Standard Markers (Lists) ---
                     new_left_markers = [(y_old - crop_y_start, label) for y_old, label in getattr(self, 'left_markers', []) if crop_y_start <= y_old < crop_y_start + crop_height]
                     self.left_markers = new_left_markers
+                    
                     new_right_markers = [(y_old - crop_y_start, label) for y_old, label in getattr(self, 'right_markers', []) if crop_y_start <= y_old < crop_y_start + crop_height]
                     self.right_markers = new_right_markers
+                    
                     new_top_markers = [(x_old - crop_x_start, label) for x_old, label in getattr(self, 'top_markers', []) if crop_x_start <= x_old < crop_x_start + crop_width]
                     self.top_markers = new_top_markers
+
+                    # --- Adjust Custom Markers ---
                     new_custom_markers = [] 
                     if hasattr(self, "custom_markers"):
                         for marker_data in self.custom_markers:
@@ -13764,6 +14272,8 @@ if __name__ == "__main__":
                                     new_custom_markers.append(m_list)
                             except: pass
                     self.custom_markers = new_custom_markers
+
+                    # --- Adjust Custom Shapes ---
                     new_custom_shapes = []
                     if hasattr(self, "custom_shapes"):
                         for shape_data_orig in self.custom_shapes:
@@ -13786,22 +14296,22 @@ if __name__ == "__main__":
                                 if adjusted_shape_data: new_custom_shapes.append(adjusted_shape_data)
                             except: pass
                     self.custom_shapes = new_custom_shapes
+
+                    # --- Update Internal Shifts (The Correct New Values) ---
                     self.left_marker_shift_added -= crop_x_start
                     self.right_marker_shift_added -= crop_x_start
                     self.top_marker_shift_added -= crop_y_start
 
-                    # Crop the master image
+                    # --- Perform Image Crop ---
                     cropped_qimage = self.image_master.copy(crop_x_start, crop_y_start, crop_width, crop_height)
-                    
-                    # Clear the UI crop previews
+                    if cropped_qimage.isNull(): raise ValueError("Cropping resulted in an invalid image.")
+
+                    # --- Clear Crop UI State ---
                     self.crop_rectangle_coords = None 
                     self.live_view_label.clear_crop_preview() 
                     self.cancel_rectangle_crop_mode() 
 
-                    # --- BUG FIX: Replace call to _finalize_permanent_transformation ---
-                    if cropped_qimage.isNull():
-                        raise ValueError("Cropping resulted in an invalid image.")
-
+                    # --- Update Master Image ---
                     self.image_master = cropped_qimage.copy()
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
@@ -13809,11 +14319,27 @@ if __name__ == "__main__":
                     self.image_padded = False
                     self.is_modified = True
 
+                    # --- Update Display Image (Dimensions Change Here) ---
+                    self.apply_all_adjustments()
+
+                    # --- CRITICAL FIX: Sync Sliders with New Dimensions AND New Shift Values ---
                     self._update_status_bar()
+                    
+                    # 1. Update ranges first (will use new image size + current shift vars)
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
-                    self.apply_all_adjustments()
-                    # --- END BUG FIX ---
+
+                    # 2. Force sliders to the calculated shift values
+                    # This must be done AFTER setRange to ensure the value isn't clamped to old bounds
+                    for slider, value_to_set in [
+                        (self.left_padding_slider, self.left_marker_shift_added),
+                        (self.right_padding_slider, self.right_marker_shift_added),
+                        (self.top_padding_slider, self.top_marker_shift_added)
+                    ]:
+                        if slider:
+                            slider.blockSignals(True)
+                            slider.setValue(int(value_to_set)) # Ensure integer
+                            slider.blockSignals(False)
 
                 except Exception as e:
                     QMessageBox.critical(self, "Crop Error", f"An error occurred during cropping: {e}")
@@ -13924,7 +14450,102 @@ if __name__ == "__main__":
                     if self.undo_stack:
                         self.undo_action_m()
 
-            
+            def _draw_oligomer_overlay_on_canvas(self, painter, render_scale, font_scale_factor):
+                """Helper to draw the oligomer overlay on a high-res canvas (Save/Copy)."""
+                if not (hasattr(self, 'show_oligomer_glyco_overlay_checkbox') and 
+                        self.show_oligomer_glyco_overlay_checkbox.isChecked() and 
+                        self.oligomer_products and 
+                        self.last_mw_prediction_model is not None):
+                    return
+
+                line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]
+                text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
+                
+                # --- UPDATE: Use Standard Marker Font Settings ---
+                # This ensures the size matches the Left/Right markers exactly
+                base_font_size = self.font_size 
+                scaled_font_size = int(base_font_size * font_scale_factor)
+                
+                text_font = QFont(self.font_family)
+                text_font.setPixelSize(max(4, scaled_font_size))
+                text_font.setBold(True) # Keep bold to distinguish specific bands, or remove for exact match
+                painter.setFont(text_font)
+                # -----------------------------------------------
+                
+                fm_text = QFontMetricsF(text_font)
+                text_height = fm_text.height()
+                min_text_spacing = text_height * 1.2
+
+                bands_to_draw = []
+                for i, mw in enumerate(self.oligomer_products):
+                    y_pos_img = self._get_y_pos_from_mw(mw, self.last_mw_prediction_model, self.last_mw_prediction_min_max_pos)
+                    if y_pos_img is not None:
+                        y_pos_canvas = y_pos_img * render_scale
+                        bands_to_draw.append({
+                            'mw': mw, 
+                            'y_canvas': y_pos_canvas, 
+                            'color': line_colors[i % len(line_colors)], 
+                            'text_color': text_colors[i % len(text_colors)]
+                        })
+                
+                if not bands_to_draw: return
+
+                bands_to_draw.sort(key=lambda b: b['y_canvas'])
+                last_text_y = -float('inf')
+                
+                for band in bands_to_draw:
+                    ideal_text_y = band['y_canvas']
+                    if ideal_text_y < last_text_y + min_text_spacing:
+                        band['text_y_canvas'] = last_text_y + min_text_spacing
+                    else:
+                        band['text_y_canvas'] = ideal_text_y
+                    last_text_y = band['text_y_canvas']
+
+                arrow_line_width = max(1.0, 2.0 * font_scale_factor)
+                
+                # Determine Start X (Cursor location or Image Center)
+                if hasattr(self, "protein_location") and self.protein_location:
+                    start_x = self.protein_location.x() * render_scale
+                else:
+                    start_x = (self.image_master.width() * render_scale) / 2.0
+
+                # Visual offsets scaled by font_scale_factor to match zoom/view ratio
+                line_len_1 = 30 * font_scale_factor
+                text_offset = 5 * font_scale_factor
+                elbow_x = start_x + line_len_1
+                text_start_x = elbow_x + text_offset
+
+                for band in bands_to_draw:
+                    pen = QPen(band['color'])
+                    pen.setWidthF(arrow_line_width)
+                    painter.setPen(pen)
+                    
+                    text = f"{band['mw']:.1f} kDa"
+                    text_rect = fm_text.boundingRect(text)
+                    
+                    p_start = QPointF(start_x, band['y_canvas'])
+                    p_elbow_1 = QPointF(elbow_x, band['y_canvas'])
+                    p_elbow_2 = QPointF(elbow_x, band['text_y_canvas'])
+                    p_text_anchor = QPointF(text_start_x, band['text_y_canvas'])
+                    
+                    polyline_points = [p_start, p_elbow_1, p_elbow_2, p_text_anchor]
+                    painter.drawPolyline(QPolygonF(polyline_points))
+                    
+                    text_draw_y = band['text_y_canvas'] - (text_rect.top() + text_rect.height() / 2.0)
+                    
+                    # Glow Effect
+                    glow_color = QColor(255, 255, 255, 90)
+                    glow_pen = QPen(glow_color)
+                    glow_pen.setWidth(int(3 * font_scale_factor)) 
+                    painter.setPen(glow_pen)
+                    
+                    glow_offset = max(1.0, 1.0 * font_scale_factor)
+                    offsets = [(-glow_offset, -glow_offset), (glow_offset, -glow_offset), (-glow_offset, glow_offset), (glow_offset, glow_offset)]
+                    for dx, dy in offsets:
+                        painter.drawText(QPointF(text_start_x + dx, text_draw_y + dy), text)
+                        
+                    painter.setPen(band['text_color'])
+                    painter.drawText(QPointF(text_start_x, text_draw_y), text)
                 
             def save_image(self):
                 self.draw_guides = False
@@ -13934,12 +14555,11 @@ if __name__ == "__main__":
                      QMessageBox.warning(self, "Error", "No image data to save.")
                      return False
 
-                # --- 1. Generate a clean suggested name for the dialog ---
+                # --- 1. Generate name and Open Dialog (Unchanged) ---
                 suggested_name = os.path.splitext(os.path.basename(self.image_path))[0] if self.image_path else "untitled_image"
                 base_name_clean_for_dialog = suggested_name.replace("_original", "").replace("_modified", "")
                 save_dir = os.path.dirname(self.image_path) if self.image_path else ""
                 
-                # --- 2. Open the file dialog ---
                 options = QFileDialog.Options()
                 base_save_path, selected_filter = QFileDialog.getSaveFileName(
                     self, "Save Image Base Name", os.path.join(save_dir, base_name_clean_for_dialog),
@@ -13948,7 +14568,6 @@ if __name__ == "__main__":
                 )
                 if not base_save_path: return False
 
-                # --- 3. Clean the filename the user ACTUALLY selected ---
                 user_selected_base_name = os.path.splitext(base_save_path)[0]
                 final_clean_base = user_selected_base_name.replace("_original", "").replace("_modified", "")
                 
@@ -13957,12 +14576,11 @@ if __name__ == "__main__":
                 elif "jpg" in selected_filter.lower(): suffix = ".jpg"
                 elif "bmp" in selected_filter.lower(): suffix = ".bmp"
 
-                # --- 4. Construct final paths using the truly clean base name ---
                 original_save_path = f"{final_clean_base}_original{suffix}"
                 modified_save_path = f"{final_clean_base}_modified{suffix}"
                 config_save_path = f"{final_clean_base}_config.txt"
 
-                # --- Save _original image (current state of self.image) ---
+                # --- Save _original image (Unchanged) ---
                 if self.image_master and not self.image_master.isNull():
                     save_format = suffix.replace(".", "").upper()
                     if save_format == "TIF": save_format = "TIFF"
@@ -13970,7 +14588,7 @@ if __name__ == "__main__":
                     if not self.image_master.save(original_save_path, format=save_format if save_format else None, quality=quality):
                         QMessageBox.warning(self, "Error", f"Failed to save original image.")
 
-                # --- Create and save _modified image with annotations ---
+                # --- Create and save _modified image ---
                 render_scale = 3
                 native_width = self.image_master.width(); native_height = self.image_master.height()
                 if native_width <= 0 or native_height <= 0: return False
@@ -13987,18 +14605,33 @@ if __name__ == "__main__":
                     'clahe': self.clahe_data.copy()
                 }
 
-                # 2. Apply these settings to the high-fidelity master image
+                # Apply settings to master image (this now returns 16-bit if appropriate)
                 fully_adjusted_master = self._apply_all_adjustments_to_image(self.image_master, current_adjustment_settings)
 
-                canvas_width = native_width * render_scale; canvas_height = native_height * render_scale
-                modified_canvas = QImage(canvas_width, canvas_height, QImage.Format_ARGB32_Premultiplied)
+                # --- FIX: Determine Canvas Format based on Image Depth ---
+                canvas_width = native_width * render_scale
+                canvas_height = native_height * render_scale
+                
+                # Check if result is high depth (Grayscale16 or RGBA64/RGBX64)
+                fmt = fully_adjusted_master.format()
+                is_high_depth = fmt in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
+                
+                if is_high_depth:
+                    # Use 64-bit RGBA for the canvas to preserve depth while allowing colored annotations
+                    canvas_format = QImage.Format_RGBA64
+                else:
+                    canvas_format = QImage.Format_ARGB32_Premultiplied
+
+                modified_canvas = QImage(canvas_width, canvas_height, canvas_format)
                 modified_canvas.fill(Qt.transparent)
                 
                 painter = QPainter(modified_canvas)
-                
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+                
+                # Draw the image
                 painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), fully_adjusted_master, QRectF(fully_adjusted_master.rect()))
 
+                # ... (Draw Annotations - Code remains exactly the same as previous) ...
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
@@ -14041,6 +14674,7 @@ if __name__ == "__main__":
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
                     except Exception: pass
                 
+                self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
 
                 save_format_mod = suffix.replace(".", "").upper()
@@ -14059,12 +14693,7 @@ if __name__ == "__main__":
                     return False
 
                 self.is_modified = False
-
-                # --- THE FIX IS HERE ---
-                # After a successful save, update the internal path to the new path.
-                # We store the path to the "_original" file, as this is what's loaded.
                 self.image_path = original_save_path
-                # --- END FIX ---
                 
                 QMessageBox.information(self, "Saved", f"Files saved successfully to '{os.path.dirname(base_save_path)}'")
                 self.setWindowTitle(f"{self.window_title}::{final_clean_base}")
@@ -14360,6 +14989,8 @@ if __name__ == "__main__":
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
                     except Exception: pass
+                
+                self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
                 
                 # --- The rest of the method, which saves to a temp file, remains the same ---
@@ -14580,10 +15211,11 @@ if __name__ == "__main__":
                     self.mw_regression_model_combo.setCurrentText(model_name)
                     self.mw_regression_model_combo.blockSignals(False)
 
-            def get_protein_location(self, event, all_marker_positions, all_marker_values):
+            def _calculate_refined_y_from_event(self, event):
                 pos = event.position()
                 cursor_x, cursor_y = pos.x(), pos.y()
 
+                # Coordinate Transforms
                 if self.live_view_label.zoom_level != 1.0:
                     cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
                     cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
@@ -14597,9 +15229,93 @@ if __name__ == "__main__":
                 x_offset = (displayed_width - image_width * scale) / 2
                 y_offset = (displayed_height - image_height * scale) / 2
 
-                protein_y_image = (cursor_y - y_offset) / scale if scale != 0 else 0
-                self.protein_location = QPointF(cursor_x, cursor_y)
+                raw_img_x = (cursor_x - x_offset) / scale
+                raw_img_y = (cursor_y - y_offset) / scale
+                refined_y = raw_img_y
 
+                # Centroid Refinement
+                if self.image and not self.image.isNull():
+                    try:
+                        np_img = self.qimage_to_numpy(self.image)
+                        if np_img is not None:
+                            h, w = np_img.shape[:2]
+                            search_radius = 15
+                            center_x_int = int(round(raw_img_x))
+                            center_y_int = int(round(raw_img_y))
+                            
+                            y_start = max(0, center_y_int - search_radius)
+                            y_end = min(h, center_y_int + search_radius + 1)
+                            x_col = max(0, min(w - 1, center_x_int))
+
+                            if np_img.ndim == 3: slice_data = np.mean(np_img[y_start:y_end, x_col, :3], axis=1)
+                            else: slice_data = np_img[y_start:y_end, x_col]
+
+                            if not self.main_image_is_inverted:
+                                max_val = 65535.0 if slice_data.dtype == np.uint16 else 255.0
+                                slice_data = max_val - slice_data
+
+                            slice_data = slice_data.astype(float) - np.min(slice_data)
+                            total_mass = np.sum(slice_data)
+                            if total_mass > 0:
+                                relative_centroid = np.sum(np.arange(len(slice_data)) * slice_data) / total_mass
+                                refined_y = y_start + relative_centroid
+                    except Exception: pass
+                
+                return refined_y
+
+            # --- HELPER: Picking Loop for Calibration ---
+            def _pick_calibration_point_loop(self):
+                """Enters a local event loop to let user pick a point, returning refined Y."""
+                
+                # 1. Setup UI for picking
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self._reset_live_view_label_custom_handlers()
+                self.live_view_label.mw_predict_preview_enabled = True # Enable preview line
+                self.live_view_label.setMouseTracking(True)
+                
+                # 2. Local Event Loop
+                loop = QEventLoop()
+                picked_data = {"y": None}
+
+                def pick_handler(event):
+                    refined_y = self._calculate_refined_y_from_event(event)
+                    picked_data["y"] = refined_y
+                    loop.quit()
+
+                self.live_view_label._custom_left_click_handler_from_app = pick_handler
+                self.live_view_label._custom_mouseMoveEvent_from_app = self.update_mw_predict_preview
+                
+                loop.exec() # BLOCK here until clicked
+
+                # 3. Cleanup
+                self.live_view_label.mw_predict_preview_enabled = False
+                self.live_view_label.setMouseTracking(False)
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+                self._reset_live_view_label_custom_handlers()
+                self.live_view_label.update()
+                
+                return picked_data["y"]
+
+            def get_protein_location(self, event, all_marker_positions, all_marker_values):
+                # Calculate initial position using the shared helper
+                refined_y = self._calculate_refined_y_from_event(event)
+                
+                # Store simple point for line drawing compatibility
+                pos = event.position()
+                cursor_x = pos.x()
+                if self.live_view_label.zoom_level != 1.0:
+                    cursor_x = (cursor_x - self.live_view_label.pan_offset.x()) / self.live_view_label.zoom_level
+                
+                # (Re-calculate X mapping locally)
+                displayed_width = self.live_view_label.width(); displayed_height = self.live_view_label.height()
+                image_width = self.image.width() if self.image else 1; image_height = self.image.height() if self.image else 1
+                scale = min(displayed_width / image_width, displayed_height / image_height) if image_width > 0 else 1.0
+                x_offset = (displayed_width - image_width * scale) / 2
+                raw_img_x = (cursor_x - x_offset) / scale
+                
+                self.protein_location = QPointF(raw_img_x, refined_y)
+
+                # Determine Marker Set
                 transition_index = -1; initial_decrease = False
                 for k in range(1, len(all_marker_values)):
                     if all_marker_values[k] < all_marker_values[k-1]: initial_decrease = True
@@ -14608,42 +15324,70 @@ if __name__ == "__main__":
 
                 active_marker_positions, active_marker_values, set_name = None, None, "Full Set"
                 if transition_index != -1:
-                    set1_pos, set1_val = all_marker_positions[:transition_index], all_marker_values[:transition_index]
-                    set2_pos, set2_val = all_marker_positions[transition_index:], all_marker_values[transition_index:]
-                    valid_set1, valid_set2 = len(set1_pos) >= 2, len(set2_pos) >= 2
-                    if valid_set1 and valid_set2:
-                        if abs(protein_y_image - np.mean(set1_pos)) <= abs(protein_y_image - np.mean(set2_pos)):
-                            active_marker_positions, active_marker_values, set_name = set1_pos, set1_val, "Set 1 (e.g., Gel)"
-                        else:
-                            active_marker_positions, active_marker_values, set_name = set2_pos, set2_val, "Set 2 (e.g., WB)"
-                    elif valid_set1: active_marker_positions, active_marker_values, set_name = set1_pos, set1_val, "Set 1 (e.g., Gel)"
-                    elif valid_set2: active_marker_positions, active_marker_values, set_name = set2_pos, set2_val, "Set 2 (e.g., WB)"
+                    set1_pos = all_marker_positions[:transition_index]
+                    set1_val = all_marker_values[:transition_index]
+                    set2_pos = all_marker_positions[transition_index:]
+                    set2_val = all_marker_values[transition_index:]
+                    
+                    mean1 = np.mean(set1_pos) if len(set1_pos)>0 else -9e9
+                    mean2 = np.mean(set2_pos) if len(set2_pos)>0 else -9e9
+                    
+                    if abs(refined_y - mean1) <= abs(refined_y - mean2):
+                        active_marker_positions, active_marker_values, set_name = set1_pos, set1_val, "Set 1"
+                    else:
+                        active_marker_positions, active_marker_values, set_name = set2_pos, set2_val, "Set 2"
                 else:
-                    if len(all_marker_positions) >= 2: active_marker_positions, active_marker_values = all_marker_positions, all_marker_values
+                    active_marker_positions, active_marker_values = all_marker_positions, all_marker_values
 
                 if active_marker_positions is None or len(active_marker_positions) < 2:
-                    QMessageBox.warning(self, "Error", f"Selected/available active set has insufficient points for prediction.")
+                    QMessageBox.warning(self, "Error", f"Insufficient points for prediction.")
                     if hasattr(self, "protein_location"): del self.protein_location
                     self._reset_live_view_label_custom_handlers(); self.live_view_label.setCursor(Qt.ArrowCursor); return
 
-                dialog = PredictionResultDialog(self, all_marker_positions, all_marker_values, active_marker_positions, active_marker_values, protein_y_image, set_name)
+                # --- RETRIEVE SAVED CALIBRATION ---
+                existing_calibration = None
+                if self.last_mw_prediction_model and "calibration" in self.last_mw_prediction_model:
+                    existing_calibration = self.last_mw_prediction_model["calibration"]
+
+                # --- DIALOG LOOP FOR INTERACTIVE PICKING ---
+                dialog = PredictionResultDialog(
+                    self, all_marker_positions, all_marker_values, 
+                    active_marker_positions, active_marker_values, 
+                    refined_y, set_name,
+                    initial_calibration=existing_calibration
+                )
                 dialog.model_changed_in_dialog.connect(self._update_main_model_from_dialog)
                 
-                if dialog.exec() == QDialog.Accepted:
+                final_result = QDialog.Rejected
+                
+                while True:
+                    result = dialog.exec()
+                    
+                    if result == QDialog.Accepted:
+                        final_result = QDialog.Accepted; break
+                    elif result == QDialog.Rejected:
+                        final_result = QDialog.Rejected; break
+                    elif result == 101: # Pick Point 1
+                        new_y = self._pick_calibration_point_loop()
+                        if new_y is not None:
+                            dialog.spin_y1.setValue(new_y)
+                            dialog.chk_calib1.setChecked(True)
+                    elif result == 102: # Pick Point 2
+                        new_y = self._pick_calibration_point_loop()
+                        if new_y is not None:
+                            dialog.spin_y2.setValue(new_y)
+                            dialog.chk_calib2.setChecked(True)
+
+                if final_result == QDialog.Accepted:
                     model_data = dialog.get_final_prediction_model()
                     self.last_mw_prediction_model = model_data 
                     self.last_mw_prediction_min_max_pos = model_data.get("min_max_pos")
                     self.run_predict_MW = True
 
-                    # --- NEW LOGIC TO UPDATE STATE AFTER PREDICTION ---
                     predicted_mw = dialog.get_final_predicted_mw()
-                    if predicted_mw > 0:
-                        self.last_predicted_mw = predicted_mw
-                        #self.base_protein_mw = predicted_mw # Update the base MW for the analyzer
+                    if predicted_mw > 0: self.last_predicted_mw = predicted_mw
                     
-                    if self.avg_glycan_mass <= 0:
-                        self.avg_glycan_mass = 0.0
-
+                    if self.avg_glycan_mass <= 0: self.avg_glycan_mass = 0.0
                     self.oligomer_products = []
                     if self.base_protein_mw > 0:
                         for j in range(1, self.num_oligomers_to_model + 1):
@@ -14652,31 +15396,16 @@ if __name__ == "__main__":
                             if self.avg_glycan_mass > 0:
                                 for i in range(1, self.num_glycans_to_model + 1):
                                     self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
-                    # --- END NEW LOGIC ---
                 else:
                     self.last_mw_prediction_model = None
-                    self.last_mw_prediction_min_max_pos = None
-                    if hasattr(self, "protein_location"): del self.protein_location
                     self.run_predict_MW = False
+                    if hasattr(self, "protein_location"): del self.protein_location
 
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label.setCursor(Qt.ArrowCursor)
-                
-                if self.run_predict_MW:
-                    try:
-                        mw_marker_font = QFont(self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value() + 2)
-                        font_metrics_mw = QFontMetrics(mw_marker_font)
-                        text_mw = "⎯⎯"; text_bounding_rect_mw = font_metrics_mw.boundingRect(text_mw)
-                        loc_x_ls = self.protein_location.x()
-                        draw_x_mw_ls = loc_x_ls - (text_bounding_rect_mw.left() + text_bounding_rect_mw.width() / 2.0)
-                        self.last_mw_prediction_marker_x_ls = draw_x_mw_ls
-                        self.last_mw_prediction_marker_width_ls = text_bounding_rect_mw.width()
-                    except Exception as e_geom:
-                        print(f"Warning: Could not calculate MW marker geometry for overlay: {e_geom}")
-                        self.last_mw_prediction_marker_x_ls = None
-                        self.last_mw_prediction_marker_width_ls = None
-                
                 self.update_live_view()
+
+            
 
             def get_protein_location_and_clear_preview(self, event, all_marker_positions, all_marker_values):
                 self.get_protein_location(event, all_marker_positions, all_marker_values)
@@ -14698,86 +15427,99 @@ if __name__ == "__main__":
                      self.live_view_label._original_mouseMoveEvent(event)
                 
             def reset_image(self):
-                self.cancel_rectangle_crop_mode()
-                self.crop_rectangle_coords = None
-                self.live_view_label.clear_crop_preview()
+                # 1. Save state exactly ONCE at the start
+                self.save_state() 
 
-                slider_info = [
-                    (getattr(self, 'crop_x_start_slider', None), self.crop_slider_min),
-                    (getattr(self, 'crop_x_end_slider', None), self.crop_slider_max),
-                    (getattr(self, 'crop_y_start_slider', None), self.crop_slider_min),
-                    (getattr(self, 'crop_y_end_slider', None), self.crop_slider_max)
-                ]
-                for slider, default_value in slider_info:
-                    if slider:
-                        slider.blockSignals(True); slider.setValue(default_value); slider.setEnabled(False); slider.blockSignals(False)
-
-                # --- FIX: Correctly restore all master images from the original backup ---
-                if hasattr(self, 'original_image') and self.original_image and not self.original_image.isNull():
-                    self.image_master = self.original_image.copy()
-                    self.image = self.image_master.copy() # Display cache starts as a copy of the master
-                    self.image_before_padding = None
-                    self.image_contrasted = self.image_master.copy()
-                    self.image_before_contrast = self.image_master.copy()
-                    self.image_padded = False
-                    self.contrast_applied = False # Reset contrast flag
-                else:
-                    self.image = None; self.image_master = None; self.original_image = None
-                    self.image_before_padding = None; self.image_contrasted = None; self.image_before_contrast = None
-                    self.image_padded = False; self.contrast_applied = False
-                
-                # --- FIX: DO NOT REMOVE OVERLAYS ON RESET ---
-                # self.remove_image1(); self.remove_image2() # <--- THIS LINE IS THE CULPRIT AND IS NOW COMMENTED OUT
-                # --- END FIX ---
-
-                if hasattr(self, 'blend_slider'): self.blend_slider.setValue(50)
-                self.cancel_interactive_overlay_mode()
-                
-                if hasattr(self, 'show_grid_checkbox_x'): self.show_grid_checkbox_x.setChecked(False)
-                if hasattr(self, 'show_grid_checkbox_y'): self.show_grid_checkbox_y.setChecked(False)
-                if hasattr(self, 'grid_size_input'): self.grid_size_input.setValue(20)
-
-                self.warped_image=None
-                if hasattr(self, 'left_markers'): self.left_markers.clear()
-                if hasattr(self, 'right_markers'): self.right_markers.clear()
-                if hasattr(self, 'top_markers'): self.top_markers.clear()
-                if hasattr(self, 'custom_markers'): self.custom_markers.clear()
-                if hasattr(self, 'custom_shapes'): self.custom_shapes.clear()
-                self.cancel_drawing_mode()
-                self.clear_predict_molecular_weight()
-
-                if hasattr(self, 'orientation_slider'): self.orientation_slider.setValue(0)
-                if hasattr(self, 'taper_skew_slider'): self.taper_skew_slider.setValue(0)
-
-                self.marker_mode = None
-                self.current_left_marker_index = 0; self.current_right_marker_index = 0; self.current_top_label_index = 0
-                self.left_marker_shift_added = 0; self.right_marker_shift_added = 0; self.top_marker_shift_added = 0
-                self.live_view_label.mode = None; self.live_view_label.quad_points = []; self.live_view_label.setCursor(Qt.ArrowCursor)
+                # 2. LOCK: Prevent sub-functions from saving state or clearing redo stack
+                self._is_restoring_state = True 
 
                 try:
-                    if hasattr(self, 'combo_box'):
-                        biorad_index = self.combo_box.findText("Precision Plus Protein All Blue Prestained (Bio-Rad)")
-                        if biorad_index != -1: self.combo_box.setCurrentIndex(biorad_index)
-                        self.on_combobox_changed()
-                except Exception: pass
+                    self.cancel_rectangle_crop_mode()
+                    self.crop_rectangle_coords = None
+                    self.live_view_label.clear_crop_preview()
 
-                if self.image and not self.image.isNull():
-                    if hasattr(self, 'left_padding_input'): self.left_padding_input.setText(str(int(self.image.width()*0.1)))
-                    if hasattr(self, 'right_padding_input'): self.right_padding_input.setText(str(int(self.image.width()*0.1)))
-                    if hasattr(self, 'top_padding_input'): self.top_padding_input.setText(str(int(self.image.height()*0.15)))
+                    slider_info = [
+                        (getattr(self, 'crop_x_start_slider', None), self.crop_slider_min),
+                        (getattr(self, 'crop_x_end_slider', None), self.crop_slider_max),
+                        (getattr(self, 'crop_y_start_slider', None), self.crop_slider_min),
+                        (getattr(self, 'crop_y_end_slider', None), self.crop_slider_max)
+                    ]
+                    for slider, default_value in slider_info:
+                        if slider:
+                            slider.blockSignals(True); slider.setValue(default_value); slider.setEnabled(False); slider.blockSignals(False)
 
-                self.live_view_label.zoom_level = 1.0; self.live_view_label.pan_offset = QPointF(0, 0)
-                if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
-                if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
-                if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
-                if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
-                
-                self.reset_all_adjustments()
-                self._update_overlay_slider_ranges()
-                self._update_marker_slider_ranges()
-                self.update_live_view()
-                self._update_levels_histogram()
-                self._update_status_bar()
+                    # Restore Master Image
+                    if hasattr(self, 'original_image') and self.original_image and not self.original_image.isNull():
+                        self.image_master = self.original_image.copy()
+                        self.image = self.image_master.copy() 
+                        self.image_before_padding = None
+                        self.image_contrasted = self.image_master.copy()
+                        self.image_before_contrast = self.image_master.copy()
+                        self.image_padded = False
+                        self.contrast_applied = False 
+                    else:
+                        self.image = None; self.image_master = None; self.original_image = None
+                        self.image_before_padding = None; self.image_contrasted = None; self.image_before_contrast = None
+                        self.image_padded = False; self.contrast_applied = False
+                    
+                    # Reset UI elements
+                    if hasattr(self, 'blend_slider'): self.blend_slider.setValue(50)
+                    self.cancel_interactive_overlay_mode()
+                    
+                    if hasattr(self, 'show_grid_checkbox_x'): self.show_grid_checkbox_x.setChecked(False)
+                    if hasattr(self, 'show_grid_checkbox_y'): self.show_grid_checkbox_y.setChecked(False)
+                    if hasattr(self, 'grid_size_input'): self.grid_size_input.setValue(20)
+
+                    self.warped_image=None
+                    if hasattr(self, 'left_markers'): self.left_markers.clear()
+                    if hasattr(self, 'right_markers'): self.right_markers.clear()
+                    if hasattr(self, 'top_markers'): self.top_markers.clear()
+                    if hasattr(self, 'custom_markers'): self.custom_markers.clear()
+                    if hasattr(self, 'custom_shapes'): self.custom_shapes.clear()
+                    self.cancel_drawing_mode()
+                    self.clear_predict_molecular_weight()
+
+                    if hasattr(self, 'orientation_slider'): self.orientation_slider.setValue(0)
+                    if hasattr(self, 'taper_skew_slider'): self.taper_skew_slider.setValue(0)
+
+                    self.marker_mode = None
+                    self.current_left_marker_index = 0; self.current_right_marker_index = 0; self.current_top_label_index = 0
+                    self.left_marker_shift_added = 0; self.right_marker_shift_added = 0; self.top_marker_shift_added = 0
+                    self.live_view_label.mode = None; self.live_view_label.quad_points = []; self.live_view_label.setCursor(Qt.ArrowCursor)
+
+                    # Reset Preset to Bio-Rad (or default), blocking signals to prevent auto-save
+                    try:
+                        if hasattr(self, 'combo_box'):
+                            biorad_index = self.combo_box.findText("Precision Plus Protein All Blue Prestained (Bio-Rad)")
+                            if biorad_index != -1: self.combo_box.setCurrentIndex(biorad_index)
+                            # We call this to update the text boxes, but _is_restoring_state=True prevents it from saving state
+                            self.on_combobox_changed()
+                    except Exception: pass
+
+                    # Reset padding text fields
+                    if self.image and not self.image.isNull():
+                        if hasattr(self, 'left_padding_input'): self.left_padding_input.setText(str(int(self.image.width()*0.1)))
+                        if hasattr(self, 'right_padding_input'): self.right_padding_input.setText(str(int(self.image.width()*0.1)))
+                        if hasattr(self, 'top_padding_input'): self.top_padding_input.setText(str(int(self.image.height()*0.15)))
+
+                    self.live_view_label.zoom_level = 1.0; self.live_view_label.pan_offset = QPointF(0, 0)
+                    if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(False)
+                    if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(False)
+                    if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(False)
+                    if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(False)
+                    
+                    # Reset adjustments (will not save state due to lock)
+                    self.reset_all_adjustments() 
+                    
+                    self._update_overlay_slider_ranges()
+                    self._update_marker_slider_ranges()
+                    self.update_live_view()
+                    self._update_levels_histogram()
+                    self._update_status_bar()
+
+                finally:
+                    # 3. UNLOCK: Re-enable saving for future actions
+                    self._is_restoring_state = False
                 
 
 
