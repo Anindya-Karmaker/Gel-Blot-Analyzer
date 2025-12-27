@@ -5876,7 +5876,7 @@ if __name__ == "__main__":
                     new_layout = QVBoxLayout(new_main_widget)
                     
                     # HEIGHT: Screen - Viewer - Margins
-                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 350)
+                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 250)
                     
                     # WIDTH: Set to SAFE_CONTENT_WIDTH. 
                     # This ensures no scrollbar is needed, but doesn't force full screen width.
@@ -9697,7 +9697,7 @@ if __name__ == "__main__":
 
                 clahe_group = QGroupBox("Local Contrast (CLAHE)"); clahe_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 clahe_layout = QGridLayout(clahe_group)
-                self.clahe_clip_slider = QSlider(Qt.Horizontal); self.clahe_clip_slider.setRange(10, 100); self.clahe_clip_slider.setValue(10)
+                self.clahe_clip_slider = QSlider(Qt.Horizontal); self.clahe_clip_slider.setRange(10, 2560); self.clahe_clip_slider.setValue(10)
                 self.clahe_clip_label = QLabel("1.0"); self.clahe_clip_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Clip Limit:"), 0, 0); clahe_layout.addWidget(self.clahe_clip_slider, 0, 1); clahe_layout.addWidget(self.clahe_clip_label, 0, 2)
                 self.clahe_tile_slider = QSlider(Qt.Horizontal); self.clahe_tile_slider.setRange(2, 32); self.clahe_tile_slider.setValue(8)
                 self.clahe_tile_label = QLabel("8x8"); self.clahe_tile_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Tile Size:"), 1, 0); clahe_layout.addWidget(self.clahe_tile_slider, 1, 1); clahe_layout.addWidget(self.clahe_tile_label, 1, 2)
@@ -9974,257 +9974,245 @@ if __name__ == "__main__":
 
             def _apply_all_adjustments_to_image(self, source_image, settings_dict):
                 """
-                Fully optimized GPU pipeline with Critical OpenCL Fixes.
-                1. Replaces addWeighted(..., 0) with addWeighted(..., src, 0) to fix CL_BUILD_PROGRAM_FAILURE.
-                2. Replaces normalize() with addWeighted() scaling to prevent unwanted Auto-Contrast.
+                GPU-Accelerated implementation of image adjustments.
+                FIXED: Removed usage of .shape/.channels() on UMat; uses 'current_channels' tracker.
+                FIXED: Corrected tuple concatenation bug in 16-bit CLAHE alpha recombination.
                 """
                 if not source_image or source_image.isNull(): return source_image
                 
-                # 1. Inversion (CPU - Fast enough)
+                # 1. Apply inversion FIRST on CPU
                 temp_image = source_image.copy()
-                if settings_dict.get('is_inverted', False):
+                is_inverted = settings_dict.get('is_inverted', False)
+                if is_inverted:
                     temp_image.invertPixels()
                 
-                np_img = self.qimage_to_numpy(temp_image)
-                if np_img is None: return source_image
+                # 2. Convert to Numpy
+                np_img_full = self.qimage_to_numpy(temp_image)
+                if np_img_full is None: return source_image
 
-                # --- GPU Setup ---
-                use_gpu = cv2.ocl.useOpenCL()
-                
-                # Metadata
-                h, w = np_img.shape[:2]
-                channels = 1 if np_img.ndim == 2 else np_img.shape[2]
-                is_16bit = np_img.dtype == np.uint16
+                # --- DETERMINE BIT DEPTH AND MAX VALUE ---
+                is_16bit = np_img_full.dtype == np.uint16
                 max_val = 65535.0 if is_16bit else 255.0
+                cv_dtype = cv2.CV_16U if is_16bit else cv2.CV_8U
                 
-                # OpenCV Constants
-                cv_dtype_in = cv2.CV_16U if is_16bit else cv2.CV_8U
-                cv_dtype_float = cv2.CV_32F
-                
-                np_content = np_img
-
-                # -------------------------------------------------------------------
-                # GPU UPLOAD
-                # -------------------------------------------------------------------
-                if use_gpu:
-                    try:
-                        u_img = cv2.UMat(np_content)
-                    except Exception:
-                        use_gpu = False
-                        u_img = np_content
+                # --- CROP CONTENT (Handle Alpha Padding) ---
+                content_rect = None
+                has_alpha = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
+                if has_alpha:
+                    alpha_channel = np_img_full[:, :, 3]
+                    rows = np.any(alpha_channel, axis=1)
+                    cols = np.any(alpha_channel, axis=0)
+                    if np.any(rows) and np.any(cols):
+                        ymin, ymax = np.where(rows)[0][[0, -1]]
+                        xmin, xmax = np.where(cols)[0][[0, -1]]
+                        content_rect = (xmin, ymin, xmax - xmin + 1, ymax - ymin + 1)
+                        np_content = np_img_full[ymin:ymax+1, xmin:xmax+1]
+                    else: 
+                        np_content = np_img_full
                 else:
-                    u_img = np_content
+                    np_content = np_img_full
 
-                # -------------------------------------------------------------------
-                # 2. CHANNEL MIXER (GPU)
-                # -------------------------------------------------------------------
-                cm = settings_dict.get('channel_mixer', {})
-                has_mix = (cm.get('mono') or cm.get('r')!=100 or cm.get('g')!=100 or cm.get('b')!=100)
-                
-                if has_mix and channels >= 3:
-                    try:
-                        b = cm.get('b', 100) / 100.0
-                        g = cm.get('g', 100) / 100.0
-                        r = cm.get('r', 100) / 100.0
-                        
-                        if cm.get('mono', False):
-                            m = np.array([[b], [g], [r]], dtype=np.float32)
-                            if channels == 4:
-                                m = np.array([[b, g, r, 0]], dtype=np.float32)
-                            u_img = cv2.transform(u_img, m)
-                            channels = 1 
-                        else:
-                            if channels == 4:
-                                m = np.array([[b, 0, 0, 0], [0, g, 0, 0], [0, 0, r, 0], [0, 0, 0, 1]], dtype=np.float32)
-                            else:
-                                m = np.array([[b, 0, 0], [0, g, 0], [0, 0, r]], dtype=np.float32)
-                            u_img = cv2.transform(u_img, m)
-                    except Exception as e:
-                        print(f"Mixer GPU Error: {e}")
+                # --- TRACK CHANNELS MANUALLY ---
+                # This variable tracks the state of the image through the pipeline
+                current_channels = 1 if np_content.ndim == 2 else np_content.shape[2]
 
-                # -------------------------------------------------------------------
-                # 3. CLAHE (GPU - Fixed)
-                # -------------------------------------------------------------------
-                clahe_s = settings_dict.get('clahe', {})
-                clip = clahe_s.get('clip_limit', 1.0)
+                # -----------------------------------------------------------
+                # UPLOAD TO GPU (UMat)
+                # -----------------------------------------------------------
+                use_gpu = cv2.ocl.useOpenCL()
+                try:
+                    if use_gpu:
+                        u_src = cv2.UMat(np_content)
+                    else:
+                        u_src = np_content
+                except Exception:
+                    u_src = np_content
+
+                # --- CHANNEL MIXER (GPU) ---
+                channel_mixer_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
+                is_mono = channel_mixer_settings.get('mono', False)
+                r_val = channel_mixer_settings.get('r', 100)
+                g_val = channel_mixer_settings.get('g', 100)
+                b_val = channel_mixer_settings.get('b', 100)
                 
-                if clip > 1.0:
-                    tile = clahe_s.get('tile_size', 8)
-                    eff_clip = clip * 256.0 if is_16bit else clip
+                # Promote Grayscale to RGB if needed for mixing
+                if current_channels == 1 and (not is_mono and (r_val != 100 or g_val != 100 or b_val != 100)):
+                    u_src = cv2.cvtColor(u_src, cv2.COLOR_GRAY2RGB)
+                    current_channels = 3 # Update tracker
+
+                if current_channels >= 3:
+                    r_scale = r_val / 100.0
+                    g_scale = g_val / 100.0
+                    b_scale = b_val / 100.0
                     
-                    try:
-                        clahe = cv2.createCLAHE(clipLimit=eff_clip, tileGridSize=(tile, tile))
+                    if is_mono:
+                        if current_channels == 4:
+                            # 1x4 matrix: [r, g, b, 0]
+                            m = np.array([[r_scale, g_scale, b_scale, 0]], dtype=np.float32)
+                        else:
+                            # 1x3 matrix: [r, g, b]
+                            m = np.array([[r_scale, g_scale, b_scale]], dtype=np.float32)
                         
-                        if channels == 1:
-                            u_img = clahe.apply(u_img)
-                        elif channels >= 3:
-                            if is_16bit:
-                                # 1. Convert to Float32 (0.0 - 1.0) using addWeighted scaling
-                                # FIX: Don't use normalize (auto-contrast). Scale by 1/65535.
-                                scale_to_float = 1.0 / 65535.0
-                                u_float = cv2.addWeighted(u_img, scale_to_float, u_img, 0.0, 0.0, dtype=cv_dtype_float)
-                                
-                                # 2. BGR -> LAB
-                                if channels == 4:
-                                    u_bgr = cv2.cvtColor(u_float, cv2.COLOR_BGRA2BGR)
-                                    u_alpha = cv2.extractChannel(u_float, 3)
-                                else:
-                                    u_bgr = u_float
-                                    u_alpha = None
+                        u_src = cv2.transform(u_src, m)
+                        current_channels = 1 # Update tracker
+                    else:
+                        # Color Mixing: Scale channels
+                        if current_channels == 4:
+                            m = np.array([[r_scale, 0, 0, 0], [0, g_scale, 0, 0], [0, 0, b_scale, 0], [0, 0, 0, 1]], dtype=np.float32)
+                        else:
+                            m = np.array([[r_scale, 0, 0], [0, g_scale, 0], [0, 0, b_scale]], dtype=np.float32)
+                        
+                        u_src = cv2.transform(u_src, m)
 
-                                u_lab = cv2.cvtColor(u_bgr, cv2.COLOR_BGR2LAB)
-                                
-                                # 3. Extract L
-                                u_l = cv2.extractChannel(u_lab, 0)
-                                u_a = cv2.extractChannel(u_lab, 1)
-                                u_b = cv2.extractChannel(u_lab, 2)
-                                
-                                # 4. Convert L to 16-bit Int for CLAHE (0..100 -> 0..65535)
-                                # L is 0..100 in Float LAB. Scale = 655.35
-                                # FIX: Use addWeighted for casting
-                                u_l_16 = cv2.multiply(u_l, 655.35) 
-                                u_l_16 = cv2.addWeighted(u_l_16, 1.0, u_l_16, 0.0, 0.0, dtype=cv2.CV_16U)
-                                
-                                # 5. Apply CLAHE
-                                u_l_16 = clahe.apply(u_l_16)
-                                
-                                # 6. Convert back to Float L (0..65535 -> 0..100)
-                                # FIX: Use addWeighted for casting
-                                u_l_new = cv2.addWeighted(u_l_16, 1.0/655.35, u_l_16, 0.0, 0.0, dtype=cv_dtype_float)
-                                
-                                # 7. Merge & Convert back to BGR
-                                u_lab_new = cv2.merge([u_l_new, u_a, u_b])
-                                u_bgr_new = cv2.cvtColor(u_lab_new, cv2.COLOR_LAB2BGR)
-                                
-                                # 8. Restore Alpha & Convert back to 16-bit
-                                if u_alpha is not None:
-                                    u_float_res = cv2.merge([
-                                        cv2.extractChannel(u_bgr_new, 0),
-                                        cv2.extractChannel(u_bgr_new, 1),
-                                        cv2.extractChannel(u_bgr_new, 2),
-                                        u_alpha
-                                    ])
-                                else:
-                                    u_float_res = u_bgr_new
-                                    
-                                # Scale 0..1 -> 0..65535
-                                u_float_res = cv2.multiply(u_float_res, 65535.0)
-                                # FIX: Use addWeighted for final cast
-                                u_img = cv2.addWeighted(u_float_res, 1.0, u_float_res, 0.0, 0.0, dtype=cv2.CV_16U)
-
-                            else:
-                                # 8-bit Color
-                                u_lab = cv2.cvtColor(u_img, cv2.COLOR_BGR2LAB)
-                                u_l = cv2.extractChannel(u_lab, 0)
-                                u_l = clahe.apply(u_l)
-                                chans = cv2.split(u_lab)
-                                u_lab = cv2.merge([u_l, chans[1], chans[2]])
-                                u_img_bgr = cv2.cvtColor(u_lab, cv2.COLOR_LAB2BGR)
-                                if channels == 4:
-                                    alpha = cv2.extractChannel(u_img, 3)
-                                    bgr = cv2.split(u_img_bgr)
-                                    u_img = cv2.merge([bgr[0], bgr[1], bgr[2], alpha])
-                                else:
-                                    u_img = u_img_bgr
-
-                    except Exception as e:
-                        print(f"CLAHE GPU Error: {e}")
-
-                # -------------------------------------------------------------------
-                # 4. UNSHARP MASK (GPU - Fixed)
-                # -------------------------------------------------------------------
-                usm = settings_dict.get('unsharp_mask', {})
-                amount = usm.get('amount', 0) / 100.0
+                # --- CLAHE (GPU) ---
+                clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
+                clip_limit = clahe_settings.get('clip_limit', 1.0)
                 
+                if clip_limit > 0.1:
+                    tile_size = clahe_settings.get('tile_size', 8)
+                    
+                    # Effective clip limit (Slider value 1.0 - 10.0, up to 256.0)
+                    effective_clip = clip_limit
+                    
+                    clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
+                    
+                    # Use the tracked channel count variable
+                    if current_channels == 1:
+                        u_src = clahe.apply(u_src)
+                    
+                    elif current_channels >= 3:
+                        if is_16bit:
+                            # --- 16-BIT COLOR PIPELINE ---
+                            # 1. Convert to Float32 (0.0 - 1.0)
+                            scale_f = 1.0 / 65535.0
+                            u_float = cv2.addWeighted(u_src, scale_f, u_src, 0.0, 0.0, dtype=cv2.CV_32F)
+                            
+                            # 2. Extract Alpha if present
+                            u_alpha = None
+                            if current_channels == 4:
+                                chans = cv2.split(u_float)
+                                u_rgb = cv2.merge(chans[:3])
+                                u_alpha = chans[3]
+                            else:
+                                u_rgb = u_float
+
+                            # 3. Convert to LAB (FIXED: Use RGB2LAB)
+                            u_lab = cv2.cvtColor(u_rgb, cv2.COLOR_RGB2LAB)
+                            
+                            # 4. Extract L
+                            lab_chans = cv2.split(u_lab)
+                            u_l = lab_chans[0]
+                            
+                            # 5. Scale L (0-100) to U16 (0-65535) for CLAHE
+                            u_l_u16 = cv2.multiply(u_l, 655.35, dtype=cv2.CV_16U)
+                            
+                            # 6. Apply CLAHE on U16 L channel
+                            u_l_u16 = clahe.apply(u_l_u16)
+                            
+                            # 7. Scale back to Float (0-100)
+                            u_l_new = cv2.multiply(u_l_u16, 1.0/655.35, dtype=cv2.CV_32F)
+                            
+                            # 8. Merge and Convert back (FIXED: Use LAB2RGB)
+                            cv2.merge([u_l_new, lab_chans[1], lab_chans[2]], u_lab)
+                            u_rgb_new = cv2.cvtColor(u_lab, cv2.COLOR_LAB2RGB)
+                            
+                            # 9. Recombine Alpha and Scale to U16
+                            if u_alpha is not None:
+                                rgb_chans = cv2.split(u_rgb_new)
+                                # Cast to list/tuple for merge
+                                cv2.merge(rgb_chans + (u_alpha,), u_float)
+                            else:
+                                u_float = u_rgb_new
+                                
+                            # Final cast back to 16-bit Int
+                            u_src = cv2.multiply(u_float, 65535.0, dtype=cv_dtype)
+
+                        else: 
+                            # --- 8-BIT COLOR PIPELINE ---
+                            u_rgb = u_src
+                            alpha = None
+                            
+                            if current_channels == 4:
+                                alpha = cv2.extractChannel(u_src, 3)
+                                # FIXED: Use RGBA2RGB to preserve correct channel order
+                                u_rgb = cv2.cvtColor(u_src, cv2.COLOR_RGBA2RGB)
+                                
+                            # FIXED: Use RGB2LAB
+                            u_lab = cv2.cvtColor(u_rgb, cv2.COLOR_RGB2LAB)
+                            
+                            # Cast tuple to list for item assignment
+                            lab_planes = list(cv2.split(u_lab))
+                            lab_planes[0] = clahe.apply(lab_planes[0])
+                            
+                            cv2.merge(lab_planes, u_lab)
+                            
+                            # FIXED: Use LAB2RGB
+                            u_res = cv2.cvtColor(u_lab, cv2.COLOR_LAB2RGB)
+                            
+                            if current_channels == 4:
+                                rgb_planes = list(cv2.split(u_res))
+                                rgb_planes.append(alpha)
+                                cv2.merge(rgb_planes, u_src)
+                            else:
+                                u_src = u_res
+
+                # --- UNSHARP MASK (GPU) ---
+                unsharp_mask_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
+                amount = unsharp_mask_settings.get('amount', 0) / 100.0
                 if amount > 0:
-                    radius = usm.get('radius', 1.0)
-                    threshold = usm.get('threshold', 0)
-                    if is_16bit: threshold *= 256
+                    radius = unsharp_mask_settings.get('radius', 1.0)
+                    threshold = unsharp_mask_settings.get('threshold', 0)
+                    if is_16bit: threshold = threshold * 256
                     sigma = max(0.1, radius)
                     
-                    try:
-                        u_blur = cv2.GaussianBlur(u_img, (0, 0), sigma)
-                        
-                        # Threshold logic
-                        if threshold > 0:
-                            # Just apply global sharpening for robustness on GPU
-                            # Implementing masking correctly with 16-bit UMat is complex/error-prone
-                            u_img = cv2.addWeighted(u_img, 1.0 + amount, u_blur, -amount, 0)
-                        else:
-                            u_img = cv2.addWeighted(u_img, 1.0 + amount, u_blur, -amount, 0)
-                            
-                    except Exception as e:
-                        print(f"Sharpen GPU Error: {e}")
+                    u_float_sh = cv2.addWeighted(u_src, 1.0/max_val, u_src, 0.0, 0.0, dtype=cv2.CV_32F)
+                    u_blur = cv2.GaussianBlur(u_float_sh, (0, 0), sigma)
+                    
+                    u_sharp = cv2.addWeighted(u_float_sh, 1.0 + amount, u_blur, -amount, 0.0)
+                    
+                    u_src = cv2.multiply(u_sharp, max_val, dtype=cv_dtype)
 
-                # -------------------------------------------------------------------
-                # 5. LEVELS & GAMMA (GPU - Fixed)
-                # -------------------------------------------------------------------
-                lg = settings_dict.get('levels_gamma', {})
-                black = lg.get('black_point', 0)
-                white = lg.get('white_point', 65535)
-                gamma_val = lg.get('gamma', 100) / 100.0
-                
-                slider_max = 65535.0
-                scale_factor = max_val / slider_max
-                
-                black_val = black * scale_factor
-                white_val = white * scale_factor
-                
-                if black_val > 0 or white_val < max_val or abs(gamma_val - 1.0) > 0.01:
-                    try:
-                        if black_val >= white_val:
-                            if black_val >= max_val - 1: black_val = max_val - 2
-                            white_val = black_val + 1
-                        
-                        # 1. Convert to Float32 (0.0 - 1.0) using scaling (NO AUTO-CONTRAST)
-                        # FIX: Replaced normalize() with addWeighted scaling
-                        scale_to_float = 1.0 / max_val
-                        u_float = cv2.addWeighted(u_img, scale_to_float, u_img, 0.0, 0.0, dtype=cv_dtype_float)
-                        
-                        # 2. Apply Levels
-                        b_norm = black_val / max_val
-                        w_norm = white_val / max_val
-                        range_norm = w_norm - b_norm
-                        
-                        u_float = cv2.subtract(u_float, b_norm)
-                        u_float = cv2.multiply(u_float, 1.0 / range_norm)
-                        
-                        # 3. Gamma
-                        if abs(gamma_val - 1.0) > 0.01:
-                            # Ensure no negative values before pow
-                            # We can't easily threshold u_float on GPU without mask
-                            # But cv2.pow handles negatives usually by taking abs or NaN
-                            # Let's trust the math or do a simple max(0) if critical
-                            cv2.pow(u_float, gamma_val, u_float)
-                            
-                        # 4. Scale back to Int
-                        u_float = cv2.multiply(u_float, float(max_val))
-                        
-                        # 5. Cast back to Int
-                        # FIX: Use addWeighted for explicit casting
-                        u_img = cv2.addWeighted(u_float, 1.0, u_float, 0.0, 0.0, dtype=cv_dtype_in)
-                        
-                    except Exception as e:
-                        print(f"Levels/Gamma GPU Error: {e}")
-
-                # -------------------------------------------------------------------
+                # -----------------------------------------------------------
                 # DOWNLOAD FROM GPU
-                # -------------------------------------------------------------------
-                if use_gpu and isinstance(u_img, cv2.UMat):
-                    np_content = u_img.get()
+                # -----------------------------------------------------------
+                # Handle both UMat and Numpy cases for .get()
+                if isinstance(u_src, cv2.UMat):
+                    np_content = u_src.get()
                 else:
-                    np_content = u_img
+                    np_content = u_src
 
-                # -------------------------------------------------------------------
-                # 6. TINT / COLORIZE (CPU)
-                # -------------------------------------------------------------------
-                col_s = settings_dict.get('colorize', {})
-                if col_s.get('enabled'):
-                    q_temp = self.numpy_to_qimage(np_content)
-                    q_temp = self.apply_tint(q_temp, col_s.get('color'))
-                    return q_temp
+                # --- RECOMBINE WITH PADDING (CPU) ---
+                if content_rect:
+                    np_img = np_img_full.copy()
+                    xmin, ymin, w, h = content_rect
+                    
+                    if np_content.ndim == 2 and np_img.ndim == 3:
+                        if np_img.shape[2] == 4:
+                            content_expanded = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
+                        else:
+                            content_expanded = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
+                        np_img[ymin:ymin+h, xmin:xmin+w] = content_expanded
+                    elif np_content.ndim == 3 and np_img.ndim == 2:
+                        np_img = cv2.cvtColor(np_img, cv2.COLOR_GRAY2BGRA)
+                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                    else:
+                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                else:
+                    np_img = np_content
 
-                return self.numpy_to_qimage(np_content)
+                # --- CONVERT BACK TO QIMAGE ---
+                temp_image_after_effects = self.numpy_to_qimage(np_img)
+
+                # --- APPLY LEVELS AND GAMMA (CPU/LUT) ---
+                lg_settings = settings_dict.get('levels_gamma', self._get_default_adjustments()['levels_gamma'])
+                self._update_levels_histogram()
+                
+                return self.apply_levels_gamma(
+                    temp_image_after_effects, 
+                    lg_settings['black_point'], 
+                    lg_settings['white_point'], 
+                    lg_settings['gamma'] / 100.0
+                )
 
             def reset_all_adjustments(self):
                 # This now only resets the settings for the CURRENT context
