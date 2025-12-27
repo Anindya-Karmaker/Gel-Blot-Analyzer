@@ -1216,7 +1216,7 @@ if __name__ == "__main__":
         class AutoLaneTuneDialog(QDialog):
             """
             Updated dialog with Center-of-Mass refinement for sub-pixel accuracy
-            and robust 16-bit noise handling.
+            and robust 16-bit noise handling. Fixed Manual Peak Addition/Deletion.
             """
             def __init__(self, pil_image_data, initial_settings, parent=None, is_from_quad_warp=False):
                 super().__init__(parent)
@@ -1276,13 +1276,13 @@ if __name__ == "__main__":
 
                 self.selected_peak_index = -1 
                 self.deleted_peak_indices = set()
+                self.manually_added_peaks = [] # FIXED: New list to store manual peaks
                 self._all_initial_peaks = np.array([])
                 self.detected_peaks = np.array([]) 
                 self.add_peak_mode_active = False
                 self.is_inverted = False 
 
                 # --- ROBUST DEFAULTS ---
-                # Higher default smoothing for 16-bit images to kill static noise
                 default_sigma = 3.0 if self.original_max_value > 255 else 1.0
                 default_prominence = 0.05 
 
@@ -1408,9 +1408,10 @@ if __name__ == "__main__":
                 clicked_x = event.xdata # Keep float for accuracy
                 
                 if self.add_peak_mode_active:
+                    # Round click to nearest integer index
                     clicked_int = int(round(clicked_x))
                     if 0 <= clicked_int < len(self.profile_original_inverted):
-                        self.add_manual_peak(clicked_int)
+                        self.add_manual_peak(float(clicked_int))
                 else:
                     if len(self.detected_peaks) > 0:
                         distances = np.abs(self.detected_peaks - clicked_x)
@@ -1429,50 +1430,53 @@ if __name__ == "__main__":
                         self.update_plot_highlights()
 
             def add_manual_peak(self, x_coord):
-                # Check for duplicates allowing for small float differences
-                if any(abs(p - x_coord) < 0.1 for p in self.detected_peaks): return
+                # FIXED: Add to manual list so it persists during re-detection
+                if any(abs(p - x_coord) < 0.5 for p in self.detected_peaks): 
+                    return # Avoid duplicates
                 
-                self.detected_peaks = np.sort(np.append(self.detected_peaks, float(x_coord)))
-                self.update_plot_highlights()
+                self.manually_added_peaks.append(x_coord)
+                self.run_peak_detection_and_plot()
 
             def delete_selected_peak(self):
+                # FIXED: Handle deletion of manual peaks and auto peaks separately
                 if self.selected_peak_index != -1:
-                    # Remove peaks that match the selected one closely (float comparison)
-                    self.detected_peaks = np.array([p for p in self.detected_peaks if abs(p - self.selected_peak_index) > 0.01])
-                    self.selected_peak_index = -1; self.delete_peak_button.setEnabled(False)
-                    self.update_plot_highlights()
+                    # Check if it is a manual peak
+                    is_manual = False
+                    for i, p in enumerate(self.manually_added_peaks):
+                        if abs(p - self.selected_peak_index) < 0.01:
+                            del self.manually_added_peaks[i]
+                            is_manual = True
+                            break
+                    
+                    if not is_manual:
+                        # It's an auto-detected peak, add to ignore list
+                        self.deleted_peak_indices.add(self.selected_peak_index)
+                    
+                    self.selected_peak_index = -1
+                    self.delete_peak_button.setEnabled(False)
+                    self.run_peak_detection_and_plot()
 
             def _refine_peak_positions_center_of_mass(self, profile, peak_indices, window_radius=3):
-                """
-                Calculates the Center of Mass (Centroid) for each peak to achieve sub-pixel accuracy.
-                """
                 refined_peaks = []
                 profile_len = len(profile)
-                
                 for peak_idx in peak_indices:
-                    # Define a small window around the integer peak index
                     start = max(0, peak_idx - window_radius)
                     end = min(profile_len, peak_idx + window_radius + 1)
-                    
                     window_vals = profile[start:end]
                     window_indices = np.arange(start, end)
-                    
-                    # Subtract local baseline to focus on the peak tip (optional but helpful)
                     local_min = np.min(window_vals)
                     weights = window_vals - local_min
-                    
                     if np.sum(weights) > 0:
                         centroid = np.sum(window_indices * weights) / np.sum(weights)
                         refined_peaks.append(centroid)
                     else:
                         refined_peaks.append(float(peak_idx))
-                        
                 return np.array(refined_peaks)
 
             def run_peak_detection_and_plot(self):
-                self.selected_peak_index = -1
-                self.delete_peak_button.setEnabled(False)
-
+                # We don't reset selected_peak_index here immediately to allow redraws to keep selection
+                # But if the selected peak disappears, we must clear it.
+                
                 if self.profile_original_inverted is None: return
                 
                 self.smoothing_sigma = self.smoothing_slider.value() / 10.0
@@ -1482,13 +1486,10 @@ if __name__ == "__main__":
                 
                 smoothed_profile_base = self.profile_original_inverted.copy()
                 
-                # --- FIX: ALWAYS apply smoothing for detection if 16-bit to kill noise ---
                 try:
                     current_sigma = self.smoothing_sigma
-                    # Force a minimum smoothing of 1.0 for 16-bit unless user sets to 0
                     if self.original_max_value > 255 and current_sigma < 0.1 and self.smoothing_slider.value() > 0:
                          current_sigma = 1.0
-                         
                     if current_sigma > 0.05:
                         smoothed_profile_base = gaussian_filter1d(smoothed_profile_base, sigma=current_sigma)
                 except Exception: pass
@@ -1500,7 +1501,6 @@ if __name__ == "__main__":
                 else:
                     profile_for_detection = smoothed_profile_base
                 
-                # Normalize using percentiles to ignore outliers (hot pixels)
                 p1, p99 = np.percentile(profile_for_detection, (1, 99))
                 if p99 > p1 + 1e-6:
                     self.profile = np.clip((profile_for_detection - p1) / (p99 - p1), 0.0, 1.0) * 255.0
@@ -1514,32 +1514,38 @@ if __name__ == "__main__":
                 min_prominence_abs = profile_range_detect * self.peak_prominence_factor
 
                 try:
-                    # 1. Find raw integer peaks
+                    # 1. Find Auto Peaks
                     peaks_indices_int, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
-                    
-                    # 2. Refine to Sub-Pixel Accuracy (Center of Mass)
-                    # We use the smoothed profile for calculation to avoid noise affecting the centroid
                     peaks_refined = self._refine_peak_positions_center_of_mass(self.profile, peaks_indices_int)
                     
-                    self._all_initial_peaks = np.sort(peaks_refined)
-                    
-                    # Filter deleted peaks (check proximity)
-                    final_peaks = []
-                    for p in self._all_initial_peaks:
-                        # Check if this peak is close to any deleted peak index
+                    # 2. Filter deleted auto-peaks
+                    valid_auto_peaks = []
+                    for p in peaks_refined:
                         is_deleted = False
                         for d in self.deleted_peak_indices:
                             if abs(p - d) < 1.0: # Tolerance
                                 is_deleted = True
                                 break
                         if not is_deleted:
-                            final_peaks.append(p)
-                            
-                    self.detected_peaks = np.array(final_peaks)
+                            valid_auto_peaks.append(p)
+                    
+                    # 3. Combine with Manual Peaks (FIXED: Merge both lists)
+                    combined_peaks = valid_auto_peaks + self.manually_added_peaks
+                    self.detected_peaks = np.sort(np.array(combined_peaks))
                     
                 except Exception as e:
                     print(f"Peak detection error: {e}")
-                    self._all_initial_peaks = np.array([]); self.detected_peaks = np.array([])
+                    self.detected_peaks = np.array([])
+
+                # Verify if selected peak still exists
+                if self.selected_peak_index != -1:
+                    exists = False
+                    for p in self.detected_peaks:
+                        if abs(p - self.selected_peak_index) < 0.01:
+                            exists = True; break
+                    if not exists:
+                        self.selected_peak_index = -1
+                        self.delete_peak_button.setEnabled(False)
 
                 # 5. Plotting
                 is_dark_theme = self.parent() and hasattr(self.parent(), 'current_theme') and self.parent().current_theme == "dark"
@@ -1561,18 +1567,13 @@ if __name__ == "__main__":
                     self.ax_profile.plot(self.profile, label=f"Normalized Profile (σ={self.smoothing_sigma:.1f})", color=profile_color, lw=1.0)
 
                     if len(self.detected_peaks) > 0:
-                        # Interpolate Y values for float X positions for plotting
                         peak_y_values = np.interp(self.detected_peaks, np.arange(len(self.profile)), self.profile)
                         self.peak_plot_artist, = self.ax_profile.plot(self.detected_peaks, peak_y_values, "x", color=peak_marker_color, markersize=8, label=f"Peaks")
 
                         if self.selected_peak_index != -1:
-                            # Highlight selected
-                            try:
-                                # Find nearest peak to selected index
-                                idx_in_valid = np.argmin(np.abs(self.detected_peaks - self.selected_peak_index))
-                                if abs(self.detected_peaks[idx_in_valid] - self.selected_peak_index) < 0.1:
-                                     self.ax_profile.plot(self.detected_peaks[idx_in_valid], peak_y_values[idx_in_valid], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none')
-                            except: pass
+                            idx_in_valid = np.argmin(np.abs(self.detected_peaks - self.selected_peak_index))
+                            if abs(self.detected_peaks[idx_in_valid] - self.selected_peak_index) < 0.1:
+                                 self.ax_profile.plot(self.detected_peaks[idx_in_valid], peak_y_values[idx_in_valid], 'o', markersize=12, markeredgecolor=selected_peak_color, markerfacecolor='none')
 
                     self.ax_profile.set_title("Intensity Profile (Normalized)", fontsize=10)
                     self.ax_profile.grid(True, linestyle=':', alpha=0.6, color=grid_color)
@@ -1590,7 +1591,6 @@ if __name__ == "__main__":
                             self.ax_image.imshow(arr_rot, cmap=cmap_val, aspect='auto', extent=extent, vmin=d_min, vmax=d_max)
                             self.ax_image.set_xlabel("Pixel Index", fontsize=9); self.ax_image.set_yticks([])
                             
-                            # Draw lines on image for sub-pixel peaks
                             for p in self.detected_peaks:
                                 self.ax_image.axvline(p, color='red', alpha=0.5, linewidth=1)
                                 
@@ -9664,10 +9664,24 @@ if __name__ == "__main__":
 
                 actions_group = QGroupBox("General Image Actions"); actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 actions_layout = QHBoxLayout(actions_group)
+                
                 self.bw_button = QPushButton("Grayscale"); self.bw_button.clicked.connect(self.convert_to_black_and_white)
+                
+                # --- NEW BUTTON ---
+                self.convert_8bit_button = QPushButton("Convert to 8-bit")
+                self.convert_8bit_button.setToolTip("Convert 16-bit/64-bit images to 8-bit/32-bit. Converts 32-bit RGB to 8-bit Grayscale.")
+                self.convert_8bit_button.clicked.connect(self.convert_to_8bit_depth)
+                # ------------------
+
                 invert_button = QPushButton("Invert"); invert_button.clicked.connect(self.invert_image)
                 reset_button = QPushButton("Reset Current Adjustments"); reset_button.clicked.connect(self.reset_all_adjustments)
-                actions_layout.addWidget(self.bw_button); actions_layout.addWidget(invert_button); actions_layout.addStretch(); actions_layout.addWidget(reset_button)
+                
+                actions_layout.addWidget(self.bw_button)
+                actions_layout.addWidget(self.convert_8bit_button) # Added to layout
+                actions_layout.addWidget(invert_button)
+                actions_layout.addStretch()
+                actions_layout.addWidget(reset_button)
+
                 left_column_layout.addWidget(actions_group)
                 left_column_layout.addStretch(1); main_layout.addLayout(left_column_layout, 1)
 
@@ -9787,6 +9801,72 @@ if __name__ == "__main__":
 
                 return tab
             
+            def convert_to_8bit_depth(self):
+                """
+                Smartly converts the image to 8-bit per channel depth.
+                - 16-bit Grayscale -> 8-bit Grayscale
+                - 64-bit RGBA -> 32-bit RGBA
+                - 32-bit RGBA -> No Change (Already 8-bit/channel)
+                """
+                self.save_state()
+                if not self.image or self.image.isNull():
+                    QMessageBox.warning(self, "Error", "No image loaded.")
+                    return
+
+                fmt = self.image.format()
+                new_image = None
+                conversion_type = ""
+
+                # --- Case 1: 16-bit Grayscale -> 8-bit Grayscale ---
+                if fmt == QImage.Format_Grayscale16:
+                    # Direct conversion works well for Grayscale
+                    new_image = self.image.convertToFormat(QImage.Format_Grayscale8)
+                    conversion_type = "16-bit Gray -> 8-bit Gray"
+                
+                # --- Case 2: 64-bit/16-bit Color -> 32-bit/8-bit Color ---
+                elif fmt in [QImage.Format_RGBA64, QImage.Format_RGBX64, QImage.Format_Grayscale16]:
+                    # Use ARGB32 to preserve Alpha channel (prevents white background issue)
+                    new_image = self.image.convertToFormat(QImage.Format_ARGB32)
+                    conversion_type = "High-Bit Color -> 8-Bit Color"
+                
+                # --- Case 3: Already 8-bit Color (32-bit total) ---
+                elif fmt in [QImage.Format_ARGB32, QImage.Format_RGB32, QImage.Format_ARGB32_Premultiplied, QImage.Format_RGB888]:
+                    QMessageBox.information(self, "Info", "Image is already 8-bit per channel (32-bit Color).")
+                    return
+                
+                # --- Case 4: Already 8-bit Grayscale ---
+                elif fmt == QImage.Format_Grayscale8:
+                     QMessageBox.information(self, "Info", "Image is already 8-bit Grayscale.")
+                     return
+                
+                # --- Fallback ---
+                else:
+                     # Default to ARGB32 to be safe with color/alpha
+                     new_image = self.image.convertToFormat(QImage.Format_ARGB32)
+                     conversion_type = "Unknown Format -> 8-Bit Color"
+
+                if new_image and not new_image.isNull():
+                    # Apply permanent transformation
+                    self.image_master = new_image.copy()
+                    self.image_before_contrast = self.image_master.copy()
+                    self.image_contrasted = self.image_master.copy()
+                    self.image_before_padding = None
+                    self.image_padded = False
+                    self.is_modified = True
+                    self.main_image_is_inverted = False 
+                    
+                    # Reset adjustments (Levels/Gamma need reset because bit-depth changed)
+                    self.reset_all_adjustments() 
+                    
+                    self._update_status_bar()
+                    self._update_marker_slider_ranges()
+                    self._update_overlay_slider_ranges()
+                    self.update_live_view()
+                    
+                    QMessageBox.information(self, "Success", f"Image converted: {conversion_type}")
+                else:
+                    QMessageBox.warning(self, "Error", "Conversion failed.")
+
             def _get_default_adjustments(self):
                 """Returns a dictionary with default adjustment settings."""
                 return {
