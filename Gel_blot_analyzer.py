@@ -11343,8 +11343,10 @@ if __name__ == "__main__":
             
             def convert_to_black_and_white(self):
                 """
-                Converts the current self.image to grayscale, preserving alpha channel.
-                Aims for 16-bit grayscale precision, fixing 64-bit RGBA handling.
+                Converts the image to grayscale.
+                FIXED: Respects the Alpha layer. 
+                - If RGBA, outputs Grayscale + Alpha (preserving bit depth).
+                - If RGB, outputs standard Grayscale.
                 """
                 self.save_state()
                 if not self.image or self.image.isNull():
@@ -11353,7 +11355,7 @@ if __name__ == "__main__":
 
                 original_format = self.image.format()
                 
-                # Check if already effectively grayscale
+                # Check if already strictly grayscale (single channel)
                 if original_format in [QImage.Format_Grayscale8, QImage.Format_Grayscale16, QImage.Format_Mono]:
                     QMessageBox.information(self, "Info", f"Image is already grayscale (Format: {original_format}).")
                     return
@@ -11363,57 +11365,32 @@ if __name__ == "__main__":
                     np_img = self.qimage_to_numpy(self.image)
                     if np_img is None: raise ValueError("NumPy conversion failed.")
 
-                    target_dtype = np.uint16
-                    target_max_val = 65535.0
+                    if np_img.ndim == 3:
+                        # --- Case 1: Image has Alpha Channel (RGBA) ---
+                        if np_img.shape[2] == 4:
+                            # Split Color and Alpha
+                            rgb_part = np_img[..., :3]
+                            alpha_part = np_img[..., 3]
+                            
+                            # Convert Color to Gray (Preserves uint8 or uint16 type)
+                            gray_data = cv2.cvtColor(rgb_part, cv2.COLOR_RGB2GRAY)
+                            
+                            # Recombine: R=Gray, G=Gray, B=Gray, A=Alpha
+                            # This preserves the transparency while making the image look black and white.
+                            # It also preserves the bit depth (32-bit RGBA stays 32-bit, 64-bit stays 64-bit).
+                            out_img = np.dstack((gray_data, gray_data, gray_data, alpha_part))
+                            
+                            converted_image = self.numpy_to_qimage(out_img)
 
-                    if np_img.ndim == 3 and np_img.shape[2] == 4: # 4-Channel (Color + Alpha)
-                        alpha_part = np_img[..., 3]
-                        color_part = np_img[..., :3]
-                        
-                        # --- FIX: Handle 16-bit RGBA correctly ---
-                        if np_img.dtype == np.uint16:
-                            # 16-bit RGBA (Qt Format_RGBA64) is R,G,B,A in memory
-                            # OpenCV accepts uint16 and returns uint16
-                            gray_data = cv2.cvtColor(color_part, cv2.COLOR_RGB2GRAY)
+                        # --- Case 2: Image is Opaque (RGB) ---
                         else:
-                            # 8-bit BGRA (Qt Format_ARGB32) is B,G,R,A in memory
-                            # OpenCV accepts uint8 and returns uint8
-                            gray_8 = cv2.cvtColor(color_part, cv2.COLOR_BGR2GRAY)
-                            # Scale 8-bit result to 16-bit
-                            gray_data = (gray_8.astype(np.float32) / 255.0 * target_max_val).astype(target_dtype)
-
-                        # Handle Alpha Channel Scaling
-                        if alpha_part.dtype == np.uint16:
-                            alpha_16 = alpha_part
-                        else:
-                            alpha_16 = (alpha_part.astype(np.float32) / 255.0 * target_max_val).astype(target_dtype)
-
-                        # Construct 16-bit RGBA (R=G=B=Gray)
-                        # numpy_to_qimage for 16-bit 4-channel expects RGBA order
-                        out_img = np.dstack((gray_data, gray_data, gray_data, alpha_16))
-                        
-                        # --- FIX: Pass 16-bit array directly (Do NOT downsample to uint8) ---
-                        converted_image = self.numpy_to_qimage(out_img)
-
-                    elif np_img.ndim == 3 and np_img.shape[2] == 3: # 3-Channel (Color, No Alpha)
-                        if np_img.dtype == np.uint16:
-                            # 16-bit RGB
+                            # Convert strictly to 1-channel Grayscale
                             gray_data = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
-                        else:
-                            # 8-bit BGR
-                            gray_8 = cv2.cvtColor(np_img, cv2.COLOR_BGR2GRAY)
-                            gray_data = (gray_8.astype(np.float32) / 255.0 * target_max_val).astype(target_dtype)
-                        
-                        # Convert to standard grayscale QImage (Format_Grayscale16)
-                        converted_image = self.numpy_to_qimage(gray_data)
+                            converted_image = self.numpy_to_qimage(gray_data)
 
+                    # --- Case 3: Already 2D (Grayscale) ---
                     elif np_img.ndim == 2:
-                         # Already grayscale, just promote bit depth if needed
-                         if np_img.dtype == np.uint8:
-                             gray_data = (np_img.astype(np.float32) / 255.0 * target_max_val).astype(target_dtype)
-                             converted_image = self.numpy_to_qimage(gray_data)
-                         else:
-                             converted_image = self.image.copy()
+                         converted_image = self.image.copy()
 
                 except Exception as e:
                      QMessageBox.critical(self, "Conversion Error", f"Could not convert image to grayscale: {e}")
