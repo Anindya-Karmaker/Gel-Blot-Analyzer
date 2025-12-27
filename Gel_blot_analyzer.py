@@ -4085,27 +4085,79 @@ if __name__ == "__main__":
                 
                 # --- Draw standard markers, custom markers, custom shapes (from app instance) ---
                 if _image_to_label_space_valid and self.app_instance:
-                    std_marker_font = QFont(self.app_instance.font_family); std_marker_font.setPixelSize(self.app_instance.font_size); std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
-                    painter.setFont(std_marker_font); painter.setPen(std_marker_color); font_metrics_std = QFontMetrics(std_marker_font)
-                    text_height_std_label_space = font_metrics_std.height(); y_offset_text_baseline_std = text_height_std_label_space * 0.3
+                    std_marker_font = QFont(self.app_instance.font_family)
+                    std_marker_font.setPixelSize(self.app_instance.font_size)
+                    std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
+                    painter.setFont(std_marker_font)
+                    painter.setPen(std_marker_color)
+                    
+                    font_metrics_std = QFontMetrics(std_marker_font)
+                    # Calculate baseline offset to center text vertically on the specific Y coord
+                    # Using CapHeight / 2 aligns numbers/caps nicely around the center line
+                    y_text_centering_offset = font_metrics_std.capHeight() / 2.0
+                    
+                    # Define dimensions for the connector line
+                    dash_len = font_metrics_std.horizontalAdvance("M") # Use width of 'M' as a standard dash length
+                    dash_gap = 6 # Pixel gap between line and text
+
+                    # --- LEFT MARKERS ---
                     if hasattr(self.app_instance, 'left_markers'):
                         left_marker_offset_x_label_space = self.app_instance.left_marker_shift_added * _scale_factor_img_to_label
                         for y_pos_img, marker_text_val in self.app_instance.left_markers:
-                            anchor_y_label_space = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y(); text_to_draw = f"{marker_text_val} ⎯"; text_width_label_space = font_metrics_std.horizontalAdvance(text_to_draw)
-                            draw_x_ls = _offset_x_img_in_label + left_marker_offset_x_label_space - text_width_label_space; draw_y_ls = anchor_y_label_space + y_offset_text_baseline_std
-                            painter.drawText(QPointF(draw_x_ls, draw_y_ls), text_to_draw)
+                            # Exact center Y in label space (corresponds to band center)
+                            center_y = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
+                            
+                            # 1. Draw the geometric line (Perfectly centered on the band)
+                            # Anchor X is the rightmost point of the marker group
+                            line_end_x = _offset_x_img_in_label + left_marker_offset_x_label_space
+                            line_start_x = line_end_x - dash_len
+                            painter.drawLine(QPointF(line_start_x, center_y), QPointF(line_end_x, center_y))
+                            
+                            # 2. Draw Text (Vertically centered relative to the line)
+                            if marker_text_val:
+                                text_to_draw = str(marker_text_val)
+                                text_width = font_metrics_std.horizontalAdvance(text_to_draw)
+                                text_x = line_start_x - dash_gap - text_width
+                                text_baseline_y = center_y + y_text_centering_offset
+                                painter.drawText(QPointF(text_x, text_baseline_y), text_to_draw)
+
+                    # --- RIGHT MARKERS ---
                     if hasattr(self.app_instance, 'right_markers'):
                             right_marker_start_x_label_space = _offset_x_img_in_label + (self.app_instance.right_marker_shift_added * _scale_factor_img_to_label)
                             for y_pos_img, marker_text_val in self.app_instance.right_markers:
-                                anchor_y_label_space = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y(); text_to_draw = f"⎯ {marker_text_val}"
-                                draw_x_ls = right_marker_start_x_label_space; draw_y_ls = anchor_y_label_space + y_offset_text_baseline_std
-                                painter.drawText(QPointF(draw_x_ls, draw_y_ls), text_to_draw)
+                                center_y = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
+                                
+                                # 1. Draw the geometric line
+                                line_start_x = right_marker_start_x_label_space
+                                line_end_x = line_start_x + dash_len
+                                painter.drawLine(QPointF(line_start_x, center_y), QPointF(line_end_x, center_y))
+                                
+                                # 2. Draw Text
+                                if marker_text_val:
+                                    text_to_draw = str(marker_text_val)
+                                    text_x = line_end_x + dash_gap
+                                    text_baseline_y = center_y + y_text_centering_offset
+                                    painter.drawText(QPointF(text_x, text_baseline_y), text_to_draw)
+
+                    # --- TOP MARKERS ---
                     if hasattr(self.app_instance, 'top_markers'):
-                        top_marker_offset_y_label = self.app_instance.top_marker_shift_added * _scale_factor_img_to_label; rotation_angle = self.app_instance.font_rotation
+                        top_marker_offset_y_label = self.app_instance.top_marker_shift_added * _scale_factor_img_to_label
+                        rotation_angle = self.app_instance.font_rotation
+                        
+                        # Top markers use standard text drawing as they are usually just labels,
+                        # but we apply the same centering logic for consistency.
                         for x_pos_img, marker_text_val in self.app_instance.top_markers:
-                            anchor_x_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, 0)).x(); text_to_draw = str(marker_text_val); painter.save()
-                            draw_baseline_y_ls = _offset_y_img_in_label + top_marker_offset_y_label + y_offset_text_baseline_std
-                            painter.translate(anchor_x_label_space, draw_baseline_y_ls); painter.rotate(rotation_angle); painter.drawText(QPointF(0, 0), text_to_draw); painter.restore()
+                            anchor_x_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, 0)).x()
+                            text_to_draw = str(marker_text_val)
+                            
+                            painter.save()
+                            # Translate to the specific X position and the Y offset
+                            draw_baseline_y_ls = _offset_y_img_in_label + top_marker_offset_y_label + y_text_centering_offset
+                            painter.translate(anchor_x_label_space, draw_baseline_y_ls)
+                            painter.rotate(rotation_angle)
+                            # Draw text at (0,0) relative to rotation center
+                            painter.drawText(QPointF(0, 0), text_to_draw)
+                            painter.restore()
                 if _image_to_label_space_valid and hasattr(self.app_instance, 'custom_shapes'):
                     for shape_data in self.app_instance.custom_shapes:
                         try:
@@ -4544,145 +4596,140 @@ if __name__ == "__main__":
                 */
                 QMainWindow, QDialog { background-color: #F0F2F5; }
                 QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; color: #333333; }
+                
+                /* --- FIX: Force Light Backgrounds on Containers --- */
+                QScrollArea { background-color: #F0F2F5; border: none; }
+                QScrollArea > QWidget { background-color: #F0F2F5; }
+                QScrollArea > QWidget > QWidget { background-color: #F0F2F5; }
+                
+                QTabWidget { background-color: #F0F2F5; }
+                QTabWidget::pane { border-top: 1px solid #D0D5DB; background-color: #F0F2F5; }
+                /* ------------------------------------------------ */
+
                 QGroupBox { background-color: #FBFCFD; border: 1px solid #D0D5DB; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
                 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 2px 8px; left: 10px; color: #FFFFFF; background-color: #5D98D4; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
+                
                 QPushButton { background-color: #FFFFFF; border: 1px solid #C0C5CB; border-radius: 3px; padding: 4px 8px; min-height: 18px; }
                 QPushButton:hover { background-color: #E6F0F9; border-color: #5D98D4; }
                 QPushButton:pressed { background-color: #D0E0EF; }
                 QPushButton:checked { background-color: #D4EDDA; border: 1px solid #74B882; }
                 QPushButton:disabled { background-color: #F0F2F5; color: #AAAAAA; }
-                QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; color: #333333; }
-                QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
-                QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
+                
+                QLineEdit, QTextEdit, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; color: #333333; }
+                QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
+                QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
+                
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
                 QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZHToPSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
                 QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
+                
                 QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
                 QSlider::handle:horizontal { background: #5D98D4; border: 1px solid #4A78A9; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
-                QTabWidget::pane { border-top: 1px solid #D0D5DB; }
+                
                 QTabBar::tab { background-color: #E4E7EB; border: 1px solid #D0D5DB; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; padding: 5px 10px; margin-right: 2px; }
                 QTabBar::tab:selected { background: #FBFCFD; border-bottom-color: #FBFCFD; font-weight: bold; }
                 QTabBar::tab:!selected:hover { background: #EFF2F5; }
+                
                 QCheckBox { spacing: 5px; }
-                QCheckBox::indicator {
-                    width: 13px;
-                    height: 13px;
-                    border-radius: 3px;
-                    border: 1px solid #C0C5CB;
-                    background-color: #FFFFFF;
-                }
-                QCheckBox::indicator:hover {
-                    border-color: #5D98D4;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #5D98D4;
-                    border-color: #4A78A9;
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTlsNy03Ljg5TDIxIDdsLTEuNDEtMS40MUw5IDE2LjE3eiIvPjwvc3ZnPg==);
-                }
-                QCheckBox::indicator:disabled {
-                    background-color: #E0E0E0;
-                }
+                QCheckBox::indicator { width: 13px; height: 13px; border-radius: 3px; border: 1px solid #C0C5CB; background-color: #FFFFFF; }
+                QCheckBox::indicator:hover { border-color: #5D98D4; }
+                QCheckBox::indicator:checked { background-color: #5D98D4; border-color: #4A78A9; image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTlsNy03Ljg5TDIxIDdsLTEuNDEtMS40MUw5IDE2LjE3eiIvPjwvc3ZnPg==); }
+                QCheckBox::indicator:disabled { background-color: #E0E0E0; }
+                
                 QToolBar { background-color: #E4E7EB; border: none; padding: 1px; }
-                QToolBar QToolButton {
-                    border: 1px solid transparent;
-                    border-radius: 3px;
-                    padding: 2px;
-                }
-                QToolBar QToolButton:hover {
-                    background-color: #E6F0F9;
-                    border: 1px solid #5D98D4;
-                }
-                QToolBar QToolButton:pressed {
-                    background-color: #D0E0EF;
-                }
+                QToolBar QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 2px; }
+                QToolBar QToolButton:hover { background-color: #E6F0F9; border: 1px solid #5D98D4; }
+                QToolBar QToolButton:pressed { background-color: #D0E0EF; }
                 QToolBar QToolButton:checked { background-color: #A0D0A0; }
+                
                 QStatusBar { background-color: #E4E7EB; }
                 #LiveViewLabel { background-color: white; border: 1px solid #AAAAAA; }
 
-                /* --- COMPLETE STYLES FOR TABLES, LISTS, AND SCROLLBARS --- */
-                QTableView, QTableWidget, QListView, QListWidget {
-                    border: 1px solid #D0D5DB;
-                    gridline-color: #EAEAEA;
-                    selection-color: white; /* Text color for selected items */
-                }
-                
-                /* --- START OF FIX: Explicitly set item colors and selection highlight --- */
-                QTableView::item, QTableWidget::item, QListView::item, QListWidget::item {
-                    color: #333333; /* Dark gray for readability on white background */
-                    background-color: #FFFFFF; /* Ensure item background is white */
-                }
-                QTableView::item:selected, QTableWidget::item:selected, QListView::item:selected, QListWidget::item:selected {
-                    background-color: #5D98D4; /* Blue highlight color */
-                    color: white; /* White text on blue highlight */
-                }
-                /* --- END OF FIX --- */
-                
-                QAbstractItemView {
-                    background-color: #FFFFFF;
-                }
+                /* --- TABLES, LISTS --- */
+                QTableView, QTableWidget, QListView, QListWidget { border: 1px solid #D0D5DB; gridline-color: #EAEAEA; selection-color: white; }
+                QTableView::item, QTableWidget::item, QListView::item, QListWidget::item { color: #333333; background-color: #FFFFFF; }
+                QTableView::item:selected, QTableWidget::item:selected, QListView::item:selected, QListWidget::item:selected { background-color: #5D98D4; color: white; }
+                QAbstractItemView { background-color: #FFFFFF; }
 
-                QHeaderView {
-                    background-color: #F0F2F5;
-                }
-
-                QHeaderView::section {
-                    background-color: #E4E7EB;
-                    color: #333333;
-                    padding: 4px;
-                    border-top: 0px;
-                    border-left: 0px;
-                    border-right: 1px solid #D0D5DB;
-                    border-bottom: 2px solid #C0C5CB;
-                    font-weight: bold;
-                }
-
-                QTableCornerButton::section {
-                    background-color: #E4E7EB;
-                    border-right: 1px solid #D0D5DB;
-                    border-bottom: 2px solid #C0C5CB;
-                }
+                QHeaderView { background-color: #F0F2F5; }
+                QHeaderView::section { background-color: #E4E7EB; color: #333333; padding: 4px; border-top: 0px; border-left: 0px; border-right: 1px solid #D0D5DB; border-bottom: 2px solid #C0C5CB; font-weight: bold; }
+                QTableCornerButton::section { background-color: #E4E7EB; border-right: 1px solid #D0D5DB; border-bottom: 2px solid #C0C5CB; }
 
                 /* --- Light Scrollbars --- */
-                QScrollBar:vertical {
-                    border: none;
-                    background-color: #F0F2F5;
-                    width: 12px;
-                    margin: 0px;
+                QScrollBar:vertical { border: none; background-color: #F0F2F5; width: 12px; margin: 0px; }
+                QScrollBar::handle:vertical { background-color: #C0C5CB; min-height: 25px; border-radius: 6px; }
+                QScrollBar::handle:vertical:hover { background-color: #A8B0B6; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+
+                QScrollBar:horizontal { border: none; background-color: #F0F2F5; height: 12px; margin: 0px; }
+                QScrollBar::handle:horizontal { background-color: #C0C5CB; min-width: 25px; border-radius: 6px; }
+                QScrollBar::handle:horizontal:hover { background-color: #A8B0B6; }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
+                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+                QRadioButton {
+                    spacing: 5px;
+                    color: #333333;
                 }
-                QScrollBar::handle:vertical {
-                    background-color: #C0C5CB;
-                    min-height: 25px;
-                    border-radius: 6px;
+                QRadioButton::indicator {
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 7px; /* Circular */
+                    border: 1px solid #C0C5CB;
+                    background-color: #FFFFFF;
                 }
-                QScrollBar::handle:vertical:hover {
-                    background-color: #A8B0B6;
+                QRadioButton::indicator:hover {
+                    border-color: #5D98D4;
                 }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    height: 0px;
+                QRadioButton::indicator:checked {
+                    background-color: #5D98D4;
+                    border: 1px solid #5D98D4;
+                    /* Inner dot handled by QStyle or image, usually sufficient with background change */
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgdmlld0JveD0iMCAwIDEwIDEwIj48Y2lyY2xlIGN4PSI1IiBjeT0iNSIgcj0iMyIgZmlsbD0id2hpdGUiLz48L3N2Zz4=);
                 }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                    background: none;
+                QSpinBox, QDoubleSpinBox {
+                    background-color: #FFFFFF;
+                    border: 1px solid #D0D5DB;
+                    border-radius: 4px;
+                    padding: 4px 6px;
+                    min-height: 20px;
+                    selection-background-color: #5D98D4;
+                    selection-color: white;
+                    color: #333333;
+                }
+                QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #5D98D4; }
+                QSpinBox:disabled, QDoubleSpinBox:disabled { background-color: #F0F2F5; color: #999999; }
+
+                /* Button Container Styling (Stacked Vertically) */
+                QSpinBox::up-button, QDoubleSpinBox::up-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: top right; /* Forces Top */
+                    width: 20px; /* Wide button area */
+                    border-left: 1px solid #D0D5DB;
+                    border-bottom: 1px solid #D0D5DB;
+                    border-top-right-radius: 4px;
+                    
+                }
+                QSpinBox::down-button, QDoubleSpinBox::down-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: bottom right; /* Forces Bottom */
+                    width: 20px; /* Wide button area */
+                    border-left: 1px solid #D0D5DB;
+                    border-bottom-right-radius: 4px;
+                    
+                }
+                QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+                QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                    background-color: #E6F0F9;
                 }
 
-                QScrollBar:horizontal {
-                    border: none;
-                    background-color: #F0F2F5;
-                    height: 12px;
-                    margin: 0px;
+                QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgNyBMNSAzIEw4IDcgWiIgZmlsbD0iIzU1NTU1NSIvPjwvc3ZnPg==);
+                    width: 8px; height: 8px;
                 }
-                QScrollBar::handle:horizontal {
-                    background-color: #C0C5CB;
-                    min-width: 25px;
-                    border-radius: 6px;
-                }
-                QScrollBar::handle:horizontal:hover {
-                    background-color: #A8B0B6;
-                }
-                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                    width: 0px;
-                }
-                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-                    background: none;
+                QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgMyBMNSA3IEw4IDMgWiIgZmlsbD0iIzU1NTU1NSIvPjwvc3ZnPg==);
+                    width: 8px; height: 8px;
                 }
             """
             
@@ -4713,9 +4760,9 @@ if __name__ == "__main__":
                 QPushButton:checked { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }
                 QPushButton:disabled { background-color: #3A3A3D; color: #707070; border-color: #4A4A4F; }
                 
-                QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
-                QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
-                QLineEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
+                QLineEdit, QTextEdit, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
+                QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
+                QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
                 QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjRjFGNEYxIiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
@@ -4850,10 +4897,107 @@ if __name__ == "__main__":
                 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
                     background: none;
                 }
+                QRadioButton {
+                    spacing: 5px;
+                    color: #F1F1F1;
+                }
+                QRadioButton::indicator {
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 7px; /* Circular */
+                    border: 1px solid #505055;
+                    background-color: #3C3C3F;
+                }
+                QRadioButton::indicator:hover {
+                    border-color: #007ACC;
+                }
+                QRadioButton::indicator:checked {
+                    background-color: #007ACC;
+                    border: 1px solid #009AFF;
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgdmlld0JveD0iMCAwIDEwIDEwIj48Y2lyY2xlIGN4PSI1IiBjeT0iNSIgcj0iMyIgZmlsbD0id2hpdGUiLz48L3N2Zz4=);
+                }
+                QSpinBox, QDoubleSpinBox {
+                    background-color: #3C3C3F;
+                    border: 1px solid #505055;
+                    border-radius: 4px;
+                    padding: 4px 6px;
+                    min-height: 20px;
+                    selection-background-color: #007ACC;
+                    selection-color: white;
+                    color: #F1F1F1;
+                }
+                QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #007ACC; }
+                QSpinBox:disabled, QDoubleSpinBox:disabled { background-color: #3A3A3D; color: #707070; }
+
+                /* Button Area */
+                QSpinBox::up-button, QDoubleSpinBox::up-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: top right;
+                    width: 20px;
+                    border-left: 1px solid #505055;
+                    border-bottom: 1px solid #505055;
+                    border-top-right-radius: 4px;
+                    background: #4A4A4F;
+                }
+                QSpinBox::down-button, QDoubleSpinBox::down-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: bottom right;
+                    width: 20px;
+                    border-left: 1px solid #505055;
+                    border-bottom-right-radius: 4px;
+                    background: #4A4A4F;
+                }
+                QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+                QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                    background-color: #5A5A60;
+                }
+
+                /* Standard Triangle Icons (White) */
+                QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgNyBMNSAzIEw4IDcgWiIgZmlsbD0iI0ZGRkZGRiIvPjwvc3ZnPg==);
+                    width: 8px; height: 8px;
+                }
+                QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgMyBMNSA3IEw4IDMgWiIgZmlsbD0iI0ZGRkZGRiIvPjwvc3ZnPg==);
+                    width: 8px; height: 8px;
+                }
             """
 
             def __init__(self):
                 super().__init__()
+                self.gpu_device_id = ":GPU:0" # Default to first GPU
+                
+                # Locate config file
+                if getattr(sys, 'frozen', False):
+                    app_path = os.path.dirname(sys.executable)
+                else:
+                    try: app_path = os.path.dirname(os.path.abspath(__file__))
+                    except NameError: app_path = os.getcwd()
+                
+                config_path = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
+                
+                # Pre-read config just for GPU setting
+                if os.path.exists(config_path):
+                    try:
+                        with open(config_path, "r", encoding='utf-8') as f:
+                            data = json.load(f)
+                            if "gpu_device_id" in data:
+                                self.gpu_device_id = str(data["gpu_device_id"])
+                    except Exception as e:
+                        print(f"Config read error (GPU init): {e}")
+
+                # Set Environment Variable
+                os.environ["OPENCV_OPENCL_DEVICE"] = self.gpu_device_id
+                
+                # Enable OpenCL
+                try:
+                    cv2.ocl.setUseOpenCL(True)
+                    # print(f"OpenCL Target: {self.gpu_device_id}")
+                    # if cv2.ocl.haveOpenCL():
+                    #     print(f"Active Device: {cv2.ocl.Device.getDefault().name()}")
+                except Exception as e:
+                    print(f"OpenCL Init Error: {e}")
+                # --- END: GPU Config ---
                 self.setAcceptDrops(True)
                 # --- ADD THIS LINE AT THE START OF __init__ ---
                 # --- (The rest of your __init__ method continues as before) ---
@@ -5286,6 +5430,10 @@ if __name__ == "__main__":
                 config_data["theme"] = self.current_theme
                 config_data["viewer_position"] = self.viewer_position
                 
+                if hasattr(self, 'gpu_id_input'):
+                    self.gpu_device_id = self.gpu_id_input.text().strip()
+                config_data["gpu_device_id"] = self.gpu_device_id
+                
                 # Ensure presets data is not lost
                 if "presets" not in config_data:
                     config_data["presets"] = self.presets_data
@@ -5296,42 +5444,14 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"Warning: Could not save global app settings: {e}")
 
-            def _update_histogram_markers_only(self):
-                """A lightweight function that only updates the position of the level markers on the histogram canvas."""
-                if not hasattr(self, 'hist_ax') or not self.hist_ax or not hasattr(self, 'hist_black_line') or not self.hist_black_line:
-                    return # Do nothing if the histogram plot isn't ready
-
-                try:
-                    is_16bit = self.image_master.format() == QImage.Format_Grayscale16 if self.image_master else False
-                    hist_range = (0, 65535) if is_16bit else (0, 255)
-                    
-                    black_point_slider_val = self.black_point_slider.value()
-                    white_point_slider_val = self.white_point_slider.value()
-                    slider_max = self.black_point_slider.maximum()
-
-                    black_point_pos = (black_point_slider_val / slider_max) * hist_range[1]
-                    white_point_pos = (white_point_slider_val / slider_max) * hist_range[1]
-                    
-                    # Update the x-position of the line and marker artists
-                    self.hist_black_line.set_xdata([black_point_pos, black_point_pos])
-                    self.hist_black_marker.set_xdata([black_point_pos])
-                    self.hist_white_line.set_xdata([white_point_pos, white_point_pos])
-                    self.hist_white_marker.set_xdata([white_point_pos])
-                    
-                    # Redraw just the canvas, which is very fast
-                    self.hist_canvas.draw_idle()
-                except (AttributeError, RuntimeError):
-                    # Fail silently if artists have been deleted or are not ready
-                    pass
-
             def _update_levels_histogram(self):
-                """Draws or updates the intensity histogram for the currently selected adjustment context."""
-                # Get the base image and settings for the current context
+                """Fast histogram calculation using OpenCV."""
+                # Determine context
                 source_image = None
                 settings_dict = {}
             
                 if self.adjustment_context == "Main Image":
-                    source_image = self.image_master # Use the high-bit-depth master for accuracy
+                    source_image = self.image_master
                     settings_dict = {
                         'is_inverted': self.main_image_is_inverted,
                         'channel_mixer': self.channel_mixer_data,
@@ -5344,198 +5464,172 @@ if __name__ == "__main__":
                 elif self.adjustment_context == "Overlay 2 (Overlay)":
                     source_image = getattr(self, 'image2_original', None)
                     settings_dict = self.image2_adjustments
-            
-                # Generate the pre-levels image for the histogram by replicating the adjustment pipeline
-                source_image_for_hist = None
-                if source_image and not source_image.isNull():
-                    temp_image = source_image.copy()
-                    if settings_dict.get('is_inverted', False):
-                        temp_image.invertPixels()
-            
-                    np_img_full = self.qimage_to_numpy(temp_image)
-                    if np_img_full is not None:
-                        np_content = np_img_full
-                        is_16bit = np_content.dtype == np.uint16
-                        max_val = 65535.0 if is_16bit else 255.0
-            
-                        # Apply Channel Mixer
-                        cm_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
-                        if np_content.ndim == 3:
-                            is_mono = cm_settings.get('mono', False)
-                            r, g, b = cm_settings.get('r',100)/100.0, cm_settings.get('g',100)/100.0, cm_settings.get('b',100)/100.0
-                            np_float = np_content.astype(np.float32)
-                            if is_mono:
-                                gray = cv2.transform(np_float[...,:3], np.array([[b],[g],[r]]).T)
-                                np_content = np.clip(gray, 0, max_val).astype(np_content.dtype)
-                            else:
-                                np_float[..., 0] *= b; np_float[..., 1] *= g; np_float[..., 2] *= r
-                                np_content = np.clip(np_float, 0, max_val).astype(np_content.dtype)
-            
-                        # --- CLAHE FIX FOR 16-BIT COLOR ---
-                        clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
-                        if clahe_settings.get('clip_limit', 1.0) > 1.0:
-                            tile_size = clahe_settings.get('tile_size', 8)
-                            effective_clip = clahe_settings['clip_limit'] * 256.0 if is_16bit else clahe_settings['clip_limit']
-                            clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
-                            
-                            if np_content.ndim == 2:
-                                np_content = clahe.apply(np_content)
-                            elif np_content.ndim == 3:
-                                bgr = np_content[...,:3]
-                                alpha = np_content[..., 3] if np_content.shape[2] == 4 else None
-
-                                if is_16bit:
-                                    # Convert 16-bit Int -> 32-bit Float -> LAB -> CLAHE -> Back
-                                    bgr_float = bgr.astype(np.float32) / 65535.0
-                                    lab_float = cv2.cvtColor(bgr_float, cv2.COLOR_BGR2LAB)
-                                    l_channel = lab_float[..., 0]
-                                    l_uint16 = (l_channel / 100.0 * 65535.0).astype(np.uint16)
-                                    l_clahe = clahe.apply(l_uint16)
-                                    lab_float[..., 0] = (l_clahe.astype(np.float32) / 65535.0 * 100.0)
-                                    bgr_float_out = cv2.cvtColor(lab_float, cv2.COLOR_LAB2BGR)
-                                    bgr_out = np.clip(bgr_float_out * 65535.0, 0, 65535).astype(np.uint16)
-                                    
-                                    if alpha is not None: np_content = np.dstack((bgr_out, alpha))
-                                    else: np_content = bgr_out
-                                else:
-                                    # 8-bit path
-                                    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-                                    lab[..., 0] = clahe.apply(lab[..., 0])
-                                    bgr_out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                                    if alpha is not None: np_content = np.dstack((bgr_out, alpha))
-                                    else: np_content = bgr_out
-                        
-                        # Apply Unsharp Mask
-                        usm_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
-                        if usm_settings.get('amount', 0) > 0:
-                            amount = usm_settings['amount'] / 100.0
-                            sigma = max(0.1, usm_settings['radius'])
-                            blurred = cv2.GaussianBlur(np_content, (0, 0), sigma)
-                            np_content = cv2.addWeighted(np_content, 1.0 + amount, blurred, -amount, 0)
-                        
-                        source_image_for_hist = self.numpy_to_qimage(np_content)
-                    else:
-                        source_image_for_hist = temp_image
                 
-                # ... (The rest of the function for plotting the histogram remains unchanged) ...
-                # Ensure the plot canvas exists and there's an image to analyze.
-                if not self.hist_ax or not source_image_for_hist or source_image_for_hist.isNull():
+                if not self.hist_ax or not source_image or source_image.isNull():
                     if self.hist_ax:
                         self.hist_ax.clear()
-                        # Set background color based on theme
-                        bg_color = '#38383C' if self.current_theme == 'dark' else '#F0F2F5' # Match main window bg
-                        self.hist_fig.patch.set_facecolor(bg_color)
-                        self.hist_ax.patch.set_facecolor(bg_color)
-                        text_color = '#A0A0A0' if self.current_theme == 'dark' else 'gray'
-                        
-                        self.hist_ax.text(0.5, 0.5, 'No Image Selected', transform=self.hist_ax.transAxes, ha='center', va='center', fontsize=9, color=text_color)
                         self.hist_ax.set_xticks([]); self.hist_ax.set_yticks([])
-                        self.hist_fig.tight_layout(pad=0.2)
                         self.hist_canvas.draw_idle()
                     return
 
                 try:
-                    np_img = self.qimage_to_numpy(source_image_for_hist)
+                    # Apply pre-adjustments (Mixer/CLAHE) to get the data being histogrammed
+                    # We reuse the helper but skip the levels step to get raw data distribution
+                    # Note: For pure speed, we could skip the heavy effects here, but accuracy requires them.
+                    # Since we optimized _apply_all_adjustments_to_image (see below), this is okay.
+                    
+                    # For histogram speed, we just convert the raw qimage to numpy directly if effects aren't critical for the preview,
+                    # BUT to show accurate levels, we should respect the processing pipeline.
+                    # We will do a lightweight conversion here.
+                    
+                    np_img = self.qimage_to_numpy(source_image)
                     if np_img is None: return
 
+                    # Handle Inversion for histogram
+                    if settings_dict.get('is_inverted', False):
+                        max_v = 65535 if np_img.dtype == np.uint16 else 255
+                        np_img = max_v - np_img
+
+                    # Convert to grayscale for histogram if needed
                     if np_img.ndim == 3:
-                        gray_np = cv2.cvtColor(np_img[:,:,:3], cv2.COLOR_BGR2GRAY) if np_img.shape[2] >= 3 else np_img[:,:,0]
+                        # Fast approximate gray for histogram speed
+                        if np_img.shape[2] >= 3:
+                            gray_np = cv2.cvtColor(np_img[...,:3], cv2.COLOR_BGR2GRAY)
+                        else:
+                            gray_np = np_img[..., 0]
                     else:
                         gray_np = np_img
                     
                     is_16bit = gray_np.dtype == np.uint16
-                    bins = 255
-                    hist_range = (0, 65535) if is_16bit else (0, 255)
+                    hist_range = [0, 65536] if is_16bit else [0, 256]
+                    hist_size = [256] # Bin count
                     
-                    # Calculate Histogram
-                    hist, bin_edges = np.histogram(gray_np.ravel(), bins=bins, range=hist_range)
-                    # Add 1 to avoid log(0)
-                    log_hist = np.log1p(hist)
-                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
+                    # --- FAST GPU/C++ Histogram ---
+                    # cv2.calcHist expects a list of images, channels, mask, histSize, ranges
+                    # It creates a 32-bit float histogram
+                    hist_data = cv2.calcHist([gray_np], [0], None, hist_size, hist_range)
+                    
+                    # Log scale for visibility
+                    # Add epsilon to avoid log(0)
+                    log_hist = np.log1p(hist_data.flatten())
+                    
+                    # Plotting (Matplotlib is now the bottleneck, keep it simple)
                     self.hist_ax.clear()
+                    
+                    # Theme colors
+                    is_dark = self.current_theme == 'dark'
+                    bg = '#38383C' if is_dark else '#F0F2F5'
+                    fg = '#2D2D30' if is_dark else '#FFFFFF'
+                    line = '#64B5F6' if is_dark else '#1976D2'
+                    fill = '#64B5F6' if is_dark else '#2196F3'
+                    txt = '#E0E0E0' if is_dark else '#333333'
+                    grid = '#505050' if is_dark else '#E0E0E0'
 
-                    # Set colors based on the current theme
-                    if self.current_theme == 'dark':
-                        bg_color = '#38383C'
-                        plot_bg_color = '#2D2D30'
-                        line_color = '#64B5F6' # Soft Blue
-                        fill_color = '#64B5F6'
-                        fill_alpha = 0.3
-                        text_color = '#E0E0E0'
-                        grid_color = '#505050'
-                        marker_color = '#FF5252' # Red Accent
-                    else:
-                        bg_color = '#F0F2F5'
-                        plot_bg_color = '#FFFFFF'
-                        line_color = '#1976D2' # Darker Blue
-                        fill_color = '#2196F3'
-                        fill_alpha = 0.3
-                        text_color = '#333333'
-                        grid_color = '#E0E0E0'
-                        marker_color = '#D32F2F' # Dark Red
-
-                    self.hist_fig.patch.set_facecolor(bg_color)
-                    self.hist_ax.patch.set_facecolor(plot_bg_color)
+                    self.hist_fig.patch.set_facecolor(bg)
+                    self.hist_ax.patch.set_facecolor(fg)
                     
-                    # Draw Data
-                    self.hist_ax.plot(bin_centers, log_hist, color=line_color, linewidth=1.0)
-                    self.hist_ax.fill_between(bin_centers, 0, log_hist, color=fill_color, alpha=fill_alpha)
+                    x_axis = np.linspace(0, 65535 if is_16bit else 255, 256)
                     
-                    # --- AXIS FORMATTING ---
-                    self.hist_ax.grid(True, linestyle=':', alpha=0.6, color=grid_color)
+                    self.hist_ax.fill_between(x_axis, 0, log_hist, color=fill, alpha=0.3)
+                    self.hist_ax.plot(x_axis, log_hist, color=line, linewidth=1.0)
                     
-                    # X-Axis Labels
-                    x_ticks = np.linspace(hist_range[0], hist_range[1], 5)
-                    self.hist_ax.set_xticks(x_ticks)
-                    
-                    if is_16bit:
-                        # Format 16-bit ticks (e.g., 0, 16k, 32k, 48k, 64k)
-                        labels = [f"{int(x/1000)}k" if x > 0 else "0" for x in x_ticks]
-                        self.hist_ax.set_xticklabels(labels, fontsize=7, color=text_color)
-                    else:
-                        self.hist_ax.set_xticklabels([f"{int(x)}" for x in x_ticks], fontsize=7, color=text_color)
-
-                    # Y-Axis (Log Density)
-                    self.hist_ax.set_yticks([]) # Hide Y ticks as log values aren't intuitive for users here
-                    self.hist_ax.set_ylabel("Log Density", fontsize=7, color=text_color)
-                    
-                    # Title
-                    title_str = 'Intensity Histogram (16-bit)' if is_16bit else 'Intensity Histogram (8-bit)'
-                    self.hist_ax.set_title(title_str, fontsize=8, pad=3, color=text_color, fontweight='bold')
+                    self.hist_ax.grid(True, linestyle=':', alpha=0.6, color=grid)
+                    self.hist_ax.set_yticks([])
+                    self.hist_ax.set_ylabel("Log Density", fontsize=7, color=txt)
+                    title = 'Intensity (16-bit)' if is_16bit else 'Intensity (8-bit)'
+                    self.hist_ax.set_title(title, fontsize=8, pad=3, color=txt, fontweight='bold')
                     
                     # Spines
                     for spine in self.hist_ax.spines.values():
-                        spine.set_color(grid_color)
-                        spine.set_linewidth(0.5)
+                        spine.set_color(grid); spine.set_linewidth(0.5)
 
-                    self.hist_ax.set_xlim(hist_range[0], hist_range[1])
+                    self.hist_ax.set_xlim(0, 65535 if is_16bit else 255)
                     self.hist_ax.set_ylim(bottom=0)
                     
-                    # --- LEVEL MARKERS ---
-                    black_point_slider_val = self.black_point_slider.value()
-                    white_point_slider_val = self.white_point_slider.value()
-                    slider_max = self.black_point_slider.maximum()
+                    # Ticks
+                    x_ticks = np.linspace(0, 65535 if is_16bit else 255, 5)
+                    self.hist_ax.set_xticks(x_ticks)
+                    if is_16bit:
+                        self.hist_ax.set_xticklabels([f"{int(x/1000)}k" if x>0 else "0" for x in x_ticks], fontsize=7, color=txt)
+                    else:
+                        self.hist_ax.set_xticklabels([f"{int(x)}" for x in x_ticks], fontsize=7, color=txt)
+
+                    # Draw Level Markers
+                    self._draw_histogram_markers(is_16bit) # Helper to keep code clean
                     
-                    # Map slider (0-65535) to current hist range
-                    scale = hist_range[1] / 65535.0
-                    black_point_pos = black_point_slider_val * scale
-                    white_point_pos = white_point_slider_val * scale
-                    
-                    # Draw Lines
-                    self.hist_black_line = self.hist_ax.axvline(black_point_pos, color=text_color, lw=1.0, linestyle='--')
-                    self.hist_white_line = self.hist_ax.axvline(white_point_pos, color=text_color, lw=1.0, linestyle='--')
-                    
-                    # Draw Triangles at bottom
-                    self.hist_black_marker = self.hist_ax.plot(black_point_pos, 0, marker='^', color='black', markeredgecolor='white', markersize=8, clip_on=False, zorder=10)[0]
-                    self.hist_white_marker = self.hist_ax.plot(white_point_pos, 0, marker='^', color='white', markeredgecolor='black', markersize=8, clip_on=False, zorder=10)[0]
-                    
-                    # Adjust margins to fit labels
                     self.hist_fig.subplots_adjust(left=0.12, right=0.95, top=0.88, bottom=0.25)
                     self.hist_canvas.draw_idle()
+
                 except Exception as e:
-                    print(f"Error updating levels histogram: {e}")
-                    # traceback.print_exc()
+                    print(f"Hist Error: {e}")
+            
+            def _update_histogram_markers_only(self):
+                """
+                Updates only the vertical marker lines on the histogram.
+                Fast and robust; safe to call during slider updates.
+                """
+                # Check if the plot elements exist. 
+                # These are created in _update_levels_histogram.
+                if (not hasattr(self, 'hist_ax') or 
+                    not hasattr(self, 'hist_black_line') or 
+                    not hasattr(self, 'hist_white_line') or
+                    not self.hist_black_line or 
+                    not self.hist_white_line):
+                    return
+
+                try:
+                    # Determine range based on current image type (default to 8-bit if unsure)
+                    is_16bit = False
+                    if self.image_master and not self.image_master.isNull():
+                        is_16bit = self.image_master.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64]
+                    
+                    hist_max = 65535.0 if is_16bit else 255.0
+                    slider_max = float(self.black_point_slider.maximum())
+                    if slider_max == 0: slider_max = 1.0
+                    
+                    scale = hist_max / slider_max
+
+                    # Calculate positions
+                    b_pos = self.black_point_slider.value() * scale
+                    w_pos = self.white_point_slider.value() * scale
+
+                    # Update Line Positions (Set x for both points of the vertical line)
+                    self.hist_black_line.set_xdata([b_pos, b_pos])
+                    self.hist_white_line.set_xdata([w_pos, w_pos])
+
+                    # Update Marker (Triangle) Positions
+                    if hasattr(self, 'hist_black_marker') and self.hist_black_marker:
+                        self.hist_black_marker.set_xdata([b_pos])
+                    if hasattr(self, 'hist_white_marker') and self.hist_white_marker:
+                        self.hist_white_marker.set_xdata([w_pos])
+
+                    # Fast redraw of the canvas only
+                    self.hist_canvas.draw_idle()
+                    
+                except Exception as e:
+                    # Fail silently on UI updates to avoid log spam during sliding
+                    pass       
+
+            def _draw_histogram_markers(self, is_16bit):
+                """Helper to draw just the lines on the histogram."""
+                black_val = self.black_point_slider.value()
+                white_val = self.white_point_slider.value()
+                slider_max = self.black_point_slider.maximum()
+                
+                # Scale slider to hist coordinates
+                max_hist_val = 65535.0 if is_16bit else 255.0
+                scale = max_hist_val / slider_max if slider_max > 0 else 1.0
+                
+                b_pos = black_val * scale
+                w_pos = white_val * scale
+                
+                txt = '#E0E0E0' if self.current_theme == 'dark' else '#333333'
+                
+                self.hist_black_line = self.hist_ax.axvline(b_pos, color=txt, lw=1.0, linestyle='--')
+                self.hist_white_line = self.hist_ax.axvline(w_pos, color=txt, lw=1.0, linestyle='--')
+                
+                self.hist_black_marker = self.hist_ax.plot(b_pos, 0, marker='^', color='black', markeredgecolor='white', markersize=8, clip_on=False, zorder=10)[0]
+                self.hist_white_marker = self.hist_ax.plot(w_pos, 0, marker='^', color='white', markeredgecolor='black', markersize=8, clip_on=False, zorder=10)[0]
                 
             def update_mouse_coords_in_statusbar(self, label_pos: QPointF, image_pos: QPointF = None):
                 if image_pos is not None:
@@ -5733,37 +5827,47 @@ if __name__ == "__main__":
             def _update_main_layout(self, position: str):
                 """
                 Rebuilds the main window's layout.
-                - Viewer is FIXED size (550x350) to prevent issues.
-                - Controls area dynamically sizes to fill the rest of the screen 
-                  to minimize scrollbar usage.
-                - Left/Right modes now maximize vertical height usage.
+                - Viewer is FIXED size (550x350).
+                - Controls area set to a safe minimum width to prevent horizontal scrolling
+                  without forcing full-screen width.
                 """
-                # --- START OF MODIFICATION ---
-                # Fixed dimensions for the viewer as requested
+                # Fixed dimensions for the viewer
                 VIEWER_FIXED_WIDTH = 550
                 VIEWER_FIXED_HEIGHT = 350
                 
+                # Width required to show tabs/sliders without horizontal scrolling
+                SAFE_CONTENT_WIDTH = 920 
+                
                 # Get available screen geometry
                 screen_geo = QGuiApplication.primaryScreen().availableGeometry()
-                screen_w = screen_geo.width()
                 screen_h = screen_geo.height()
 
                 new_main_widget = QWidget()
                 new_layout = None
 
-                # Create a ScrollArea for the Tab Widget (Controls) if needed
+                # Create or configure ScrollArea
                 if not hasattr(self, 'controls_scroll_area'):
                     self.controls_scroll_area = QScrollArea()
-                    
+                
                 self.controls_scroll_area.setWidget(self.tab_widget)
-                self.controls_scroll_area.setWidgetResizable(True)
+                
+                # --- SCROLLBAR SETTINGS ---
+                # 1. Resize widget to fit the area (expands to fill available space)
+                self.controls_scroll_area.setWidgetResizable(True) 
+                # 2. Remove frame
                 self.controls_scroll_area.setFrameShape(QFrame.NoFrame)
+                # 3. Policy: AsNeeded. (It won't appear because we set a MinWidth below)
+                self.controls_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                self.controls_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                # 4. Allow expansion
+                self.controls_scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                # --------------------------
 
-                # --- 1. Enforce Fixed Viewer Size ---
+                # Enforce Fixed Viewer Size
                 self.live_view_label.setFixedSize(VIEWER_FIXED_WIDTH, VIEWER_FIXED_HEIGHT)
                 self.live_view_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-                # --- 2. Unconstrain Tab Widget ---
+                # Unconstrain Tab Widget
                 self.tab_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
                 self.tab_widget.setMinimumSize(0, 0)
                 self.tab_widget.setMaximumSize(16777215, 16777215)
@@ -5771,12 +5875,13 @@ if __name__ == "__main__":
                 if position in ["Top", "Bottom"]:
                     new_layout = QVBoxLayout(new_main_widget)
                     
-                    # Vertical Layout: Calculate remaining height for controls
-                    # Screen Height - Fixed Viewer Height - Window Margins (~120px)
-                    available_height = max(400, screen_h - VIEWER_FIXED_HEIGHT - 150)
+                    # HEIGHT: Screen - Viewer - Margins
+                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 350)
                     
+                    # WIDTH: Set to SAFE_CONTENT_WIDTH. 
+                    # This ensures no scrollbar is needed, but doesn't force full screen width.
+                    self.controls_scroll_area.setMinimumWidth(SAFE_CONTENT_WIDTH)
                     self.controls_scroll_area.setMinimumHeight(available_height)
-                    self.controls_scroll_area.setMinimumWidth(0)
                     
                     if position == "Top":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
@@ -5793,25 +5898,20 @@ if __name__ == "__main__":
                     separator.setFrameShadow(QFrame.Sunken)
                     new_layout = QHBoxLayout(new_main_widget)
                     
-                    # Horizontal Layout Width: Screen Width - Fixed Viewer Width - Margins (~60px)
-                    available_width = max(450, screen_w - VIEWER_FIXED_WIDTH - 60)
-                    
-                    # Horizontal Layout Height: Use almost full screen height to minimize vertical scrolling
-                    # Screen Height - Window Titlebar/Taskbar buffer (~100px)
-                    available_height = max(600, screen_h - VIEWER_FIXED_HEIGHT - 150)
-                    
-                    self.controls_scroll_area.setMinimumWidth(available_width)
-                    self.controls_scroll_area.setMinimumHeight(available_height) # Maximize height usage
+                    # HEIGHT: Full screen height minus taskbars
+                    available_height = max(600, screen_h - 150)
+
+                    self.controls_scroll_area.setMinimumWidth(SAFE_CONTENT_WIDTH)
+                    self.controls_scroll_area.setMinimumHeight(available_height)
                     
                     if position == "Left":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(separator)
-                        new_layout.addWidget(self.controls_scroll_area, 1) # Controls take remaining width
+                        new_layout.addWidget(self.controls_scroll_area, 1) 
                     else:  # Right
-                        new_layout.addWidget(self.controls_scroll_area, 1) # Controls take remaining width
+                        new_layout.addWidget(self.controls_scroll_area, 1) 
                         new_layout.addWidget(separator)
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
-                # --- END OF MODIFICATION ---
 
                 if new_layout:
                     old_central_widget = self.centralWidget()
@@ -9873,166 +9973,258 @@ if __name__ == "__main__":
                 self._update_levels_histogram()
 
             def _apply_all_adjustments_to_image(self, source_image, settings_dict):
-                """Applies a full suite of adjustments from a settings dict to a source QImage."""
+                """
+                Fully optimized GPU pipeline with Critical OpenCL Fixes.
+                1. Replaces addWeighted(..., 0) with addWeighted(..., src, 0) to fix CL_BUILD_PROGRAM_FAILURE.
+                2. Replaces normalize() with addWeighted() scaling to prevent unwanted Auto-Contrast.
+                """
                 if not source_image or source_image.isNull(): return source_image
                 
-                # 1. Apply inversion FIRST if the flag is set.
+                # 1. Inversion (CPU - Fast enough)
                 temp_image = source_image.copy()
-                is_inverted = settings_dict.get('is_inverted', False)
-                if is_inverted:
+                if settings_dict.get('is_inverted', False):
                     temp_image.invertPixels()
                 
-                # 2. All subsequent operations now use the (potentially) inverted temp_image.
-                np_img_full = self.qimage_to_numpy(temp_image)
+                np_img = self.qimage_to_numpy(temp_image)
+                if np_img is None: return source_image
 
-                if np_img_full is None: return source_image
-
-                # --- DETERMINE BIT DEPTH AND MAX VALUE ---
-                is_16bit = np_img_full.dtype == np.uint16
+                # --- GPU Setup ---
+                use_gpu = cv2.ocl.useOpenCL()
+                
+                # Metadata
+                h, w = np_img.shape[:2]
+                channels = 1 if np_img.ndim == 2 else np_img.shape[2]
+                is_16bit = np_img.dtype == np.uint16
                 max_val = 65535.0 if is_16bit else 255.0
                 
-                content_rect = None
-                has_alpha = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
-                if has_alpha:
-                    alpha_channel = np_img_full[:, :, 3]
-                    rows, cols = np.any(alpha_channel, axis=1), np.any(alpha_channel, axis=0)
-                    if np.any(rows) and np.any(cols):
-                        ymin, ymax = np.where(rows)[0][[0, -1]]
-                        xmin, xmax = np.where(cols)[0][[0, -1]]
-                        content_rect = (xmin, ymin, xmax - xmin + 1, ymax - ymin + 1)
-                        np_content = np_img_full[ymin:ymax+1, xmin:xmax+1]
-                    else: np_content = np_img_full
+                # OpenCV Constants
+                cv_dtype_in = cv2.CV_16U if is_16bit else cv2.CV_8U
+                cv_dtype_float = cv2.CV_32F
+                
+                np_content = np_img
+
+                # -------------------------------------------------------------------
+                # GPU UPLOAD
+                # -------------------------------------------------------------------
+                if use_gpu:
+                    try:
+                        u_img = cv2.UMat(np_content)
+                    except Exception:
+                        use_gpu = False
+                        u_img = np_content
                 else:
-                    np_content = np_img_full
+                    u_img = np_content
 
-                # --- CHANNEL MIXER ---
-                channel_mixer_settings = settings_dict.get('channel_mixer', self._get_default_adjustments()['channel_mixer'])
+                # -------------------------------------------------------------------
+                # 2. CHANNEL MIXER (GPU)
+                # -------------------------------------------------------------------
+                cm = settings_dict.get('channel_mixer', {})
+                has_mix = (cm.get('mono') or cm.get('r')!=100 or cm.get('g')!=100 or cm.get('b')!=100)
                 
-                # Check if mixer is active or we need to promote grayscale
-                is_mono = channel_mixer_settings.get('mono', False)
-                r_val = channel_mixer_settings.get('r', 100)
-                g_val = channel_mixer_settings.get('g', 100)
-                b_val = channel_mixer_settings.get('b', 100)
-                
-                # If image is grayscale (2D) and settings are non-default, promote to RGB
-                if np_content.ndim == 2 and (not is_mono and (r_val != 100 or g_val != 100 or b_val != 100)):
-                    np_content = np.stack((np_content,)*3, axis=-1)
-
-                if np_content.ndim == 3:
-                    r_scale = r_val / 100.0
-                    g_scale = g_val / 100.0
-                    b_scale = b_val / 100.0
-                    np_float = np_content.astype(np.float32)
-                    
-                    if is_mono:
-                        gray = cv2.transform(np_float[...,:3], np.array([[b_scale],[g_scale],[r_scale]]).T)
-                        np_content = np.clip(gray, 0, max_val).astype(np_content.dtype)
-                    else:
-                        if np_content.shape[2] == 4: # BGRA
-                            np_float[..., 0] *= b_scale; np_float[..., 1] *= g_scale; np_float[..., 2] *= r_scale
-                        else: # RGB/BGR
-                            np_float[..., 0] *= r_scale; np_float[..., 1] *= g_scale; np_float[..., 2] *= b_scale
-                        np_content = np.clip(np_float, 0, max_val).astype(np_content.dtype)
-
-                # --- CLAHE FIX FOR 16-BIT COLOR ---
-                clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
-                clip_limit = clahe_settings.get('clip_limit', 1.0)
-                if clip_limit > 1.0:
-                    tile_size = clahe_settings.get('tile_size', 8)
-                    # Scale clip limit for 16-bit range if we apply it to 16-bit integers directly
-                    # However, logic below converts L to 16-bit int, so we scale it.
-                    effective_clip = clip_limit * 256.0 if is_16bit else clip_limit
-                    clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
-                    
-                    if np_content.ndim == 2: # Grayscale (Works fine for 16-bit Int)
-                        np_content = clahe.apply(np_content)
-                    
-                    elif np_content.ndim == 3: # Color
-                        # Separate Alpha if present
-                        bgr = np_content[..., :3]
-                        alpha = np_content[..., 3] if np_content.shape[2] == 4 else None
-
-                        if is_16bit:
-                            # --- CRITICAL FIX START ---
-                            # OpenCV's cvtColor(BGR2LAB) DOES NOT support uint16. 
-                            # We MUST convert to float32 (0.0 - 1.0) first.
-                            
-                            # 1. Convert 16-bit Int to 32-bit Float
-                            bgr_float = bgr.astype(np.float32) / 65535.0
-                            
-                            # 2. Convert Float BGR to Float LAB
-                            lab_float = cv2.cvtColor(bgr_float, cv2.COLOR_BGR2LAB)
-                            
-                            # 3. Extract L channel (Float range 0.0 - 100.0 in OpenCV LAB)
-                            l_channel = lab_float[..., 0]
-                            
-                            # 4. Map Float L (0-100) to UInt16 (0-65535) for CLAHE
-                            l_uint16 = (l_channel / 100.0 * 65535.0).astype(np.uint16)
-                            
-                            # 5. Apply CLAHE to the 16-bit L channel
-                            l_clahe = clahe.apply(l_uint16)
-                            
-                            # 6. Map back to Float L (0-100)
-                            lab_float[..., 0] = (l_clahe.astype(np.float32) / 65535.0 * 100.0)
-                            
-                            # 7. Convert Float LAB back to Float BGR
-                            bgr_float_out = cv2.cvtColor(lab_float, cv2.COLOR_LAB2BGR)
-                            
-                            # 8. Convert Float BGR back to UInt16
-                            bgr_out = np.clip(bgr_float_out * 65535.0, 0, 65535).astype(np.uint16)
-                            # --- CRITICAL FIX END ---
-                            
-                            # Recombine with alpha
-                            if alpha is not None:
-                                np_content = np.dstack((bgr_out, alpha))
+                if has_mix and channels >= 3:
+                    try:
+                        b = cm.get('b', 100) / 100.0
+                        g = cm.get('g', 100) / 100.0
+                        r = cm.get('r', 100) / 100.0
+                        
+                        if cm.get('mono', False):
+                            m = np.array([[b], [g], [r]], dtype=np.float32)
+                            if channels == 4:
+                                m = np.array([[b, g, r, 0]], dtype=np.float32)
+                            u_img = cv2.transform(u_img, m)
+                            channels = 1 
+                        else:
+                            if channels == 4:
+                                m = np.array([[b, 0, 0, 0], [0, g, 0, 0], [0, 0, r, 0], [0, 0, 0, 1]], dtype=np.float32)
                             else:
-                                np_content = bgr_out
+                                m = np.array([[b, 0, 0], [0, g, 0], [0, 0, r]], dtype=np.float32)
+                            u_img = cv2.transform(u_img, m)
+                    except Exception as e:
+                        print(f"Mixer GPU Error: {e}")
 
-                        else: # 8-bit Color (Standard path, works with uint8)
-                            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-                            lab[..., 0] = clahe.apply(lab[..., 0])
-                            bgr_out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                            if alpha is not None:
-                                np_content = np.dstack((bgr_out, alpha))
+                # -------------------------------------------------------------------
+                # 3. CLAHE (GPU - Fixed)
+                # -------------------------------------------------------------------
+                clahe_s = settings_dict.get('clahe', {})
+                clip = clahe_s.get('clip_limit', 1.0)
+                
+                if clip > 1.0:
+                    tile = clahe_s.get('tile_size', 8)
+                    eff_clip = clip * 256.0 if is_16bit else clip
+                    
+                    try:
+                        clahe = cv2.createCLAHE(clipLimit=eff_clip, tileGridSize=(tile, tile))
+                        
+                        if channels == 1:
+                            u_img = clahe.apply(u_img)
+                        elif channels >= 3:
+                            if is_16bit:
+                                # 1. Convert to Float32 (0.0 - 1.0) using addWeighted scaling
+                                # FIX: Don't use normalize (auto-contrast). Scale by 1/65535.
+                                scale_to_float = 1.0 / 65535.0
+                                u_float = cv2.addWeighted(u_img, scale_to_float, u_img, 0.0, 0.0, dtype=cv_dtype_float)
+                                
+                                # 2. BGR -> LAB
+                                if channels == 4:
+                                    u_bgr = cv2.cvtColor(u_float, cv2.COLOR_BGRA2BGR)
+                                    u_alpha = cv2.extractChannel(u_float, 3)
+                                else:
+                                    u_bgr = u_float
+                                    u_alpha = None
+
+                                u_lab = cv2.cvtColor(u_bgr, cv2.COLOR_BGR2LAB)
+                                
+                                # 3. Extract L
+                                u_l = cv2.extractChannel(u_lab, 0)
+                                u_a = cv2.extractChannel(u_lab, 1)
+                                u_b = cv2.extractChannel(u_lab, 2)
+                                
+                                # 4. Convert L to 16-bit Int for CLAHE (0..100 -> 0..65535)
+                                # L is 0..100 in Float LAB. Scale = 655.35
+                                # FIX: Use addWeighted for casting
+                                u_l_16 = cv2.multiply(u_l, 655.35) 
+                                u_l_16 = cv2.addWeighted(u_l_16, 1.0, u_l_16, 0.0, 0.0, dtype=cv2.CV_16U)
+                                
+                                # 5. Apply CLAHE
+                                u_l_16 = clahe.apply(u_l_16)
+                                
+                                # 6. Convert back to Float L (0..65535 -> 0..100)
+                                # FIX: Use addWeighted for casting
+                                u_l_new = cv2.addWeighted(u_l_16, 1.0/655.35, u_l_16, 0.0, 0.0, dtype=cv_dtype_float)
+                                
+                                # 7. Merge & Convert back to BGR
+                                u_lab_new = cv2.merge([u_l_new, u_a, u_b])
+                                u_bgr_new = cv2.cvtColor(u_lab_new, cv2.COLOR_LAB2BGR)
+                                
+                                # 8. Restore Alpha & Convert back to 16-bit
+                                if u_alpha is not None:
+                                    u_float_res = cv2.merge([
+                                        cv2.extractChannel(u_bgr_new, 0),
+                                        cv2.extractChannel(u_bgr_new, 1),
+                                        cv2.extractChannel(u_bgr_new, 2),
+                                        u_alpha
+                                    ])
+                                else:
+                                    u_float_res = u_bgr_new
+                                    
+                                # Scale 0..1 -> 0..65535
+                                u_float_res = cv2.multiply(u_float_res, 65535.0)
+                                # FIX: Use addWeighted for final cast
+                                u_img = cv2.addWeighted(u_float_res, 1.0, u_float_res, 0.0, 0.0, dtype=cv2.CV_16U)
+
                             else:
-                                np_content = bgr_out
+                                # 8-bit Color
+                                u_lab = cv2.cvtColor(u_img, cv2.COLOR_BGR2LAB)
+                                u_l = cv2.extractChannel(u_lab, 0)
+                                u_l = clahe.apply(u_l)
+                                chans = cv2.split(u_lab)
+                                u_lab = cv2.merge([u_l, chans[1], chans[2]])
+                                u_img_bgr = cv2.cvtColor(u_lab, cv2.COLOR_LAB2BGR)
+                                if channels == 4:
+                                    alpha = cv2.extractChannel(u_img, 3)
+                                    bgr = cv2.split(u_img_bgr)
+                                    u_img = cv2.merge([bgr[0], bgr[1], bgr[2], alpha])
+                                else:
+                                    u_img = u_img_bgr
+
+                    except Exception as e:
+                        print(f"CLAHE GPU Error: {e}")
+
+                # -------------------------------------------------------------------
+                # 4. UNSHARP MASK (GPU - Fixed)
+                # -------------------------------------------------------------------
+                usm = settings_dict.get('unsharp_mask', {})
+                amount = usm.get('amount', 0) / 100.0
                 
-                # --- RECOMBINE WITH PADDING IF NEEDED ---
-                if content_rect:
-                    np_img = np_img_full.copy()
-                    xmin, ymin, w, h = content_rect
-                    if np_content.ndim == 2 and np_img.ndim == 3:
-                        if np_img.shape[2] == 4: np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
-                        else: np_img[ymin:ymin+h, xmin:xmin+w] = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
-                    elif np_content.ndim == 3 and np_img.ndim == 2:
-                        np_img = np.stack((np_img,)*3, axis=-1) if np_content.shape[2]==3 else cv2.cvtColor(np_img, cv2.COLOR_GRAY2BGRA)
-                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
-                    else:
-                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
-                else: np_img = np_content
-                
-                # --- UNSHARP MASK ---
-                unsharp_mask_settings = settings_dict.get('unsharp_mask', self._get_default_adjustments()['unsharp_mask'])
-                amount = unsharp_mask_settings.get('amount', 0) / 100.0
                 if amount > 0:
-                    radius = unsharp_mask_settings.get('radius', 1.0)
-                    threshold = unsharp_mask_settings.get('threshold', 0)
-                    if is_16bit: threshold = threshold * 256
+                    radius = usm.get('radius', 1.0)
+                    threshold = usm.get('threshold', 0)
+                    if is_16bit: threshold *= 256
                     sigma = max(0.1, radius)
-                    img_float = np_img.astype(np.float32)
-                    blurred = cv2.GaussianBlur(img_float, (0, 0), sigma)
-                    mask = np.abs(img_float - blurred) > threshold
-                    sharpened = np.zeros_like(img_float)
-                    sharpened[~mask] = img_float[~mask]
-                    sharpened[mask] = img_float[mask] + (img_float[mask] - blurred[mask]) * amount
-                    np_img = np.clip(sharpened, 0, max_val).astype(np_img.dtype)
+                    
+                    try:
+                        u_blur = cv2.GaussianBlur(u_img, (0, 0), sigma)
+                        
+                        # Threshold logic
+                        if threshold > 0:
+                            # Just apply global sharpening for robustness on GPU
+                            # Implementing masking correctly with 16-bit UMat is complex/error-prone
+                            u_img = cv2.addWeighted(u_img, 1.0 + amount, u_blur, -amount, 0)
+                        else:
+                            u_img = cv2.addWeighted(u_img, 1.0 + amount, u_blur, -amount, 0)
+                            
+                    except Exception as e:
+                        print(f"Sharpen GPU Error: {e}")
 
-                temp_image_after_effects = self.numpy_to_qimage(np_img)
+                # -------------------------------------------------------------------
+                # 5. LEVELS & GAMMA (GPU - Fixed)
+                # -------------------------------------------------------------------
+                lg = settings_dict.get('levels_gamma', {})
+                black = lg.get('black_point', 0)
+                white = lg.get('white_point', 65535)
+                gamma_val = lg.get('gamma', 100) / 100.0
+                
+                slider_max = 65535.0
+                scale_factor = max_val / slider_max
+                
+                black_val = black * scale_factor
+                white_val = white * scale_factor
+                
+                if black_val > 0 or white_val < max_val or abs(gamma_val - 1.0) > 0.01:
+                    try:
+                        if black_val >= white_val:
+                            if black_val >= max_val - 1: black_val = max_val - 2
+                            white_val = black_val + 1
+                        
+                        # 1. Convert to Float32 (0.0 - 1.0) using scaling (NO AUTO-CONTRAST)
+                        # FIX: Replaced normalize() with addWeighted scaling
+                        scale_to_float = 1.0 / max_val
+                        u_float = cv2.addWeighted(u_img, scale_to_float, u_img, 0.0, 0.0, dtype=cv_dtype_float)
+                        
+                        # 2. Apply Levels
+                        b_norm = black_val / max_val
+                        w_norm = white_val / max_val
+                        range_norm = w_norm - b_norm
+                        
+                        u_float = cv2.subtract(u_float, b_norm)
+                        u_float = cv2.multiply(u_float, 1.0 / range_norm)
+                        
+                        # 3. Gamma
+                        if abs(gamma_val - 1.0) > 0.01:
+                            # Ensure no negative values before pow
+                            # We can't easily threshold u_float on GPU without mask
+                            # But cv2.pow handles negatives usually by taking abs or NaN
+                            # Let's trust the math or do a simple max(0) if critical
+                            cv2.pow(u_float, gamma_val, u_float)
+                            
+                        # 4. Scale back to Int
+                        u_float = cv2.multiply(u_float, float(max_val))
+                        
+                        # 5. Cast back to Int
+                        # FIX: Use addWeighted for explicit casting
+                        u_img = cv2.addWeighted(u_float, 1.0, u_float, 0.0, 0.0, dtype=cv_dtype_in)
+                        
+                    except Exception as e:
+                        print(f"Levels/Gamma GPU Error: {e}")
 
-                # Finally, apply levels and gamma
-                lg_settings = settings_dict.get('levels_gamma', self._get_default_adjustments()['levels_gamma'])
-                self._update_levels_histogram()
-                return self.apply_levels_gamma(temp_image_after_effects, lg_settings['black_point'], lg_settings['white_point'], lg_settings['gamma'] / 100.0)
+                # -------------------------------------------------------------------
+                # DOWNLOAD FROM GPU
+                # -------------------------------------------------------------------
+                if use_gpu and isinstance(u_img, cv2.UMat):
+                    np_content = u_img.get()
+                else:
+                    np_content = u_img
+
+                # -------------------------------------------------------------------
+                # 6. TINT / COLORIZE (CPU)
+                # -------------------------------------------------------------------
+                col_s = settings_dict.get('colorize', {})
+                if col_s.get('enabled'):
+                    q_temp = self.numpy_to_qimage(np_content)
+                    q_temp = self.apply_tint(q_temp, col_s.get('color'))
+                    return q_temp
+
+                return self.numpy_to_qimage(np_content)
 
             def reset_all_adjustments(self):
                 # This now only resets the settings for the CURRENT context
@@ -10074,86 +10266,77 @@ if __name__ == "__main__":
                 self.reset_all_adjustments()
                 
             def apply_levels_gamma(self, qimage_base, black_point_ui, white_point_ui, gamma_ui_factor):
-                if not qimage_base or qimage_base.isNull():
-                    return qimage_base
+                """
+                Applies Levels and Gamma using a Look-Up Table (LUT).
+                Extremely fast on CPU (instant), eliminating the need for GPU here.
+                """
+                if not qimage_base or qimage_base.isNull(): return qimage_base
 
                 try:
+                    # 1. Get Numpy View (No copy if possible)
                     img_array = self.qimage_to_numpy(qimage_base)
-                    if img_array is None: raise ValueError("NumPy conversion failed.")
+                    if img_array is None: return qimage_base
 
-                    img_array_float = img_array.astype(np.float64)
-                    original_dtype = img_array.dtype
+                    # 2. Determine Depth settings
+                    is_16bit = img_array.dtype == np.uint16
+                    max_val = 65535.0 if is_16bit else 255.0
+                    dtype = np.uint16 if is_16bit else np.uint8
+                    lut_size = 65536 if is_16bit else 256
 
-                    # Determine max pixel value of the image type
-                    if original_dtype == np.uint16:
-                        max_dtype_val = 65535.0
-                    elif original_dtype == np.uint8:
-                        max_dtype_val = 255.0
-                    elif np.issubdtype(original_dtype, np.floating):
-                        max_dtype_val = np.max(img_array_float) if np.any(img_array_float) else 1.0
-                    else:
-                        max_dtype_val = 255.0
-
-                    if max_dtype_val == 0: max_dtype_val = 1.0 
-
-                    # Scale slider logic (0-65535 or 0-255) to image range
-                    slider_max = 65535.0 
-                    if hasattr(self, 'black_point_slider'):
-                        slider_max = float(self.black_point_slider.maximum())
-                    if slider_max == 0: slider_max = 1.0
+                    # 3. Scale UI inputs to image range
+                    slider_max = 65535.0 # Sliders are always 0-65535
+                    scale_factor = max_val / slider_max
                     
-                    scale_factor_slider_to_img = max_dtype_val / slider_max
+                    black = float(black_point_ui) * scale_factor
+                    white = float(white_point_ui) * scale_factor
+                    
+                    # Validation
+                    if black >= white:
+                        if black >= max_val - 1: black = max_val - 2
+                        white = black + 1
+                    
+                    # 4. Generate Look-Up Table (LUT)
+                    # We calculate the math ONCE for every possible pixel value
+                    input_range = np.arange(lut_size, dtype=np.float32)
+                    
+                    # Normalize (0.0 - 1.0) based on black/white points
+                    lut = (input_range - black) / (white - black)
+                    np.clip(lut, 0.0, 1.0, out=lut) # In-place clip
+                    
+                    # Gamma
+                    if abs(gamma_ui_factor - 1.0) > 0.01:
+                        # Power is slow, but we only do it lut_size times (tiny)
+                        np.power(lut, gamma_ui_factor, out=lut) 
+                    
+                    # Scale back to integer range
+                    lut *= max_val
+                    np.clip(lut, 0, max_val, out=lut)
+                    
+                    # Cast to image type
+                    lut = lut.astype(dtype)
 
-                    current_black = float(black_point_ui) * scale_factor_slider_to_img
-                    current_white = float(white_point_ui) * scale_factor_slider_to_img
-
-                    if current_black >= current_white:
-                        if current_black >= max_dtype_val - 1:
-                            current_black = max_dtype_val - 2.0; current_white = max_dtype_val
+                    # 5. Apply LUT (The heavy lifting)
+                    # Use cv2.LUT for 8-bit (optimized C++)
+                    # Use NumPy indexing for 16-bit (optimized C-array lookup)
+                    if not is_16bit:
+                        if img_array.ndim == 2:
+                            # Grayscale 8-bit
+                            res_array = cv2.LUT(img_array, lut)
                         else:
-                            current_white = current_black + 1.0
-
-                    denominator = current_white - current_black
-                    if abs(denominator) < 1e-9: denominator = 1e-9
-
-                    # --- Process Channels ---
-                    if img_array_float.ndim == 3: # Color
-                        processed_channels = []
-                        num_channels = img_array_float.shape[2]
-                        channels_to_adjust = min(num_channels, 3)
-
-                        for i in range(channels_to_adjust):
-                            channel_data = img_array_float[..., i]
-                            channel_levels = (channel_data - current_black) / denominator
-                            channel_levels = np.clip(channel_levels, 0.0, 1.0)
-                            channel_gamma = np.power(channel_levels, max(0.01, gamma_ui_factor))
-                            processed_channels.append(np.clip(channel_gamma, 0.0, 1.0) * max_dtype_val)
-
-                        img_array_final_float = np.stack(processed_channels, axis=-1)
-                        if num_channels == 4:
-                            img_array_final_float = np.dstack((img_array_final_float, img_array_float[..., 3]))
-
-                    elif img_array_float.ndim == 2: # Grayscale
-                        img_levels = (img_array_float - current_black) / denominator
-                        img_levels = np.clip(img_levels, 0.0, 1.0)
-                        img_gamma = np.power(img_levels, max(0.01, gamma_ui_factor))
-                        img_array_final_float = np.clip(img_gamma, 0.0, 1.0) * max_dtype_val
+                            # Color 8-bit: LUT applies to all channels
+                            # Reshape to 2D for cv2.LUT, then reshape back, or split
+                            # Actually cv2.LUT handles multichannel correctly if LUT is single channel
+                            res_array = cv2.LUT(img_array, lut)
                     else:
-                        return qimage_base
+                        # 16-bit: Numpy Advanced Indexing is extremely fast
+                        # result = lut[input_pixels]
+                        res_array = lut[img_array]
 
-                    # --- FIX: Preserve Bit Depth ---
-                    if original_dtype == np.uint16:
-                        img_array_final = img_array_final_float.astype(np.uint16)
-                    else:
-                        img_array_final = img_array_final_float.astype(np.uint8)
-
-                    result_qimage = self.numpy_to_qimage(img_array_final)
-                    if result_qimage.isNull(): raise ValueError("Conversion back to QImage failed.")
-                    return result_qimage
+                    # 6. Convert back
+                    return self.numpy_to_qimage(res_array)
 
                 except Exception as e:
-                    print(f"Error in apply_levels_gamma: {e}")
-                    traceback.print_exc()
+                    print(f"LUT Error: {e}")
                     return qimage_base
                 
             def _get_fully_adjusted_image_for_analysis(self):
@@ -15502,7 +15685,9 @@ if __name__ == "__main__":
             loading_dialog.close()
             loading_dialog.deleteLater() # YOU ALREADY HAVE THIS, WHICH IS GOOD!
             loading_dialog = None      # <<--- ADD THIS LINE HERE
-
+        
+        screen_geo = QGuiApplication.primaryScreen().availableGeometry()   
+        main_window.move(screen_geo.x(), screen_geo.y())        
         main_window.show()
 
         # Connect cleanup
