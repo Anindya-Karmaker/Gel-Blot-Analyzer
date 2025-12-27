@@ -9975,8 +9975,9 @@ if __name__ == "__main__":
             def _apply_all_adjustments_to_image(self, source_image, settings_dict):
                 """
                 GPU-Accelerated implementation of image adjustments.
-                FIXED: Removed usage of .shape/.channels() on UMat; uses 'current_channels' tracker.
-                FIXED: Corrected tuple concatenation bug in 16-bit CLAHE alpha recombination.
+                FIXED: Correctly handles BGR (8-bit) vs RGB (16-bit) channel order.
+                FIXED: Channel Mixer Red/Blue sliders now target the correct channels.
+                FIXED: CLAHE uses correct color space conversion codes to prevent tinting.
                 """
                 if not source_image or source_image.isNull(): return source_image
                 
@@ -9994,8 +9995,13 @@ if __name__ == "__main__":
                 is_16bit = np_img_full.dtype == np.uint16
                 max_val = 65535.0 if is_16bit else 255.0
                 cv_dtype = cv2.CV_16U if is_16bit else cv2.CV_8U
-                
-                # --- CROP CONTENT (Handle Alpha Padding) ---
+
+                # Determine Color Order: 
+                # Qt 8-bit (ARGB32) is typically BGR. 
+                # Qt 16-bit (RGBA64) is RGB.
+                is_bgr = not is_16bit
+
+                # --- CROP CONTENT ---
                 content_rect = None
                 has_alpha = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
                 if has_alpha:
@@ -10013,7 +10019,6 @@ if __name__ == "__main__":
                     np_content = np_img_full
 
                 # --- TRACK CHANNELS MANUALLY ---
-                # This variable tracks the state of the image through the pipeline
                 current_channels = 1 if np_content.ndim == 2 else np_content.shape[2]
 
                 # -----------------------------------------------------------
@@ -10038,29 +10043,36 @@ if __name__ == "__main__":
                 # Promote Grayscale to RGB if needed for mixing
                 if current_channels == 1 and (not is_mono and (r_val != 100 or g_val != 100 or b_val != 100)):
                     u_src = cv2.cvtColor(u_src, cv2.COLOR_GRAY2RGB)
-                    current_channels = 3 # Update tracker
+                    current_channels = 3 
+                    is_bgr = False # Promoted from gray is RGB order in OpenCV
 
                 if current_channels >= 3:
                     r_scale = r_val / 100.0
                     g_scale = g_val / 100.0
                     b_scale = b_val / 100.0
                     
+                    # Assign scales to channels 0, 1, 2 based on order
+                    if is_bgr:
+                        c0, c1, c2 = b_scale, g_scale, r_scale # 0=Blue, 1=Green, 2=Red
+                    else:
+                        c0, c1, c2 = r_scale, g_scale, b_scale # 0=Red, 1=Green, 2=Blue
+
                     if is_mono:
+                        # Output 1 Channel: Gray = c0*Ch0 + c1*Ch1 + c2*Ch2
                         if current_channels == 4:
-                            # 1x4 matrix: [r, g, b, 0]
-                            m = np.array([[r_scale, g_scale, b_scale, 0]], dtype=np.float32)
+                            m = np.array([[c0, c1, c2, 0]], dtype=np.float32)
                         else:
-                            # 1x3 matrix: [r, g, b]
-                            m = np.array([[r_scale, g_scale, b_scale]], dtype=np.float32)
+                            m = np.array([[c0, c1, c2]], dtype=np.float32)
                         
                         u_src = cv2.transform(u_src, m)
-                        current_channels = 1 # Update tracker
+                        current_channels = 1 
+                        is_bgr = False # Now grayscale
                     else:
-                        # Color Mixing: Scale channels
+                        # Output 3/4 Channels: Scale independently
                         if current_channels == 4:
-                            m = np.array([[r_scale, 0, 0, 0], [0, g_scale, 0, 0], [0, 0, b_scale, 0], [0, 0, 0, 1]], dtype=np.float32)
+                            m = np.array([[c0, 0, 0, 0], [0, c1, 0, 0], [0, 0, c2, 0], [0, 0, 0, 1]], dtype=np.float32)
                         else:
-                            m = np.array([[r_scale, 0, 0], [0, g_scale, 0], [0, 0, b_scale]], dtype=np.float32)
+                            m = np.array([[c0, 0, 0], [0, c1, 0], [0, 0, c2]], dtype=np.float32)
                         
                         u_src = cv2.transform(u_src, m)
 
@@ -10070,24 +10082,18 @@ if __name__ == "__main__":
                 
                 if clip_limit > 0.1:
                     tile_size = clahe_settings.get('tile_size', 8)
-                    
-                    # Effective clip limit (Slider value 1.0 - 10.0, up to 256.0)
-                    effective_clip = clip_limit
-                    
+                    effective_clip = clip_limit 
                     clahe = cv2.createCLAHE(clipLimit=effective_clip, tileGridSize=(tile_size, tile_size))
                     
-                    # Use the tracked channel count variable
                     if current_channels == 1:
                         u_src = clahe.apply(u_src)
                     
                     elif current_channels >= 3:
                         if is_16bit:
-                            # --- 16-BIT COLOR PIPELINE ---
-                            # 1. Convert to Float32 (0.0 - 1.0)
+                            # --- 16-BIT COLOR PIPELINE (Assume RGB) ---
                             scale_f = 1.0 / 65535.0
                             u_float = cv2.addWeighted(u_src, scale_f, u_src, 0.0, 0.0, dtype=cv2.CV_32F)
                             
-                            # 2. Extract Alpha if present
                             u_alpha = None
                             if current_channels == 4:
                                 chans = cv2.split(u_float)
@@ -10096,63 +10102,58 @@ if __name__ == "__main__":
                             else:
                                 u_rgb = u_float
 
-                            # 3. Convert to LAB (FIXED: Use RGB2LAB)
+                            # Use RGB conversion codes
                             u_lab = cv2.cvtColor(u_rgb, cv2.COLOR_RGB2LAB)
                             
-                            # 4. Extract L
                             lab_chans = cv2.split(u_lab)
                             u_l = lab_chans[0]
-                            
-                            # 5. Scale L (0-100) to U16 (0-65535) for CLAHE
                             u_l_u16 = cv2.multiply(u_l, 655.35, dtype=cv2.CV_16U)
-                            
-                            # 6. Apply CLAHE on U16 L channel
                             u_l_u16 = clahe.apply(u_l_u16)
-                            
-                            # 7. Scale back to Float (0-100)
                             u_l_new = cv2.multiply(u_l_u16, 1.0/655.35, dtype=cv2.CV_32F)
                             
-                            # 8. Merge and Convert back (FIXED: Use LAB2RGB)
                             cv2.merge([u_l_new, lab_chans[1], lab_chans[2]], u_lab)
                             u_rgb_new = cv2.cvtColor(u_lab, cv2.COLOR_LAB2RGB)
                             
-                            # 9. Recombine Alpha and Scale to U16
                             if u_alpha is not None:
                                 rgb_chans = cv2.split(u_rgb_new)
-                                # Cast to list/tuple for merge
                                 cv2.merge(rgb_chans + (u_alpha,), u_float)
                             else:
                                 u_float = u_rgb_new
                                 
-                            # Final cast back to 16-bit Int
                             u_src = cv2.multiply(u_float, 65535.0, dtype=cv_dtype)
 
                         else: 
                             # --- 8-BIT COLOR PIPELINE ---
-                            u_rgb = u_src
                             alpha = None
                             
+                            # Select Conversion Codes based on BGR vs RGB
+                            if is_bgr:
+                                code_strip_alpha = cv2.COLOR_BGRA2BGR
+                                code_to_lab = cv2.COLOR_BGR2LAB
+                                code_from_lab = cv2.COLOR_LAB2BGR
+                            else:
+                                code_strip_alpha = cv2.COLOR_RGBA2RGB
+                                code_to_lab = cv2.COLOR_RGB2LAB
+                                code_from_lab = cv2.COLOR_LAB2RGB
+
                             if current_channels == 4:
                                 alpha = cv2.extractChannel(u_src, 3)
-                                # FIXED: Use RGBA2RGB to preserve correct channel order
-                                u_rgb = cv2.cvtColor(u_src, cv2.COLOR_RGBA2RGB)
+                                u_color = cv2.cvtColor(u_src, code_strip_alpha)
+                            else:
+                                u_color = u_src
                                 
-                            # FIXED: Use RGB2LAB
-                            u_lab = cv2.cvtColor(u_rgb, cv2.COLOR_RGB2LAB)
+                            u_lab = cv2.cvtColor(u_color, code_to_lab)
                             
-                            # Cast tuple to list for item assignment
                             lab_planes = list(cv2.split(u_lab))
                             lab_planes[0] = clahe.apply(lab_planes[0])
-                            
                             cv2.merge(lab_planes, u_lab)
                             
-                            # FIXED: Use LAB2RGB
-                            u_res = cv2.cvtColor(u_lab, cv2.COLOR_LAB2RGB)
+                            u_res = cv2.cvtColor(u_lab, code_from_lab)
                             
-                            if current_channels == 4:
-                                rgb_planes = list(cv2.split(u_res))
-                                rgb_planes.append(alpha)
-                                cv2.merge(rgb_planes, u_src)
+                            if alpha is not None:
+                                planes = list(cv2.split(u_res))
+                                planes.append(alpha)
+                                cv2.merge(planes, u_src)
                             else:
                                 u_src = u_res
 
@@ -10167,15 +10168,12 @@ if __name__ == "__main__":
                     
                     u_float_sh = cv2.addWeighted(u_src, 1.0/max_val, u_src, 0.0, 0.0, dtype=cv2.CV_32F)
                     u_blur = cv2.GaussianBlur(u_float_sh, (0, 0), sigma)
-                    
                     u_sharp = cv2.addWeighted(u_float_sh, 1.0 + amount, u_blur, -amount, 0.0)
-                    
                     u_src = cv2.multiply(u_sharp, max_val, dtype=cv_dtype)
 
                 # -----------------------------------------------------------
                 # DOWNLOAD FROM GPU
                 # -----------------------------------------------------------
-                # Handle both UMat and Numpy cases for .get()
                 if isinstance(u_src, cv2.UMat):
                     np_content = u_src.get()
                 else:
@@ -10186,17 +10184,25 @@ if __name__ == "__main__":
                     np_img = np_img_full.copy()
                     xmin, ymin, w, h = content_rect
                     
-                    if np_content.ndim == 2 and np_img.ndim == 3:
-                        if np_img.shape[2] == 4:
-                            content_expanded = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
-                        else:
-                            content_expanded = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
-                        np_img[ymin:ymin+h, xmin:xmin+w] = content_expanded
-                    elif np_content.ndim == 3 and np_img.ndim == 2:
-                        np_img = cv2.cvtColor(np_img, cv2.COLOR_GRAY2BGRA)
-                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
-                    else:
-                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                    # Handle channel mismatch (e.g., colorized grayscale content into 1-channel pad)
+                    # or grayscale content into 4-channel pad
+                    dest_channels = 1 if np_img.ndim == 2 else np_img.shape[2]
+                    src_channels = 1 if np_content.ndim == 2 else np_content.shape[2]
+
+                    if src_channels != dest_channels:
+                        # Simple promotion/demotion for recombination
+                        if dest_channels == 4 and src_channels == 1:
+                            if is_bgr:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
+                            else:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2RGBA)
+                        elif dest_channels == 3 and src_channels == 1:
+                            if is_bgr:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
+                            else:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2RGB)
+                    
+                    np_img[ymin:ymin+h, xmin:xmin+w] = np_content
                 else:
                     np_img = np_content
 
