@@ -8,7 +8,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
-SCRIPT_FILE = "Gel_blot_analyzer.py"
+SCRIPT_FILE = "gel_blot_analyzer.py"
 ICON_FILE = "icon.ico"
 #VERSION_FILE = "version_file.txt" # You must create this file for version info
 
