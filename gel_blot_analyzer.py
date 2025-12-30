@@ -5233,13 +5233,19 @@ if __name__ == "__main__":
                 
                 
                 # 2. The tab widget for settings (created but not yet placed in a layout)
+                # 2. The tab widget for settings (created but not yet placed in a layout)
                 self.tab_widget = QTabWidget()
-                self.tab_widget.addTab(self.font_and_image_tab(), "Image and Contrast")
-                self.tab_widget.addTab(self.create_cropping_tab(), "Transform")
-                self.tab_widget.addTab(self.create_markers_tab(), "Markers")
-                self.tab_widget.addTab(self.combine_image_tab(), "Overlap Images")
-                self.tab_widget.addTab(self.analysis_tab(), "Analysis")
-                self.tab_widget.addTab(self.create_settings_tab(), "Settings")
+                # Center the tabs
+                self.tab_widget.setStyleSheet(
+                    "QTabWidget::tab-bar { alignment: center; }"
+                )
+                
+                self.tab_widget.addTab(self._create_scrollable_container(self.font_and_image_tab()), "Image and Contrast")
+                self.tab_widget.addTab(self._create_scrollable_container(self.create_cropping_tab()), "Transform")
+                self.tab_widget.addTab(self._create_scrollable_container(self.create_markers_tab()), "Markers")
+                self.tab_widget.addTab(self._create_scrollable_container(self.combine_image_tab()), "Overlap Images")
+                self.tab_widget.addTab(self._create_scrollable_container(self.analysis_tab()), "Analysis")
+                self.tab_widget.addTab(self._create_scrollable_container(self.create_settings_tab()), "Settings")
 
                 
                 #self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
@@ -5404,6 +5410,16 @@ if __name__ == "__main__":
                 if hasattr(self, 'table_window_instance'):
                     self.table_window_instance = None
 
+
+            def _create_scrollable_container(self, widget):
+                """Helper to wrap a widget in a borderless QScrollArea."""
+                scroll = QScrollArea()
+                scroll.setWidget(widget)
+                scroll.setWidgetResizable(True)
+                scroll.setFrameShape(QFrame.NoFrame)
+                # Ensure transparent background to match theme
+                scroll.setStyleSheet("QScrollArea { background-color: transparent; }")
+                return scroll
 
             # --- ADD THIS NEW METHOD ---
             def _toggle_theme(self, checked):
@@ -5864,52 +5880,33 @@ if __name__ == "__main__":
                 new_main_widget = QWidget()
                 new_layout = None
 
-                # Create or configure ScrollArea
-                if not hasattr(self, 'controls_scroll_area'):
-                    self.controls_scroll_area = QScrollArea()
-                
-                self.controls_scroll_area.setWidget(self.tab_widget)
-                
-                # --- SCROLLBAR SETTINGS ---
-                # 1. Resize widget to fit the area (expands to fill available space)
-                self.controls_scroll_area.setWidgetResizable(True) 
-                # 2. Remove frame
-                self.controls_scroll_area.setFrameShape(QFrame.NoFrame)
-                # 3. Policy: AsNeeded. (It won't appear because we set a MinWidth below)
-                self.controls_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-                self.controls_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-                # 4. Allow expansion
-                self.controls_scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                # --------------------------
-
                 # Enforce Fixed Viewer Size
                 self.live_view_label.setFixedSize(VIEWER_FIXED_WIDTH, VIEWER_FIXED_HEIGHT)
                 self.live_view_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-                # Unconstrain Tab Widget
-                self.tab_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-                self.tab_widget.setMinimumSize(0, 0)
-                self.tab_widget.setMaximumSize(16777215, 16777215)
+                self.tab_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)
+                self.tab_widget.setFixedWidth(SAFE_CONTENT_WIDTH)
+                self.tab_widget.setMinimumHeight(0)
+                
+                # Reset window constraints to allow shrinking
+                self.setMinimumSize(0, 0)
 
                 if position in ["Top", "Bottom"]:
                     new_layout = QVBoxLayout(new_main_widget)
                     
                     # HEIGHT: Screen - Viewer - Margins
-                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 250)
-                    
-                    # WIDTH: Set to SAFE_CONTENT_WIDTH. 
-                    # This ensures no scrollbar is needed, but doesn't force full screen width.
-                    self.controls_scroll_area.setMinimumWidth(SAFE_CONTENT_WIDTH)
-                    self.controls_scroll_area.setMinimumHeight(available_height)
+                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 200)
                     
                     if position == "Top":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(self.create_separator())
-                        new_layout.addWidget(self.controls_scroll_area, 1)
+                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter) 
                     else:  # Bottom
-                        new_layout.addWidget(self.controls_scroll_area, 1)
+                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter) 
                         new_layout.addWidget(self.create_separator())
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
+                    
+                    self.tab_widget.setMinimumHeight(available_height)
                 
                 elif position in ["Left", "Right"]:
                     separator = QFrame()
@@ -5918,26 +5915,42 @@ if __name__ == "__main__":
                     new_layout = QHBoxLayout(new_main_widget)
                     
                     # HEIGHT: Full screen height minus taskbars
-                    available_height = max(600, screen_h - 150)
+                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 50)
 
-                    self.controls_scroll_area.setMinimumWidth(SAFE_CONTENT_WIDTH)
-                    self.controls_scroll_area.setMinimumHeight(available_height)
-                    
                     if position == "Left":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(separator)
-                        new_layout.addWidget(self.controls_scroll_area, 1) 
+                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter)  # Use tab_widget directly
                     else:  # Right
-                        new_layout.addWidget(self.controls_scroll_area, 1) 
+                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter)  # Use tab_widget directly
                         new_layout.addWidget(separator)
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
 
+                    self.tab_widget.setMinimumHeight(available_height)
+
                 if new_layout:
+                    # Allow layout to shrink tightly around content
+                    new_layout.setSizeConstraint(QVBoxLayout.SetDefaultConstraint)
+
                     old_central_widget = self.centralWidget()
                     self.setCentralWidget(new_main_widget)
                     self.main_widget = new_main_widget
                     if old_central_widget:
                         old_central_widget.deleteLater()
+                    
+                    # --- FIX: Force the window to resize to fit the new content (shrinking the outline) ---
+                    QApplication.processEvents()
+                    
+                    # Get the preferred size of the new central widget which is determined by fixed widths inside
+                    hint = new_main_widget.sizeHint()
+                    
+                    # Resize the window to exactly fit the content
+                    self.resize(hint)
+                    
+                    # Ensure it doesn't get stuck smaller than content
+                    self.setMinimumWidth(hint.width())
+
+                
 
             def open_settings_tab(self):
                 """Switches to the Settings tab."""
@@ -11519,7 +11532,7 @@ if __name__ == "__main__":
                 
                 # --- Buttons ---
                 btn_layout = QHBoxLayout()
-                apply_btn = QPushButton("Apply & Save Settings")
+                apply_btn = QPushButton("Apply and Save Settings")
                 apply_btn.setMinimumHeight(45)
                 apply_btn.setMinimumWidth(200)
                 font = QFont(); font.setBold(True); apply_btn.setFont(font)
