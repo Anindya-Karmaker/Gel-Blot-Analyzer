@@ -122,12 +122,7 @@ def log_exception(exc_type, exc_value, exc_traceback):
 sys.excepthook = log_exception
 	
 if __name__ == "__main__":
-    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
-    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"  
 
     app = None
     loading_dialog = None
@@ -5058,7 +5053,7 @@ if __name__ == "__main__":
                 
                 self.viewer_fixed_width = 550
                 self.viewer_fixed_height = 350
-                self.safe_content_width = 920
+                self.safe_content_width = 1000
                 
                 self.label_size = self.preview_label_width_setting
                 self.window_title="GEL BLOT ANALYZER v4.0"
@@ -5875,7 +5870,7 @@ if __name__ == "__main__":
                 VIEWER_FIXED_HEIGHT = getattr(self, 'viewer_fixed_height', 350)
                 
                 # Width required to show tabs/sliders without horizontal scrolling
-                SAFE_CONTENT_WIDTH = getattr(self, 'safe_content_width', 920) 
+                SAFE_CONTENT_WIDTH = getattr(self, 'safe_content_width', 1000) 
                 
                 # Get available screen geometry
                 screen_geo = QGuiApplication.primaryScreen().availableGeometry()
@@ -5895,7 +5890,7 @@ if __name__ == "__main__":
                     new_layout = QVBoxLayout(new_main_widget)
                     
                     # HEIGHT: Screen - Viewer - Margins
-                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 250)
+                    available_height = max(450, screen_h - VIEWER_FIXED_HEIGHT - 250)
                     
                     
                     if position == "Top":
@@ -5930,7 +5925,7 @@ if __name__ == "__main__":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
 
                     self.tab_widget.setFixedHeight(available_height)
-                    self.tab_widget.setFixedWidth(SAFE_CONTENT_WIDTH)
+                    self.tab_widget.setFixedWidth(SAFE_CONTENT_WIDTH-100)
                     
                     
                 if new_layout:
@@ -11526,7 +11521,7 @@ if __name__ == "__main__":
                 
                 if not hasattr(self, 'viewer_fixed_width'): self.viewer_fixed_width = 550
                 if not hasattr(self, 'viewer_fixed_height'): self.viewer_fixed_height = 350
-                if not hasattr(self, 'safe_content_width'): self.safe_content_width = 920
+                if not hasattr(self, 'safe_content_width'): self.safe_content_width = 1000
 
                 def add_spin(label, val, row, col, min_v=10, max_v=10000):
                     lbl = QLabel(label)
@@ -12878,7 +12873,7 @@ if __name__ == "__main__":
                     "use_gpu": getattr(self, "use_gpu", True),
                     "viewer_fixed_width": getattr(self, "viewer_fixed_width", 550),
                     "viewer_fixed_height": getattr(self, "viewer_fixed_height", 350),
-                    "safe_content_width": getattr(self, "safe_content_width", 920),
+                    "safe_content_width": getattr(self, "safe_content_width", 1000),
                     "presets": getattr(self, "presets_data", {})
                 }
                 
@@ -13048,7 +13043,7 @@ if __name__ == "__main__":
                         except: pass
                         self.viewer_fixed_width = loaded_json.get("viewer_fixed_width", 550)
                         self.viewer_fixed_height = loaded_json.get("viewer_fixed_height", 350)
-                        self.safe_content_width = loaded_json.get("safe_content_width", 920)
+                        self.safe_content_width = loaded_json.get("safe_content_width", 1000)
                         
                         # Check for new "presets" key
                         if "presets" in loaded_json and isinstance(loaded_json["presets"], dict):
@@ -13097,7 +13092,7 @@ if __name__ == "__main__":
                     self.use_gpu = True
                     self.viewer_fixed_width = 550
                     self.viewer_fixed_height = 350
-                    self.safe_content_width = 920
+                    self.safe_content_width = 1000
                     
                     try:
                         self.save_full_config()
