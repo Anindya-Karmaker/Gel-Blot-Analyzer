@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v4.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v4.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
@@ -4080,8 +4080,12 @@ if __name__ == "__main__":
                 
                 # --- Draw standard markers, custom markers, custom shapes (from app instance) ---
                 if _image_to_label_space_valid and self.app_instance:
+                    # Apply UI Scale Preference to the Standard Marker Font
+                    current_ui_scale = getattr(self.app_instance, 'ui_scale_factor', 1.0)
+                    scaled_pixel_size = int(self.app_instance.font_size * current_ui_scale)
+                    
                     std_marker_font = QFont(self.app_instance.font_family)
-                    std_marker_font.setPixelSize(self.app_instance.font_size)
+                    std_marker_font.setPixelSize(scaled_pixel_size)
                     std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
                     painter.setFont(std_marker_font)
                     painter.setPen(std_marker_color)
@@ -4169,7 +4173,12 @@ if __name__ == "__main__":
                     for marker_data_list in self.app_instance.custom_markers:
                         try:
                             x_pos_img, y_pos_img, marker_text_str, qcolor_obj, font_family_str, font_size_int, is_bold, is_italic = marker_data_list
-                            anchor_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, y_pos_img)); current_marker_font = QFont(font_family_str); current_marker_font.setPixelSize(font_size_int); current_marker_font.setBold(is_bold); current_marker_font.setItalic(is_italic); painter.setFont(current_marker_font)
+                            anchor_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, y_pos_img)); 
+                            current_marker_font = QFont(font_family_str); 
+                            current_marker_font.setPixelSize(int(font_size_int * current_ui_scale)); 
+                            current_marker_font.setBold(is_bold); 
+                            current_marker_font.setItalic(is_italic); 
+                            painter.setFont(current_marker_font)
                             if not isinstance(qcolor_obj, QColor): qcolor_obj = QColor(qcolor_obj)
                             if not qcolor_obj.isValid(): qcolor_obj = Qt.black
                             painter.setPen(qcolor_obj); font_metrics_marker = QFontMetrics(current_marker_font); text_bounding_rect_marker = font_metrics_marker.boundingRect(marker_text_str)
@@ -4182,7 +4191,12 @@ if __name__ == "__main__":
                     # (This block remains unchanged)
                     painter.save()
                     painter.setOpacity(0.7)
-                    std_marker_font = QFont(self.app_instance.font_family); std_marker_font.setPixelSize(self.app_instance.font_size)
+                    
+                    # Apply UI Scale Preference to the Preview Font Size
+                    current_ui_scale = getattr(self.app_instance, 'ui_scale_factor', 1.0)
+                    scaled_preview_font_size = self.app_instance.font_size * current_ui_scale
+                    
+                    std_marker_font = QFont(self.app_instance.font_family); std_marker_font.setPixelSize(int(scaled_preview_font_size))
                     painter.setFont(std_marker_font); painter.setPen(self.app_instance.font_color)
                     font_metrics_std = QFontMetrics(std_marker_font); y_offset_text_baseline_std = font_metrics_std.height() * 0.3
                     preview_text = self.standard_marker_preview_text; preview_pos = self.standard_marker_preview_position
@@ -4210,7 +4224,8 @@ if __name__ == "__main__":
                 if self.preview_marker_enabled and self.preview_marker_position:
                     # (This block remains unchanged)
                     painter.setOpacity(0.7)
-                    marker_preview_font = QFont(self.marker_font_type); marker_preview_font.setPixelSize(self.marker_font_size)
+                    marker_preview_font = QFont(self.marker_font_type); 
+                    marker_preview_font.setPixelSize(int(self.marker_font_size * current_ui_scale))
                     painter.setFont(marker_preview_font); painter.setPen(self.marker_color)
                     font_metrics_preview = QFontMetrics(marker_preview_font); preview_text_rect = font_metrics_preview.boundingRect(self.preview_marker_text)
                     draw_x_preview = self.preview_marker_position.x() - (preview_text_rect.left() + preview_text_rect.width() / 2.0)
@@ -4279,7 +4294,8 @@ if __name__ == "__main__":
                 if anchor_point_ls:
                     # (This entire complex block for drawing MW lines remains unchanged)
                     line_symbol = "⎯⎯"; base_font_size = 25
-                    predict_font = QFont(self.app_instance.custom_font_type_dropdown.currentText()); scaled_pixel_size = max(8, int(base_font_size / self.zoom_level))
+                    predict_font = QFont(self.app_instance.custom_font_type_dropdown.currentText()); 
+                    scaled_pixel_size = max(8, int(base_font_size * current_ui_scale / self.zoom_level))
                     predict_font.setPixelSize(scaled_pixel_size); predict_fm = QFontMetricsF(predict_font); predict_line_rect = predict_fm.boundingRect(line_symbol)
                     center_x_ls = anchor_point_ls.x(); predict_line_draw_start_x_ls = center_x_ls - (predict_line_rect.left() + predict_line_rect.width() / 2.0)
                     if self.mw_predict_preview_enabled and self.mw_predict_preview_position:
@@ -4300,7 +4316,7 @@ if __name__ == "__main__":
                         # Uses app_instance.font_family/font_size instead of custom settings
                         base_font_size = self.app_instance.font_size
                         font_family = self.app_instance.font_family
-                        scaled_pixel_size = max(4, int(base_font_size / self.zoom_level))
+                        scaled_pixel_size = max(4, int(base_font_size * current_ui_scale / self.zoom_level))
 
                         text_font = QFont(font_family)
                         text_font.setPixelSize(scaled_pixel_size)
@@ -4403,7 +4419,7 @@ if __name__ == "__main__":
                 # --- Draw Finalized Multi-Lane Shapes ---
                 if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
                     lane_font = QFont("Arial")
-                    font_pixel_size = max(4, int(10 / self.zoom_level if self.zoom_level > 0 else 10))
+                    font_pixel_size = max(4, int(10 * current_ui_scale / self.zoom_level if self.zoom_level > 0 else 10 * current_ui_scale))
                     lane_font.setPixelSize(font_pixel_size)
                     lane_font.setBold(True)
                     
@@ -4985,6 +5001,10 @@ if __name__ == "__main__":
                             # Load saved Toggle State
                             if "use_gpu" in data:
                                 self.use_gpu = bool(data["use_gpu"])
+                            # Load saved UI Scale Preference
+                            if "ui_scale_preference" in data:
+                                self.ui_scale_preference = float(data["ui_scale_preference"])
+                                print(f"DEBUG: Loaded UI Scale Preview from {config_path}: {self.ui_scale_preference}")
                     except Exception as e:
                         print(f"GPU Config Init Error: {e}")
 
@@ -5056,7 +5076,7 @@ if __name__ == "__main__":
                 self.safe_content_width = 1000
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v4.0"
+                self.window_title="GEL BLOT ANALYZER v4.5"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -5475,7 +5495,7 @@ if __name__ == "__main__":
                     pass # print(f"Warning: Could not save global app settings: {e}")
 
             def _update_levels_histogram(self):
-                """Fast histogram calculation using OpenCV."""
+                """Fast histogram calculation using OpenCV, updated for Theme consistency."""
                 # Determine context
                 source_image = None
                 settings_dict = {}
@@ -5484,9 +5504,6 @@ if __name__ == "__main__":
                     source_image = self.image_master
                     settings_dict = {
                         'is_inverted': self.main_image_is_inverted,
-                        'channel_mixer': self.channel_mixer_data,
-                        'unsharp_mask': self.unsharp_mask_data,
-                        'clahe': self.clahe_data
                     }
                 elif self.adjustment_context == "Overlay 1 (Base)":
                     source_image = getattr(self, 'image1_original', None)
@@ -5495,34 +5512,50 @@ if __name__ == "__main__":
                     source_image = getattr(self, 'image2_original', None)
                     settings_dict = self.image2_adjustments
                 
+                # --- FIX: Determine Colors based on Current Theme ---
+                is_dark = getattr(self, 'current_theme', 'light') == 'dark'
+                
+                # Figure Background (matches GroupBox)
+                fig_bg = '#38383C' if is_dark else '#FBFCFD' 
+                # Axes Background (matches Input fields for contrast)
+                ax_bg  = '#2D2D30' if is_dark else '#FFFFFF' 
+                # Text/Spine Color
+                text_col = '#F1F1F1' if is_dark else '#333333'
+                grid_col = '#505055' if is_dark else '#D0D5DB'
+                
+                # Apply Figure Background
+                if self.hist_fig:
+                    self.hist_fig.patch.set_facecolor(fig_bg)
+
+                # --- Handle Empty/Null Image Case ---
                 if not self.hist_ax or not source_image or source_image.isNull():
                     if self.hist_ax:
                         self.hist_ax.clear()
-                        self.hist_ax.set_xticks([]); self.hist_ax.set_yticks([])
+                        self.hist_ax.set_xticks([])
+                        self.hist_ax.set_yticks([])
+                        
+                        # CRITICAL FIX: Set facecolor after clear()
+                        self.hist_ax.patch.set_facecolor(ax_bg)
+                        
+                        # Set spine colors for empty box look
+                        for spine in self.hist_ax.spines.values():
+                            spine.set_color(grid_col)
+                            
                         self.hist_canvas.draw_idle()
                     return
 
                 try:
-                    # Apply pre-adjustments (Mixer/CLAHE) to get the data being histogrammed
-                    # We reuse the helper but skip the levels step to get raw data distribution
-                    # Note: For pure speed, we could skip the heavy effects here, but accuracy requires them.
-                    # Since we optimized _apply_all_adjustments_to_image (see below), this is okay.
-                    
-                    # For histogram speed, we just convert the raw qimage to numpy directly if effects aren't critical for the preview,
-                    # BUT to show accurate levels, we should respect the processing pipeline.
-                    # We will do a lightweight conversion here.
-                    
+                    # (Existing Logic to get Numpy Array...)
                     np_img = self.qimage_to_numpy(source_image)
                     if np_img is None: return
 
-                    # Handle Inversion for histogram
+                    # Handle Inversion
                     if settings_dict.get('is_inverted', False):
                         max_v = 65535 if np_img.dtype == np.uint16 else 255
                         np_img = max_v - np_img
 
-                    # Convert to grayscale for histogram if needed
+                    # Convert to grayscale
                     if np_img.ndim == 3:
-                        # Fast approximate gray for histogram speed
                         if np_img.shape[2] >= 3:
                             gray_np = cv2.cvtColor(np_img[...,:3], cv2.COLOR_BGR2GRAY)
                         else:
@@ -5532,46 +5565,37 @@ if __name__ == "__main__":
                     
                     is_16bit = gray_np.dtype == np.uint16
                     hist_range = [0, 65536] if is_16bit else [0, 256]
-                    hist_size = [256] # Bin count
+                    hist_size = [256] 
                     
-                    # --- FAST GPU/C++ Histogram ---
-                    # cv2.calcHist expects a list of images, channels, mask, histSize, ranges
-                    # It creates a 32-bit float histogram
                     hist_data = cv2.calcHist([gray_np], [0], None, hist_size, hist_range)
-                    
-                    # Log scale for visibility
-                    # Add epsilon to avoid log(0)
                     log_hist = np.log1p(hist_data.flatten())
                     
-                    # Plotting (Matplotlib is now the bottleneck, keep it simple)
+                    # --- Plotting ---
                     self.hist_ax.clear()
                     
-                    # Theme colors
-                    is_dark = self.current_theme == 'dark'
-                    bg = '#38383C' if is_dark else '#F0F2F5'
-                    fg = '#2D2D30' if is_dark else '#FFFFFF'
-                    line = '#64B5F6' if is_dark else '#1976D2'
-                    fill = '#64B5F6' if is_dark else '#2196F3'
-                    txt = '#E0E0E0' if is_dark else '#333333'
-                    grid = '#505050' if is_dark else '#E0E0E0'
-
-                    self.hist_fig.patch.set_facecolor(bg)
-                    self.hist_ax.patch.set_facecolor(fg)
+                    # Apply Theme Colors to Axes
+                    self.hist_ax.patch.set_facecolor(ax_bg)
+                    
+                    # Plot colors
+                    line_col = '#64B5F6' if is_dark else '#1976D2'
+                    fill_col = '#2196F3' if is_dark else '#BBDEFB'
                     
                     x_axis = np.linspace(0, 65535 if is_16bit else 255, 256)
                     
-                    self.hist_ax.fill_between(x_axis, 0, log_hist, color=fill, alpha=0.3)
-                    self.hist_ax.plot(x_axis, log_hist, color=line, linewidth=1.0)
+                    self.hist_ax.fill_between(x_axis, 0, log_hist, color=fill_col, alpha=0.3)
+                    self.hist_ax.plot(x_axis, log_hist, color=line_col, linewidth=1.0)
                     
-                    self.hist_ax.grid(True, linestyle=':', alpha=0.6, color=grid)
+                    self.hist_ax.grid(True, linestyle=':', alpha=0.6, color=grid_col)
                     self.hist_ax.set_yticks([])
-                    self.hist_ax.set_ylabel("Log Density", fontsize=7, color=txt)
+                    self.hist_ax.set_ylabel("Log Density", fontsize=7, color=text_col)
+                    
                     title = 'Intensity (16-bit)' if is_16bit else 'Intensity (8-bit)'
-                    self.hist_ax.set_title(title, fontsize=8, pad=3, color=txt, fontweight='bold')
+                    self.hist_ax.set_title(title, fontsize=8, pad=3, color=text_col, fontweight='bold')
                     
                     # Spines
                     for spine in self.hist_ax.spines.values():
-                        spine.set_color(grid); spine.set_linewidth(0.5)
+                        spine.set_color(grid_col)
+                        spine.set_linewidth(0.5)
 
                     self.hist_ax.set_xlim(0, 65535 if is_16bit else 255)
                     self.hist_ax.set_ylim(bottom=0)
@@ -5579,19 +5603,24 @@ if __name__ == "__main__":
                     # Ticks
                     x_ticks = np.linspace(0, 65535 if is_16bit else 255, 5)
                     self.hist_ax.set_xticks(x_ticks)
+                    
+                    tick_labels = []
                     if is_16bit:
-                        self.hist_ax.set_xticklabels([f"{int(x/1000)}k" if x>0 else "0" for x in x_ticks], fontsize=7, color=txt)
+                        tick_labels = [f"{int(x/1000)}k" if x>0 else "0" for x in x_ticks]
                     else:
-                        self.hist_ax.set_xticklabels([f"{int(x)}" for x in x_ticks], fontsize=7, color=txt)
+                        tick_labels = [f"{int(x)}" for x in x_ticks]
+                        
+                    self.hist_ax.set_xticklabels(tick_labels, fontsize=7, color=text_col)
+                    self.hist_ax.tick_params(axis='x', colors=text_col)
 
                     # Draw Level Markers
-                    self._draw_histogram_markers(is_16bit) # Helper to keep code clean
+                    self._draw_histogram_markers(is_16bit)
                     
                     self.hist_fig.subplots_adjust(left=0.12, right=0.95, top=0.88, bottom=0.25)
                     self.hist_canvas.draw_idle()
 
                 except Exception as e:
-                    pass # print(f"Hist Error: {e}")
+                    pass
             
             def _update_histogram_markers_only(self):
                 """
@@ -5865,12 +5894,30 @@ if __name__ == "__main__":
                 - Controls area set to a safe minimum width to prevent horizontal scrolling
                   without forcing full-screen width.
                 """
+                user_pref_scale = getattr(self, 'ui_scale_preference', 0.0)
+                
+                if user_pref_scale > 0.1:
+                    ui_scale_factor = user_pref_scale
+                else:
+                    # Get the primary screen object
+                    screen_obj = QGuiApplication.primaryScreen()
+                    
+                    # Calculate scale factor. Baseline is 96 DPI.
+                    # If logical DPI is 120 (125%), factor will be 1.25.
+                    logical_dpi = screen_obj.logicalDotsPerInch()
+                    dpr = screen_obj.devicePixelRatio()
+                    
+                    # Use the larger of the two indicators to ensure we scale up on HighDPI
+                    ui_scale_factor = max(logical_dpi / 96.0, dpr)
+                    
+                self.ui_scale_factor = ui_scale_factor # Store globally for rendering
+                
                 # Fixed dimensions for the viewer
-                VIEWER_FIXED_WIDTH = getattr(self, 'viewer_fixed_width', 550)
-                VIEWER_FIXED_HEIGHT = getattr(self, 'viewer_fixed_height', 350)
+                VIEWER_FIXED_WIDTH = int(getattr(self, 'viewer_fixed_width', 550)*ui_scale_factor)
+                VIEWER_FIXED_HEIGHT = int(getattr(self, 'viewer_fixed_height', 350)*ui_scale_factor)
                 
                 # Width required to show tabs/sliders without horizontal scrolling
-                SAFE_CONTENT_WIDTH = getattr(self, 'safe_content_width', 1000) 
+                SAFE_CONTENT_WIDTH = int(getattr(self, 'safe_content_width', 1000)*ui_scale_factor)
                 
                 # Get available screen geometry
                 screen_geo = QGuiApplication.primaryScreen().availableGeometry()
@@ -9662,182 +9709,179 @@ if __name__ == "__main__":
                 main_layout = QHBoxLayout(tab)
                 main_layout.setSpacing(15)
 
+                # --- LEFT COLUMN ---
                 left_column_layout = QVBoxLayout()
 
-                # --- NEW: Adjustment Context Switcher ---
+                # Adjustment Context
                 context_group = QGroupBox("Adjustment Target")
                 context_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 context_layout = QHBoxLayout(context_group)
                 context_layout.addWidget(QLabel("Adjusting:"))
                 self.adjustment_context_combo = QComboBox()
                 self.adjustment_context_combo.addItems(["Main Image", "Overlay 1 (Base)", "Overlay 2 (Overlay)"])
-                self.adjustment_context_combo.model().item(1).setEnabled(False) # Disable Overlay 1
-                self.adjustment_context_combo.model().item(2).setEnabled(False) # Disable Overlay 2
+                self.adjustment_context_combo.model().item(1).setEnabled(False)
+                self.adjustment_context_combo.model().item(2).setEnabled(False)
                 self.adjustment_context_combo.currentTextChanged.connect(self._on_adjustment_context_changed)
                 context_layout.addWidget(self.adjustment_context_combo, 1)
                 left_column_layout.addWidget(context_group)
-                # --- END NEW ---
 
-                levels_group = QGroupBox("Levels and Gamma"); levels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                # Levels and Gamma
+                levels_group = QGroupBox("Levels and Gamma")
+                levels_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 levels_layout = QGridLayout(levels_group)
+                
                 from matplotlib.figure import Figure
                 self.hist_fig = Figure(figsize=(5, 1.8), dpi=100)
                 self.hist_fig.patch.set_facecolor('none')
                 self.hist_ax = self.hist_fig.add_subplot(111)
-                self.hist_ax.patch.set_facecolor('white')
+                self.hist_ax.patch.set_facecolor('none')
+                
                 self.hist_canvas = FigureCanvas(self.hist_fig)
                 self.hist_canvas.setFixedHeight(120) 
                 self._update_levels_histogram() 
                 levels_layout.addWidget(self.hist_canvas, 0, 0, 1, 3) 
                 
-                self.black_point_label = QLabel("Black Point:"); levels_layout.addWidget(self.black_point_label, 1, 0)
-                self.black_point_slider = QSlider(Qt.Horizontal); self.black_point_slider.setRange(0, 65535); self.black_point_slider.setValue(0); levels_layout.addWidget(self.black_point_slider, 1, 1)
-                self.black_point_value_label = QLabel("0"); self.black_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.black_point_value_label, 1, 2)
+                def add_level_slider(row, text, slider_obj, label_obj, min_v, max_v, def_v):
+                    levels_layout.addWidget(QLabel(text), row, 0)
+                    slider_obj.setRange(min_v, max_v)
+                    slider_obj.setValue(def_v)
+                    levels_layout.addWidget(slider_obj, row, 1)
+                    label_obj.setFixedWidth(50)
+                    levels_layout.addWidget(label_obj, row, 2)
+
+                self.black_point_slider = QSlider(Qt.Horizontal)
+                self.black_point_value_label = QLabel("0")
+                add_level_slider(1, "Black Point:", self.black_point_slider, self.black_point_value_label, 0, 65535, 0)
                 
-                self.white_point_label = QLabel("White Point:"); levels_layout.addWidget(self.white_point_label, 2, 0)
-                self.white_point_slider = QSlider(Qt.Horizontal); self.white_point_slider.setRange(0, 65535); self.white_point_slider.setValue(65535); levels_layout.addWidget(self.white_point_slider, 2, 1)
-                self.white_point_value_label = QLabel("65535"); self.white_point_value_label.setFixedWidth(50); levels_layout.addWidget(self.white_point_value_label, 2, 2)
+                self.white_point_slider = QSlider(Qt.Horizontal)
+                self.white_point_value_label = QLabel("65535")
+                add_level_slider(2, "White Point:", self.white_point_slider, self.white_point_value_label, 0, 65535, 65535)
                 
-                gamma_label = QLabel("Gamma:"); levels_layout.addWidget(gamma_label, 3, 0)
-                self.gamma_slider = QSlider(Qt.Horizontal); self.gamma_slider.setRange(10, 500); self.gamma_slider.setValue(100); levels_layout.addWidget(self.gamma_slider, 3, 1)
-                self.gamma_value_label = QLabel("1.00"); self.gamma_value_label.setFixedWidth(50); levels_layout.addWidget(self.gamma_value_label, 3, 2)
+                self.gamma_slider = QSlider(Qt.Horizontal)
+                self.gamma_value_label = QLabel("1.00")
+                add_level_slider(3, "Gamma:", self.gamma_slider, self.gamma_value_label, 10, 500, 100)
                 
                 left_column_layout.addWidget(levels_group)
 
-                actions_group = QGroupBox("General Image Actions"); actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                # General Actions
+                actions_group = QGroupBox("General Image Actions")
+                actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 actions_layout = QHBoxLayout(actions_group)
                 
-                self.bw_button = QPushButton("Grayscale"); self.bw_button.clicked.connect(self.convert_to_black_and_white)
-                
-                # --- NEW BUTTON ---
+                self.bw_button = QPushButton("Grayscale")
+                self.bw_button.clicked.connect(self.convert_to_black_and_white)
                 self.convert_8bit_button = QPushButton("Convert to 8-bit")
-                self.convert_8bit_button.setToolTip("Convert 16-bit/64-bit images to 8-bit/32-bit. Converts 32-bit RGB to 8-bit Grayscale.")
+                self.convert_8bit_button.setToolTip("Convert 16-bit/64-bit to 8-bit/32-bit")
                 self.convert_8bit_button.clicked.connect(self.convert_to_8bit_depth)
-                # ------------------
-
-                invert_button = QPushButton("Invert"); invert_button.clicked.connect(self.invert_image)
-                reset_button = QPushButton("Reset Current Adjustments"); reset_button.clicked.connect(self.reset_all_adjustments)
+                invert_button = QPushButton("Invert")
+                invert_button.clicked.connect(self.invert_image)
+                reset_button = QPushButton("Reset Current Adjustments")
+                reset_button.clicked.connect(self.reset_all_adjustments)
                 
                 actions_layout.addWidget(self.bw_button)
-                actions_layout.addWidget(self.convert_8bit_button) # Added to layout
+                actions_layout.addWidget(self.convert_8bit_button)
                 actions_layout.addWidget(invert_button)
                 actions_layout.addStretch()
                 actions_layout.addWidget(reset_button)
 
                 left_column_layout.addWidget(actions_group)
-                left_column_layout.addStretch(1); main_layout.addLayout(left_column_layout, 1)
-
-                right_column_layout = QVBoxLayout()
-                cm_group = QGroupBox("Channel Mixer (for Color Images)"); cm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                cm_layout = QGridLayout(cm_group)
-                self.cm_red_slider = QSlider(Qt.Horizontal); self.cm_red_slider.setRange(0, 200); self.cm_red_slider.setValue(100)
-                self.cm_red_label = QLabel("100%"); self.cm_red_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Red:"), 0, 0); cm_layout.addWidget(self.cm_red_slider, 0, 1); cm_layout.addWidget(self.cm_red_label, 0, 2)
-                self.cm_green_slider = QSlider(Qt.Horizontal); self.cm_green_slider.setRange(0, 200); self.cm_green_slider.setValue(100)
-                self.cm_green_label = QLabel("100%"); self.cm_green_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Green:"), 1, 0); cm_layout.addWidget(self.cm_green_slider, 1, 1); cm_layout.addWidget(self.cm_green_label, 1, 2)
-                self.cm_blue_slider = QSlider(Qt.Horizontal); self.cm_blue_slider.setRange(0, 200); self.cm_blue_slider.setValue(100)
-                self.cm_blue_label = QLabel("100%"); self.cm_blue_label.setFixedWidth(40); cm_layout.addWidget(QLabel("Blue:"), 2, 0); cm_layout.addWidget(self.cm_blue_slider, 2, 1); cm_layout.addWidget(self.cm_blue_label, 2, 2)
-                self.cm_mono_checkbox = QCheckBox("Monochrome"); cm_layout.addWidget(self.cm_mono_checkbox, 3, 1)
+                left_column_layout.addStretch(1)
                 
+                # Add Left Column with Stretch 1
+                main_layout.addLayout(left_column_layout, 1)
+
+                # --- RIGHT COLUMN ---
+                right_column_layout = QVBoxLayout()
+                
+                # Channel Mixer
+                cm_group = QGroupBox("Channel Mixer (for Color Images)")
+                cm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                cm_layout = QGridLayout(cm_group)
+                
+                self.cm_red_slider = QSlider(Qt.Horizontal); self.cm_red_label = QLabel("100%"); self.cm_red_label.setFixedWidth(40)
+                self.cm_green_slider = QSlider(Qt.Horizontal); self.cm_green_label = QLabel("100%"); self.cm_green_label.setFixedWidth(40)
+                self.cm_blue_slider = QSlider(Qt.Horizontal); self.cm_blue_label = QLabel("100%"); self.cm_blue_label.setFixedWidth(40)
+                
+                for i, (txt, sld, lbl) in enumerate([("Red:", self.cm_red_slider, self.cm_red_label), ("Green:", self.cm_green_slider, self.cm_green_label), ("Blue:", self.cm_blue_slider, self.cm_blue_label)]):
+                    sld.setRange(0, 200); sld.setValue(100)
+                    cm_layout.addWidget(QLabel(txt), i, 0); cm_layout.addWidget(sld, i, 1); cm_layout.addWidget(lbl, i, 2)
+                
+                self.cm_mono_checkbox = QCheckBox("Monochrome")
+                cm_layout.addWidget(self.cm_mono_checkbox, 3, 1)
                 right_column_layout.addWidget(cm_group)
 
-                usm_group = QGroupBox("Sharpening (Unsharp Mask)"); usm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                # Unsharp Mask
+                usm_group = QGroupBox("Sharpening (Unsharp Mask)")
+                usm_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 usm_layout = QGridLayout(usm_group)
-                self.usm_amount_slider = QSlider(Qt.Horizontal); self.usm_amount_slider.setRange(0, 500); self.usm_amount_slider.setValue(0)
-                self.usm_amount_label = QLabel("0%"); self.usm_amount_label.setFixedWidth(40); usm_layout.addWidget(QLabel("Amount:"), 0, 0); usm_layout.addWidget(self.usm_amount_slider, 0, 1); usm_layout.addWidget(self.usm_amount_label, 0, 2)
-                self.usm_radius_slider = QSlider(Qt.Horizontal); self.usm_radius_slider.setRange(1, 250); self.usm_radius_slider.setValue(10)
-                self.usm_radius_label = QLabel("1.0 px"); self.usm_radius_label.setFixedWidth(50); usm_layout.addWidget(QLabel("Radius:"), 1, 0); usm_layout.addWidget(self.usm_radius_slider, 1, 1); usm_layout.addWidget(self.usm_radius_label, 1, 2)
-                self.usm_threshold_slider = QSlider(Qt.Horizontal); self.usm_threshold_slider.setRange(0, 255); self.usm_threshold_slider.setValue(0)
-                self.usm_threshold_label = QLabel("0"); self.usm_threshold_label.setFixedWidth(40); usm_layout.addWidget(QLabel("Threshold:"), 2, 0); usm_layout.addWidget(self.usm_threshold_slider, 2, 1); usm_layout.addWidget(self.usm_threshold_label, 2, 2)
-
+                
+                self.usm_amount_slider = QSlider(Qt.Horizontal); self.usm_amount_label = QLabel("0%"); self.usm_amount_label.setFixedWidth(40)
+                self.usm_radius_slider = QSlider(Qt.Horizontal); self.usm_radius_label = QLabel("1.0 px"); self.usm_radius_label.setFixedWidth(50)
+                self.usm_threshold_slider = QSlider(Qt.Horizontal); self.usm_threshold_label = QLabel("0"); self.usm_threshold_label.setFixedWidth(40)
+                
+                usm_layout.addWidget(QLabel("Amount:"), 0, 0); usm_layout.addWidget(self.usm_amount_slider, 0, 1); usm_layout.addWidget(self.usm_amount_label, 0, 2)
+                usm_layout.addWidget(QLabel("Radius:"), 1, 0); usm_layout.addWidget(self.usm_radius_slider, 1, 1); usm_layout.addWidget(self.usm_radius_label, 1, 2)
+                usm_layout.addWidget(QLabel("Threshold:"), 2, 0); usm_layout.addWidget(self.usm_threshold_slider, 2, 1); usm_layout.addWidget(self.usm_threshold_label, 2, 2)
+                
+                self.usm_amount_slider.setRange(0, 500); self.usm_amount_slider.setValue(0)
+                self.usm_radius_slider.setRange(1, 250); self.usm_radius_slider.setValue(10)
+                self.usm_threshold_slider.setRange(0, 255); self.usm_threshold_slider.setValue(0)
+                
                 right_column_layout.addWidget(usm_group)
 
-                clahe_group = QGroupBox("Local Contrast (CLAHE)"); clahe_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                # CLAHE
+                clahe_group = QGroupBox("Local Contrast (CLAHE)")
+                clahe_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 clahe_layout = QGridLayout(clahe_group)
-                self.clahe_clip_slider = QSlider(Qt.Horizontal); self.clahe_clip_slider.setRange(10, 2560); self.clahe_clip_slider.setValue(10)
-                self.clahe_clip_label = QLabel("1.0"); self.clahe_clip_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Clip Limit:"), 0, 0); clahe_layout.addWidget(self.clahe_clip_slider, 0, 1); clahe_layout.addWidget(self.clahe_clip_label, 0, 2)
-                self.clahe_tile_slider = QSlider(Qt.Horizontal); self.clahe_tile_slider.setRange(2, 32); self.clahe_tile_slider.setValue(2)
-                self.clahe_tile_label = QLabel("8x8"); self.clahe_tile_label.setFixedWidth(40); clahe_layout.addWidget(QLabel("Tile Size:"), 1, 0); clahe_layout.addWidget(self.clahe_tile_slider, 1, 1); clahe_layout.addWidget(self.clahe_tile_label, 1, 2)
-
+                
+                self.clahe_clip_slider = QSlider(Qt.Horizontal); self.clahe_clip_label = QLabel("1.0"); self.clahe_clip_label.setFixedWidth(40)
+                self.clahe_tile_slider = QSlider(Qt.Horizontal); self.clahe_tile_label = QLabel("8x8"); self.clahe_tile_label.setFixedWidth(40)
+                
+                clahe_layout.addWidget(QLabel("Clip Limit:"), 0, 0); clahe_layout.addWidget(self.clahe_clip_slider, 0, 1); clahe_layout.addWidget(self.clahe_clip_label, 0, 2)
+                clahe_layout.addWidget(QLabel("Tile Size:"), 1, 0); clahe_layout.addWidget(self.clahe_tile_slider, 1, 1); clahe_layout.addWidget(self.clahe_tile_label, 1, 2)
+                
+                self.clahe_clip_slider.setRange(10, 2560); self.clahe_clip_slider.setValue(10)
+                self.clahe_tile_slider.setRange(2, 32); self.clahe_tile_slider.setValue(2)
+                
                 right_column_layout.addWidget(clahe_group)
-                right_column_layout.addStretch(); main_layout.addLayout(right_column_layout, 1)
-
-                # --- UPDATED CONNECTION LOGIC ---
+                right_column_layout.addStretch()
                 
-                # Helper lambdas
-                # Live preview: Update image, don't save to undo stack
+                # Add Right Column with Stretch 1 (Equal to Left)
+                main_layout.addLayout(right_column_layout, 1)
+
+                # --- CONNECTIONS (Same as before, abridged for length but included in logic) ---
+                # Levels
                 preview_update = lambda: self.apply_all_adjustments(save_history=False)
-                # Commit: Save to undo stack (and ensure image is updated)
                 commit_update = lambda: self.apply_all_adjustments(save_history=True)
-
-                # --- Levels and Gamma ---
-                # valueChanged: Updates histogram markers AND live preview (fixes arrow keys)
-                self.black_point_slider.valueChanged.connect(self._update_histogram_markers_only)
-                self.black_point_slider.valueChanged.connect(preview_update)
-                self.black_point_slider.valueChanged.connect(lambda: self.black_point_slider.setFocus())
-                self.black_point_slider.sliderReleased.connect(commit_update)
-
-                self.white_point_slider.valueChanged.connect(self._update_histogram_markers_only)
-                self.white_point_slider.valueChanged.connect(preview_update)
-                self.white_point_slider.valueChanged.connect(lambda: self.white_point_slider.setFocus())
-                self.white_point_slider.sliderReleased.connect(commit_update)
-
-                self.gamma_slider.valueChanged.connect(preview_update)
-                self.gamma_slider.valueChanged.connect(lambda: self.gamma_slider.setFocus())
-                self.gamma_slider.sliderReleased.connect(commit_update)
-
-                # Labels (Live update)
-                self.black_point_slider.valueChanged.connect(lambda val: self.black_point_value_label.setText(f"{val}"))
-                self.white_point_slider.valueChanged.connect(lambda val: self.white_point_value_label.setText(f"{val}"))
-                self.gamma_slider.valueChanged.connect(lambda val: self.gamma_value_label.setText(f"{val/100.0:.2f}"))
-
-                # --- Channel Mixer ---
-                self.cm_red_slider.valueChanged.connect(preview_update)
-                self.cm_red_slider.sliderReleased.connect(commit_update)
-                self.cm_red_slider.sliderReleased.connect(lambda: self.cm_red_slider.setFocus())
-
-                self.cm_green_slider.valueChanged.connect(preview_update)
-                self.cm_green_slider.sliderReleased.connect(commit_update)
-                self.cm_green_slider.sliderReleased.connect(lambda: self.cm_green_slider.setFocus())
-
-                self.cm_blue_slider.valueChanged.connect(preview_update)
-                self.cm_blue_slider.sliderReleased.connect(commit_update)
-                self.cm_blue_slider.sliderReleased.connect(lambda: self.cm_blue_slider.setFocus())
                 
-                self.cm_mono_checkbox.stateChanged.connect(commit_update) # Checkboxes are instant commits
-
+                for s in [self.black_point_slider, self.white_point_slider]:
+                    s.valueChanged.connect(self._update_histogram_markers_only)
+                    s.valueChanged.connect(preview_update)
+                    s.sliderReleased.connect(commit_update)
+                self.gamma_slider.valueChanged.connect(preview_update)
+                self.gamma_slider.sliderReleased.connect(commit_update)
+                
                 # Labels
+                self.black_point_slider.valueChanged.connect(lambda v: self.black_point_value_label.setText(f"{v}"))
+                self.white_point_slider.valueChanged.connect(lambda v: self.white_point_value_label.setText(f"{v}"))
+                self.gamma_slider.valueChanged.connect(lambda v: self.gamma_value_label.setText(f"{v/100.0:.2f}"))
+                
+                # Other Sliders (Mixer, USM, CLAHE)
+                sliders_misc = [self.cm_red_slider, self.cm_green_slider, self.cm_blue_slider, 
+                                self.usm_amount_slider, self.usm_radius_slider, self.usm_threshold_slider,
+                                self.clahe_clip_slider, self.clahe_tile_slider]
+                for s in sliders_misc:
+                    s.valueChanged.connect(preview_update)
+                    s.sliderReleased.connect(commit_update)
+                self.cm_mono_checkbox.stateChanged.connect(commit_update)
+
+                # Misc Labels
                 self.cm_red_slider.valueChanged.connect(lambda v: self.cm_red_label.setText(f"{v}%"))
                 self.cm_green_slider.valueChanged.connect(lambda v: self.cm_green_label.setText(f"{v}%"))
                 self.cm_blue_slider.valueChanged.connect(lambda v: self.cm_blue_label.setText(f"{v}%"))
-
-                # --- Unsharp Mask ---
-                self.usm_amount_slider.valueChanged.connect(preview_update)
-                self.usm_amount_slider.sliderReleased.connect(commit_update)
-                self.usm_amount_slider.sliderReleased.connect(lambda: self.usm_amount_slider.setFocus())
-
-                self.usm_radius_slider.valueChanged.connect(preview_update)
-                self.usm_radius_slider.sliderReleased.connect(commit_update)
-                self.usm_radius_slider.sliderReleased.connect(lambda: self.usm_radius_slider.setFocus())
-
-                self.usm_threshold_slider.valueChanged.connect(preview_update)
-                self.usm_threshold_slider.sliderReleased.connect(commit_update)
-                self.usm_threshold_slider.sliderReleased.connect(lambda: self.usm_threshold_slider.setFocus())
-
-                # Labels
                 self.usm_amount_slider.valueChanged.connect(lambda v: self.usm_amount_label.setText(f"{v}%"))
                 self.usm_radius_slider.valueChanged.connect(lambda v: self.usm_radius_label.setText(f"{(v/10.0):.1f} px"))
                 self.usm_threshold_slider.valueChanged.connect(lambda v: self.usm_threshold_label.setText(f"{v}"))
-
-                # --- CLAHE ---
-                self.clahe_clip_slider.valueChanged.connect(preview_update)
-                self.clahe_clip_slider.sliderReleased.connect(commit_update)
-                self.clahe_clip_slider.sliderReleased.connect(lambda: self.clahe_clip_slider.setFocus())
-
-                self.clahe_tile_slider.valueChanged.connect(preview_update)
-                self.clahe_tile_slider.sliderReleased.connect(commit_update)
-                self.clahe_tile_slider.sliderReleased.connect(lambda: self.clahe_tile_slider.setFocus())
-
-                # Labels
                 self.clahe_clip_slider.valueChanged.connect(lambda v: self.clahe_clip_label.setText(f"{(v/10.0):.1f}"))
                 self.clahe_tile_slider.valueChanged.connect(lambda v: self.clahe_tile_label.setText(f"{v}x{v}"))
 
@@ -11180,141 +11224,234 @@ if __name__ == "__main__":
                 presets_group = QGroupBox("Marker Presets and Labels")
                 presets_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 presets_layout = QGridLayout(presets_group)
+                
+                # Preset Row
                 presets_layout.addWidget(QLabel("Preset:"), 0, 0)
                 self.combo_box = QComboBox(self)
-                if hasattr(self, 'presets_data') and self.presets_data: self.combo_box.addItems(sorted(self.presets_data.keys()))
-                self.combo_box.addItem("Custom"); self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
-                self.combo_box.setFixedWidth(450)
+                if hasattr(self, 'presets_data') and self.presets_data: 
+                    self.combo_box.addItems(sorted(self.presets_data.keys()))
+                self.combo_box.addItem("Custom")
+                self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
+                # Removed fixed width to allow shrinking
                 presets_layout.addWidget(self.combo_box, 0, 1)
+                
                 self.rename_input = QLineEdit(self)
-                self.rename_input.setPlaceholderText("Enter new name to save preset..."); self.rename_input.setEnabled(False)
+                self.rename_input.setPlaceholderText("Enter new name...")
+                self.rename_input.setEnabled(False)
                 presets_layout.addWidget(self.rename_input, 0, 2)
-                self.save_button = QPushButton("Save"); self.save_button.setToolTip("Saves the current L/R, Top, Custom Markers/Shapes to the selected/new preset name.")
-                self.save_button.setFixedWidth(100)
+                
+                self.save_button = QPushButton("Save")
                 self.save_button.clicked.connect(self.save_config)
                 presets_layout.addWidget(self.save_button, 0, 3)
-                self.remove_config_button = QPushButton("Remove"); self.remove_config_button.setFixedWidth(100); self.remove_config_button.clicked.connect(self.remove_config)
+                
+                self.remove_config_button = QPushButton("Remove")
+                self.remove_config_button.clicked.connect(self.remove_config)
                 presets_layout.addWidget(self.remove_config_button, 0, 4)
+                
+                # Checkbox Row
                 self.load_custom_from_preset_checkbox = QCheckBox("Load Custom Markers/Shapes from Preset")
-                self.load_custom_from_preset_checkbox.setChecked(True) # Default to checked
-                self.load_custom_from_preset_checkbox.setToolTip("If checked, changing the preset will also load any custom markers/shapes saved with it, overwriting existing ones.")
+                self.load_custom_from_preset_checkbox.setChecked(True)
                 presets_layout.addWidget(self.load_custom_from_preset_checkbox, 1, 1, 1, 4)
+                
+                # Values Row
                 presets_layout.addWidget(QLabel("L/R Values:"), 2, 0)
                 self.marker_values_textbox = QLineEdit(self)
-                self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-separated)"); self.marker_values_textbox.setEnabled(False)
+                self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-separated)")
+                self.marker_values_textbox.setEnabled(False)
                 presets_layout.addWidget(self.marker_values_textbox, 2, 1, 1, 4)
+                
+                # Labels Row
                 presets_layout.addWidget(QLabel("Top Labels:"), 3, 0, Qt.AlignTop)
                 self.top_marker_input = QTextEdit(self)
                 self.top_marker_input.setText(", ".join(map(str, getattr(self, 'top_label', []))))
-                self.top_marker_input.setFixedHeight(50); self.top_marker_input.setPlaceholderText("Top labels (comma-separated)")
+                self.top_marker_input.setFixedHeight(50)
                 presets_layout.addWidget(self.top_marker_input, 3, 1, 1, 3)
+                
                 self.update_labels_button = QPushButton("Update Labels")
-                self.update_labels_button.setToolTip("Apply values from the L/R and Top text boxes to any markers currently on the image.")
                 self.update_labels_button.clicked.connect(self.update_all_labels)
                 presets_layout.addWidget(self.update_labels_button, 3, 4)
+                
                 main_layout.addWidget(presets_group)
 
                 # --- Group 2: Standard Marker Tools ---
                 standard_group = QGroupBox("Standard Marker Tools")
                 standard_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 standard_layout = QGridLayout(standard_group)
-                standard_layout.setColumnStretch(1, 1)
+                
+                # Font Options Row
                 font_options_layout = QHBoxLayout()
-                self.font_combo_box = QFontComboBox(); self.font_combo_box.setCurrentFont(QFont(self.font_family)); self.font_combo_box.currentFontChanged.connect(self.update_font)
-                self.font_size_spinner = QSpinBox(); self.font_size_spinner.setRange(6, 72); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.valueChanged.connect(self.update_font)
-                self.font_color_button = QPushButton("Color"); self.font_color_button.clicked.connect(self.select_font_color); self._update_color_button_style(self.font_color_button, self.font_color)
-                self.font_rotation_input = QSpinBox(); self.font_rotation_input.setRange(-180, 180); self.font_rotation_input.setValue(self.font_rotation); self.font_rotation_input.setSuffix(" °"); self.font_rotation_input.valueChanged.connect(self.update_font)
-                font_options_layout.addWidget(QLabel("Font:")); font_options_layout.addWidget(self.font_combo_box, 1); font_options_layout.addWidget(self.font_size_spinner)
-                font_options_layout.addWidget(self.font_color_button); font_options_layout.addWidget(QLabel("Top Rotation:")); font_options_layout.addWidget(self.font_rotation_input)
+                self.font_combo_box = QFontComboBox()
+                self.font_combo_box.setCurrentFont(QFont(self.font_family))
+                self.font_combo_box.currentFontChanged.connect(self.update_font)
+                
+                self.font_size_spinner = QSpinBox()
+                self.font_size_spinner.setRange(6, 72)
+                self.font_size_spinner.setValue(self.font_size)
+                self.font_size_spinner.valueChanged.connect(self.update_font)
+                
+                self.font_color_button = QPushButton("Color")
+                self.font_color_button.clicked.connect(self.select_font_color)
+                self._update_color_button_style(self.font_color_button, self.font_color)
+                
+                self.font_rotation_input = QSpinBox()
+                self.font_rotation_input.setRange(-180, 180)
+                self.font_rotation_input.setValue(self.font_rotation)
+                self.font_rotation_input.setSuffix(" °")
+                self.font_rotation_input.valueChanged.connect(self.update_font)
+                
+                font_options_layout.addWidget(QLabel("Font:"))
+                font_options_layout.addWidget(self.font_combo_box, 1)
+                font_options_layout.addWidget(self.font_size_spinner)
+                font_options_layout.addWidget(self.font_color_button)
+                font_options_layout.addWidget(QLabel("Top Rotation:"))
+                font_options_layout.addWidget(self.font_rotation_input)
+                
                 standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
-                left_buttons = QHBoxLayout(); left_marker_button = QPushButton("Place Left"); left_marker_button.clicked.connect(self.enable_left_marker_mode); remove_left_button = QPushButton("Remove Last"); remove_left_button.clicked.connect(lambda: self.reset_marker('left','remove')); reset_left_button = QPushButton("Reset All"); reset_left_button.clicked.connect(lambda: self.reset_marker('left','reset'))
-                left_buttons.addWidget(left_marker_button); left_buttons.addWidget(remove_left_button); left_buttons.addWidget(reset_left_button); standard_layout.addLayout(left_buttons, 2, 0)
-                self.left_padding_slider = QSlider(Qt.Horizontal); self.left_padding_slider.setRange(self.left_slider_range[0], self.left_slider_range[1]); self.left_padding_slider.setValue(self.left_marker_shift_added); self.left_padding_slider.valueChanged.connect(lambda: self.update_left_padding()); self.left_padding_slider.valueChanged.connect(lambda: self.left_padding_slider.setFocus())
-                standard_layout.addWidget(self.left_padding_slider, 2, 1)
-                duplicate_left_button = QPushButton("Copy →"); duplicate_left_button.setToolTip("Copy Right Markers & Offset to Left"); duplicate_left_button.clicked.connect(lambda: self.duplicate_marker('left')); standard_layout.addWidget(duplicate_left_button, 2, 2)
-                right_buttons = QHBoxLayout(); right_marker_button = QPushButton("Place Right"); right_marker_button.clicked.connect(self.enable_right_marker_mode); remove_right_button = QPushButton("Remove Last"); remove_right_button.clicked.connect(lambda: self.reset_marker('right','remove')); reset_right_button = QPushButton("Reset All"); reset_right_button.clicked.connect(lambda: self.reset_marker('right','reset'))
-                right_buttons.addWidget(right_marker_button); right_buttons.addWidget(remove_right_button); right_buttons.addWidget(reset_right_button); standard_layout.addLayout(right_buttons, 3, 0)
-                self.right_padding_slider = QSlider(Qt.Horizontal); self.right_padding_slider.setRange(self.right_slider_range[0], self.right_slider_range[1]); self.right_padding_slider.setValue(self.right_marker_shift_added); self.right_padding_slider.valueChanged.connect(lambda: self.update_right_padding()); self.right_padding_slider.valueChanged.connect(lambda: self.right_padding_slider.setFocus())
-                standard_layout.addWidget(self.right_padding_slider, 3, 1)
-                duplicate_right_button = QPushButton("← Copy"); duplicate_right_button.setToolTip("Copy Left Markers & Offset to Right"); duplicate_right_button.clicked.connect(lambda: self.duplicate_marker('right')); standard_layout.addWidget(duplicate_right_button, 3, 2)
-                top_buttons = QHBoxLayout(); top_marker_button = QPushButton("Place Top"); top_marker_button.clicked.connect(self.enable_top_marker_mode); remove_top_button = QPushButton("Remove Last"); remove_top_button.clicked.connect(lambda: self.reset_marker('top','remove')); reset_top_button = QPushButton("Reset All"); reset_top_button.clicked.connect(lambda: self.reset_marker('top','reset'))
-                top_buttons.addWidget(top_marker_button); top_buttons.addWidget(remove_top_button); top_buttons.addWidget(reset_top_button); standard_layout.addLayout(top_buttons, 4, 0)
-                self.top_padding_slider = QSlider(Qt.Horizontal); self.top_padding_slider.setRange(self.top_slider_range[0], self.top_slider_range[1]); self.top_padding_slider.setValue(self.top_marker_shift_added); self.top_padding_slider.valueChanged.connect(lambda: self.update_top_padding()); self.top_padding_slider.valueChanged.connect(lambda: self.top_padding_slider.setFocus())
-                standard_layout.addWidget(self.top_padding_slider, 4, 1)
+                
+                # Sliders Rows - Using a helper to reduce code bloat
+                def add_marker_row(row_idx, label, mode, slider_attr, range_attr, val_attr):
+                    btn_box = QHBoxLayout()
+                    btn_place = QPushButton(f"Place {label}")
+                    btn_place.clicked.connect(getattr(self, f"enable_{mode}_marker_mode"))
+                    btn_rem = QPushButton("Remove Last")
+                    btn_rem.clicked.connect(lambda: self.reset_marker(mode, 'remove'))
+                    btn_rst = QPushButton("Reset All")
+                    btn_rst.clicked.connect(lambda: self.reset_marker(mode, 'reset'))
+                    btn_box.addWidget(btn_place); btn_box.addWidget(btn_rem); btn_box.addWidget(btn_rst)
+                    
+                    standard_layout.addLayout(btn_box, row_idx, 0)
+                    
+                    slider = QSlider(Qt.Horizontal)
+                    r_min, r_max = getattr(self, range_attr)
+                    slider.setRange(r_min, r_max)
+                    slider.setValue(getattr(self, val_attr))
+                    setattr(self, slider_attr, slider) # Store reference
+                    
+                    # Determine update function name
+                    update_func_name = f"update_{label.lower()}_padding"
+                    slider.valueChanged.connect(lambda: getattr(self, update_func_name)())
+                    slider.valueChanged.connect(lambda: slider.setFocus())
+                    
+                    standard_layout.addWidget(slider, row_idx, 1)
+                    
+                    # Copy buttons
+                    if mode == 'left':
+                        cp_btn = QPushButton("Copy →")
+                        cp_btn.setToolTip("Copy Right Markers & Offset to Left")
+                        cp_btn.clicked.connect(lambda: self.duplicate_marker('left'))
+                        standard_layout.addWidget(cp_btn, row_idx, 2)
+                    elif mode == 'right':
+                        cp_btn = QPushButton("← Copy")
+                        cp_btn.setToolTip("Copy Left Markers & Offset to Right")
+                        cp_btn.clicked.connect(lambda: self.duplicate_marker('right'))
+                        standard_layout.addWidget(cp_btn, row_idx, 2)
+
+                add_marker_row(2, "Left", 'left', 'left_padding_slider', 'left_slider_range', 'left_marker_shift_added')
+                add_marker_row(3, "Right", 'right', 'right_padding_slider', 'right_slider_range', 'right_marker_shift_added')
+                add_marker_row(4, "Top", 'top', 'top_padding_slider', 'top_slider_range', 'top_marker_shift_added')
+
                 main_layout.addWidget(standard_group)
 
                 # --- Group 3: Custom Markers, Shapes & Grid ---
                 custom_group = QGroupBox("Custom Markers, Shapes and Grid")
                 custom_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                custom_layout = QVBoxLayout(custom_group); custom_layout.setSpacing(6)
-                row1_layout = QHBoxLayout(); row1_layout.setSpacing(6)
-                self.custom_marker_button = QPushButton("Place Custom", self); self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
-                self.custom_marker_text_entry = QLineEdit(self); self.custom_marker_text_entry.setPlaceholderText("Custom text...")
-                arrow_buttons_layout = QHBoxLayout(); arrow_buttons_layout.setContentsMargins(0, 0, 0, 0); arrow_buttons_layout.setSpacing(2)
-                arrow_size = 35
-                self.custom_marker_button_left_arrow = QPushButton("←"); self.custom_marker_button_left_arrow.setToolTip("Ctrl+Left")
-                self.custom_marker_button_right_arrow = QPushButton("→"); self.custom_marker_button_right_arrow.setToolTip("Ctrl+Right")
-                self.custom_marker_button_top_arrow = QPushButton("↑"); self.custom_marker_button_top_arrow.setToolTip("Ctrl+Up")
-                self.custom_marker_button_bottom_arrow = QPushButton("↓"); self.custom_marker_button_bottom_arrow.setToolTip("Ctrl+Down")
-
-                # --- START OF BUG FIX ---
-                # 1. Enlarge the arrow symbols by applying a larger, bold font.
-                arrow_font = QFont(); arrow_font.setPointSize(14); arrow_font.setBold(True)
-                self.custom_marker_button_left_arrow.setFont(arrow_font)
-                self.custom_marker_button_right_arrow.setFont(arrow_font)
-                self.custom_marker_button_top_arrow.setFont(arrow_font)
-                self.custom_marker_button_bottom_arrow.setFont(arrow_font)
+                custom_layout = QVBoxLayout(custom_group)
+                custom_layout.setSpacing(6)
                 
-                self.custom_marker_button_left_arrow.setFixedSize(arrow_size, arrow_size)
-                self.custom_marker_button_right_arrow.setFixedSize(arrow_size, arrow_size)
-                self.custom_marker_button_top_arrow.setFixedSize(arrow_size, arrow_size)
-                self.custom_marker_button_bottom_arrow.setFixedSize(arrow_size, arrow_size)
+                row1_layout = QHBoxLayout()
+                self.custom_marker_button = QPushButton("Place Custom")
+                self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
                 
-                arrow_buttons_layout.addWidget(self.custom_marker_button_left_arrow); arrow_buttons_layout.addWidget(self.custom_marker_button_right_arrow)
-                arrow_buttons_layout.addWidget(self.custom_marker_button_top_arrow); arrow_buttons_layout.addWidget(self.custom_marker_button_bottom_arrow)
-                self.custom_marker_button_left_arrow.clicked.connect(lambda: self.arrow_marker("←"))
-                self.custom_marker_button_right_arrow.clicked.connect(lambda: self.arrow_marker("→"))
-                self.custom_marker_button_top_arrow.clicked.connect(lambda: self.arrow_marker("↑"))
-                self.custom_marker_button_bottom_arrow.clicked.connect(lambda: self.arrow_marker("↓"))
-                self.custom_font_type_dropdown = QFontComboBox(); self.custom_font_type_dropdown.setCurrentFont(QFont("Arial")); self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
-                self.custom_font_size_spinbox = QSpinBox(); self.custom_font_size_spinbox.setRange(1, 150); self.custom_font_size_spinbox.setValue(12); self.custom_font_size_spinbox.setPrefix("Size (px): ")
-                self.custom_marker_color_button = QPushButton("Color"); self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
+                self.custom_marker_text_entry = QLineEdit()
+                self.custom_marker_text_entry.setPlaceholderText("Custom text...")
+                
+                # Arrow Buttons
+                arrow_layout = QHBoxLayout()
+                arrow_layout.setSpacing(2)
+                arrow_font = QFont(); arrow_font.setPointSize(12); arrow_font.setBold(True)
+                for txt, key in [("←","←"), ("→","→"), ("↑","↑"), ("↓","↓")]:
+                    btn = QPushButton(txt)
+                    btn.setFixedSize(30, 30)
+                    btn.setFont(arrow_font)
+                    btn.clicked.connect(lambda checked, t=key: self.arrow_marker(t))
+                    arrow_layout.addWidget(btn)
+                
+                self.custom_font_type_dropdown = QFontComboBox()
+                self.custom_font_type_dropdown.setCurrentFont(QFont("Arial"))
+                self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
+                
+                self.custom_font_size_spinbox = QSpinBox()
+                self.custom_font_size_spinbox.setRange(1, 150)
+                self.custom_font_size_spinbox.setValue(12)
+                self.custom_font_size_spinbox.setPrefix("Size: ")
+                
+                self.custom_marker_color_button = QPushButton("Color")
+                self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
                 if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
                 self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                
+
                 row1_layout.addWidget(self.custom_marker_button)
-                # 2. Adjust stretch factors to make the text box longer.
-                row1_layout.addWidget(self.custom_marker_text_entry, 2) # Give text entry a stretch factor of 2
-                row1_layout.addLayout(arrow_buttons_layout)
-                row1_layout.addWidget(self.custom_font_type_dropdown, 1) # Give font dropdown a stretch factor of 1
+                row1_layout.addWidget(self.custom_marker_text_entry, 1)
+                row1_layout.addLayout(arrow_layout)
+                row1_layout.addWidget(self.custom_font_type_dropdown, 1)
                 row1_layout.addWidget(self.custom_font_size_spinbox)
                 row1_layout.addWidget(self.custom_marker_color_button)
-                # --- END OF BUG FIX ---
-                
                 custom_layout.addLayout(row1_layout)
-                row2_layout = QHBoxLayout(); row2_layout.setSpacing(6)
-                self.remove_custom_marker_button = QPushButton("Remove Last"); self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
-                self.reset_custom_marker_button = QPushButton("Reset All"); self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
+
+                row2_layout = QHBoxLayout()
+                self.remove_custom_marker_button = QPushButton("Remove Last")
+                self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
+                self.reset_custom_marker_button = QPushButton("Reset All")
+                self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
+                
                 shape_size = 25
-                self.draw_line_button = QPushButton("L"); self.draw_line_button.setToolTip("Draw Line"); self.draw_line_button.setFixedSize(shape_size, shape_size); self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
-                self.draw_rect_button = QPushButton("R"); self.draw_rect_button.setToolTip("Draw Rectangle"); self.draw_rect_button.setFixedSize(shape_size, shape_size); self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
-                self.remove_shape_button = QPushButton("X"); self.remove_shape_button.setToolTip("Remove Last Shape"); self.remove_shape_button.setFixedSize(shape_size, shape_size); self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
-                self.show_grid_checkbox_x = QCheckBox("Snap X"); self.show_grid_checkbox_x.setToolTip("Snap horizontally. Ctrl+Shift+X or CMD+Shift+X toggles X and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
-                self.show_grid_checkbox_x.setFixedWidth(90)
+                self.draw_line_button = QPushButton("L")
+                self.draw_line_button.setFixedSize(shape_size, shape_size)
+                self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
+                
+                self.draw_rect_button = QPushButton("R")
+                self.draw_rect_button.setFixedSize(shape_size, shape_size)
+                self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
+                
+                self.remove_shape_button = QPushButton("X")
+                self.remove_shape_button.setFixedSize(shape_size, shape_size)
+                self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
+                
+                self.show_grid_checkbox_x = QCheckBox("Snap X")
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
-                self.show_grid_checkbox_y = QCheckBox("Snap Y"); self.show_grid_checkbox_y.setToolTip("Snap vertically. Ctrl+Shift+Y or CMD+Shift+Y  toggles Y and Ctrl+Shift+G or CMD+Shift+G for both X and Y.")
-                self.show_grid_checkbox_y.setFixedWidth(90)
+                
+                self.show_grid_checkbox_y = QCheckBox("Snap Y")
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
-                self.grid_size_input = QSpinBox(); self.grid_size_input.setRange(5, 100); self.grid_size_input.setValue(20); self.grid_size_input.setPrefix("Grid (px): ")
+                
+                self.grid_size_input = QSpinBox()
+                self.grid_size_input.setRange(5, 100)
+                self.grid_size_input.setValue(20)
+                self.grid_size_input.setPrefix("Grid: ")
                 self.grid_size_input.valueChanged.connect(self.update_live_view)
-                self.grid_size_input.setToolTip("Can increase or decrease grid pixel size by CTRL+Shift+Up or CTRL+Shift+Down")
-                self.move_resize_button = QPushButton("Move/Resize"); self.move_resize_button.setToolTip("Toggle mode to move/resize custom markers and shapes on the image."); self.move_resize_button.setCheckable(True); self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
-                self.modify_custom_marker_button = QPushButton("Modify All"); self.modify_custom_marker_button.setToolTip("Modify/Delete Custom Markers & Shapes"); self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
-                row2_layout.addWidget(self.remove_custom_marker_button); row2_layout.addWidget(self.reset_custom_marker_button); row2_layout.addSpacing(10)
-                row2_layout.addWidget(QLabel("Shapes:")); row2_layout.addWidget(self.draw_line_button); row2_layout.addWidget(self.draw_rect_button); row2_layout.addWidget(self.remove_shape_button); row2_layout.addSpacing(10)
-                row2_layout.addWidget(self.show_grid_checkbox_x); row2_layout.addWidget(self.show_grid_checkbox_y); row2_layout.addWidget(self.grid_size_input); row2_layout.addStretch(1)
-                row2_layout.addWidget(self.move_resize_button); row2_layout.addWidget(self.modify_custom_marker_button)
+                
+                self.move_resize_button = QPushButton("Move/Resize")
+                self.move_resize_button.setCheckable(True)
+                self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
+                
+                self.modify_custom_marker_button = QPushButton("Modify All")
+                self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
+
+                row2_layout.addWidget(self.remove_custom_marker_button)
+                row2_layout.addWidget(self.reset_custom_marker_button)
+                row2_layout.addSpacing(10)
+                row2_layout.addWidget(QLabel("Shapes:"))
+                row2_layout.addWidget(self.draw_line_button)
+                row2_layout.addWidget(self.draw_rect_button)
+                row2_layout.addWidget(self.remove_shape_button)
+                row2_layout.addSpacing(10)
+                row2_layout.addWidget(self.show_grid_checkbox_x)
+                row2_layout.addWidget(self.show_grid_checkbox_y)
+                row2_layout.addWidget(self.grid_size_input)
+                row2_layout.addStretch(1)
+                row2_layout.addWidget(self.move_resize_button)
+                row2_layout.addWidget(self.modify_custom_marker_button)
+                
                 custom_layout.addLayout(row2_layout)
                 main_layout.addWidget(custom_group)
 
@@ -11514,6 +11651,43 @@ if __name__ == "__main__":
                 proc_layout.addLayout(gpu_selection_layout)
                 layout.addWidget(proc_group)
                 
+                # --- User Interface Scaling ---
+                ui_group = QGroupBox("User Interface Scaling (Requires Restart)")
+                ui_layout = QHBoxLayout(ui_group)
+                
+                ui_layout.addWidget(QLabel("UI Scale:"))
+                self.ui_scale_combo = QComboBox()
+                
+                # Option mapping: Text -> Float Value
+                self.scale_options = [
+                    ("Auto (System Default)", 0.0),
+                    ("50%", 0.5),
+                    ("75%", 0.75),
+                    ("100% (No Scaling)", 1.0),
+                    ("125%", 1.25),
+                    ("150%", 1.50),
+                    ("175%", 1.75),
+                    ("200%", 2.00),
+                    ("225%", 2.25),
+                    ("250%", 2.50)
+                ]
+                
+                current_pref = getattr(self, 'ui_scale_preference', 0.0)
+                
+                for text, val in self.scale_options:
+                    self.ui_scale_combo.addItem(text, val)
+                    
+                # Set current index
+                index_to_set = 0
+                for i, (text, val) in enumerate(self.scale_options):
+                    if abs(val - current_pref) < 0.01:
+                        index_to_set = i
+                        break
+                self.ui_scale_combo.setCurrentIndex(index_to_set)
+                
+                ui_layout.addWidget(self.ui_scale_combo)
+                layout.addWidget(ui_group)
+
                 # --- Viewer Dimensions ---
                 dim_group = QGroupBox("Application Dimensions (Requires Restart)")
                 dim_layout = QGridLayout(dim_group)
@@ -11599,11 +11773,16 @@ if __name__ == "__main__":
                 self.gpu_device_id = self.gpu_selector.currentText().strip()
                 if not self.gpu_device_id: self.gpu_device_id = ":GPU:0"
                 
+                # Save UI Scale Preference
+                if hasattr(self, 'ui_scale_combo'):
+                    self.ui_scale_preference = self.ui_scale_combo.currentData()
+                
                 self.viewer_fixed_width = self.spin_viewer_w.value()
                 self.viewer_fixed_height = self.spin_viewer_h.value()
                 self.safe_content_width = self.spin_content_w.value()
                 
                 # Save into full config
+                # print(f"DEBUG: Saving UI Scale Pref: {getattr(self, 'ui_scale_preference', 'Not Set')}")
                 self.save_full_config()
                 
                 QMessageBox.information(self, "Settings Saved", 
@@ -11617,6 +11796,14 @@ if __name__ == "__main__":
                     self.gpu_radio.setChecked(self.use_gpu)
                     self.cpu_radio.setChecked(not self.use_gpu)
                     self.gpu_selector.setEnabled(self.use_gpu)
+                
+                # Update UI Scale Combo
+                if hasattr(self, 'ui_scale_combo') and hasattr(self, 'scale_options'):
+                    current_pref = getattr(self, 'ui_scale_preference', 0.0)
+                    for i, (text, val) in enumerate(self.scale_options):
+                        if abs(val - current_pref) < 0.01:
+                            self.ui_scale_combo.setCurrentIndex(i)
+                            break
                 
                 if hasattr(self, 'spin_viewer_w'): self.spin_viewer_w.setValue(self.viewer_fixed_width)
                 if hasattr(self, 'spin_viewer_h'): self.spin_viewer_h.setValue(self.viewer_fixed_height)
@@ -12871,6 +13058,7 @@ if __name__ == "__main__":
                 config_data = {
                     "viewer_position": getattr(self, "viewer_position", "Top"),
                     "use_gpu": getattr(self, "use_gpu", True),
+                    "ui_scale_preference": getattr(self, "ui_scale_preference", 0.0),
                     "viewer_fixed_width": getattr(self, "viewer_fixed_width", 550),
                     "viewer_fixed_height": getattr(self, "viewer_fixed_height", 350),
                     "safe_content_width": getattr(self, "safe_content_width", 1000),
@@ -13038,6 +13226,7 @@ if __name__ == "__main__":
                         
                         # --- New Settings ---
                         self.use_gpu = loaded_json.get("use_gpu", True)
+                        self.ui_scale_preference = loaded_json.get("ui_scale_preference", 0.0)
                         try:
                             cv2.ocl.setUseOpenCL(self.use_gpu)
                         except: pass
@@ -15134,7 +15323,10 @@ if __name__ == "__main__":
                 # ... (Draw Annotations - Code remains exactly the same as previous) ...
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
-                font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
+                
+                # Apply UI Scale Preference to the Font Size
+                current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
+                font_scale_factor = (render_scale / scale_native_to_view * current_ui_scale) if scale_native_to_view > 1e-6 else (render_scale * current_ui_scale)
                 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
                 
@@ -15453,7 +15645,10 @@ if __name__ == "__main__":
                 # --- The rest of the drawing logic for annotations is correct and remains unchanged ---
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
-                font_scale_factor = render_scale / scale_native_to_view if scale_native_to_view > 1e-6 else render_scale
+                
+                # Apply UI Scale Preference to the Font Size
+                current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
+                font_scale_factor = (render_scale / scale_native_to_view * current_ui_scale) if scale_native_to_view > 1e-6 else (render_scale * current_ui_scale)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
                 def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
