@@ -2408,14 +2408,11 @@ if __name__ == "__main__":
             # MAKE SURE TO PASTE THE REST OF THE UNCHANGED TableWindow METHODS HERE
             # ...
             def _get_config_dir(self):
-                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                    application_path = os.path.dirname(sys.executable)
-                elif getattr(sys, 'frozen', False):
-                    application_path = os.path.dirname(sys.executable)
-                else:
-                    try: application_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError: application_path = os.getcwd()
-                return application_path
+                """Returns the user home directory config path for history storage."""
+                app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                if not os.path.exists(app_path):
+                    os.makedirs(app_path)
+                return app_path
 
             def _load_history(self):
                 history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
@@ -4988,11 +4985,9 @@ if __name__ == "__main__":
                 self.use_gpu = True
                 
                 # Locate config file path early
-                if getattr(sys, 'frozen', False):
-                    app_path = os.path.dirname(sys.executable)
-                else:
-                    try: app_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError: app_path = os.getcwd()
+                app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                if not os.path.exists(app_path):
+                    os.makedirs(app_path)
                 
                 config_path = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
                 
@@ -5472,10 +5467,11 @@ if __name__ == "__main__":
             # --- ADD THIS NEW METHOD ---
             def save_app_settings(self):
                 """Saves non-preset global settings like theme and layout to the config file."""
-                config_filepath = os.path.join(
-                    os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__)),
-                    self.CONFIG_PRESET_FILE_NAME
-                )
+                app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                if not os.path.exists(app_path):
+                    os.makedirs(app_path)
+                
+                config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
                 
                 config_data = {}
                 try:
@@ -5906,7 +5902,7 @@ if __name__ == "__main__":
                 - Viewer is FIXED size (550x350).
                 - Controls area set to expand freely.
                 """
-                user_pref_scale = getattr(self, 'ui_scale_preference', 0.0)
+                user_pref_scale = getattr(self, 'ui_scale_preference', 1.0)
                 
                 if user_pref_scale > 0.1:
                     ui_scale_factor = user_pref_scale
@@ -6035,14 +6031,11 @@ if __name__ == "__main__":
                 self.viewer_position = position
                 
                 # --- Save the new layout preference to the config file ---
-                if getattr(sys, 'frozen', False):
-                    application_path = os.path.dirname(sys.executable)
-                else:
-                    try:
-                        application_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError:
-                        application_path = os.getcwd()
-                config_filepath = os.path.join(application_path, self.CONFIG_PRESET_FILE_NAME)
+                app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                if not os.path.exists(app_path):
+                    os.makedirs(app_path)
+                
+                config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
                 
                 config_data = {}
                 try: 
@@ -11699,7 +11692,7 @@ if __name__ == "__main__":
                     self.ui_scale_combo.addItem(text, val)
                     
                 # Set current index
-                index_to_set = 0
+                index_to_set = 3
                 for i, (text, val) in enumerate(self.scale_options):
                     if abs(val - current_pref) < 0.01:
                         index_to_set = i
@@ -13044,8 +13037,14 @@ if __name__ == "__main__":
                 try:
                     del self.presets_data[selected_preset_name]
 
-                    # Save the updated configuration
-                    config_filepath = os.path.join(os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__)), self.CONFIG_PRESET_FILE_NAME)
+                    # --- Standardized Path Logic ---
+                    app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                    if not os.path.exists(app_path):
+                        os.makedirs(app_path)
+                    
+                    config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
+                    # -------------------------------
+
                     with open(config_filepath, "w", encoding='utf-8') as f:
                         json.dump({"presets": self.presets_data}, f, indent=4)
 
@@ -13088,15 +13087,11 @@ if __name__ == "__main__":
                     "presets": getattr(self, "presets_data", {})
                 }
                 
-                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                    application_path = os.path.dirname(sys.executable)
-                elif getattr(sys, 'frozen', False):
-                     application_path = os.path.dirname(sys.executable)
-                else:
-                    try: application_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError: application_path = os.getcwd()
+                app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                if not os.path.exists(app_path):
+                    os.makedirs(app_path)
 
-                config_filepath = os.path.join(application_path, self.CONFIG_PRESET_FILE_NAME)
+                config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
                 
                 try:
                     with open(config_filepath, "w", encoding='utf-8') as f:
@@ -13200,16 +13195,12 @@ if __name__ == "__main__":
                 config_loaded_successfully = False
                 self.presets_data.clear() # Start with an empty dictionary
 
-                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                    application_path = os.path.dirname(sys.executable)
-                elif getattr(sys, 'frozen', False):
-                     application_path = os.path.dirname(sys.executable)
-                else:
-                    try: application_path = os.path.dirname(os.path.abspath(__file__))
-                    except NameError: application_path = os.getcwd()
-
-                config_filepath = os.path.join(application_path, self.CONFIG_PRESET_FILE_NAME)
-                pass # print(f"INFO: Attempting to load/create preset config at: {config_filepath}")
+                app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                if not os.path.exists(app_path):
+                    os.makedirs(app_path)
+                
+                config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
+                
 
                 default_marker_standards = {
                     # Proteins (kDa)
