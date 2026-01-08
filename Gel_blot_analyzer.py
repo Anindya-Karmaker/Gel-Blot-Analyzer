@@ -4977,6 +4977,12 @@ if __name__ == "__main__":
             def __init__(self):
                 super().__init__()
                 
+                self.resize_timer = QTimer()
+                self.resize_timer.setSingleShot(True)
+                self.resize_timer.setInterval(1000) # Save 1 second after resizing stops
+                self.resize_timer.timeout.connect(self.save_app_settings)
+                self.saved_window_width = None
+                self.saved_window_height = None
                 # --- 1. GPU/CPU Initialization (CRITICAL: Must run first) ---
                 self.gpu_device_id = ":GPU:0" # Default to 0 (usually Integrated)
                 self.use_gpu = True
@@ -5404,9 +5410,13 @@ if __name__ == "__main__":
                 elif self.viewer_position == "Left": self.layout_left_action.setChecked(True)
                 elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
                 
-                self._apply_initial_theme('dark')
-                self._apply_initial_theme('light')
+                self._apply_initial_theme(self.current_theme)
                 self._update_toolbar_icons()
+
+            def resizeEvent(self, event):
+                """Trigger auto-save 1 second after the user stops resizing."""
+                self.resize_timer.start()
+                super().resizeEvent(event)
             
             def _apply_initial_theme(self, current_theme):
                 """Applies the theme stylesheet based on the loaded preference."""
@@ -5457,6 +5467,7 @@ if __name__ == "__main__":
                 self._update_toolbar_icons()
                 
                 self._update_levels_histogram()
+                self.save_app_settings()
 
             # --- ADD THIS NEW METHOD ---
             def save_app_settings(self):
@@ -5477,6 +5488,8 @@ if __name__ == "__main__":
                     config_data = {} # Start fresh on parsing error
                 
                 # Update the settings we want to save
+                config_data["window_width"] = self.width()
+                config_data["window_height"] = self.height()
                 config_data["theme"] = self.current_theme
                 config_data["viewer_position"] = self.viewer_position
                 
@@ -5891,8 +5904,7 @@ if __name__ == "__main__":
                 """
                 Rebuilds the main window's layout.
                 - Viewer is FIXED size (550x350).
-                - Controls area set to a safe minimum width to prevent horizontal scrolling
-                  without forcing full-screen width.
+                - Controls area set to expand freely.
                 """
                 user_pref_scale = getattr(self, 'ui_scale_preference', 0.0)
                 
@@ -5903,7 +5915,6 @@ if __name__ == "__main__":
                     screen_obj = QGuiApplication.primaryScreen()
                     
                     # Calculate scale factor. Baseline is 96 DPI.
-                    # If logical DPI is 120 (125%), factor will be 1.25.
                     logical_dpi = screen_obj.logicalDotsPerInch()
                     dpr = screen_obj.devicePixelRatio()
                     
@@ -5930,27 +5941,33 @@ if __name__ == "__main__":
                 self.live_view_label.setFixedSize(VIEWER_FIXED_WIDTH, VIEWER_FIXED_HEIGHT)
                 self.live_view_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-                self.tab_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)
+                # --- FIX: Allow Tab Widget to Expand ---
+                self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 
+                # Reset any previous fixed constraints
+                self.tab_widget.setMinimumSize(0, 0)
+                self.tab_widget.setMaximumSize(16777215, 16777215)
 
                 if position in ["Top", "Bottom"]:
                     new_layout = QVBoxLayout(new_main_widget)
                     
-                    # HEIGHT: Screen - Viewer - Margins
-                    available_height = max(450, screen_h - VIEWER_FIXED_HEIGHT - 250)
-                    
-                    
                     if position == "Top":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(self.create_separator())
-                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter) 
+                        # --- FIX: Removed Qt.AlignCenter so it fills the width ---
+                        new_layout.addWidget(self.tab_widget, 1) 
                     else:  # Bottom
-                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter) 
+                        # --- FIX: Removed Qt.AlignCenter so it fills the width ---
+                        new_layout.addWidget(self.tab_widget, 1) 
                         new_layout.addWidget(self.create_separator())
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                     
-                    self.tab_widget.setFixedWidth(SAFE_CONTENT_WIDTH)
-                    self.tab_widget.setFixedHeight(available_height)
+                    # --- FIX: Use MinimumWidth instead of FixedWidth ---
+                    self.tab_widget.setMinimumWidth(SAFE_CONTENT_WIDTH)
+                    
+                    # Ensure it has enough vertical space initially but can grow
+                    available_height = max(450, screen_h - VIEWER_FIXED_HEIGHT - 250)
+                    self.tab_widget.setMinimumHeight(int(available_height * 0.8))
                     
                 
                 elif position in ["Left", "Right"]:
@@ -5960,19 +5977,22 @@ if __name__ == "__main__":
                     new_layout = QHBoxLayout(new_main_widget)
                     
                     # HEIGHT: Full screen height minus taskbars
-                    available_height = max(500, screen_h - VIEWER_FIXED_HEIGHT-250)
+                    available_height = max(500, screen_h - VIEWER_FIXED_HEIGHT - 250)
 
                     if position == "Left":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(separator)
-                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter)  # Use tab_widget directly
+                        # --- FIX: Removed Qt.AlignCenter ---
+                        new_layout.addWidget(self.tab_widget, 1) 
                     else:  # Right
-                        new_layout.addWidget(self.tab_widget, 1, Qt.AlignCenter)  # Use tab_widget directly
+                        # --- FIX: Removed Qt.AlignCenter ---
+                        new_layout.addWidget(self.tab_widget, 1) 
                         new_layout.addWidget(separator)
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
 
-                    self.tab_widget.setFixedHeight(available_height)
-                    self.tab_widget.setFixedWidth(SAFE_CONTENT_WIDTH-100)
+                    # --- FIX: Use Minimum dimensions ---
+                    self.tab_widget.setMinimumHeight(available_height)
+                    self.tab_widget.setMinimumWidth(SAFE_CONTENT_WIDTH - 100)
                     
                     
                 if new_layout:
@@ -5985,18 +6005,16 @@ if __name__ == "__main__":
                     if old_central_widget:
                         old_central_widget.deleteLater()
                     
-                    # --- FIX: Force the window to resize to fit the new content (shrinking the outline) ---
                     QApplication.processEvents()
                     
-                    # Get the preferred size of the new central widget which is determined by fixed widths inside
+                    # --- MODIFIED RESIZE LOGIC ---
                     hint = new_main_widget.sizeHint()
                     
-                    # Resize the window to exactly fit the content
-                    self.resize(hint)
-                    
-                    # Ensure it doesn't get stuck smaller than content
-                    #self.setMinimumWidth(hint.width())
-
+                    # If we have a saved valid size, use it. Otherwise use the auto-calculated hint.
+                    if self.saved_window_width and self.saved_window_height and self.saved_window_width > 0 and self.saved_window_height > 0:
+                        self.resize(self.saved_window_width, self.saved_window_height)
+                    else:
+                        self.resize(hint)
                 
 
             def open_settings_tab(self):
@@ -6782,7 +6800,10 @@ if __name__ == "__main__":
                 """Regenerates all toolbar icons based on the current theme's palette."""
                 icon_size = QSize(30, 30) 
                 # --- FIX: Get the text color from the CURRENT palette ---
-                text_color = self.palette().color(QPalette.Text) # Use QPalette.Text for better contrast guarantee
+                if hasattr(self, 'current_theme') and self.current_theme == 'dark':
+                    text_color = QColor("#F1F1F1") # White/Light Gray for Dark Mode
+                else:
+                    text_color = QColor("#333333") # Dark Gray/Black for Light Mode
 
                 # Create and set icons for each action
                 self.load_action.setIcon(create_text_icon("Wingdings", icon_size, text_color, "1"))
@@ -11660,7 +11681,7 @@ if __name__ == "__main__":
                 
                 # Option mapping: Text -> Float Value
                 self.scale_options = [
-                    ("Auto (System Default)", 0.0),
+                    ("0%", 0.0),
                     ("50%", 0.5),
                     ("75%", 0.75),
                     ("100% (No Scaling)", 1.0),
@@ -11672,7 +11693,7 @@ if __name__ == "__main__":
                     ("250%", 2.50)
                 ]
                 
-                current_pref = getattr(self, 'ui_scale_preference', 0.0)
+                current_pref = getattr(self, 'ui_scale_preference', 1.0)
                 
                 for text, val in self.scale_options:
                     self.ui_scale_combo.addItem(text, val)
@@ -11799,7 +11820,7 @@ if __name__ == "__main__":
                 
                 # Update UI Scale Combo
                 if hasattr(self, 'ui_scale_combo') and hasattr(self, 'scale_options'):
-                    current_pref = getattr(self, 'ui_scale_preference', 0.0)
+                    current_pref = getattr(self, 'ui_scale_preference', 1.0)
                     for i, (text, val) in enumerate(self.scale_options):
                         if abs(val - current_pref) < 0.01:
                             self.ui_scale_combo.setCurrentIndex(i)
@@ -13057,8 +13078,10 @@ if __name__ == "__main__":
                 """Saves all application settings and presets to the config file."""
                 config_data = {
                     "viewer_position": getattr(self, "viewer_position", "Top"),
+                    "window_width": getattr(self, "window_width", self.width()),
+                    "window_height": getattr(self, "window_height", self.height()),
                     "use_gpu": getattr(self, "use_gpu", True),
-                    "ui_scale_preference": getattr(self, "ui_scale_preference", 0.0),
+                    "ui_scale_preference": getattr(self, "ui_scale_preference", 1.0),
                     "viewer_fixed_width": getattr(self, "viewer_fixed_width", 550),
                     "viewer_fixed_height": getattr(self, "viewer_fixed_height", 350),
                     "safe_content_width": getattr(self, "safe_content_width", 1000),
@@ -13223,10 +13246,14 @@ if __name__ == "__main__":
                             loaded_json = json.load(f)
 
                         self.viewer_position = loaded_json.get("viewer_position", "Top")
+                        self.current_theme = loaded_json.get("theme", "light")
+
+                        self.saved_window_width = loaded_json.get("window_width", None)
+                        self.saved_window_height = loaded_json.get("window_height", None)
                         
                         # --- New Settings ---
                         self.use_gpu = loaded_json.get("use_gpu", True)
-                        self.ui_scale_preference = loaded_json.get("ui_scale_preference", 0.0)
+                        self.ui_scale_preference = loaded_json.get("ui_scale_preference", 1.0)
                         try:
                             cv2.ocl.setUseOpenCL(self.use_gpu)
                         except: pass
