@@ -11242,28 +11242,32 @@ if __name__ == "__main__":
                 # Preset Row
                 presets_layout.addWidget(QLabel("Preset:"), 0, 0)
                 self.combo_box = QComboBox(self)
+                self.combo_box.setToolTip("Select a saved marker configuration or 'Custom' to create your own.")
                 if hasattr(self, 'presets_data') and self.presets_data: 
                     self.combo_box.addItems(sorted(self.presets_data.keys()))
                 self.combo_box.addItem("Custom")
                 self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
-                # Removed fixed width to allow shrinking
                 presets_layout.addWidget(self.combo_box, 0, 1)
                 
                 self.rename_input = QLineEdit(self)
                 self.rename_input.setPlaceholderText("Enter new name...")
+                self.rename_input.setToolTip("Enter a name here to save the current 'Custom' configuration as a new preset.")
                 self.rename_input.setEnabled(False)
                 presets_layout.addWidget(self.rename_input, 0, 2)
                 
                 self.save_button = QPushButton("Save")
+                self.save_button.setToolTip("Save the current configuration as a new preset.")
                 self.save_button.clicked.connect(self.save_config)
                 presets_layout.addWidget(self.save_button, 0, 3)
                 
                 self.remove_config_button = QPushButton("Remove")
+                self.remove_config_button.setToolTip("Delete the currently selected preset.")
                 self.remove_config_button.clicked.connect(self.remove_config)
                 presets_layout.addWidget(self.remove_config_button, 0, 4)
                 
                 # Checkbox Row
                 self.load_custom_from_preset_checkbox = QCheckBox("Load Custom Markers/Shapes from Preset")
+                self.load_custom_from_preset_checkbox.setToolTip("If checked, loading a preset will also restore saved lines, rectangles, and custom text markers.")
                 self.load_custom_from_preset_checkbox.setChecked(True)
                 presets_layout.addWidget(self.load_custom_from_preset_checkbox, 1, 1, 1, 4)
                 
@@ -11271,6 +11275,7 @@ if __name__ == "__main__":
                 presets_layout.addWidget(QLabel("L/R Values:"), 2, 0)
                 self.marker_values_textbox = QLineEdit(self)
                 self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-separated)")
+                self.marker_values_textbox.setToolTip("Comma-separated molecular weights (e.g., 250, 150, 100) for Left/Right markers.")
                 self.marker_values_textbox.setEnabled(False)
                 presets_layout.addWidget(self.marker_values_textbox, 2, 1, 1, 4)
                 
@@ -11278,10 +11283,12 @@ if __name__ == "__main__":
                 presets_layout.addWidget(QLabel("Top Labels:"), 3, 0, Qt.AlignTop)
                 self.top_marker_input = QTextEdit(self)
                 self.top_marker_input.setText(", ".join(map(str, getattr(self, 'top_label', []))))
+                self.top_marker_input.setToolTip("Comma-separated labels (e.g., Lane 1, Lane 2, Ctrl) for Top markers.")
                 self.top_marker_input.setFixedHeight(50)
                 presets_layout.addWidget(self.top_marker_input, 3, 1, 1, 3)
                 
                 self.update_labels_button = QPushButton("Update Labels")
+                self.update_labels_button.setToolTip("Apply changes made to the text boxes above to the image immediately.")
                 self.update_labels_button.clicked.connect(self.update_all_labels)
                 presets_layout.addWidget(self.update_labels_button, 3, 4)
                 
@@ -11295,15 +11302,18 @@ if __name__ == "__main__":
                 # Font Options Row
                 font_options_layout = QHBoxLayout()
                 self.font_combo_box = QFontComboBox()
+                self.font_combo_box.setToolTip("Font family for Standard Markers (Left/Right/Top).")
                 self.font_combo_box.setCurrentFont(QFont(self.font_family))
                 self.font_combo_box.currentFontChanged.connect(self.update_font)
                 
                 self.font_size_spinner = QSpinBox()
                 self.font_size_spinner.setRange(6, 72)
                 self.font_size_spinner.setValue(self.font_size)
+                self.font_size_spinner.setToolTip("Font size for Standard Markers.")
                 self.font_size_spinner.valueChanged.connect(self.update_font)
                 
                 self.font_color_button = QPushButton("Color")
+                self.font_color_button.setToolTip("Click to change color for Standard Markers.")
                 self.font_color_button.clicked.connect(self.select_font_color)
                 self._update_color_button_style(self.font_color_button, self.font_color)
                 
@@ -11311,6 +11321,7 @@ if __name__ == "__main__":
                 self.font_rotation_input.setRange(-180, 180)
                 self.font_rotation_input.setValue(self.font_rotation)
                 self.font_rotation_input.setSuffix(" °")
+                self.font_rotation_input.setToolTip("Rotation angle for Top Markers (e.g., -45°).")
                 self.font_rotation_input.valueChanged.connect(self.update_font)
                 
                 font_options_layout.addWidget(QLabel("Font:"))
@@ -11323,26 +11334,32 @@ if __name__ == "__main__":
                 standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 
-                # Sliders Rows - Using a helper to reduce code bloat
-                def add_marker_row(row_idx, label, mode, slider_attr, range_attr, val_attr):
+                # Sliders Rows
+                def add_marker_row(row_idx, label, mode, slider_attr, range_attr, val_attr, shortcut_key):
                     btn_box = QHBoxLayout()
                     btn_place = QPushButton(f"Place {label}")
+                    btn_place.setToolTip(f"Click to place {label} markers on the image.\nShortcut: Ctrl+Shift+{shortcut_key}")
                     btn_place.clicked.connect(getattr(self, f"enable_{mode}_marker_mode"))
+                    
                     btn_rem = QPushButton("Remove Last")
+                    btn_rem.setToolTip(f"Remove the most recently added {label} marker.")
                     btn_rem.clicked.connect(lambda: self.reset_marker(mode, 'remove'))
+                    
                     btn_rst = QPushButton("Reset All")
+                    btn_rst.setToolTip(f"Remove ALL {label} markers.")
                     btn_rst.clicked.connect(lambda: self.reset_marker(mode, 'reset'))
+                    
                     btn_box.addWidget(btn_place); btn_box.addWidget(btn_rem); btn_box.addWidget(btn_rst)
                     
                     standard_layout.addLayout(btn_box, row_idx, 0)
                     
                     slider = QSlider(Qt.Horizontal)
+                    slider.setToolTip(f"Adjust horizontal/vertical padding/offset for {label} markers.")
                     r_min, r_max = getattr(self, range_attr)
                     slider.setRange(r_min, r_max)
                     slider.setValue(getattr(self, val_attr))
                     setattr(self, slider_attr, slider) # Store reference
                     
-                    # Determine update function name
                     update_func_name = f"update_{label.lower()}_padding"
                     slider.valueChanged.connect(lambda: getattr(self, update_func_name)())
                     slider.valueChanged.connect(lambda: slider.setFocus())
@@ -11352,18 +11369,18 @@ if __name__ == "__main__":
                     # Copy buttons
                     if mode == 'left':
                         cp_btn = QPushButton("Copy →")
-                        cp_btn.setToolTip("Copy Right Markers & Offset to Left")
+                        cp_btn.setToolTip("Copy Left Markers & Padding to the Right side.")
                         cp_btn.clicked.connect(lambda: self.duplicate_marker('left'))
                         standard_layout.addWidget(cp_btn, row_idx, 2)
                     elif mode == 'right':
                         cp_btn = QPushButton("← Copy")
-                        cp_btn.setToolTip("Copy Left Markers & Offset to Right")
+                        cp_btn.setToolTip("Copy Right Markers & Padding to the Left side.")
                         cp_btn.clicked.connect(lambda: self.duplicate_marker('right'))
                         standard_layout.addWidget(cp_btn, row_idx, 2)
 
-                add_marker_row(2, "Left", 'left', 'left_padding_slider', 'left_slider_range', 'left_marker_shift_added')
-                add_marker_row(3, "Right", 'right', 'right_padding_slider', 'right_slider_range', 'right_marker_shift_added')
-                add_marker_row(4, "Top", 'top', 'top_padding_slider', 'top_slider_range', 'top_marker_shift_added')
+                add_marker_row(2, "Left", 'left', 'left_padding_slider', 'left_slider_range', 'left_marker_shift_added', 'L')
+                add_marker_row(3, "Right", 'right', 'right_padding_slider', 'right_slider_range', 'right_marker_shift_added', 'R')
+                add_marker_row(4, "Top", 'top', 'top_padding_slider', 'top_slider_range', 'top_marker_shift_added', 'T')
 
                 main_layout.addWidget(standard_group)
 
@@ -11373,25 +11390,29 @@ if __name__ == "__main__":
                 custom_layout = QVBoxLayout(custom_group)
                 custom_layout.setSpacing(6)
                 
+                # Row 1: Creation Tools
                 row1_layout = QHBoxLayout()
                 self.custom_marker_button = QPushButton("Place Custom")
+                self.custom_marker_button.setToolTip("Activate tool to place text on image.\nText from the box on the right will be used.")
                 self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
                 
                 self.custom_marker_text_entry = QLineEdit()
                 self.custom_marker_text_entry.setPlaceholderText("Custom text...")
+                self.custom_marker_text_entry.setToolTip("Enter text for custom markers here.\nUse arrow buttons to insert symbols.")
                 
-                # Arrow Buttons
                 arrow_layout = QHBoxLayout()
                 arrow_layout.setSpacing(2)
                 arrow_font = QFont(); arrow_font.setPointSize(12); arrow_font.setBold(True)
-                for txt, key in [("←","←"), ("→","→"), ("↑","↑"), ("↓","↓")]:
+                for txt, key in [("←","Left"), ("→","Right"), ("↑","Up"), ("↓","Down")]:
                     btn = QPushButton(txt)
                     btn.setFixedSize(30, 30)
                     btn.setFont(arrow_font)
-                    btn.clicked.connect(lambda checked, t=key: self.arrow_marker(t))
+                    btn.setToolTip(f"Insert {key} Arrow.\nShortcut: Ctrl+{key}")
+                    btn.clicked.connect(lambda checked, t=txt: self.arrow_marker(t))
                     arrow_layout.addWidget(btn)
                 
                 self.custom_font_type_dropdown = QFontComboBox()
+                self.custom_font_type_dropdown.setToolTip("Font family for Custom Markers.")
                 self.custom_font_type_dropdown.setCurrentFont(QFont("Arial"))
                 self.custom_font_type_dropdown.currentFontChanged.connect(self.update_marker_text_font)
                 
@@ -11399,8 +11420,10 @@ if __name__ == "__main__":
                 self.custom_font_size_spinbox.setRange(1, 150)
                 self.custom_font_size_spinbox.setValue(12)
                 self.custom_font_size_spinbox.setPrefix("Size: ")
+                self.custom_font_size_spinbox.setToolTip("Font size for Custom Markers.")
                 
                 self.custom_marker_color_button = QPushButton("Color")
+                self.custom_marker_color_button.setToolTip("Color for Custom Markers and Shapes.")
                 self.custom_marker_color_button.clicked.connect(self.select_custom_marker_color)
                 if not hasattr(self, 'custom_marker_color'): self.custom_marker_color = QColor(0,0,0)
                 self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
@@ -11413,42 +11436,57 @@ if __name__ == "__main__":
                 row1_layout.addWidget(self.custom_marker_color_button)
                 custom_layout.addLayout(row1_layout)
 
+                # Row 2: Marker Reset + Shapes + Grid + Actions (Optimized for space)
                 row2_layout = QHBoxLayout()
-                self.remove_custom_marker_button = QPushButton("Remove Last")
+                
+                self.remove_custom_marker_button = QPushButton("Rem. Last")
+                self.remove_custom_marker_button.setToolTip("Remove the last placed Custom Marker.")
                 self.remove_custom_marker_button.clicked.connect(self.remove_custom_marker_mode)
-                self.reset_custom_marker_button = QPushButton("Reset All")
+                
+                self.reset_custom_marker_button = QPushButton("Reset")
+                self.reset_custom_marker_button.setToolTip("Remove ALL Custom Markers.")
                 self.reset_custom_marker_button.clicked.connect(self.reset_custom_marker_mode)
                 
                 shape_size = 25
                 self.draw_line_button = QPushButton("L")
                 self.draw_line_button.setFixedSize(shape_size, shape_size)
+                self.draw_line_button.setToolTip("Draw Line.\nHold Shift to constrain angle (0, 45, 90).")
                 self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
                 
                 self.draw_rect_button = QPushButton("R")
                 self.draw_rect_button.setFixedSize(shape_size, shape_size)
+                self.draw_rect_button.setToolTip("Draw Rectangle.\nHold Shift for perfect square.")
                 self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
                 
                 self.remove_shape_button = QPushButton("X")
                 self.remove_shape_button.setFixedSize(shape_size, shape_size)
+                self.remove_shape_button.setToolTip("Remove Last Shape.")
                 self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
                 
                 self.show_grid_checkbox_x = QCheckBox("Snap X")
+                self.show_grid_checkbox_x.setToolTip("Snap mouse to vertical grid lines.\nShortcut: Ctrl+Shift+X")
+                self.show_grid_checkbox_x.setFixedWidth(100)
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
                 
                 self.show_grid_checkbox_y = QCheckBox("Snap Y")
+                self.show_grid_checkbox_y.setToolTip("Snap mouse to horizontal grid lines.\nShortcut: Ctrl+Shift+Y")
+                self.show_grid_checkbox_y.setFixedWidth(100)
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
                 
                 self.grid_size_input = QSpinBox()
                 self.grid_size_input.setRange(5, 100)
                 self.grid_size_input.setValue(20)
-                self.grid_size_input.setPrefix("Grid: ")
+                self.grid_size_input.setPrefix("Grid (px): ")
+                self.grid_size_input.setToolTip("Grid Size in pixels with Shortcut: Ctrl+Shift+Up/Down")                
                 self.grid_size_input.valueChanged.connect(self.update_live_view)
                 
                 self.move_resize_button = QPushButton("Move/Resize")
                 self.move_resize_button.setCheckable(True)
+                self.move_resize_button.setToolTip("Select and Move/Resize items.\n- Drag body to move.\n- Drag corners to resize (Shapes).\n- Hold Shift to constrain axis.")
                 self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
                 
-                self.modify_custom_marker_button = QPushButton("Modify All")
+                self.modify_custom_marker_button = QPushButton("Marker Options")
+                self.modify_custom_marker_button.setToolTip("Open dialog to edit precise coordinates/colors of all items.")
                 self.modify_custom_marker_button.clicked.connect(self.open_modify_markers_dialog)
 
                 row2_layout.addWidget(self.remove_custom_marker_button)
