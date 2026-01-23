@@ -5407,6 +5407,7 @@ if __name__ == "__main__":
                 
                 self._apply_initial_theme(self.current_theme)
                 self._update_toolbar_icons()
+                self._update_levels_histogram()
 
             def resizeEvent(self, event):
                 """Trigger auto-save 1 second after the user stops resizing."""
@@ -9275,6 +9276,7 @@ if __name__ == "__main__":
                 # -----------------------------------------
 
                 self._update_overlay_preview(2)
+                self.reset_overlay2_transform()
                 self.place_image2()
                 self.adjustment_context_combo.model().item(2).setEnabled(True)
                 self.adjustment_context_combo.setCurrentText("Overlay 2 (Overlay)")
@@ -9467,9 +9469,33 @@ if __name__ == "__main__":
 
                 blend_value = self.blend_slider.value()
 
-                # --- 3. Draw Image 1 (Base) ---
+                # --- 2. Draw Base Master Image (Always Background) ---
+                if self.image_master and not self.image_master.isNull():
+                    # Determine Main Image Settings (Saved or Current)
+                    main_settings = {}
+                    if hasattr(self, 'main_levels_gamma'):
+                        main_settings['levels_gamma'] = self.main_levels_gamma
+                    else:
+                        # Fallback if no specific main levels saved (e.g. never switched context)
+                        main_settings['levels_gamma'] = {
+                            'black_point': self.black_point_slider.value(),
+                            'white_point': self.white_point_slider.value(),
+                            'gamma': self.gamma_slider.value()
+                        }
+                    
+                    main_settings['is_inverted'] = self.main_image_is_inverted
+                    main_settings['channel_mixer'] = getattr(self, 'channel_mixer_data', self._get_default_adjustments()['channel_mixer']).copy()
+                    main_settings['unsharp_mask'] = getattr(self, 'unsharp_mask_data', self._get_default_adjustments()['unsharp_mask']).copy()
+                    main_settings['clahe'] = getattr(self, 'clahe_data', self._get_default_adjustments()['clahe']).copy()
+
+                    base_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
+                    painter.setOpacity(1.0)
+                    rect_base = QRectF(0.0, 0.0, float(final_canvas.width()), float(final_canvas.height()))
+                    painter.drawImage(rect_base, base_img)
+
+                # --- 3. Draw Image 1 (Base/Overlay 1) ---
                 if has_img1 and adjusted_img1:
-                    # Base image drawn at 100% opacity to ensure visibility
+                     # Image 1 layer
                     painter.setOpacity(1.0)
                     
                     rect1_native = QRectF(
@@ -9485,6 +9511,7 @@ if __name__ == "__main__":
                         painter.restore()
                     else:
                         painter.drawImage(rect1_native, adjusted_img1)
+
                 
                 # --- 4. Draw Image 2 (Overlay) ---
                 if has_img2 and adjusted_img2:
@@ -9985,7 +10012,12 @@ if __name__ == "__main__":
                     self.channel_mixer_data = {'r': self.cm_red_slider.value(), 'g': self.cm_green_slider.value(), 'b': self.cm_blue_slider.value(), 'mono': self.cm_mono_checkbox.isChecked()}
                     self.unsharp_mask_data = {'amount': self.usm_amount_slider.value(), 'radius': self.usm_radius_slider.value() / 10.0, 'threshold': self.usm_threshold_slider.value()}
                     self.clahe_data = {'clip_limit': self.clahe_clip_slider.value() / 10.0, 'tile_size': self.clahe_tile_slider.value()}
-                    # The main image levels are not stored separately, they are part of the main undo stack
+                    # SAVE LEVELS for Main Image
+                    self.main_levels_gamma = {
+                        'black_point': self.black_point_slider.value(),
+                        'white_point': self.white_point_slider.value(),
+                        'gamma': self.gamma_slider.value()
+                    }
                     return
                 elif self.adjustment_context == "Overlay 1 (Base)":
                     target_dict = self.image1_adjustments
@@ -10002,7 +10034,18 @@ if __name__ == "__main__":
                 """Loads settings from the appropriate dictionary and updates the UI sliders."""
                 settings = {}
                 if context == "Main Image":
-                    settings['levels_gamma'] = {'black_point': self.black_point_slider.value(), 'white_point': self.white_point_slider.value(), 'gamma': self.gamma_slider.value()} # Use current values
+                    # Load from saved attributes or defaults
+                    default_lg = self._get_default_adjustments()['levels_gamma']
+                    saved_lg = getattr(self, 'main_levels_gamma', default_lg)
+                    # However, if we never saved them (e.g. startup), use current sliders? 
+                    # No, better to use defaults or what's there if main_levels_gamma is missing.
+                    # Check if we have main_levels_gamma.
+                    if hasattr(self, 'main_levels_gamma'):
+                         settings['levels_gamma'] = self.main_levels_gamma
+                    else:
+                         # First run, rely on current slider values (which represent main)
+                         settings['levels_gamma'] = {'black_point': self.black_point_slider.value(), 'white_point': self.white_point_slider.value(), 'gamma': self.gamma_slider.value()}
+                         
                     settings['channel_mixer'] = self.channel_mixer_data
                     settings['unsharp_mask'] = self.unsharp_mask_data
                     settings['clahe'] = self.clahe_data
@@ -15357,10 +15400,24 @@ if __name__ == "__main__":
                 canvas_width = native_width * render_scale
                 canvas_height = native_height * render_scale
                 
+                # Check Overlays existence
+                has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
+                has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
+                
+                # Grab overlay adjusted previews if they exist
+                adjusted_img1 = getattr(self, 'image1_adjusted_preview', None) if has_img1 else None
+                adjusted_img2 = getattr(self, 'image2_adjusted_preview', None) if has_img2 else None
+
                 # Check if result is high depth (Grayscale16 or RGBA64/RGBX64)
                 fmt = fully_adjusted_master.format()
                 is_high_depth = fmt in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
                 
+                # If overlays are present and high bit, we should respect that
+                if has_img1 and adjusted_img1:
+                    if adjusted_img1.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]: is_high_depth = True
+                if has_img2 and adjusted_img2:
+                    if adjusted_img2.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]: is_high_depth = True
+
                 if is_high_depth:
                     # Use 64-bit RGBA for the canvas to preserve depth while allowing colored annotations
                     canvas_format = QImage.Format_RGBA64
@@ -15372,9 +15429,83 @@ if __name__ == "__main__":
                 
                 painter = QPainter(modified_canvas)
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+                # Ensure antialiasing for rotation if needed, though pixel art might prefer otherwise. 
+                # Keeping False for SmoothPixmap like original, but maybe True for rotation? 
+                # Original code used False for image.
                 
-                # Draw the image
-                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), fully_adjusted_master, QRectF(fully_adjusted_master.rect()))
+                # --- DRAWING LOGIC WITH OVERLAYS ---
+                
+                # 0. Draw Background (Master)
+                if True: # Always draw master background to prevent data loss
+                    # Determine Main Image Settings
+                    main_settings = {}
+                    if hasattr(self, 'main_levels_gamma'):
+                        main_settings['levels_gamma'] = self.main_levels_gamma
+                    else:
+                        main_settings['levels_gamma'] = {
+                            'black_point': self.black_point_slider.value(),
+                            'white_point': self.white_point_slider.value(),
+                            'gamma': self.gamma_slider.value()
+                        }
+                    main_settings['is_inverted'] = self.main_image_is_inverted
+                    main_settings['channel_mixer'] = getattr(self, 'channel_mixer_data', self._get_default_adjustments()['channel_mixer']).copy()
+                    main_settings['unsharp_mask'] = getattr(self, 'unsharp_mask_data', self._get_default_adjustments()['unsharp_mask']).copy()
+                    main_settings['clahe'] = getattr(self, 'clahe_data', self._get_default_adjustments()['clahe']).copy()
+                    
+                    # We need to generate the base image with these settings
+                    # fully_adjusted_master might range from "Main Settings" (if in Main context) or "Overlay Settings" (bleed)
+                    # Safest is to re-generate it here specifically for the background layer
+                    base_bg_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
+                    
+                    painter.setOpacity(1.0)
+                    painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_bg_img, QRectF(base_bg_img.rect()))
+
+                # 1. Base Layer (Image 1 - Overlay 1)
+                if has_img1 and adjusted_img1:
+                    # Draw Image 1
+                    painter.setOpacity(1.0)
+                    
+                    w_scaled = adjusted_img1.width() * (self.image1_resize_slider.value()/100.0) * render_scale
+                    h_scaled = adjusted_img1.height() * (self.image1_resize_slider.value()/100.0) * render_scale
+                    x_scaled = self.image1_position[0] * render_scale
+                    y_scaled = self.image1_position[1] * render_scale
+                    
+                    rect1_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
+                    
+                    rotation1 = self.image1_rotation_slider.value() / 10.0
+                    if abs(rotation1) > 0.01:
+                        center_point = rect1_draw.center()
+                        painter.save(); painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
+                        painter.drawImage(rect1_draw, adjusted_img1)
+                        painter.restore()
+                    else:
+                        painter.drawImage(rect1_draw, adjusted_img1)
+                # Note: removed the 'else draw Standard Master' block since we draw Master at step 0 now.
+
+
+                # 2. Overlay Layer (Image 2)
+                if has_img2 and adjusted_img2:
+                    blend_val = self.blend_slider.value() if hasattr(self, 'blend_slider') else 50
+                    painter.setOpacity(blend_val / 100.0)
+                    
+                    w_scaled = adjusted_img2.width() * (self.image2_resize_slider.value()/100.0) * render_scale
+                    h_scaled = adjusted_img2.height() * (self.image2_resize_slider.value()/100.0) * render_scale
+                    x_scaled = self.image2_position[0] * render_scale
+                    y_scaled = self.image2_position[1] * render_scale
+                    
+                    rect2_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
+                    
+                    rotation2 = self.image2_rotation_slider.value() / 10.0
+                    if abs(rotation2) > 0.01:
+                        center_point = rect2_draw.center()
+                        painter.save(); painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
+                        painter.drawImage(rect2_draw, adjusted_img2)
+                        painter.restore()
+                    else:
+                        painter.drawImage(rect2_draw, adjusted_img2)
+                    
+                    # Reset opacity for markers
+                    painter.setOpacity(1.0)
 
                 # ... (Draw Annotations - Code remains exactly the same as previous) ...
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
