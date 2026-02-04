@@ -1996,7 +1996,8 @@ if __name__ == "__main__":
         
                 # Find the visual row of the button that was clicked
                 for row in range(self.table_widget.rowCount()):
-                    if self.table_widget.cellWidget(row, 7) is clicked_button:
+                    # FIX: Check column 8 (Actions), not column 7 (Color)
+                    if self.table_widget.cellWidget(row, 8) is clicked_button:
                         item_data = self.table_widget.item(row, 0).data(Qt.UserRole)
                         if not item_data: return
                         
@@ -9988,7 +9989,9 @@ if __name__ == "__main__":
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
-                    self.update_live_view()
+                    
+                    # User requested reset on permanent changes
+                    self.reset_all_adjustments()
                     
                     QMessageBox.information(self, "Success", f"Image converted: {conversion_type}")
                 else:
@@ -10348,11 +10351,62 @@ if __name__ == "__main__":
                             lab_chans = cv2.split(u_lab)
                             u_l = lab_chans[0]
                             
+                            # STEP 2: Handle Transparent Regions for CLAHE
+                            u_l_for_clahe = u_l
+                            if u_alpha is not None:
+                                # Normalized Convolution to fill transparent areas smoothly
+                                # This prevents 'histogram spikes' from mean-filling which confuse CLAHE
+                                
+                                # 1. Create float mask (0.0 transparent, 1.0 opaque)
+                                # Alpha is 0..1 (float32) in this branch
+                                mask_f = u_alpha 
+                                
+                                # 2. Blur the image * mask
+                                # u_l is float32 [0..1]
+                                if isinstance(u_l, cv2.UMat):
+                                    img_masked = cv2.multiply(u_l, mask_f)
+                                    blur_img = cv2.boxFilter(img_masked, -1, (15, 15), borderType=cv2.BORDER_CONSTANT)
+                                    blur_mask = cv2.boxFilter(mask_f, -1, (15, 15), borderType=cv2.BORDER_CONSTANT)
+                                    
+                                    # Avoid division by zero
+                                    # Add epsilon to mask where it is 0? Or just divide and patch?
+                                    # safe_divide: dst = src1 / src2
+                                    # cv2.divide handles 0 division (saturates or 0?)
+                                    # Let's add epsilon to blur_mask
+                                    cv2.add(blur_mask, 0.0001, dst=blur_mask)
+                                    
+                                    fill_bg = cv2.divide(blur_img, blur_mask)
+                                    
+                                    # Combine: Original where alpha>0, Filled where alpha<=0
+                                    # Logic: dst = src1 * alpha + src2 * (1-alpha)? No, simpler:
+                                    # Use the hard mask we made before?
+                                    trans_mask_8u = cv2.compare(u_alpha, 0.001, cv2.CMP_LE) # 255 if trans, 0 if opaque
+                                    
+                                    u_l_for_clahe = cv2.UMat(u_l)
+                                    # Manuall masked copyTo for UMat
+                                    # 1. Clear destination where mask is set
+                                    cv2.subtract(u_l_for_clahe, u_l_for_clahe, dst=u_l_for_clahe, mask=trans_mask_8u)
+                                    # 2. Add source where mask is set
+                                    cv2.add(u_l_for_clahe, fill_bg, dst=u_l_for_clahe, mask=trans_mask_8u)
+                                else:
+                                    # Numpy path
+                                    img_masked = u_l * mask_f
+                                    blur_img = cv2.boxFilter(img_masked, -1, (15, 15))
+                                    blur_mask = cv2.boxFilter(mask_f, -1, (15, 15))
+                                    
+                                    # Prevent div/0
+                                    blur_mask[blur_mask < 0.0001] = 0.0001
+                                    fill_bg = blur_img / blur_mask
+                                    
+                                    mask_bool = u_alpha < 0.001
+                                    u_l_for_clahe = u_l.copy()
+                                    u_l_for_clahe[mask_bool] = fill_bg[mask_bool]
+                            
                             # STEP 2: Scale L to 16-bit for CLAHE
-                            if isinstance(u_l, cv2.UMat):
-                                u_l_u16 = cv2.multiply(u_l, 655.35, dtype=cv2.CV_16U)
+                            if isinstance(u_l_for_clahe, cv2.UMat):
+                                u_l_u16 = cv2.multiply(u_l_for_clahe, 655.35, dtype=cv2.CV_16U)
                             else:
-                                u_l_u16 = (u_l * 655.35).astype(np.uint16)
+                                u_l_u16 = (u_l_for_clahe * 655.35).astype(np.uint16)
 
                             u_l_u16 = clahe.apply(u_l_u16)
                             
@@ -10401,7 +10455,57 @@ if __name__ == "__main__":
                             u_lab = cv2.cvtColor(u_color, code_to_lab)
                             
                             lab_planes = list(cv2.split(u_lab))
-                            lab_planes[0] = clahe.apply(lab_planes[0])
+                            
+                            # Neutralize transparent background for 8-bit pipeline
+                            if alpha is not None:
+                                # Normalized Convolution for 8-bit pipeline
+                                
+                                # 1. Prepare float mask
+                                # alpha is uint8 [0..255]
+                                if isinstance(alpha, cv2.UMat):
+                                    mask_f = cv2.multiply(alpha, 1.0/255.0, dtype=cv2.CV_32F)
+                                    l_plane_f = cv2.multiply(lab_planes[0], 1.0/255.0, dtype=cv2.CV_32F)
+                                    
+                                    img_masked = cv2.multiply(l_plane_f, mask_f)
+                                    blur_img = cv2.boxFilter(img_masked, -1, (15, 15), borderType=cv2.BORDER_CONSTANT)
+                                    blur_mask = cv2.boxFilter(mask_f, -1, (15, 15), borderType=cv2.BORDER_CONSTANT)
+                                    
+                                    cv2.add(blur_mask, 0.0001, dst=blur_mask)
+                                    fill_bg_f = cv2.divide(blur_img, blur_mask)
+                                    
+                                    # Convert fill back to 8-bit
+                                    fill_bg_8u = cv2.multiply(fill_bg_f, 255.0, dtype=cv2.CV_8U)
+                                    
+                                    trans_mask = cv2.compare(alpha, 1, cv2.CMP_LT)
+                                    
+                                    l_plane_for_clahe = cv2.UMat(lab_planes[0])
+                                    # Manual masked copyTo for UMat
+                                    cv2.subtract(l_plane_for_clahe, l_plane_for_clahe, dst=l_plane_for_clahe, mask=trans_mask)
+                                    cv2.add(l_plane_for_clahe, fill_bg_8u, dst=l_plane_for_clahe, mask=trans_mask)
+                                    
+                                    lab_planes[0] = clahe.apply(l_plane_for_clahe)
+                                    
+                                else:
+                                    # Numpy
+                                    mask_f = alpha.astype(np.float32) / 255.0
+                                    l_plane_f = lab_planes[0].astype(np.float32) / 255.0
+                                    
+                                    img_masked = l_plane_f * mask_f
+                                    blur_img = cv2.boxFilter(img_masked, -1, (15, 15))
+                                    blur_mask = cv2.boxFilter(mask_f, -1, (15, 15))
+                                    
+                                    blur_mask[blur_mask < 0.0001] = 0.0001
+                                    fill_bg_f = blur_img / blur_mask
+                                    fill_bg_8u = np.clip(fill_bg_f * 255.0, 0, 255).astype(np.uint8)
+                                    
+                                    mask_bool = alpha < 1
+                                    l_plane_for_clahe = lab_planes[0].copy()
+                                    l_plane_for_clahe[mask_bool] = fill_bg_8u[mask_bool]
+                                    
+                                    lab_planes[0] = clahe.apply(l_plane_for_clahe)
+                            else:
+                                lab_planes[0] = clahe.apply(lab_planes[0])
+                                
                             cv2.merge(lab_planes, u_lab)
                             
                             u_res = cv2.cvtColor(u_lab, code_from_lab)
@@ -10504,6 +10608,8 @@ if __name__ == "__main__":
                     self.channel_mixer_data = default_settings['channel_mixer'].copy()
                     self.unsharp_mask_data = default_settings['unsharp_mask'].copy()
                     self.clahe_data = default_settings['clahe'].copy()
+                    
+                    self.main_levels_gamma = default_settings['levels_gamma'].copy()
                     
                     # --- START FIX ---
                     # Call the dedicated function to reset sliders to their default full range
@@ -10754,36 +10860,27 @@ if __name__ == "__main__":
             
             def _update_level_slider_ranges_and_defaults(self):
                 """
-                Sets the Black/White Point slider ranges and default values based on the master image's format.
-                8-bit images get 0-255. 16-bit/Color images get 0-65535.
+                Sets the Black/White Point slider ranges.
+                FIX: Always use 0-65535 range to match apply_levels_gamma's internal scaling logic.
+                This prevents 8-bit images from turning white due to incorrect normalization.
                 """
-                # Default for 16-bit or unknown
+                # ALWAYS use 16-bit range for sliders to ensure precision and compatibility
+                # with the fixed divisor in apply_levels_gamma.
                 new_max = 65535
-                
-                img_to_check = self.image_master
-                if img_to_check and not img_to_check.isNull():
-                    current_format = img_to_check.format()
-                    # Check for 8-bit formats
-                    if current_format in [QImage.Format_Grayscale8, QImage.Format_Indexed8]:
-                        new_max = 255
                 
                 # Update Black Point Slider
                 if hasattr(self, 'black_point_slider'):
                     self.black_point_slider.blockSignals(True)
                     self.black_point_slider.setRange(0, new_max)
-                    self.black_point_slider.setValue(0)
+                    # Don't reset value here, let _load_adjustments_to_ui handle it
                     self.black_point_slider.blockSignals(False)
-                    if hasattr(self, 'black_point_value_label'): 
-                        self.black_point_value_label.setText("0")
 
                 # Update White Point Slider
                 if hasattr(self, 'white_point_slider'):
                     self.white_point_slider.blockSignals(True)
                     self.white_point_slider.setRange(0, new_max)
-                    self.white_point_slider.setValue(new_max)
+                    # Don't reset value here, let _load_adjustments_to_ui handle it
                     self.white_point_slider.blockSignals(False)
-                    if hasattr(self, 'white_point_value_label'): 
-                        self.white_point_value_label.setText(str(new_max))
 
             
             def _update_color_button_style(self, button, color):
@@ -10894,14 +10991,29 @@ if __name__ == "__main__":
                 def create_value_label(initial_value=0.0):
                     lbl = QLabel(f"{initial_value:.2f}%"); lbl.setMinimumWidth(55); lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     return lbl
+                
+                # --- FIX: Added `_` argument to lambdas to accept signal value, and added `()` to execute the method ---
                 self.crop_x_start_slider = QSlider(Qt.Horizontal); self.crop_x_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_start_slider.setValue(self.crop_slider_min); self.crop_x_start_slider.setEnabled(False)
-                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_start_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_x_start_slider.valueChanged.connect(lambda: self.crop_x_start_slider.setFocus())
+                self.crop_x_start_value_label = create_value_label(0.00); self.crop_x_start_slider.valueChanged.connect(lambda val, lbl=self.crop_x_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); 
+                self.crop_x_start_slider.valueChanged.connect(lambda _: self._update_crop_from_sliders())
+                self.crop_x_start_slider.valueChanged.connect(lambda: self.crop_x_start_slider.setFocus())
+                
                 self.crop_x_end_slider = QSlider(Qt.Horizontal); self.crop_x_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_x_end_slider.setValue(self.crop_slider_max); self.crop_x_end_slider.setEnabled(False)
-                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_x_end_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_x_end_slider.valueChanged.connect(lambda: self.crop_x_end_slider.setFocus())
+                self.crop_x_end_value_label = create_value_label(100.00); self.crop_x_end_slider.valueChanged.connect(lambda val, lbl=self.crop_x_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); 
+                self.crop_x_end_slider.valueChanged.connect(lambda _: self._update_crop_from_sliders())
+                self.crop_x_end_slider.valueChanged.connect(lambda: self.crop_x_end_slider.setFocus())
+                
                 self.crop_y_start_slider = QSlider(Qt.Horizontal); self.crop_y_start_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_start_slider.setValue(self.crop_slider_min); self.crop_y_start_slider.setEnabled(False)
-                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_start_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_y_start_slider.valueChanged.connect(lambda: self.crop_y_start_slider.setFocus())
+                self.crop_y_start_value_label = create_value_label(0.00); self.crop_y_start_slider.valueChanged.connect(lambda val, lbl=self.crop_y_start_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); 
+                self.crop_y_start_slider.valueChanged.connect(lambda _: self._update_crop_from_sliders())
+                self.crop_y_start_slider.valueChanged.connect(lambda: self.crop_y_start_slider.setFocus())
+                
                 self.crop_y_end_slider = QSlider(Qt.Horizontal); self.crop_y_end_slider.setRange(self.crop_slider_min, self.crop_slider_max); self.crop_y_end_slider.setValue(self.crop_slider_max); self.crop_y_end_slider.setEnabled(False)
-                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); self.crop_y_end_slider.valueChanged.connect(lambda: self._update_crop_from_sliders); self.crop_y_end_slider.valueChanged.connect(lambda: self.crop_y_end_slider.setFocus())
+                self.crop_y_end_value_label = create_value_label(100.00); self.crop_y_end_slider.valueChanged.connect(lambda val, lbl=self.crop_y_end_value_label: lbl.setText(f"{val/self.crop_slider_precision_factor:.2f}%")); 
+                self.crop_y_end_slider.valueChanged.connect(lambda _: self._update_crop_from_sliders())
+                self.crop_y_end_slider.valueChanged.connect(lambda: self.crop_y_end_slider.setFocus())
+                # ------------------------------------------------------------------------------------------------------
+
                 crop_slider_layout.addWidget(QLabel("Left:"), 0, 0); crop_slider_layout.addWidget(self.crop_x_start_slider, 0, 1); crop_slider_layout.addWidget(self.crop_x_start_value_label, 0, 2)
                 crop_slider_layout.addWidget(QLabel("Right:"), 0, 3); crop_slider_layout.addWidget(self.crop_x_end_slider, 0, 4); crop_slider_layout.addWidget(self.crop_x_end_value_label, 0, 5)
                 crop_slider_layout.addWidget(QLabel("Top:"), 1, 0); crop_slider_layout.addWidget(self.crop_y_start_slider, 1, 1); crop_slider_layout.addWidget(self.crop_y_start_value_label, 1, 2)
@@ -11926,43 +12038,86 @@ if __name__ == "__main__":
             
             def flip_vertical(self):
                 self.save_state()
-                """Flip the image vertically."""
-                if self.image and not self.image.isNull():
-                    transform = QTransform()
-                    # Scale by -1 in Y, then translate back because scaling is around (0,0)
-                    transform.scale(1, -1)
-                    transform.translate(0, -self.image.height())
-                    self.image = self.image.transformed(transform) # Get a new transformed image
-
-                    # Update backups after transformation
-                    if not self.image.isNull(): # Check if transform was successful
-                        self.image_master = self.image.copy()
-                        self.image_before_contrast = self.image.copy()
-                        self.image_before_padding = self.image.copy() # Or None if padding invalidates this
-                        self.image_contrasted = self.image.copy()
-                        self.update_live_view()
+                """Flip the image vertically using the high-resolution master and OpenCV."""
+                if self.image_master and not self.image_master.isNull():
+                    # USE OPENCV FOR BIT-DEPTH PRESERVATION
+                    # QImage.transformed(QTransform) can act unexpectedly with High-Bit Depths
+                    
+                    np_img = self.qimage_to_numpy(self.image_master)
+                    if np_img is not None:
+                        flipped_np = cv2.flip(np_img, 0) # 0 = Vertical
+                        self.image_master = self.numpy_to_qimage(flipped_np)
                     else:
-                        pass # print("Warning: Vertical flip resulted in a null image.")
+                        raise ValueError("Failed to convert image for vertical flip.")
+
+                    self.image_before_contrast = self.image_master.copy()
+                    self.image_contrasted = self.image_master.copy()
+                    
+                    # Sync to overlays
+                    for i in [1, 2]:
+                        img_orig_attr = f'image{i}_original'
+                        if hasattr(self, img_orig_attr):
+                            img_orig = getattr(self, img_orig_attr)
+                            if img_orig and not img_orig.isNull():
+                                # Try OpenCV flip for overlay too, fallback to transform if fails
+                                try:
+                                    res_np = self.qimage_to_numpy(img_orig)
+                                    if res_np is not None:
+                                        res_flipped = cv2.flip(res_np, 0)
+                                        flipped_overlay = self.numpy_to_qimage(res_flipped)
+                                        setattr(self, img_orig_attr, flipped_overlay)
+                                    else:
+                                        # Fallback
+                                        transform = QTransform().scale(1, -1).translate(0, -img_orig.height())
+                                        setattr(self, img_orig_attr, img_orig.transformed(transform))
+                                    self._update_overlay_preview(i)
+                                except:
+                                    pass
+
+                    self.image_before_padding = None
+                    self.image_padded = False
+                    self.is_modified = True
+                    self.update_live_view()
             
             def flip_horizontal(self):
                 self.save_state()
-                """Flip the image horizontally."""
-                if self.image and not self.image.isNull():
-                    transform = QTransform()
-                    # Scale by -1 in X, then translate back
-                    transform.scale(-1, 1)
-                    transform.translate(-self.image.width(), 0)
-                    self.image = self.image.transformed(transform) # Get a new transformed image
-
-                    # Update backups after transformation
-                    if not self.image.isNull(): # Check if transform was 
-                        self.image_master = self.image.copy()
-                        self.image_before_contrast = self.image.copy()
-                        self.image_before_padding = self.image.copy() # Or None
-                        self.image_contrasted = self.image.copy()
-                        self.update_live_view()
+                """Flip the image horizontally using the high-resolution master and OpenCV."""
+                if self.image_master and not self.image_master.isNull():
+                    # USE OPENCV FOR BIT-DEPTH PRESERVATION
+                    
+                    np_img = self.qimage_to_numpy(self.image_master)
+                    if np_img is not None:
+                        flipped_np = cv2.flip(np_img, 1) # 1 = Horizontal
+                        self.image_master = self.numpy_to_qimage(flipped_np)
                     else:
-                        pass # print("Warning: Horizontal flip resulted in a null image.")
+                        raise ValueError("Failed to convert image for horizontal flip.")
+
+                    self.image_before_contrast = self.image_master.copy()
+                    self.image_contrasted = self.image_master.copy()
+                    
+                    # Sync to overlays
+                    for i in [1, 2]:
+                        img_orig_attr = f'image{i}_original'
+                        if hasattr(self, img_orig_attr):
+                            img_orig = getattr(self, img_orig_attr)
+                            if img_orig and not img_orig.isNull():
+                                try:
+                                    res_np = self.qimage_to_numpy(img_orig)
+                                    if res_np is not None:
+                                        res_flipped = cv2.flip(res_np, 1)
+                                        flipped_overlay = self.numpy_to_qimage(res_flipped)
+                                        setattr(self, img_orig_attr, flipped_overlay)
+                                    else:
+                                        transform = QTransform().scale(-1, 1).translate(-img_orig.width(), 0)
+                                        setattr(self, img_orig_attr, img_orig.transformed(transform))
+                                    self._update_overlay_preview(i)
+                                except:
+                                    pass
+
+                    self.image_before_padding = None
+                    self.image_padded = False
+                    self.is_modified = True
+                    self.update_live_view()
             
             def convert_to_black_and_white(self):
                 """
@@ -14347,7 +14502,8 @@ if __name__ == "__main__":
                     
                     # 4. CRITICAL FIX: Refresh self.image (display image) so it has NEW DIMENSIONS
                     # This must happen BEFORE updating slider ranges.
-                    self.apply_all_adjustments()
+                    # User requested reset on permanent changes
+                    self.reset_all_adjustments()
 
                     # 5. Now update ranges (uses new self.image dimensions) and sync slider values
                     self._update_status_bar()
@@ -14519,15 +14675,8 @@ if __name__ == "__main__":
                     orientation = float(self.orientation_slider.value() / 20)
                     if hasattr(self, 'orientation_label') and self.orientation_label:
                         self.orientation_label.setText(f"Rotation Angle ({orientation:.2f}°)")
-                    if abs(orientation) > 0.01: 
-                         if not image_to_transform.isNull() and image_to_transform.width() > 0 and image_to_transform.height() > 0:
-                             transform_rotate = QTransform()
-                             w_rot, h_rot = image_to_transform.width(), image_to_transform.height()
-                             transform_rotate.translate(w_rot / 2.0, h_rot / 2.0)
-                             transform_rotate.rotate(orientation)
-                             transform_rotate.translate(-w_rot / 2.0, -h_rot / 2.0)
-                             temp_rotated = image_to_transform.transformed(transform_rotate, Qt.SmoothTransformation)
-                             if not temp_rotated.isNull(): image_to_transform = temp_rotated
+                
+                taper_value = 0.0
                 
                 taper_value = 0.0
                 if hasattr(self, 'taper_skew_slider') and self.taper_skew_slider:
@@ -14579,7 +14728,8 @@ if __name__ == "__main__":
                                             x_start=current_crop_offset_x, 
                                             y_start=current_crop_offset_y, 
                                             render_scale=render_scale,
-                                            draw_guides=True)
+                                            draw_guides=True,
+                                            additional_rotation=orientation)
 
                 if render_canvas.isNull():
                     if hasattr(self, 'live_view_label'): self.live_view_label.clear()
@@ -14674,10 +14824,21 @@ if __name__ == "__main__":
                         slider.setValue(clamped_val)
                         slider.blockSignals(False)
             
-            def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True):
+            def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True, additional_rotation=0.0):
                 painter = QPainter(canvas)
                 painter.setRenderHint(QPainter.Antialiasing, True)
                 painter.setRenderHint(QPainter.TextAntialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+                # --- 1. Global Rotation Transformation ---
+                # This ensures the entire composition (base + all overlays) rotates together.
+                # This fixes the "multiplied background effects" bug where static overlays
+                # were drawn over rotated background images.
+                if abs(additional_rotation) > 0.01:
+                    center_pt = QPointF(canvas.width() / 2.0, canvas.height() / 2.0)
+                    painter.translate(center_pt)
+                    painter.rotate(additional_rotation)
+                    painter.translate(-center_pt)
 
                 # --- 1. Logic for Isolated Edit Mode ---
                 # (Viewing just one overlay while adjusting its settings)
@@ -14934,17 +15095,74 @@ if __name__ == "__main__":
                     self.custom_shapes = new_custom_shapes
                     # --- END NEW MARKER TRANSFORMATION CODE ---
                     
-                    rotated_image_high_res = self.image_master.transformed(transform_marker, Qt.SmoothTransformation) # Use the same transform
+                    # --- HIGH-RES ROTATION USING OPENCV ---
+                    # QImage.transformed can change formats (e.g. Grayscale16 -> RGBA64) or degrade quality.
+                    # We use OpenCV to wrapAffine the raw data to ensure bit-depth preservation.
+                    
+                    np_img = self.qimage_to_numpy(self.image_master)
+                    h, w = np_img.shape[:2]
+                    center = (w / 2.0, h / 2.0)
+                    
+                    # OpenCV Rotation Matrix
+                    # Note: angle in cv2.getRotationMatrix2D is counter-clockwise. 
+                    # self.orientation_slider is likely giving us CCW or CW? 
+                    # QTransform.rotate(angle) is clockwise.
+                    # If angle comes from slider/20.0, we just use the same sign convention?
+                    # Let's check: QTransform.rotate() "Rotates the coordinate system... clockwise".
+                    # cv2.getRotationMatrix2D: positive angle is counter-clockwise.
+                    # So we need to invert the angle for OpenCV to match QTransform.
+                    rot_mat = cv2.getRotationMatrix2D(center, -angle, 1.0)
+                    
+                    # Calculate new bounding box to strictly match what QTransform does?
+                    # Or just use the logic to keep image centered.
+                    # To capture the whole rotated image:
+                    abs_cos = abs(rot_mat[0, 0])
+                    abs_sin = abs(rot_mat[0, 1])
+                    new_w = int(h * abs_sin + w * abs_cos)
+                    new_h = int(h * abs_cos + w * abs_sin)
+                    
+                    rot_mat[0, 2] += new_w / 2.0 - center[0]
+                    rot_mat[1, 2] += new_h / 2.0 - center[1]
+                    
+                    # Determine Border Mode? Constant 0 (Transparent) is best for overlay logic
+                    # Determine dtype
+                    dtype = np_img.dtype
+                    is_16bit = (dtype == np.uint16)
+                    
+                    # Perform Rotation
+                    rotated_np = cv2.warpAffine(
+                        np_img, rot_mat, (new_w, new_h), 
+                        flags=cv2.INTER_CUBIC, 
+                        borderMode=cv2.BORDER_CONSTANT, 
+                        borderValue=0
+                    )
+                    
+                    rotated_image_high_res = self.numpy_to_qimage(rotated_np)
                     
                     self.orientation_slider.setValue(0)
                     
-                    # --- BUG FIX: Replace call to _finalize_permanent_transformation ---
                     if rotated_image_high_res.isNull():
                         raise ValueError("Rotation resulted in an invalid image.")
 
                     self.image_master = rotated_image_high_res.copy()
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
+                    
+                    # --- SYNC TRANSFORMATION TO OVERLAYS ---
+                    # Rotating the master image should also rotate any overlays to maintain alignment
+                    for i in [1, 2]:
+                        img_orig_attr = f'image{i}_original'
+                        if hasattr(self, img_orig_attr):
+                            img_orig = getattr(self, img_orig_attr)
+                            if img_orig and not img_orig.isNull():
+                                try:
+                                    rotated_overlay = img_orig.transformed(transform_marker, Qt.SmoothTransformation)
+                                    if not rotated_overlay.isNull():
+                                        setattr(self, img_orig_attr, rotated_overlay)
+                                        self._update_overlay_preview(i)
+                                except Exception as e:
+                                    pass # print(f"Error rotating overlay {i}: {e}")
+
                     self.image_before_padding = None
                     self.image_padded = False
                     self.is_modified = True
@@ -14952,7 +15170,8 @@ if __name__ == "__main__":
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
-                    self.apply_all_adjustments() # Re-apply visual adjustments
+                    # User requested reset on permanent changes
+                    self.reset_all_adjustments()
                     # --- END BUG FIX ---
 
                 except Exception as e:
@@ -15108,7 +15327,8 @@ if __name__ == "__main__":
                     self.is_modified = True
 
                     # --- Update Display Image (Dimensions Change Here) ---
-                    self.apply_all_adjustments()
+                    # User requested reset of all settings (CLAHE, etc) on permanent changes
+                    self.reset_all_adjustments()
 
                     # --- CRITICAL FIX: Sync Sliders with New Dimensions AND New Shift Values ---
                     self._update_status_bar()
@@ -16316,6 +16536,11 @@ if __name__ == "__main__":
                 self._is_restoring_state = True 
 
                 try:
+                    self.crop_offset_x = 0
+                    self.crop_offset_y = 0
+                    self.x_offset_s = 0
+                    self.y_offset_s = 0
+
                     self.cancel_rectangle_crop_mode()
                     self.crop_rectangle_coords = None
                     self.live_view_label.clear_crop_preview()
@@ -16368,6 +16593,12 @@ if __name__ == "__main__":
                     self.current_left_marker_index = 0; self.current_right_marker_index = 0; self.current_top_label_index = 0
                     self.left_marker_shift_added = 0; self.right_marker_shift_added = 0; self.top_marker_shift_added = 0
                     self.live_view_label.mode = None; self.live_view_label.quad_points = []; self.live_view_label.setCursor(Qt.ArrowCursor)
+
+                    self.live_view_label.mode = None
+                    self.live_view_label.quad_points = []
+                    self.live_view_label.bounding_box_preview = None
+                    self.live_view_label.current_preview_points = []
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
 
                     # Reset Preset to Bio-Rad (or default), blocking signals to prevent auto-save
                     try:
