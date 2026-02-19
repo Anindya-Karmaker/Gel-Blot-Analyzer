@@ -5659,24 +5659,16 @@ if __name__ == "__main__":
                     pass
             
             def _update_histogram_markers_only(self):
-                """
-                Updates only the vertical marker lines on the histogram.
-                Fast and robust; safe to call during slider updates.
-                """
-                # Check if the plot elements exist. 
-                # These are created in _update_levels_histogram.
+                """Fast update for histogram lines."""
                 if (not hasattr(self, 'hist_ax') or 
                     not hasattr(self, 'hist_black_line') or 
-                    not hasattr(self, 'hist_white_line') or
-                    not self.hist_black_line or 
-                    not self.hist_white_line):
+                    not self.hist_black_line):
                     return
 
                 try:
-                    # Determine range based on current image type (default to 8-bit if unsure)
                     is_16bit = False
                     if self.image_master and not self.image_master.isNull():
-                        is_16bit = self.image_master.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64]
+                        is_16bit = self.image_master.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
                     
                     hist_max = 65535.0 if is_16bit else 255.0
                     slider_max = float(self.black_point_slider.maximum())
@@ -5684,34 +5676,28 @@ if __name__ == "__main__":
                     
                     scale = hist_max / slider_max
 
-                    # Calculate positions
                     b_pos = self.black_point_slider.value() * scale
                     w_pos = self.white_point_slider.value() * scale
 
-                    # Update Line Positions (Set x for both points of the vertical line)
                     self.hist_black_line.set_xdata([b_pos, b_pos])
                     self.hist_white_line.set_xdata([w_pos, w_pos])
 
-                    # Update Marker (Triangle) Positions
                     if hasattr(self, 'hist_black_marker') and self.hist_black_marker:
                         self.hist_black_marker.set_xdata([b_pos])
                     if hasattr(self, 'hist_white_marker') and self.hist_white_marker:
                         self.hist_white_marker.set_xdata([w_pos])
 
-                    # Fast redraw of the canvas only
                     self.hist_canvas.draw_idle()
-                    
-                except Exception as e:
-                    # Fail silently on UI updates to avoid log spam during sliding
-                    pass       
+                except Exception: pass   
 
             def _draw_histogram_markers(self, is_16bit):
                 """Helper to draw just the lines on the histogram."""
                 black_val = self.black_point_slider.value()
                 white_val = self.white_point_slider.value()
-                slider_max = self.black_point_slider.maximum()
+                slider_max = self.black_point_slider.maximum() # Should be 65535
                 
-                # Scale slider to hist coordinates
+                # If image is 16-bit, histogram is 0-65535. Slider is 0-65535. Ratio 1.0.
+                # If image is 8-bit, histogram is 0-255. Slider is 0-65535. Ratio 255/65535.
                 max_hist_val = 65535.0 if is_16bit else 255.0
                 scale = max_hist_val / slider_max if slider_max > 0 else 1.0
                 
@@ -10225,51 +10211,42 @@ if __name__ == "__main__":
 
             def _apply_all_adjustments_to_image(self, source_image, settings_dict):
                 """
-                GPU-accelerated image adjustment pipeline.
-                Handles 8-bit (BGR/BGRA) and 16-bit (RGB/RGBA) images via OpenCL UMat.
-
-                GPU state is managed externally — this function never calls setUseOpenCL.
-
-                Levels+Gamma: delegated entirely to apply_levels_gamma() which uses a
-                fast CPU LUT. black_point/white_point in settings_dict are on 0-65535
-                slider scale (apply_levels_gamma() scales internally), so they are passed
-                through unchanged.
+                GPU-accelerated pipeline.
+                Fixes 'broadcast input array' error by robustly handling channel mismatches 
+                (3->4 and 4->3) during the recombination step.
                 """
-                if not source_image or source_image.isNull():
-                    return source_image
+                if not source_image or source_image.isNull(): return source_image
 
-                # ── 0. Defaults once ──────────────────────────────────────────────────────
+                # ── 0. Defaults ───────────────────────────────────────────────────────────
                 _def = self._get_default_adjustments()
 
-                # ── 1. Inversion ──────────────────────────────────────────────────────────
+                # ── 1. Inversion (CPU) ────────────────────────────────────────────────────
                 temp_image = source_image.copy()
                 if settings_dict.get('is_inverted', False):
                     temp_image.invertPixels()
 
-                # ── 2. QImage → NumPy ─────────────────────────────────────────────────────
+                # ── 2. Convert to Numpy ───────────────────────────────────────────────────
                 np_img_full = self.qimage_to_numpy(temp_image)
-                if np_img_full is None:
-                    return source_image
+                if np_img_full is None: return source_image
 
                 # ── 3. Bit-depth constants ────────────────────────────────────────────────
                 is_16bit = np_img_full.dtype == np.uint16
                 max_val  = 65535.0 if is_16bit else 255.0
                 cv_dtype = cv2.CV_16U if is_16bit else cv2.CV_8U
                 np_dtype = np.uint16  if is_16bit else np.uint8
-                is_bgr   = not is_16bit   # Qt ARGB32 → BGR; Qt RGBA64 → RGB
+                is_bgr   = not is_16bit
 
                 # ── 4. Alpha-crop with bbox cache ─────────────────────────────────────────
-                # Cache the bounding box so repeated slider drags skip the np.where scan.
                 has_alpha    = np_img_full.ndim == 3 and np_img_full.shape[2] == 4
                 content_rect = None
 
                 if has_alpha:
-                    _ck     = (id(source_image), np_img_full.shape)
+                    _ck = (id(source_image), np_img_full.shape)
                     _cached = getattr(self, '_bbox_cache', None)
                     if _cached and _cached[0] == _ck:
                         content_rect = _cached[1]
                     else:
-                        ach  = np_img_full[:, :, 3]
+                        ach = np_img_full[:, :, 3]
                         rows = np.any(ach, axis=1)
                         cols = np.any(ach, axis=0)
                         if np.any(rows) and np.any(cols):
@@ -10280,8 +10257,7 @@ if __name__ == "__main__":
 
                     if content_rect:
                         xmin, ymin, w, h = content_rect
-                        np_content = np.ascontiguousarray(
-                            np_img_full[ymin:ymin+h, xmin:xmin+w])
+                        np_content = np.ascontiguousarray(np_img_full[ymin:ymin+h, xmin:xmin+w])
                     else:
                         np_content = np_img_full
                 else:
@@ -10289,30 +10265,22 @@ if __name__ == "__main__":
 
                 current_channels = 1 if np_content.ndim == 2 else np_content.shape[2]
 
-                # ── 5. GPU state (read-only) ──────────────────────────────────────────────
+                # ── 5. GPU Upload ─────────────────────────────────────────────────────────
                 gpu = cv2.ocl.useOpenCL()
-
                 if not np_content.flags['C_CONTIGUOUS']:
                     np_content = np.ascontiguousarray(np_content)
-
                 try:
                     u_src = cv2.UMat(np_content) if gpu else np_content
-                except Exception:
-                    u_src = np_content
-                    gpu   = False
+                except:
+                    u_src = np_content; gpu = False
 
-                # ─────────────────────────────────────────────────────────────────────────
-                # Helper: normalized-convolution fill for transparent pixels.
-                # Replaces fully-transparent regions with a locally-weighted average of
-                # opaque neighbours so CLAHE histograms are not distorted.
-                # ─────────────────────────────────────────────────────────────────────────
+                # Helper: Fill transparent pixels
                 def _fill_transparent(l_plane, alpha_plane):
                     BOX = (15, 15)
                     if gpu:
                         img_m = cv2.multiply(l_plane, alpha_plane)
-                        bi    = cv2.boxFilter(img_m,       -1, BOX, borderType=cv2.BORDER_CONSTANT)
+                        bi    = cv2.boxFilter(img_m, -1, BOX, borderType=cv2.BORDER_CONSTANT)
                         bm    = cv2.boxFilter(alpha_plane, -1, BOX, borderType=cv2.BORDER_CONSTANT)
-                        # Use same-shape UMat for epsilon to avoid broadcast failure
                         eps   = cv2.UMat(np.full(bm.get().shape, 1e-4, dtype=np.float32))
                         bm    = cv2.add(bm, eps)
                         fill  = cv2.divide(bi, bm)
@@ -10323,7 +10291,7 @@ if __name__ == "__main__":
                         return out
                     else:
                         img_m = l_plane * alpha_plane
-                        bi    = cv2.boxFilter(img_m,       -1, BOX)
+                        bi    = cv2.boxFilter(img_m, -1, BOX)
                         bm    = cv2.boxFilter(alpha_plane, -1, BOX)
                         np.clip(bm, 1e-4, None, out=bm)
                         fill  = bi / bm
@@ -10331,220 +10299,180 @@ if __name__ == "__main__":
                         out[alpha_plane < 1e-3] = fill[alpha_plane < 1e-3]
                         return out
 
-                # ══════════════════════════════════════════════════════════════════════════
-                # A.  CHANNEL MIXER
-                # ══════════════════════════════════════════════════════════════════════════
-                cm      = settings_dict.get('channel_mixer', _def['channel_mixer'])
-                is_mono = cm.get('mono', False)
-                r_val   = cm.get('r', 100)
-                g_val   = cm.get('g', 100)
-                b_val   = cm.get('b', 100)
-
-                if is_mono or not (r_val == 100 and g_val == 100 and b_val == 100):
+                # --- A. CHANNEL MIXER ---
+                cm = settings_dict.get('channel_mixer', _def['channel_mixer'])
+                if cm.get('mono', False) or not (cm.get('r')==100 and cm.get('g')==100 and cm.get('b')==100):
                     if current_channels == 1:
-                        u_src = cv2.cvtColor(u_src, cv2.COLOR_GRAY2RGB)
-                        current_channels = 3
-                        is_bgr = False
-
+                        u_src = cv2.cvtColor(u_src, cv2.COLOR_GRAY2RGB); current_channels = 3; is_bgr = False
+                    
                     if current_channels >= 3:
-                        r_s, g_s, b_s = r_val / 100.0, g_val / 100.0, b_val / 100.0
-                        c0, c1, c2    = (b_s, g_s, r_s) if is_bgr else (r_s, g_s, b_s)
-
-                        if is_mono:
-                            m = (np.array([[c0, c1, c2, 0]], dtype=np.float32)
-                                 if current_channels == 4
-                                 else np.array([[c0, c1, c2]], dtype=np.float32))
+                        r, g, b = cm.get('r',100)/100.0, cm.get('g',100)/100.0, cm.get('b',100)/100.0
+                        c0, c1, c2 = (b, g, r) if is_bgr else (r, g, b)
+                        
+                        if cm.get('mono', False):
+                            m = np.array([[c0, c1, c2, 0]] if current_channels==4 else [[c0, c1, c2]], dtype=np.float32)
                             u_src = cv2.transform(u_src, m)
-                            current_channels = 1
-                            is_bgr = False
+                            current_channels = 1; is_bgr = False
                         else:
-                            if current_channels == 4:
-                                m = np.array([[c0,0,0,0],[0,c1,0,0],
-                                              [0,0,c2,0],[0,0,0,1]], dtype=np.float32)
-                            else:
-                                m = np.array([[c0,0,0],[0,c1,0],[0,0,c2]], dtype=np.float32)
+                            m = np.array([[c0,0,0,0],[0,c1,0,0],[0,0,c2,0],[0,0,0,1]] if current_channels==4 else [[c0,0,0],[0,c1,0],[0,0,c2]], dtype=np.float32)
                             u_src = cv2.transform(u_src, m)
 
-                # ══════════════════════════════════════════════════════════════════════════
-                # B.  CLAHE
-                # ══════════════════════════════════════════════════════════════════════════
-                clahe_s    = settings_dict.get('clahe', _def['clahe'])
-                clip_limit = clahe_s.get('clip_limit', 1.0)
-
-                if clip_limit > 0.1:
-                    tile_size = clahe_s.get('tile_size', 2)
-
-                    # Cache CLAHE object — avoid reallocating histogram buffers every frame
-                    _clahe_key = (clip_limit, tile_size)
-                    if getattr(self, '_clahe_cache_key', None) != _clahe_key:
-                        self._clahe_obj       = cv2.createCLAHE(
-                            clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
-                        self._clahe_cache_key = _clahe_key
-                    clahe_obj = self._clahe_obj
-
+                # --- B. CLAHE ---
+                clahe_s = settings_dict.get('clahe', _def['clahe'])
+                if clahe_s.get('clip_limit', 1.0) > 0.1:
+                    if getattr(self, '_clahe_cache_key', None) != (clahe_s.get('clip_limit'), clahe_s.get('tile_size')):
+                        self._clahe_obj = cv2.createCLAHE(clipLimit=clahe_s.get('clip_limit', 1.0), tileGridSize=(clahe_s.get('tile_size', 2), clahe_s.get('tile_size', 2)))
+                        self._clahe_cache_key = (clahe_s.get('clip_limit'), clahe_s.get('tile_size'))
+                    clahe = self._clahe_obj
+                    
                     if current_channels == 1:
-                        u_src = clahe_obj.apply(u_src)
-
+                        u_src = clahe.apply(u_src)
                     elif current_channels >= 3:
-
                         if is_16bit:
-                            # ── 16-bit: float32 LAB on GPU ───────────────────────────────
-                            SCALE_DOWN  = 1.0 / 65535.0
-                            CLAHE_SCALE = 655.35
-
-                            if gpu:
-                                u_f32 = cv2.multiply(u_src, SCALE_DOWN, dtype=cv2.CV_32F)
-                            else:
-                                u_f32 = u_src.astype(np.float32) * SCALE_DOWN
-
-                            u_alpha_f32 = None
+                            SCALE_DOWN, CLAHE_SCALE = 1.0/65535.0, 655.35
+                            u_f32 = cv2.multiply(u_src, SCALE_DOWN, dtype=cv2.CV_32F) if gpu else u_src.astype(np.float32) * SCALE_DOWN
+                            
+                            u_alpha = None
                             if current_channels == 4:
-                                chans       = list(cv2.split(u_f32))
-                                u_rgb_f     = cv2.merge([chans[0], chans[1], chans[2]])
-                                u_alpha_f32 = chans[3]
-                            else:
-                                u_rgb_f = u_f32
+                                chans = list(cv2.split(u_f32))
+                                u_rgb = cv2.merge(chans[:3]); u_alpha = chans[3]
+                            else: u_rgb = u_f32
 
-                            u_lab     = cv2.cvtColor(u_rgb_f, cv2.COLOR_RGB2LAB)
-                            lab_chans = list(cv2.split(u_lab))
-
-                            l_fill = (_fill_transparent(lab_chans[0], u_alpha_f32)
-                                      if u_alpha_f32 is not None else lab_chans[0])
-
+                            u_lab = cv2.cvtColor(u_rgb, cv2.COLOR_RGB2LAB); lab_chans = list(cv2.split(u_lab))
+                            l_fill = _fill_transparent(lab_chans[0], u_alpha) if u_alpha is not None else lab_chans[0]
+                            
                             if gpu:
                                 l_u16 = cv2.multiply(l_fill, CLAHE_SCALE, dtype=cv2.CV_16U)
-                                l_u16 = clahe_obj.apply(l_u16)
-                                l_new = cv2.multiply(l_u16, 1.0 / CLAHE_SCALE, dtype=cv2.CV_32F)
+                                l_u16 = clahe.apply(l_u16)
+                                lab_chans[0] = cv2.multiply(l_u16, 1.0/CLAHE_SCALE, dtype=cv2.CV_32F)
                             else:
                                 l_u16 = np.clip(l_fill * CLAHE_SCALE, 0, 65535).astype(np.uint16)
-                                l_u16 = clahe_obj.apply(l_u16)
-                                l_new = l_u16.astype(np.float32) * (1.0 / CLAHE_SCALE)
+                                l_u16 = clahe.apply(l_u16)
+                                lab_chans[0] = l_u16.astype(np.float32) * (1.0/CLAHE_SCALE)
 
-                            u_lab_new = cv2.merge([l_new, lab_chans[1], lab_chans[2]])
-                            u_rgb_new = cv2.cvtColor(u_lab_new, cv2.COLOR_LAB2RGB)
-
-                            if u_alpha_f32 is not None:
-                                rc    = list(cv2.split(u_rgb_new))
-                                u_f32 = cv2.merge([rc[0], rc[1], rc[2], u_alpha_f32])
-                            else:
-                                u_f32 = u_rgb_new
-
-                            if gpu:
-                                u_src = cv2.multiply(u_f32, 65535.0, dtype=cv_dtype)
-                            else:
-                                u_src = np.clip(u_f32 * 65535.0, 0, 65535).astype(np_dtype)
-
+                            u_rgb_new = cv2.cvtColor(cv2.merge(lab_chans), cv2.COLOR_LAB2RGB)
+                            if u_alpha is not None:
+                                rc = list(cv2.split(u_rgb_new))
+                                u_f32 = cv2.merge([rc[0], rc[1], rc[2], u_alpha])
+                            else: u_f32 = u_rgb_new
+                            
+                            u_src = cv2.multiply(u_f32, 65535.0, dtype=cv_dtype) if gpu else np.clip(u_f32 * 65535.0, 0, 65535).astype(np_dtype)
                         else:
-                            # ── 8-bit: stay uint8 in LAB ─────────────────────────────────
                             code_strip = cv2.COLOR_BGRA2BGR if is_bgr else cv2.COLOR_RGBA2RGB
-                            code_fwd   = cv2.COLOR_BGR2LAB  if is_bgr else cv2.COLOR_RGB2LAB
-                            code_inv   = cv2.COLOR_LAB2BGR  if is_bgr else cv2.COLOR_LAB2RGB
-
+                            code_fwd = cv2.COLOR_BGR2LAB if is_bgr else cv2.COLOR_RGB2LAB
+                            code_inv = cv2.COLOR_LAB2BGR if is_bgr else cv2.COLOR_LAB2RGB
+                            
                             alpha_8u = None
                             if current_channels == 4:
                                 alpha_8u = cv2.extractChannel(u_src, 3)
-                                u_color  = cv2.cvtColor(u_src, code_strip)
-                            else:
-                                u_color = u_src
-
-                            u_lab      = cv2.cvtColor(u_color, code_fwd)
-                            lab_planes = list(cv2.split(u_lab))
-
+                                u_color = cv2.cvtColor(u_src, code_strip)
+                            else: u_color = u_src
+                            
+                            u_lab = cv2.cvtColor(u_color, code_fwd); lab_planes = list(cv2.split(u_lab))
                             if alpha_8u is not None:
                                 if gpu:
-                                    mask_f   = cv2.multiply(alpha_8u, 1.0/255.0, dtype=cv2.CV_32F)
-                                    l_f      = cv2.multiply(lab_planes[0], 1.0/255.0, dtype=cv2.CV_32F)
+                                    mask_f = cv2.multiply(alpha_8u, 1.0/255.0, dtype=cv2.CV_32F)
+                                    l_f = cv2.multiply(lab_planes[0], 1.0/255.0, dtype=cv2.CV_32F)
                                     l_filled = _fill_transparent(l_f, mask_f)
-                                    l_8u     = cv2.multiply(l_filled, 255.0, dtype=cv2.CV_8U)
-                                    trans_m  = cv2.compare(alpha_8u, 1, cv2.CMP_LT)
-                                    l_in     = cv2.UMat(lab_planes[0])
+                                    l_8u = cv2.multiply(l_filled, 255.0, dtype=cv2.CV_8U)
+                                    trans_m = cv2.compare(alpha_8u, 1, cv2.CMP_LT)
+                                    l_in = cv2.UMat(lab_planes[0])
                                     cv2.subtract(l_in, l_in, dst=l_in, mask=trans_m)
-                                    cv2.add(l_in, l_8u,      dst=l_in, mask=trans_m)
+                                    cv2.add(l_in, l_8u, dst=l_in, mask=trans_m)
+                                    lab_planes[0] = clahe.apply(l_in)
                                 else:
-                                    mask_f   = alpha_8u.astype(np.float32) / 255.0
-                                    l_f      = lab_planes[0].astype(np.float32) / 255.0
+                                    mask_f = alpha_8u.astype(np.float32) / 255.0
+                                    l_f = lab_planes[0].astype(np.float32) / 255.0
                                     l_filled = _fill_transparent(l_f, mask_f)
-                                    l_8u     = np.clip(l_filled * 255.0, 0, 255).astype(np.uint8)
-                                    mask_b   = alpha_8u < 1
-                                    l_in     = lab_planes[0].copy()
+                                    l_8u = np.clip(l_filled * 255.0, 0, 255).astype(np.uint8)
+                                    mask_b = alpha_8u < 1
+                                    l_in = lab_planes[0].copy()
                                     l_in[mask_b] = l_8u[mask_b]
-
-                                lab_planes[0] = clahe_obj.apply(l_in)
-                            else:
-                                lab_planes[0] = clahe_obj.apply(lab_planes[0])
-
-                            u_lab_new = cv2.merge(lab_planes)
-                            u_res     = cv2.cvtColor(u_lab_new, code_inv)
-
+                                    lab_planes[0] = clahe.apply(l_in)
+                            else: lab_planes[0] = clahe.apply(lab_planes[0])
+                            
+                            u_res = cv2.cvtColor(cv2.merge(lab_planes), code_inv)
                             if alpha_8u is not None:
-                                planes = list(cv2.split(u_res))
-                                planes.append(alpha_8u)
+                                planes = list(cv2.split(u_res)); planes.append(alpha_8u)
                                 u_src = cv2.merge(planes)
-                            else:
-                                u_src = u_res
+                            else: u_src = u_res
 
-                # ══════════════════════════════════════════════════════════════════════════
-                # C.  UNSHARP MASK
-                # ══════════════════════════════════════════════════════════════════════════
-                um_s   = settings_dict.get('unsharp_mask', _def['unsharp_mask'])
-                amount = um_s.get('amount', 0) / 100.0
-
+                # --- C. UNSHARP MASK ---
+                um = settings_dict.get('unsharp_mask', _def['unsharp_mask'])
+                amount = um.get('amount', 0) / 100.0
                 if amount > 0:
-                    radius    = um_s.get('radius', 1.0)
-                    threshold = um_s.get('threshold', 0)
-                    if is_16bit:
-                        threshold *= 256
-                    sigma = max(0.1, radius)
-
+                    radius = um.get('radius', 1.0); sigma = max(0.1, radius)
                     if gpu:
-                        u_f   = cv2.multiply(u_src, 1.0 / max_val, dtype=cv2.CV_32F)
-                        u_b   = cv2.GaussianBlur(u_f, (0, 0), sigma)
-                        u_sh  = cv2.addWeighted(u_f, 1.0 + amount, u_b, -amount, 0.0)
+                        u_f = cv2.multiply(u_src, 1.0/max_val, dtype=cv2.CV_32F)
+                        u_b = cv2.GaussianBlur(u_f, (0, 0), sigma)
+                        u_sh = cv2.addWeighted(u_f, 1.0 + amount, u_b, -amount, 0.0)
                         u_src = cv2.multiply(u_sh, max_val, dtype=cv_dtype)
                     else:
-                        f  = u_src.astype(np.float32) * (1.0 / max_val)
-                        bl = cv2.GaussianBlur(f, (0, 0), sigma)
-                        np.subtract(f, bl, out=bl)
-                        np.multiply(bl, amount, out=bl)
-                        np.add(f, bl, out=f)
-                        u_src = np.clip(f * max_val, 0, max_val).astype(np_dtype)
+                        f = u_src.astype(np.float32) * (1.0/max_val)
+                        bl = cv2.GaussianBlur(f, (0,0), sigma)
+                        sh = cv2.addWeighted(f, 1.0+amount, bl, -amount, 0.0)
+                        u_src = np.clip(sh * max_val, 0, max_val).astype(np_dtype)
 
-                # ── 6. Single GPU download ────────────────────────────────────────────────
+                # ── 6. Download ───────────────────────────────────────────────────────────
                 np_content = u_src.get() if isinstance(u_src, cv2.UMat) else u_src
 
                 # ── 7. Recombine with padding ─────────────────────────────────────────────
                 if content_rect:
-                    np_img  = np_img_full.copy()
+                    np_img = np_img_full.copy()
                     xmin, ymin, w, h = content_rect
-                    dest_ch = 1 if np_img.ndim == 2     else np_img.shape[2]
-                    src_ch  = 1 if np_content.ndim == 2 else np_content.shape[2]
+                    
+                    dest_ch = 1 if np_img.ndim == 2 else np_img.shape[2]
+                    src_ch = 1 if np_content.ndim == 2 else np_content.shape[2]
+                    
+                    # --- FIX: Handle ALL channel mismatches (3->4, 4->3, etc.) ---
                     if src_ch != dest_ch:
-                        if dest_ch == 4 and src_ch == 1:
-                            np_content = cv2.cvtColor(np_content,
-                                cv2.COLOR_GRAY2BGRA if is_bgr else cv2.COLOR_GRAY2RGBA)
+                        # 3 channels (RGB) -> 4 channels (RGBA)
+                        if dest_ch == 4 and src_ch == 3:
+                            if is_bgr:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_BGR2BGRA)
+                            else:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_RGB2RGBA)
+                        
+                        # 1 channel (Gray) -> 4 channels (RGBA)
+                        elif dest_ch == 4 and src_ch == 1:
+                            if is_bgr:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGRA)
+                            else:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2RGBA)
+                        
+                        # 4 channels (RGBA) -> 3 channels (RGB) [Drop Alpha]
+                        elif dest_ch == 3 and src_ch == 4:
+                            if is_bgr:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_BGRA2BGR)
+                            else:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_RGBA2RGB)
+                        
+                        # 1 channel (Gray) -> 3 channels (RGB)
                         elif dest_ch == 3 and src_ch == 1:
-                            np_content = cv2.cvtColor(np_content,
-                                cv2.COLOR_GRAY2BGR if is_bgr else cv2.COLOR_GRAY2RGB)
-                    np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                            if is_bgr:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2BGR)
+                            else:
+                                np_content = cv2.cvtColor(np_content, cv2.COLOR_GRAY2RGB)
+
+                    # Ensure dimensions match before assignment
+                    target_slice = np_img[ymin:ymin+h, xmin:xmin+w]
+                    if np_content.shape == target_slice.shape:
+                        np_img[ymin:ymin+h, xmin:xmin+w] = np_content
+                    else:
+                        # Fallback for unexpected dimension mismatch
+                        pass 
                 else:
                     np_img = np_content
 
-                # ── 8. QImage + histogram ─────────────────────────────────────────────────
+                # ── 8. Levels + Gamma (LUT) ──────────────────────────────────────────────
                 temp_image_after_effects = self.numpy_to_qimage(np_img)
                 self._update_levels_histogram()
-
-                # ── 9. Levels + Gamma — delegate to apply_levels_gamma() ─────────────────
-                # black_point and white_point in the dict are on the 0-65535 slider scale.
-                # apply_levels_gamma() scales them internally (scale_factor = max_val/65535)
-                # so we pass the raw dict values unchanged for both 8-bit and 16-bit.
-                # gamma is stored as e.g. 100 = 1.0x, 50 = 0.5x; divide by 100 for the
-                # power exponent that apply_levels_gamma() expects.
                 lg = settings_dict.get('levels_gamma', _def['levels_gamma'])
                 return self.apply_levels_gamma(
-                    temp_image_after_effects,
-                    lg['black_point'],          # raw 0-65535 slider value
-                    lg['white_point'],          # raw 0-65535 slider value
-                    lg['gamma'] / 100.0,        # e.g. 100 → 1.0 (neutral)
+                    temp_image_after_effects, 
+                    lg['black_point'], 
+                    lg['white_point'], 
+                    lg['gamma'] / 100.0
                 )
 
             def reset_all_adjustments(self):
@@ -10589,78 +10517,41 @@ if __name__ == "__main__":
                 self.reset_all_adjustments()
                 
             def apply_levels_gamma(self, qimage_base, black_point_ui, white_point_ui, gamma_ui_factor):
-                """
-                Applies Levels and Gamma using a Look-Up Table (LUT).
-                Extremely fast on CPU (instant), eliminating the need for GPU here.
-                """
                 if not qimage_base or qimage_base.isNull(): return qimage_base
-
                 try:
-                    # 1. Get Numpy View (No copy if possible)
                     img_array = self.qimage_to_numpy(qimage_base)
                     if img_array is None: return qimage_base
 
-                    # 2. Determine Depth settings
                     is_16bit = img_array.dtype == np.uint16
                     max_val = 65535.0 if is_16bit else 255.0
-                    dtype = np.uint16 if is_16bit else np.uint8
                     lut_size = 65536 if is_16bit else 256
+                    dtype = np.uint16 if is_16bit else np.uint8
 
-                    # 3. Scale UI inputs to image range
-                    slider_max = 65535.0 # Sliders are always 0-65535
-                    scale_factor = max_val / slider_max
+                    # Scale UI (0-65535) to Image Range (0-255 or 0-65535)
+                    scale_factor = 1.0 
                     
                     black = float(black_point_ui) * scale_factor
                     white = float(white_point_ui) * scale_factor
                     
-                    # Validation
                     if black >= white:
                         if black >= max_val - 1: black = max_val - 2
                         white = black + 1
                     
-                    # 4. Generate Look-Up Table (LUT)
-                    # We calculate the math ONCE for every possible pixel value
                     input_range = np.arange(lut_size, dtype=np.float32)
-                    
-                    # Normalize (0.0 - 1.0) based on black/white points
                     lut = (input_range - black) / (white - black)
-                    np.clip(lut, 0.0, 1.0, out=lut) # In-place clip
-                    
-                    # Gamma
-                    if abs(gamma_ui_factor - 1.0) > 0.01:
-                        # Power is slow, but we only do it lut_size times (tiny)
-                        np.power(lut, gamma_ui_factor, out=lut) 
-                    
-                    # Scale back to integer range
+                    np.clip(lut, 0.0, 1.0, out=lut)
+                    if abs(gamma_ui_factor - 1.0) > 0.01: np.power(lut, gamma_ui_factor, out=lut)
                     lut *= max_val
                     np.clip(lut, 0, max_val, out=lut)
-                    
-                    # Cast to image type
                     lut = lut.astype(dtype)
 
-                    # 5. Apply LUT (The heavy lifting)
-                    # Use cv2.LUT for 8-bit (optimized C++)
-                    # Use NumPy indexing for 16-bit (optimized C-array lookup)
-                    if not is_16bit:
-                        if img_array.ndim == 2:
-                            # Grayscale 8-bit
-                            res_array = cv2.LUT(img_array, lut)
-                        else:
-                            # Color 8-bit: LUT applies to all channels
-                            # Reshape to 2D for cv2.LUT, then reshape back, or split
-                            # Actually cv2.LUT handles multichannel correctly if LUT is single channel
-                            res_array = cv2.LUT(img_array, lut)
+                    if is_16bit:
+                        res_array = lut[img_array] # NumPy Advanced Indexing (Fast)
                     else:
-                        # 16-bit: Numpy Advanced Indexing is extremely fast
-                        # result = lut[input_pixels]
-                        res_array = lut[img_array]
+                        res_array = cv2.LUT(img_array, lut) # OpenCV LUT (Fast)
 
-                    # 6. Convert back
                     return self.numpy_to_qimage(res_array)
-
-                except Exception as e:
-                    pass # print(f"LUT Error: {e}")
-                    return qimage_base
+                except Exception: return qimage_base
                 
             def _get_fully_adjusted_image_for_analysis(self):
                 """
@@ -10814,27 +10705,48 @@ if __name__ == "__main__":
             
             def _update_level_slider_ranges_and_defaults(self):
                 """
-                Sets the Black/White Point slider ranges.
-                FIX: Always use 0-65535 range to match apply_levels_gamma's internal scaling logic.
-                This prevents 8-bit images from turning white due to incorrect normalization.
+                Sets the Black/White Point slider ranges based on the current image bit depth.
+                8-bit/32-bit images -> 0-255
+                16-bit/64-bit images -> 0-65535
                 """
-                # ALWAYS use 16-bit range for sliders to ensure precision and compatibility
-                # with the fixed divisor in apply_levels_gamma.
-                new_max = 65535
+                is_16bit = False
+                if self.image_master and not self.image_master.isNull():
+                    # Check for 16-bit grayscale or 64-bit RGBA
+                    is_16bit = self.image_master.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
                 
+                new_max = 65535 if is_16bit else 255
+                
+                # Check current max to see if we need to scale existing values
+                current_max_black = self.black_point_slider.maximum()
+                if current_max_black == 0: current_max_black = 1 # Avoid div/0
+                
+                # Calculate scale factor to convert current slider position to new range
+                scale_factor = new_max / current_max_black
+
                 # Update Black Point Slider
                 if hasattr(self, 'black_point_slider'):
+                    old_val = self.black_point_slider.value()
+                    new_val = int(old_val * scale_factor)
                     self.black_point_slider.blockSignals(True)
                     self.black_point_slider.setRange(0, new_max)
-                    # Don't reset value here, let _load_adjustments_to_ui handle it
+                    self.black_point_slider.setValue(new_val)
                     self.black_point_slider.blockSignals(False)
+                    self.black_point_value_label.setText(str(new_val))
 
                 # Update White Point Slider
                 if hasattr(self, 'white_point_slider'):
+                    old_val = self.white_point_slider.value()
+                    # If old value was at max (e.g. 65535), keep it at new max (255)
+                    if old_val == current_max_black:
+                        new_val = new_max
+                    else:
+                        new_val = int(old_val * scale_factor)
+                        
                     self.white_point_slider.blockSignals(True)
                     self.white_point_slider.setRange(0, new_max)
-                    # Don't reset value here, let _load_adjustments_to_ui handle it
+                    self.white_point_slider.setValue(new_val)
                     self.white_point_slider.blockSignals(False)
+                    self.white_point_value_label.setText(str(new_val))
 
             
             def _update_color_button_style(self, button, color):
