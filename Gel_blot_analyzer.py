@@ -14718,8 +14718,16 @@ if __name__ == "__main__":
                     orientation = float(self.orientation_slider.value() / 20)
                     if hasattr(self, 'orientation_label') and self.orientation_label:
                         self.orientation_label.setText(f"Rotation Angle ({orientation:.2f}°)")
+                    if abs(orientation) > 0.01: 
+                         if not image_to_transform.isNull() and image_to_transform.width() > 0 and image_to_transform.height() > 0:
+                             transform_rotate = QTransform()
+                             w_rot, h_rot = image_to_transform.width(), image_to_transform.height()
+                             transform_rotate.translate(w_rot / 2.0, h_rot / 2.0)
+                             transform_rotate.rotate(orientation)
+                             transform_rotate.translate(-w_rot / 2.0, -h_rot / 2.0)
+                             temp_rotated = image_to_transform.transformed(transform_rotate, Qt.SmoothTransformation)
+                             if not temp_rotated.isNull(): image_to_transform = temp_rotated
                 
-                taper_value = 0.0
                 
                 taper_value = 0.0
                 if hasattr(self, 'taper_skew_slider') and self.taper_skew_slider:
@@ -14771,8 +14779,8 @@ if __name__ == "__main__":
                                             x_start=current_crop_offset_x, 
                                             y_start=current_crop_offset_y, 
                                             render_scale=render_scale,
-                                            draw_guides=True,
-                                            additional_rotation=orientation)
+                                            draw_guides=True
+                                            )
 
                 if render_canvas.isNull():
                     if hasattr(self, 'live_view_label'): self.live_view_label.clear()
