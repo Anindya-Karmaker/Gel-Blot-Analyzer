@@ -5709,14 +5709,10 @@ if __name__ == "__main__":
                 """Helper to draw just the lines on the histogram."""
                 black_val = self.black_point_slider.value()
                 white_val = self.white_point_slider.value()
-                slider_max = self.black_point_slider.maximum()
                 
-                # Scale slider to hist coordinates
-                max_hist_val = 65535.0 if is_16bit else 255.0
-                scale = max_hist_val / slider_max if slider_max > 0 else 1.0
                 
-                b_pos = black_val * scale
-                w_pos = white_val * scale
+                b_pos = black_val
+                w_pos = white_val
                 
                 txt = '#E0E0E0' if self.current_theme == 'dark' else '#333333'
                 
@@ -10623,6 +10619,12 @@ if __name__ == "__main__":
                 
                 default_settings = self._get_default_adjustments()
 
+                current_max = 255
+                if self.image_master and not self.image_master.isNull():
+                    fmt = self.image_master.format()
+                    if fmt in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]:
+                        current_max = 65535
+
                 if self.adjustment_context == "Main Image":
                     # For the main image, we reset the top-level attributes
                     self.image_before_contrast = self.image_master.copy() if self.image_master else None
@@ -10658,18 +10660,13 @@ if __name__ == "__main__":
                 self.reset_all_adjustments()
                 
             def apply_levels_gamma(self, qimage_base, black_point_ui, white_point_ui, gamma_ui_factor):
-                """
-                Applies Levels and Gamma using a Look-Up Table (LUT).
-                Alpha channel is preserved verbatim — LUT is applied to colour channels only.
-                Supports uint8, uint16, and float32 (treated as [0,1]) inputs.
-                """
+                # ... (Keep initial checks and numpy conversion) ...
                 if not qimage_base or qimage_base.isNull():
                     return qimage_base
 
                 try:
                     img_array = self.qimage_to_numpy(qimage_base)
-                    if img_array is None:
-                        return qimage_base
+                    if img_array is None: return qimage_base
 
                     # --- Detect dtype ---
                     dt = img_array.dtype
@@ -10686,7 +10683,7 @@ if __name__ == "__main__":
                         lut_size = 65536
                         dtype    = np.uint16
                     elif dt in (np.float32, np.float64):
-                        # Normalised [0,1] — quantise to uint16 for LUT, rescale at end
+                        # ... (Keep existing float handling) ...
                         is_float = True
                         is_16bit = True
                         max_val  = 65535.0
@@ -10695,24 +10692,20 @@ if __name__ == "__main__":
                         img_array = np.clip(img_array.astype(np.float64), 0.0, 1.0)
                         img_array = (img_array * 65535.0).astype(np.uint16)
                     else:
-                        return qimage_base  # unsupported
+                        return qimage_base
 
-                    # --- Split alpha BEFORE building LUT so it is never touched ---
+                    # --- Split alpha (Keep existing logic) ---
                     has_alpha  = img_array.ndim == 3 and img_array.shape[2] == 4
                     alpha_save = img_array[:, :, 3].copy() if has_alpha else None
+                    if has_alpha: work = img_array[:, :, :3]
+                    else: work = img_array
 
-                    # Work on colour channels only
-                    if has_alpha:
-                        work = img_array[:, :, :3]
-                    else:
-                        work = img_array
-
-                    # --- Build LUT ---
-                    slider_max   = 65535.0   # UI sliders are always 0-65535
-                    scale_factor = max_val / slider_max
-
-                    black = float(black_point_ui) * scale_factor
-                    white = float(white_point_ui) * scale_factor
+                    # --- Build LUT (UPDATED LOGIC) ---
+                    # Logic: The UI sliders now match max_val (255 for 8-bit, 65535 for 16-bit).
+                    # Therefore, no scaling factor is needed between UI inputs and image data range.
+                    
+                    black = float(black_point_ui)
+                    white = float(white_point_ui)
 
                     # Guard against zero-width range
                     if black >= white:
@@ -10721,6 +10714,8 @@ if __name__ == "__main__":
                         white = black + 1
 
                     indices = np.arange(lut_size, dtype=np.float32)
+                    
+                    # Normalize: (x - black) / (white - black)
                     lut = (indices - black) / (white - black)
                     np.clip(lut, 0.0, 1.0, out=lut)
 
@@ -10917,27 +10912,52 @@ if __name__ == "__main__":
             
             def _update_level_slider_ranges_and_defaults(self):
                 """
-                Sets the Black/White Point slider ranges.
-                FIX: Always use 0-65535 range to match apply_levels_gamma's internal scaling logic.
-                This prevents 8-bit images from turning white due to incorrect normalization.
+                Sets the Black/White Point slider ranges based on the bit depth of the 
+                CURRENTLY SELECTED IMAGE context (Main, Overlay 1, or Overlay 2).
                 """
-                # ALWAYS use 16-bit range for sliders to ensure precision and compatibility
-                # with the fixed divisor in apply_levels_gamma.
-                new_max = 65535
-                
-                # Update Black Point Slider
-                if hasattr(self, 'black_point_slider'):
-                    self.black_point_slider.blockSignals(True)
-                    self.black_point_slider.setRange(0, new_max)
-                    # Don't reset value here, let _load_adjustments_to_ui handle it
-                    self.black_point_slider.blockSignals(False)
+                # 1. Determine which image is currently being edited
+                target_img = None
+                if self.adjustment_context == "Main Image":
+                    target_img = self.image_master
+                elif self.adjustment_context == "Overlay 1 (Base)":
+                    target_img = getattr(self, 'image1_original', None)
+                elif self.adjustment_context == "Overlay 2 (Overlay)":
+                    target_img = getattr(self, 'image2_original', None)
 
-                # Update White Point Slider
-                if hasattr(self, 'white_point_slider'):
-                    self.white_point_slider.blockSignals(True)
-                    self.white_point_slider.setRange(0, new_max)
-                    # Don't reset value here, let _load_adjustments_to_ui handle it
-                    self.white_point_slider.blockSignals(False)
+                # 2. Check bit depth of that specific image
+                is_16bit = False
+                if target_img and not target_img.isNull():
+                    fmt = target_img.format()
+                    # Check for 16-bit Grayscale or 64-bit RGBA (16-bit per channel)
+                    is_16bit = fmt in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
+
+                # 3. Set the correct maximum value
+                new_max = 65535 if is_16bit else 255
+                
+                # 4. Update both sliders (scaling current values to match new range)
+                for slider_name in ['black_point_slider', 'white_point_slider']:
+                    slider = getattr(self, slider_name, None)
+                    if slider:
+                        old_max = slider.maximum()
+                        if old_max == 0: old_max = 1 # Safety
+                        
+                        # Only update if the range is actually different
+                        if old_max != new_max:
+                            current_val = slider.value()
+                            # Calculate ratio to preserve relative knob position
+                            ratio = new_max / old_max
+                            new_val = int(round(current_val * ratio))
+                            
+                            slider.blockSignals(True)
+                            slider.setRange(0, new_max)
+                            slider.setValue(new_val)
+                            slider.blockSignals(False)
+
+                # 5. Refresh labels immediately
+                if hasattr(self, 'black_point_value_label') and hasattr(self, 'black_point_slider'):
+                    self.black_point_value_label.setText(str(self.black_point_slider.value()))
+                if hasattr(self, 'white_point_value_label') and hasattr(self, 'white_point_slider'):
+                    self.white_point_value_label.setText(str(self.white_point_slider.value()))
 
             
             def _update_color_button_style(self, button, color):
@@ -13723,6 +13743,7 @@ if __name__ == "__main__":
                     self.image_contrasted = self.image.copy()
                     self.image_before_contrast = self.image.copy()
                     self.image_padded = False
+                    self._update_level_slider_ranges_and_defaults()
                     # self.image_path is set earlier if loaded from file
 
                     # --- Update UI Elements ---
@@ -13754,6 +13775,7 @@ if __name__ == "__main__":
                         title_suffix = " (+ Config)" if config_loaded_from_paste else ""
                         self.setWindowTitle(f"{self.window_title}::{display_source}{title_suffix}")
                         self._update_status_bar()
+                        
 
                     except Exception as e:
                         QMessageBox.warning(self, "UI Update Error", f"Could not update UI elements after pasting: {e}")
@@ -13789,6 +13811,7 @@ if __name__ == "__main__":
                     self.adjustSize()
                     QTimer.singleShot(0, self.update_live_view) # Render the loaded image
                     self._update_levels_histogram() # Update histogram for new image
+                    
                     
                 
             def update_font(self):
@@ -13899,6 +13922,7 @@ if __name__ == "__main__":
                     self.image_padded = False               # Reset flag
 
                     self.setWindowTitle(f"{self.window_title}::{self.image_path}")
+                    self._update_level_slider_ranges_and_defaults()
 
                     # --- Load Associated Config File ---
                     self.base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -13956,7 +13980,7 @@ if __name__ == "__main__":
                 if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                 if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
                 QTimer.singleShot(0, self.update_live_view)
-                self._update_levels_histogram() 
+                self._update_levels_histogram()                 
                 self.save_state()
             
             def apply_config(self, config_data,load_analysis=False):
