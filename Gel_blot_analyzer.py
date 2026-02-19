@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v4.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v5.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
@@ -1612,6 +1612,16 @@ if __name__ == "__main__":
 
             def get_detected_peaks(self): return self.detected_peaks
             def get_final_settings(self): return self._final_settings
+            def keyPressEvent(self, event):
+                """Handle Delete/Backspace keys to remove the selected peak."""
+                if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                    if self.selected_peak_index != -1 and self.delete_peak_button.isEnabled():
+                        self.delete_selected_peak()
+                        event.accept()
+                        return
+                
+                # Pass other keys (like Escape) to the parent implementation
+                super().keyPressEvent(event)
             
         
         
@@ -3416,6 +3426,9 @@ if __name__ == "__main__":
 
                     self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     self.ax_image.set_xlabel("Pixel Index", fontsize=9)
+
+                    for p in self.peaks:
+                        self.ax_image.axvline(p, color='red', alpha=0.5, linewidth=1, linestyle='-', zorder=9)
                     
                     # Draw handles on image
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
@@ -3497,6 +3510,7 @@ if __name__ == "__main__":
                             self.selected_peak_index_for_delete = -1
                             self.delete_selected_peak_button.setEnabled(False)
                         self.update_plot()
+                self.setFocus()
             def _find_intersection_boundaries(self, profile, baseline, peak_x, search_start, search_end):
                 diff = profile - baseline
                 if not np.any(diff): return search_start, search_end
@@ -3701,6 +3715,17 @@ if __name__ == "__main__":
                 if structure_size > profile.shape[0]: structure_size = profile.shape[0]
                 try: return grey_opening(profile, size=structure_size, mode='reflect')
                 except Exception: return np.zeros_like(profile)
+
+            def keyPressEvent(self, event):
+                """Handle Delete/Backspace keys to remove the selected peak."""
+                if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                    if self.selected_peak_index_for_delete != -1 and self.delete_selected_peak_button.isEnabled():
+                        self.delete_selected_peak_action()
+                        event.accept()
+                        return
+                
+                # Pass other keys (like Escape) to the parent implementation
+                super().keyPressEvent(event)
             
 
         class LiveViewLabel(QLabel):
@@ -5068,17 +5093,17 @@ if __name__ == "__main__":
                 self.preview_label_max_height_setting = 300 # A smaller base height for the minimum calculation
                 
                 # --- Configurable Global Settings (Defaults) ---
-                self.use_gpu = True
-                try:
-                    cv2.ocl.setUseOpenCL(self.use_gpu)
-                except: pass
+                #self.use_gpu = True
+                #try:
+                #    cv2.ocl.setUseOpenCL(self.use_gpu)
+                #except: pass
                 
                 self.viewer_fixed_width = 550
                 self.viewer_fixed_height = 350
                 self.safe_content_width = 1000
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v4.5"
+                self.window_title="GEL BLOT ANALYZER v5.0"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -11809,13 +11834,6 @@ if __name__ == "__main__":
                 layout.setContentsMargins(20, 20, 20, 20)
                 
                 # --- Processing Unit ---
-                # Check actual runtime state
-                is_opencl_active = False
-                try: is_opencl_active = cv2.ocl.useOpenCL()
-                except: pass
-                
-                self.use_gpu = is_opencl_active
-                
                 proc_group = QGroupBox("Processing Unit Priority")
                 proc_layout = QVBoxLayout(proc_group)
                 proc_layout.setSpacing(10)
@@ -11823,8 +11841,11 @@ if __name__ == "__main__":
                 self.gpu_radio = QRadioButton("GPU (Graphics Processing Unit)")
                 self.cpu_radio = QRadioButton("CPU (Central Processing Unit)")
                 
-                if is_opencl_active: self.gpu_radio.setChecked(True)
-                else: self.cpu_radio.setChecked(True)
+                # FIX: Initialize based on current self.use_gpu state (set in __init__)
+                if getattr(self, 'use_gpu', True): 
+                    self.gpu_radio.setChecked(True)
+                else: 
+                    self.cpu_radio.setChecked(True)
                 
                 proc_layout.addWidget(self.gpu_radio)
                 proc_layout.addWidget(self.cpu_radio)
@@ -11845,7 +11866,7 @@ if __name__ == "__main__":
                 if idx != -1: self.gpu_selector.setCurrentIndex(idx)
                 else: self.gpu_selector.setCurrentText(current_id)
                 
-                self.gpu_selector.setEnabled(self.use_gpu)
+                self.gpu_selector.setEnabled(getattr(self, 'use_gpu', True))
                 gpu_selection_layout.addWidget(self.gpu_selector, 0, 1)
 
                 # --- Active Device Label ---
@@ -11867,16 +11888,9 @@ if __name__ == "__main__":
                 
                 # Option mapping: Text -> Float Value
                 self.scale_options = [
-                    ("0%", 0.0),
-                    ("50%", 0.5),
-                    ("75%", 0.75),
-                    ("100% (No Scaling)", 1.0),
-                    ("125%", 1.25),
-                    ("150%", 1.50),
-                    ("175%", 1.75),
-                    ("200%", 2.00),
-                    ("225%", 2.25),
-                    ("250%", 2.50)
+                    ("0%", 0.0), ("50%", 0.5), ("75%", 0.75), ("100% (No Scaling)", 1.0),
+                    ("125%", 1.25), ("150%", 1.50), ("175%", 1.75), ("200%", 2.00),
+                    ("225%", 2.25), ("250%", 2.50)
                 ]
                 
                 current_pref = getattr(self, 'ui_scale_preference', 1.0)
@@ -11915,7 +11929,7 @@ if __name__ == "__main__":
 
                 self.spin_viewer_w = add_spin("Viewer Fixed Width:", self.viewer_fixed_width, 0, 0)
                 self.spin_viewer_h = add_spin("Viewer Fixed Height:", self.viewer_fixed_height, 1, 0)
-                self.spin_content_w = add_spin("Safe Content Width:", self.safe_content_width, 2, 0)
+                self.spin_content_w = add_spin("Program UI Width:", self.safe_content_width, 2, 0)
                 
                 layout.addWidget(dim_group)
                 
@@ -11971,7 +11985,8 @@ if __name__ == "__main__":
                 # Apply CPU/GPU Toggle Immediately
                 try:
                     cv2.ocl.setUseOpenCL(self.use_gpu)
-                except: pass
+                except: 
+                    pass
                 
                 # Update label immediately to reflect CPU/GPU switch
                 self._update_active_device_label()
@@ -12015,6 +12030,9 @@ if __name__ == "__main__":
                 if hasattr(self, 'spin_viewer_w'): self.spin_viewer_w.setValue(self.viewer_fixed_width)
                 if hasattr(self, 'spin_viewer_h'): self.spin_viewer_h.setValue(self.viewer_fixed_height)
                 if hasattr(self, 'spin_content_w'): self.spin_content_w.setValue(self.safe_content_width)
+                
+                # FIX: Force label refresh to match new settings
+                self._update_active_device_label()
 
             
             def add_column(self):
@@ -14478,15 +14496,42 @@ if __name__ == "__main__":
                     new_height = original_height + padding_top + padding_bottom
                     target_dtype = np_img.dtype
 
-                    padded_shape = (new_height, new_width, 4) if np_img.ndim == 3 else (new_height, new_width)
-                    padded_np = np.zeros(padded_shape, dtype=target_dtype)
+                    # --- FIX START: Handle 16-bit Grayscale Transparency ---
+                    # If 16-bit grayscale (2D uint16), we MUST promote to RGBA64 (4-channel)
+                    # to support transparent padding. Otherwise, padding is black (0) and 
+                    # indistinguishable from valid black image data.
+                    is_16bit_gray = (np_img.ndim == 2 and np_img.dtype == np.uint16)
+                    
+                    if is_16bit_gray:
+                        # Create 4-channel destination initialized to 0 (Transparent Black)
+                        padded_np = np.zeros((new_height, new_width, 4), dtype=np.uint16)
+                        
+                        # Define scan ranges
+                        y_start, y_end = padding_top, padding_top + original_height
+                        x_start, x_end = padding_left, padding_left + original_width
+                        
+                        # Fill RGB channels with the grayscale data
+                        padded_np[y_start:y_end, x_start:x_end, 0] = np_img # R
+                        padded_np[y_start:y_end, x_start:x_end, 1] = np_img # G
+                        padded_np[y_start:y_end, x_start:x_end, 2] = np_img # B
+                        
+                        # Fill Alpha channel with Opaque (65535) for content area only
+                        padded_np[y_start:y_end, x_start:x_end, 3] = 65535 
+                        
+                        # The padding areas remain 0 (Transparent) in all channels
+                        
+                    else:
+                        # Standard logic for 8-bit or existing Color images
+                        padded_shape = (new_height, new_width, 4) if np_img.ndim == 3 else (new_height, new_width)
+                        padded_np = np.zeros(padded_shape, dtype=target_dtype)
 
-                    target_slice = padded_np[padding_top:padding_top + original_height, padding_left:padding_left + original_width]
+                        target_slice = padded_np[padding_top:padding_top + original_height, padding_left:padding_left + original_width]
 
-                    if np_img.ndim == 2:
-                        target_slice[:, :] = np_img
-                    elif np_img.ndim == 3:
-                        target_slice[:, :, :] = np_img
+                        if np_img.ndim == 2:
+                            target_slice[:, :] = np_img
+                        elif np_img.ndim == 3:
+                            target_slice[:, :, :] = np_img
+                    # --- FIX END ---
                     
                     padded_image = self.numpy_to_qimage(padded_np)
                     if padded_image.isNull():
@@ -14500,9 +14545,7 @@ if __name__ == "__main__":
                     self.image_padded = True
                     self.is_modified = True
                     
-                    # 4. CRITICAL FIX: Refresh self.image (display image) so it has NEW DIMENSIONS
-                    # This must happen BEFORE updating slider ranges.
-                    # User requested reset on permanent changes
+                    # 4. Refresh display and sliders
                     self.reset_all_adjustments()
 
                     # 5. Now update ranges (uses new self.image dimensions) and sync slider values
@@ -14510,7 +14553,7 @@ if __name__ == "__main__":
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
 
-                    # Force sliders to the new adjusted values (which now fit in the new ranges)
+                    # Force sliders to the new adjusted values
                     for slider, value_to_set in [
                         (self.left_padding_slider, self.left_marker_shift_added), 
                         (self.right_padding_slider, self.right_marker_shift_added), 
@@ -15337,17 +15380,17 @@ if __name__ == "__main__":
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
 
-                    # 2. Force sliders to the calculated shift values
-                    # This must be done AFTER setRange to ensure the value isn't clamped to old bounds
+                    # 2. Force sliders to the calculated shift values (UNCOMMENTED AND FIXED)
+                    # This ensures the UI reflects the mathematical update we did above
                     for slider, value_to_set in [
-                        (self.left_padding_slider, self.left_marker_shift_added),
-                        (self.right_padding_slider, self.right_marker_shift_added),
-                        (self.top_padding_slider, self.top_marker_shift_added)
+                       (self.left_padding_slider, self.left_marker_shift_added),
+                       (self.right_padding_slider, self.right_marker_shift_added),
+                       (self.top_padding_slider, self.top_marker_shift_added)
                     ]:
-                        if slider:
-                            slider.blockSignals(True)
-                            slider.setValue(int(value_to_set)) # Ensure integer
-                            slider.blockSignals(False)
+                       if slider:
+                           slider.blockSignals(True)
+                           slider.setValue(int(value_to_set)) # Ensure integer
+                           slider.blockSignals(False)
 
                 except Exception as e:
                     QMessageBox.critical(self, "Crop Error", f"An error occurred during cropping: {e}")
