@@ -12061,12 +12061,13 @@ if __name__ == "__main__":
                     # USE OPENCV FOR BIT-DEPTH PRESERVATION
                     # QImage.transformed(QTransform) can act unexpectedly with High-Bit Depths
                     
-                    np_img = self.qimage_to_numpy(self.image_master)
-                    if np_img is not None:
-                        flipped_np = cv2.flip(np_img, 0) # 0 = Vertical
-                        self.image_master = self.numpy_to_qimage(flipped_np)
-                    else:
-                        raise ValueError("Failed to convert image for vertical flip.")
+                    transform = QTransform()
+                    # Scale by -1 in Y, then translate back because scaling is around (0,0)
+                    transform.scale(1, -1)
+                    transform.translate(0, -self.image.height())
+                    self.image = self.image.transformed(transform)
+                    self.image_master = self.image.copy()
+                    
 
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
@@ -12079,17 +12080,11 @@ if __name__ == "__main__":
                             if img_orig and not img_orig.isNull():
                                 # Try OpenCV flip for overlay too, fallback to transform if fails
                                 try:
-                                    res_np = self.qimage_to_numpy(img_orig)
-                                    if res_np is not None:
-                                        res_flipped = cv2.flip(res_np, 0)
-                                        flipped_overlay = self.numpy_to_qimage(res_flipped)
-                                        setattr(self, img_orig_attr, flipped_overlay)
-                                    else:
-                                        # Fallback
-                                        transform = QTransform().scale(1, -1).translate(0, -img_orig.height())
-                                        setattr(self, img_orig_attr, img_orig.transformed(transform))
+                                    transform = QTransform().scale(1, -1).translate(0, -img_orig.height())
+                                    setattr(self, img_orig_attr, img_orig.transformed(transform))
                                     self._update_overlay_preview(i)
                                 except:
+                                    print("ERROR HERE")
                                     pass
 
                     self.image_before_padding = None
@@ -12103,12 +12098,12 @@ if __name__ == "__main__":
                 if self.image_master and not self.image_master.isNull():
                     # USE OPENCV FOR BIT-DEPTH PRESERVATION
                     
-                    np_img = self.qimage_to_numpy(self.image_master)
-                    if np_img is not None:
-                        flipped_np = cv2.flip(np_img, 1) # 1 = Horizontal
-                        self.image_master = self.numpy_to_qimage(flipped_np)
-                    else:
-                        raise ValueError("Failed to convert image for horizontal flip.")
+                    transform = QTransform()
+                    # Scale by -1 in X, then translate back
+                    transform.scale(-1, 1)
+                    transform.translate(-self.image.width(), 0)
+                    self.image = self.image.transformed(transform) # Get a new transformed image
+                    self.image_master=self.image.copy()
 
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
@@ -12120,16 +12115,11 @@ if __name__ == "__main__":
                             img_orig = getattr(self, img_orig_attr)
                             if img_orig and not img_orig.isNull():
                                 try:
-                                    res_np = self.qimage_to_numpy(img_orig)
-                                    if res_np is not None:
-                                        res_flipped = cv2.flip(res_np, 1)
-                                        flipped_overlay = self.numpy_to_qimage(res_flipped)
-                                        setattr(self, img_orig_attr, flipped_overlay)
-                                    else:
-                                        transform = QTransform().scale(-1, 1).translate(-img_orig.width(), 0)
-                                        setattr(self, img_orig_attr, img_orig.transformed(transform))
+                                    transform = QTransform().scale(-1, 1).translate(-img_orig.width(), 0)
+                                    setattr(self, img_orig_attr, img_orig.transformed(transform))
                                     self._update_overlay_preview(i)
                                 except:
+                                    print("ERROR HERE")
                                     pass
 
                     self.image_before_padding = None
