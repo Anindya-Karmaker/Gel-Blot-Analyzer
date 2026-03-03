@@ -584,7 +584,7 @@ if __name__ == "__main__":
             A dialog for analyzing a protein sequence for N-glycosylation sites
             and calculating potential molecular weights of glycosylated and oligomeric fragments.
             """
-            def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, parent=None):
+            def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, num_glycans_prev, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Protein Size Analysis")
                 self.setMinimumSize(900, 700) 
@@ -598,8 +598,9 @@ if __name__ == "__main__":
                 self.glycan_mass = glycan_mass
                 self.num_glycosylation_sites = 0
                 self.num_oligomers_to_model = num_oligomers
+                self.num_glycans_prev = num_glycans_prev # Store the previous count
 
-                # --- UI Setup --- (Layout remains the same as the improved two-column version)
+                # --- UI Setup --- 
                 main_dialog_layout = QVBoxLayout(self)
                 main_columns_layout = QHBoxLayout()
                 left_column_layout = QVBoxLayout()
@@ -662,7 +663,7 @@ if __name__ == "__main__":
                 self.ph_input_spinbox.setRange(0.0, 14.0)
                 self.ph_input_spinbox.setDecimals(2)
                 self.ph_input_spinbox.setSingleStep(0.25)
-                self.ph_input_spinbox.setValue(7.0) # Default to physiological pH
+                self.ph_input_spinbox.setValue(7.0)
                 self.ph_input_spinbox.valueChanged.connect(self._update_charge_display)
                 self.charge_display = QLineEdit(); self.charge_display.setReadOnly(True)
                 charge_layout.addWidget(self.ph_input_spinbox)
@@ -679,22 +680,20 @@ if __name__ == "__main__":
                 params_layout.addWidget(self.base_protein_mw_input_da, 0, 1, 1, 3)
                 params_layout.addWidget(QLabel("Avg. Glycan Mass (kDa):"), 1, 0)
                 
-                # --- THIS IS THE FIX ---
                 glycan_layout = QHBoxLayout()
                 self.glycan_type_combo = QComboBox()
                 self.glycan_type_combo.addItems(GLYCAN_MASSES_KDA.keys())
                 self.glycan_type_combo.currentTextChanged.connect(self._on_glycan_type_selected)
                 
-                self.glycan_mass_input = QLineEdit(str(self.glycan_mass) if self.glycan_mass > 0 else "")
+                self.glycan_mass_input = QLineEdit()
                 self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self))
                 self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
-                self.glycan_mass_input.setFixedWidth(80) # Give the input a fixed width
+                self.glycan_mass_input.setFixedWidth(80)
                 self.glycan_mass_input.textChanged.connect(self.update_potential_fragments)
                 self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
                 
-                glycan_layout.addWidget(self.glycan_type_combo, 1) # Let the combo box take most of the space
-                glycan_layout.addWidget(self.glycan_mass_input, 0) # Give the input field no stretch
-                # --- END OF FIX ---
+                glycan_layout.addWidget(self.glycan_type_combo, 1)
+                glycan_layout.addWidget(self.glycan_mass_input, 0)
 
                 params_layout.addLayout(glycan_layout, 1, 1, 1, 3)
                 params_layout.addWidget(QLabel("Number of Glycans:"), 2, 0)
@@ -719,8 +718,46 @@ if __name__ == "__main__":
                 button_box.accepted.connect(self.accept); button_box.rejected.connect(self.reject)
                 main_dialog_layout.addWidget(button_box)
 
-                if self.sequence: self._analyze_sequence()
-                if self.base_mw > 0: self.base_protein_mw_input_da.setText(f"{(self.base_mw * 1000):.2f}")
+                # --- FIX START: Restore values properly ---
+                if self.sequence: 
+                    self._analyze_sequence()
+                
+                # 1. Restore MW if explicitly passed (and positive)
+                if self.base_mw > 0: 
+                    self.base_protein_mw_input_da.setText(f"{(self.base_mw * 1000):.2f}")
+                
+                # 2. Restore Glycan Count if explicitly passed (and positive)
+                # This overrides the auto-calculation from _analyze_sequence
+                if self.num_glycans_prev > 0:
+                    self.num_glycans_spinbox.blockSignals(True)
+                    self.num_glycans_spinbox.setValue(self.num_glycans_prev)
+                    self.num_glycans_spinbox.blockSignals(False)
+
+                # 3. Restore Glycan Mass and Combo selection
+                self.glycan_type_combo.blockSignals(True)
+                self.glycan_mass_input.blockSignals(True)
+                
+                if self.glycan_mass > 0:
+                    self.glycan_mass_input.setText(str(self.glycan_mass))
+                    # Try to find matching preset
+                    matched = False
+                    for name, mass in GLYCAN_MASSES_KDA.items():
+                        if abs(mass - self.glycan_mass) < 0.001:
+                            self.glycan_type_combo.setCurrentText(name)
+                            matched = True
+                            break
+                    if not matched:
+                        self.glycan_type_combo.setCurrentText("Custom...")
+                else:
+                    # Default
+                    self.glycan_type_combo.setCurrentIndex(0)
+                    self.glycan_mass_input.clear()
+
+                self.glycan_mass_input.blockSignals(False)
+                self.glycan_type_combo.blockSignals(False)
+                
+                # Final update
+                self.update_potential_fragments()
 
             # --- START MODIFICATION: pI Calculation using user-provided table ---
             def _calculate_isoelectric_point(self, sequence):
@@ -8228,13 +8265,16 @@ if __name__ == "__main__":
                 # Default glycan mass to 0 if it hasn't been set to a positive value
                 glycan_mass_for_dialog = self.avg_glycan_mass if self.avg_glycan_mass > 0 else 0.0
 
+                # --- FIX: Pass self.num_glycans_to_model to the dialog ---
                 dialog = GlycosylationMapperDialog(
                     self.protein_sequence,
                     base_mw_for_dialog,
                     glycan_mass_for_dialog,
                     self.num_oligomers_to_model,
+                    self.num_glycans_to_model, # Pass the saved glycan count
                     self
                 )
+                
                 if dialog.exec() == QDialog.Accepted:
                     results = dialog.get_results()
                     self.protein_sequence = results["sequence"]
@@ -8257,7 +8297,6 @@ if __name__ == "__main__":
                                     self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
                     
                     self.update_live_view()
-
             def _get_y_pos_from_mw(self, mw, model_data, min_max_pos):
                 """Calculates the image Y-position for a given MW using the inverse regression model + calibration."""
                 if mw <= 0 or model_data is None: return None
@@ -11543,6 +11582,11 @@ if __name__ == "__main__":
                 self.font_size_spinner.setValue(self.font_size)
                 self.font_size_spinner.setToolTip("Font size for Standard Markers.")
                 self.font_size_spinner.valueChanged.connect(self.update_font)
+
+                # Fit width to content
+                fm = self.font_size_spinner.fontMetrics()
+                width = fm.horizontalAdvance(str(self.font_size_spinner.maximum())) + 40  # +40 for arrows/padding
+                self.font_size_spinner.setFixedWidth(width)
                 
                 self.font_color_button = QPushButton("Color")
                 self.font_color_button.setToolTip("Click to change color for Standard Markers.")
