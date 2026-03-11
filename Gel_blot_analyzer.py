@@ -2251,7 +2251,7 @@ if __name__ == "__main__":
                 model_layout_history.addWidget(self.model_combo_history, 1)
                 self.previous_plot_groupbox_layout.addLayout(model_layout_history)
                 self.plot_placeholder_history = QWidget() # Placeholder for the canvas
-                self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details."); self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
+                self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details.\n"); self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
                 self.plot_placeholder_history.setLayout(QVBoxLayout()); self.plot_placeholder_history.layout().addWidget(self.previous_plot_placeholder_label)
                 self.previous_plot_groupbox_layout.addWidget(self.plot_placeholder_history, 1)
                 self.previous_plot_groupbox.setMinimumHeight(280)
@@ -2296,8 +2296,14 @@ if __name__ == "__main__":
                     
                     # Update plot
                     new_plot = self._create_standard_curve_plot_generic(std_dict, model_name)
-                    old_widget = self.plot_placeholder_history.layout().takeAt(0).widget()
-                    if old_widget: old_widget.deleteLater()
+                    layout = self.plot_placeholder_history.layout()
+                    while layout.count() > 0:
+                        item = layout.takeAt(0)
+                        if item:
+                            widget = item.widget()
+                            if widget and widget is not self.previous_plot_placeholder_label:
+                                widget.deleteLater()
+                    layout.addWidget(new_plot)
                     self.plot_placeholder_history.layout().addWidget(new_plot)
 
                     # Update tables
@@ -2469,21 +2475,76 @@ if __name__ == "__main__":
                         with open(history_file_path, "r", encoding='utf-8') as f:
                             loaded_data = json.load(f)
                         if isinstance(loaded_data, list):
-                            self.analysis_history = [entry for entry in loaded_data if isinstance(entry, dict)]
+                            self.analysis_history = [
+                                self._restore_entry_types(entry)
+                                for entry in loaded_data
+                                if isinstance(entry, dict)
+                            ]
                         else:
                             self.analysis_history = []
-                    except (json.JSONDecodeError, IOError) as e:
+                    except (json.JSONDecodeError, IOError):
                         self.analysis_history = []
                 else:
                     self.analysis_history = []
+            def _restore_entry_types(self, entry):
+                """
+                JSON serialisation coerces all dict keys to strings.
+                This restores:
+                - results_data lane IDs  → int   (was 1,  loaded as "1")
+                - standard_dictionary keys → float (was 0.5, loaded as "0.5")
+                """
+                # --- Fix results_data lane ID keys (int) ---
+                if "results_data" in entry and isinstance(entry["results_data"], dict):
+                    fixed_results = {}
+                    for k, v in entry["results_data"].items():
+                        try:
+                            lane_key = int(k)
+                        except (ValueError, TypeError):
+                            lane_key = k
+                        # Also ensure areas/quantities are plain Python float lists
+                        if isinstance(v, dict):
+                            v["areas"]      = [float(x) for x in v.get("areas",      [])]
+                            v["quantities"] = [float(x) for x in v.get("quantities", [])]
+                        fixed_results[lane_key] = v
+                    entry["results_data"] = fixed_results
+
+                # --- Fix standard_dictionary keys (float) ---
+                if "standard_dictionary" in entry and isinstance(entry["standard_dictionary"], dict):
+                    fixed_std = {}
+                    for k, v in entry["standard_dictionary"].items():
+                        try:
+                            std_key = float(k)
+                        except (ValueError, TypeError):
+                            std_key = k
+                        try:
+                            fixed_std[std_key] = float(v)
+                        except (ValueError, TypeError):
+                            fixed_std[std_key] = v
+                    entry["standard_dictionary"] = fixed_std
+
+                return entry
 
             def _save_history(self):
+                class _NumpyEncoder(json.JSONEncoder):
+                    def default(self, obj):
+                        if isinstance(obj, np.integer):
+                            return int(obj)
+                        if isinstance(obj, np.floating):
+                            return float(obj)
+                        if isinstance(obj, np.ndarray):
+                            return obj.tolist()
+                        return super().default(obj)
+
                 history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
                 try:
                     with open(history_file_path, "w", encoding='utf-8') as f:
-                        json.dump(self.analysis_history, f, indent=4)
+                        json.dump(self.analysis_history, f, indent=4, cls=_NumpyEncoder)
                 except IOError as e:
-                    QMessageBox.critical(self, "Save History Error", f"Could not save analysis history to {history_file_path}: {e}")
+                    QMessageBox.critical(self, "Save History Error",
+                                        f"Could not save analysis history to {history_file_path}: {e}")
+                except TypeError as e:
+                    QMessageBox.critical(self, "Save History Error",
+                                        f"Data contains non-serializable type: {e}")
             def _create_lane_data_display_widget(self, lane_id, peak_areas, calculated_quantities, is_std_mode,
                                                  pil_lane_image=None, peak_details_for_lane=None, is_for_history=False):
                 lane_widget = QWidget()
@@ -2658,25 +2719,27 @@ if __name__ == "__main__":
                     while self.history_results_display_layout.count() > 0:
                         item = self.history_results_display_layout.takeAt(0)
                         widget = item.widget()
-                        if widget: widget.deleteLater()
-                    initial_hist_table_placeholder = QLabel("Select an analysis to view details.")
-                    initial_hist_table_placeholder.setAlignment(Qt.AlignCenter)
-                    self.history_results_display_layout.addWidget(initial_hist_table_placeholder)
+                        if widget:
+                            widget.deleteLater()
+                    self.history_results_display_layout.addWidget(
+                        QLabel("Select an analysis to view details.\n", alignment=Qt.AlignCenter))
 
-                # --- START OF FIX: Use a robust while loop to clear the layout ---
                 if self.plot_placeholder_history and self.plot_placeholder_history.layout():
-                    while self.plot_placeholder_history.layout().count() > 0:
-                        item = self.plot_placeholder_history.layout().takeAt(0)
+                    layout = self.plot_placeholder_history.layout()
+                    while layout.count() > 0:
+                        item = layout.takeAt(0)
                         if item:
                             widget = item.widget()
-                            if widget:
+                            if widget and widget is not self.previous_plot_placeholder_label:
+                                # Only delete widgets that are NOT the persistent placeholder label
                                 widget.deleteLater()
-                # --- END OF FIX ---
-                
+                            # If it IS the placeholder label, just un-parent it (takeAt already did that)
+
+                # Now safely re-add the persistent label (it was never deleted)
                 self.plot_placeholder_history.layout().addWidget(self.previous_plot_placeholder_label)
-                self.previous_plot_placeholder_label.setText("Select an analysis from the list to view details.")
+                self.previous_plot_placeholder_label.setText("Select an analysis from the list to view details.\n")
                 self.previous_plot_placeholder_label.show()
-                
+
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
             def _delete_selected_history_entry(self):
@@ -3177,46 +3240,64 @@ if __name__ == "__main__":
                     return 50
 
             def _recalculate_all_regions(self):
-                """The single source of truth for calculating peak_regions based on the current method."""
+                """
+                Single source of truth for peak_regions.
+                Now uses SNIP as an additional floor to handle smeared-band local
+                background elevation that the rolling ball alone can miss.
+                """
                 self.method = self.method_combobox.currentText()
 
-                # Calculate rolling ball background if needed for the current method.
+                if self.profile_original_inverted is None:
+                    return
+
+                profile_float = self.profile_original_inverted.astype(np.float64)
+
                 if self.method in ["Rolling Ball", "Rolling-valley"]:
-                    if rolling_ball and self.profile_original_inverted is not None:
-                        try:
-                            profile_float = self.profile_original_inverted.astype(np.float64)
-                            safe_radius = max(1, min(self.rolling_ball_radius, len(profile_float) // 2 - 1))
-                            self.background = self._custom_rolling_ball(profile_float, safe_radius) if len(profile_float) > 1 else profile_float.copy()
-                            self.background = np.maximum(self.background, 0)
-                        except Exception:
-                            self.background = np.zeros_like(self.profile_original_inverted)
-                    else:
-                        self.background = np.zeros_like(self.profile_original_inverted) if self.profile_original_inverted is not None else np.array([])
-                
-                # Define peak region boundaries based on method.
+                    try:
+                        safe_radius = max(1, min(self.rolling_ball_radius,
+                                                len(profile_float) // 2 - 1))
+                        rb_bg   = self._custom_rolling_ball(profile_float, safe_radius)
+
+                        # SNIP gives a tighter (lower) background under smears —
+                        # take the MINIMUM of both estimates as the true floor.
+                        # This prevents the rolling ball from riding on broad smears.
+                        snip_bg = self._snip_background(profile_float)
+                        
+                        self.background = np.minimum(rb_bg, snip_bg)
+                        self.background = np.maximum(self.background, 0.0)
+
+                    except Exception:
+                        self.background = np.zeros_like(self.profile_original_inverted)
+                else:
+                    # Straight Line method: still compute a SNIP background as floor
+                    # so even a linear baseline cannot dip below true background
+                    try:
+                        self.background = self._snip_background(profile_float)
+                    except Exception:
+                        self.background = np.zeros_like(self.profile_original_inverted)
+
                 if self.method == "Rolling Ball":
-                    # For Rolling Ball, boundaries are at the intersections with the background curve.
                     self._redefine_regions_from_background(self.background)
-                else: # "Rolling-valley" and "Straight Line"
-                    # For both Valley methods, boundaries are defined by troughs (and outer background intersections).
+                else:
                     self._redefine_all_valley_regions()
 
             def _redefine_regions_from_background(self, background):
-                """Helper to define peak regions based on intersections with a given background."""
                 self.peak_regions = []
-                profile_to_analyze = self.profile_original_inverted
-                if profile_to_analyze is None or len(profile_to_analyze) <= 1 or len(self.peaks) == 0:
+                profile = self.profile_original_inverted
+                if profile is None or len(profile) <= 1 or len(self.peaks) == 0:
                     return
 
-                midpoints = (self.peaks[:-1] + self.peaks[1:]) // 2 if len(self.peaks) > 1 else []
-                search_boundaries_left = np.concatenate(([0], midpoints))
-                search_boundaries_right = np.concatenate((midpoints, [len(profile_to_analyze) - 1]))
+                profile_len  = len(profile)
+                n_peaks      = len(self.peaks)
+                midpoints    = (self.peaks[:-1] + self.peaks[1:]) // 2 if n_peaks > 1 else []
+                left_fences  = np.concatenate(([0],              midpoints))
+                right_fences = np.concatenate((midpoints, [profile_len - 1]))
 
-                for i, peak_idx in enumerate(self.peaks):
-                    left_bound = int(search_boundaries_left[i])
-                    right_bound = int(search_boundaries_right[i])
+                for i, peak_x in enumerate(self.peaks):
                     start, end = self._find_intersection_boundaries(
-                        profile_to_analyze, background, peak_idx, left_bound, right_bound
+                        profile, background, peak_x,
+                        int(left_fences[i]), int(right_fences[i]),
+                        threshold_fraction=0.05
                     )
                     self.peak_regions.append((start, end))
             
@@ -3338,83 +3419,153 @@ if __name__ == "__main__":
                 profile_range_plot = np.ptp(profile_for_display) if np.ptp(profile_for_display) > 0 else 1.0
                 max_y_for_plot_limit = np.max(profile_for_display) if len(profile_for_display) > 0 else 1
                 text_positions = []
+                global_sl_baseline = None
+                if self.peak_regions:
+                    trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
+                    trough_y = [profile_to_plot_and_calc[x] for x in trough_x]
+                    if len(trough_x) >= 2:
+                        x_all              = np.arange(len(profile_to_plot_and_calc))
+                        global_sl_baseline = np.interp(x_all, trough_x, trough_y)
+
+                
 
                 # --- First pass: Calculate all areas ---
                 for i in range(len(self.peak_regions)):
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
-                    if start_handle >= end_handle or i >= len(self.peaks): 
-                        self.peak_areas_valley.append(0); self.peak_areas_straight_line.append(0); self.peak_areas_rolling_ball.append(0)
+                    if start_handle >= end_handle or i >= len(self.peaks):
+                        self.peak_areas_valley.append(0)
+                        self.peak_areas_straight_line.append(0)
+                        self.peak_areas_rolling_ball.append(0)
                         continue
-                    
-                    baseline_rb = self.background
-                    area_rb = np.trapezoid(profile_to_plot_and_calc[start_handle:end_handle+1] - baseline_rb[start_handle:end_handle+1])
+
+                    # --- Rolling Ball: smooth curved background ---
+                    area_rb = np.trapezoid(
+                        np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle + 1]
+                                - self.background[start_handle:end_handle + 1])
+                    )
                     self.peak_areas_rolling_ball.append(max(0, area_rb))
-                    
-                    global_sl_baseline = None
-                    if self.peak_regions:
-                        trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
-                        trough_y = [profile_to_plot_and_calc[x] for x in trough_x]
-                        if len(trough_x) >= 2:
-                            x_all = np.arange(len(profile_to_plot_and_calc))
-                            global_sl_baseline = np.interp(x_all, trough_x, trough_y)
+
+                    # --- Straight Line: global interpolated baseline ---
                     area_sl = 0.0
                     if global_sl_baseline is not None:
-                        difference_sl = profile_to_plot_and_calc[start_handle:end_handle+1] - global_sl_baseline[start_handle:end_handle+1]
-                        area_sl = np.trapezoid(np.maximum(0, difference_sl))
+                        area_sl = np.trapezoid(np.maximum(
+                            0, profile_to_plot_and_calc[start_handle:end_handle + 1]
+                            - global_sl_baseline[start_handle:end_handle + 1]
+                        ))
                     self.peak_areas_straight_line.append(max(0, area_sl))
 
-                    y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
-                    baseline_rv_local_straight = np.interp(np.arange(start_handle, end_handle + 1), [start_handle, end_handle], y_baseline_rv_points)
-                    final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
-                    area_valley = np.trapezoid(np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle+1] - final_rv_baseline))
+                    # --- Rolling-valley: FLAT straight line between the two valley
+                    #     boundary points only — no rolling ball curve involvement.
+                    #     The rolling ball was only used to FIND those boundary positions.
+                    #     y_start / y_end are the raw profile values at the boundaries,
+                    #     connected by a single straight horizontal-ish line segment. ---
+                    y_start_rv = float(profile_to_plot_and_calc[start_handle])
+                    y_end_rv   = float(profile_to_plot_and_calc[end_handle])
+                    baseline_rv = np.interp(
+                        np.arange(start_handle, end_handle + 1),
+                        [start_handle, end_handle],
+                        [y_start_rv, y_end_rv]          # pure straight line, no background max
+                    )
+                    area_valley = np.trapezoid(np.maximum(
+                        0, profile_to_plot_and_calc[start_handle:end_handle + 1] - baseline_rv
+                    ))
                     self.peak_areas_valley.append(max(0, area_valley))
 
-                total_area = 0
-                if self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
-                elif self.method == "Rolling Ball": total_area = sum(self.peak_areas_rolling_ball)
-                elif self.method == "Straight Line": total_area = sum(self.peak_areas_straight_line)
-                if total_area < 1e-9: total_area = 0.0
+                total_area = 0.0
+                if   self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
+                elif self.method == "Rolling Ball":   total_area = sum(self.peak_areas_rolling_ball)
+                elif self.method == "Straight Line":  total_area = sum(self.peak_areas_straight_line)
+                if total_area < 1e-9:
+                    total_area = 0.0
 
-                # --- Second pass: Draw fills and labels ---
+                # ── SECOND PASS: draw fills and labels ───────────────────────────────
                 for i in range(len(self.peak_regions)):
                     start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
-                    if start_handle >= end_handle or i >= len(self.peaks): continue
+                    if start_handle >= end_handle or i >= len(self.peaks):
+                        continue
                     peak_x = self.peaks[i]
-                    
                     area_to_display = 0.0
+
                     if self.method == "Rolling-valley":
                         x_region_rv = np.arange(start_handle, end_handle + 1)
-                        y_baseline_rv_points = np.interp([start_handle, end_handle], [start_handle, end_handle], [profile_to_plot_and_calc[start_handle], profile_to_plot_and_calc[end_handle]])
-                        baseline_rv_local_straight = np.interp(x_region_rv, [start_handle, end_handle], y_baseline_rv_points)
-                        final_rv_baseline = np.maximum(baseline_rv_local_straight, self.background[start_handle:end_handle+1])
-                        
-                        self.ax.fill_between(x_region_rv, final_rv_baseline, profile_for_display[x_region_rv], where=(profile_for_display[x_region_rv] >= final_rv_baseline), color=fill_color_rv, alpha=fill_alpha_rv, interpolate=True, zorder=1)
-                        self.ax.plot(x_region_rv, final_rv_baseline, color=rv_line_color, lw=1.5, zorder=4)
 
+                        # Flat straight line between the two valley boundary points
+                        y_start_rv = float(profile_to_plot_and_calc[start_handle])
+                        y_end_rv   = float(profile_to_plot_and_calc[end_handle])
+                        baseline_rv = np.interp(
+                            x_region_rv,
+                            [start_handle, end_handle],
+                            [y_start_rv, y_end_rv]
+                        )
+
+                        self.ax.fill_between(
+                            x_region_rv,
+                            baseline_rv,
+                            profile_for_display[x_region_rv],
+                            where=(profile_for_display[x_region_rv] >= baseline_rv),
+                            color=fill_color_rv, alpha=fill_alpha_rv,
+                            interpolate=True, zorder=1
+                        )
+                        # Draw the straight line baseline between valley edges
+                        self.ax.plot(
+                            [start_handle, end_handle],
+                            [y_start_rv,   y_end_rv],
+                            color=rv_line_color, lw=1.5, zorder=4,
+                            label="Valley BG" if i == 0 else "_nolegend_"
+                        )
+                        # Show rolling ball as a dotted guide only — it found the
+                        # boundaries but is NOT used as the baseline itself
                         if i == 0:
-                            self.ax.get_lines()[-1].set_label("Valley BG")
-                            self.ax.plot(np.arange(len(self.background)), self.background, color='magenta', ls=":", lw=1.0, label="RV Guide BG", zorder=3)
-                        
+                            self.ax.plot(
+                                np.arange(len(self.background)), self.background,
+                                color='magenta', ls=":", lw=1.0,
+                                label="RB Guide (boundary detection)", zorder=3
+                            )
+
                         area_to_display = self.peak_areas_valley[i]
-                    
+
                     elif self.method == "Rolling Ball":
-                         x_region = np.arange(start_handle, end_handle + 1)
-                         self.ax.fill_between(x_region, self.background[x_region], profile_for_display[x_region], where=(profile_for_display[x_region] >= self.background[x_region]), color="yellow", alpha=0.4, interpolate=True, zorder=1)
-                         if i == 0: self.ax.plot(np.arange(len(self.background)), self.background, color=bg_line_color, ls="--", lw=1, label="Rolling Ball BG", zorder=2)
-                         area_to_display = self.peak_areas_rolling_ball[i]
+                        x_region = np.arange(start_handle, end_handle + 1)
+
+                        # Smooth curved rolling ball IS the baseline
+                        self.ax.fill_between(
+                            x_region,
+                            self.background[x_region],
+                            profile_for_display[x_region],
+                            where=(profile_for_display[x_region] >= self.background[x_region]),
+                            color="yellow", alpha=0.4, interpolate=True, zorder=1
+                        )
+                        if i == 0:
+                            self.ax.plot(
+                                np.arange(len(self.background)), self.background,
+                                color=bg_line_color, ls="--", lw=1.5,
+                                label="Rolling Ball BG", zorder=2
+                            )
+
+                        area_to_display = self.peak_areas_rolling_ball[i]
 
                     elif self.method == "Straight Line":
                         if global_sl_baseline is not None:
                             x_region = np.arange(start_handle, end_handle + 1)
-                            self.ax.fill_between(x_region, global_sl_baseline[x_region], profile_for_display[x_region], where=(profile_for_display[x_region] >= global_sl_baseline[x_region]), color="cyan", alpha=0.4, interpolate=True, zorder=1)
-                            if i == 0: self.ax.plot(np.arange(len(global_sl_baseline)), global_sl_baseline, color=sl_line_color, ls="--", lw=1.2, label="SL BG", zorder=2)
+                            self.ax.fill_between(
+                                x_region,
+                                global_sl_baseline[x_region],
+                                profile_for_display[x_region],
+                                where=(profile_for_display[x_region] >= global_sl_baseline[x_region]),
+                                color="cyan", alpha=0.4, interpolate=True, zorder=1
+                            )
+                            if i == 0:
+                                self.ax.plot(
+                                    np.arange(len(global_sl_baseline)), global_sl_baseline,
+                                    color=sl_line_color, ls="--", lw=1.2,
+                                    label="SL BG", zorder=2
+                                )
+
                         area_to_display = self.peak_areas_straight_line[i]
-                    
+
                     text_y_pos = profile_for_display[peak_x] + profile_range_plot * 0.03
-                    if total_area > 0:
-                        text_str = f"{(area_to_display / total_area * 100):.1f}%"
-                    else:
-                        text_str = f"{area_to_display:.0f}"
+                    text_str = (f"{(area_to_display / total_area * 100):.1f}%"
+                                if total_area > 0 else f"{area_to_display:.0f}")
                     text_positions.append((peak_x, text_y_pos, text_str))
                     max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
 
@@ -3548,20 +3699,44 @@ if __name__ == "__main__":
                             self.delete_selected_peak_button.setEnabled(False)
                         self.update_plot()
                 self.setFocus()
-            def _find_intersection_boundaries(self, profile, baseline, peak_x, search_start, search_end):
-                diff = profile - baseline
-                if not np.any(diff): return search_start, search_end
-                above_indices = np.where(diff > 0)[0]
-                if len(above_indices) == 0: return peak_x, peak_x
-                sign_changes = np.where(np.diff(np.sign(diff)))[0]
-                left_intersections = sign_changes[sign_changes < peak_x]
-                start_calc = np.max(left_intersections) + 1 if left_intersections.size > 0 else np.min(above_indices)
-                right_intersections = sign_changes[sign_changes > peak_x]
-                end_calc = np.min(right_intersections) if right_intersections.size > 0 else np.max(above_indices)
-                start_calc = max(search_start, start_calc)
-                end_calc = min(search_end, end_calc)
-                if start_calc >= end_calc: return search_start, search_end
-                return int(start_calc), int(end_calc)
+            def _find_intersection_boundaries(self, profile, background, peak_x,
+                                   search_start, search_end,
+                                   threshold_fraction=0.05):
+                """
+                Find left and right boundaries where the profile rises above
+                background + threshold_fraction * (peak_height - background_at_peak).
+                Replaces the old zero-crossing approach which placed boundaries too
+                far from the band on gradual slopes.
+                """
+                profile_len  = len(profile)
+                peak_x       = int(np.clip(peak_x,       0, profile_len - 1))
+                search_start = int(np.clip(search_start,  0, profile_len - 1))
+                search_end   = int(np.clip(search_end,    0, profile_len - 1))
+
+                bg_at_peak    = float(background[peak_x])
+                peak_height   = float(profile[peak_x])
+                signal_height = peak_height - bg_at_peak
+
+                if signal_height < 1e-6:
+                    return search_start, search_end
+
+                threshold = bg_at_peak + threshold_fraction * signal_height
+
+                # Scan left from peak until profile drops below threshold
+                left_bound = search_start
+                for idx in range(peak_x, search_start - 1, -1):
+                    if profile[idx] <= threshold:
+                        left_bound = idx
+                        break
+
+                # Scan right from peak until profile drops below threshold
+                right_bound = search_end
+                for idx in range(peak_x, search_end + 1):
+                    if profile[idx] <= threshold:
+                        right_bound = idx
+                        break
+
+                return int(left_bound), int(right_bound)
 
             def get_final_peak_info(self):
                 peak_info_list = []
@@ -3596,48 +3771,49 @@ if __name__ == "__main__":
                 self._recalculate_all_regions()
                 self.update_plot()
             def _redefine_all_valley_regions(self):
-                """
-                Defines the start/end region for each peak based on its adjacent troughs (valleys).
-                This is the definitive fix to prevent baselines from incorrectly connecting distant points.
-                """
                 self.peak_regions = []
                 profile = self.profile_original_inverted
                 if profile is None or len(profile) == 0 or len(self.peaks) == 0:
                     return
 
-                # 1. Find the troughs (local minima) BETWEEN each pair of adjacent peaks.
-                troughs = []
-                for i in range(len(self.peaks) - 1):
-                    start_search = self.peaks[i]
-                    end_search = self.peaks[i+1]
-                    if start_search >= end_search: continue
-                    valley_region = profile[start_search:end_search]
-                    if valley_region.size > 0:
-                        local_min_idx = np.argmin(valley_region)
-                        troughs.append(start_search + local_min_idx)
+                profile_len = len(profile)
+                n_peaks     = len(self.peaks)
 
-                # 2. Find the absolute outer boundaries of the entire peak cluster using the rolling ball background.
-                left_outer_bound, _ = self._find_intersection_boundaries(profile, self.background, self.peaks[0], 0, self.peaks[0])
-                _, right_outer_bound = self._find_intersection_boundaries(profile, self.background, self.peaks[-1], self.peaks[-1], len(profile) - 1)
-
-                # 3. Create a complete list of all possible boundary points.
-                all_boundary_points = sorted(list(set([left_outer_bound] + troughs + [right_outer_bound])))
-                
-                # 4. For each peak, find its correct start and end from the boundary points list.
                 for i, peak_x in enumerate(self.peaks):
-                    # Find the closest boundary point to the left.
-                    left_boundaries = [b for b in all_boundary_points if b <= peak_x]
-                    start_handle = max(left_boundaries) if left_boundaries else 0
+                    # Midpoint fences — hard limits so peaks never overlap
+                    left_limit  = (self.peaks[i - 1] + peak_x) // 2 if i > 0           else 0
+                    right_limit = (peak_x + self.peaks[i + 1]) // 2 if i < n_peaks - 1 else profile_len - 1
 
-                    # Find the closest boundary point to the right.
-                    right_boundaries = [b for b in all_boundary_points if b >= peak_x]
-                    end_handle = min(right_boundaries) if right_boundaries else len(profile) - 1
-                    
+                    # Use threshold scan for ALL boundaries — inner and outer.
+                    # threshold_fraction=0.10 means boundary lands where profile
+                    # drops to background + 10% of peak signal → tight to band foot.
+                    # _find_outward_troughs was causing empty regions on gradual slopes
+                    # because slope reversal never occurs on smeared bands.
+                    start_handle, end_handle = self._find_intersection_boundaries(
+                        profile, self.background, peak_x,
+                        left_limit, right_limit,
+                        threshold_fraction=0.10
+                    )
+
+                    start_handle = int(np.clip(start_handle, 0, profile_len - 1))
+                    end_handle   = int(np.clip(end_handle,   0, profile_len - 1))
+
+                    # Ensure inner boundaries between adjacent peaks never share
+                    # the same pixel — right peak starts 1 after left peak ends
+                    if i > 0 and self.peak_regions:
+                        prev_end = self.peak_regions[-1][1]
+                        if start_handle <= prev_end:
+                            start_handle = prev_end + 1
+
+                    start_handle = int(np.clip(start_handle, 0, profile_len - 1))
+
                     if start_handle < end_handle:
                         self.peak_regions.append((start_handle, end_handle))
-                    # Fallback for a peak that might not have a proper region found
-                    elif len(self.peak_regions) < len(self.peaks):
-                        self.peak_regions.append((max(0, peak_x - 5), min(len(profile)-1, peak_x + 5)))
+                    else:
+                        self.peak_regions.append((
+                            max(0, peak_x - 5),
+                            min(profile_len - 1, peak_x + 5)
+                        ))
 
             def delete_selected_peak_action(self):
                 if self.selected_peak_index_for_delete == -1 or self.selected_peak_index_for_delete not in self.peaks: return
@@ -3747,11 +3923,92 @@ if __name__ == "__main__":
                     self.update_plot()
                 except ValueError: self.peak_number_input.setText(str(len(self.peaks)))
             def _custom_rolling_ball(self, profile, radius):
-                if grey_opening is None or profile is None or profile.ndim != 1 or profile.size == 0 or radius <= 0: return np.zeros_like(profile) if profile is not None else np.array([])
-                structure_size = int(max(1, 2 * radius + 1));
-                if structure_size > profile.shape[0]: structure_size = profile.shape[0]
-                try: return grey_opening(profile, size=structure_size, mode='reflect')
-                except Exception: return np.zeros_like(profile)
+                """
+                True parabolic 1D rolling ball with fine sampling + multi-pass
+                smoothing to produce a smooth background under smeared bands.
+                """
+                if (profile is None or profile.ndim != 1 or
+                        profile.size == 0 or radius <= 0):
+                    return np.zeros_like(profile) if profile is not None else np.array([])
+
+                n      = len(profile)
+                radius = float(radius)
+                p      = profile.astype(np.float64)
+
+                # --- Step 1: Parabolic erosion ---
+                # step=1 means EVERY pixel is sampled → no jagged gaps in the ball
+                eroded = np.full(n, np.inf)
+                j_vals      = np.arange(-int(radius), int(radius) + 1)   # step=1, full resolution
+                ball_curves = (j_vals ** 2) / (2.0 * radius)             # parabolic height at each j
+
+                for j, bc in zip(j_vals, ball_curves):
+                    shifted = np.empty(n)
+                    if j < 0:
+                        shifted[:n + j] = p[-j:]          # shift left
+                        shifted[n + j:] = p[-1]           # pad right edge
+                    elif j > 0:
+                        shifted[j:]     = p[:n - j]       # shift right
+                        shifted[:j]     = p[0]            # pad left edge
+                    else:
+                        shifted = p
+                    eroded = np.minimum(eroded, shifted - bc)
+
+                # --- Step 2: Parabolic dilation of eroded signal ---
+                background = np.full(n, -np.inf)
+                for j, bc in zip(j_vals, ball_curves):
+                    shifted = np.empty(n)
+                    if j < 0:
+                        shifted[:n + j] = eroded[-j:]
+                        shifted[n + j:] = eroded[-1]
+                    elif j > 0:
+                        shifted[j:]     = eroded[:n - j]
+                        shifted[:j]     = eroded[0]
+                    else:
+                        shifted = eroded
+                    background = np.maximum(background, shifted + bc)
+
+                # --- Step 3: Multi-pass Gaussian smoothing ---
+                # Two passes: first pass removes high-frequency jaggedness,
+                # second pass blends any remaining step artefacts at smear edges.
+                smooth_sigma = max(2.0, radius / 8.0)
+                background   = gaussian_filter1d(background, sigma=smooth_sigma)
+                background   = gaussian_filter1d(background, sigma=smooth_sigma / 2.0)
+
+                background = np.minimum(background, p)
+                background = np.maximum(background, 0.0)
+                return background
+
+
+            def _snip_background(self, profile, n_iterations=None):
+                """
+                SNIP background with Gaussian smoothing on output to remove
+                the staircase artefacts that iterative clipping can introduce.
+                """
+                if profile is None or len(profile) == 0:
+                    return np.zeros_like(profile)
+
+                n = len(profile)
+                if n_iterations is None:
+                    n_iterations = max(5, int(np.sqrt(n / 2)))
+
+                # Work in sqrt-space (Poisson variance stabilisation)
+                w = np.sqrt(np.maximum(profile.astype(np.float64), 0.0))
+
+                for m in range(1, n_iterations + 1):
+                    left  = np.concatenate([np.full(m, w[0]),  w[:-m]])
+                    right = np.concatenate([w[m:], np.full(m, w[-1])])
+                    w     = np.minimum(w, (left + right) / 2.0)
+
+                bg = w ** 2
+
+                # Smooth SNIP output — iterative clipping creates small steps
+                # between iterations that appear as jagged lines on the plot
+                smooth_sigma = max(2.0, n_iterations / 4.0)
+                bg = gaussian_filter1d(bg, sigma=smooth_sigma)
+
+                bg = np.minimum(bg, profile)
+                bg = np.maximum(bg, 0.0)
+                return bg
 
             def keyPressEvent(self, event):
                 """Handle Delete/Backspace keys to remove the selected peak."""
@@ -7845,7 +8102,7 @@ if __name__ == "__main__":
                 step2_layout.addWidget(self.update_standards_button, 2, 2)
                 step2_layout.addWidget(QLabel("Std. Areas:"), 3, 0); self.standard_protein_areas_text = QLineEdit(); self.standard_protein_areas_text.setPlaceholderText("Calculated total areas (comma-separated)")
                 step2_layout.addWidget(self.standard_protein_areas_text, 3, 1, 1, 2)
-                step2_layout.addWidget(QLabel("Sample Results:"), 4, 0, Qt.AlignTop); self.target_protein_areas_text = QTextEdit(); self.target_protein_areas_text.setPlaceholderText("Calculated peak areas and quantities will appear here for each lane.")
+                step2_layout.addWidget(QLabel("Sample Results:"), 4, 0, Qt.AlignTop); self.target_protein_areas_text = QTextEdit(); self.target_protein_areas_text.setMinimumHeight(50); self.target_protein_areas_text.setPlaceholderText("Calculated peak areas and quantities will appear here for each lane.")
                 self.target_protein_areas_text.setReadOnly(True); self.target_protein_areas_text.setFixedHeight(60)
                 step2_layout.addWidget(self.target_protein_areas_text, 4, 1, 1, 2)
                 bottom_buttons_layout = QHBoxLayout()
@@ -7858,7 +8115,7 @@ if __name__ == "__main__":
                 self.load_analysis_button = QPushButton("Load Analysis")
                 self.load_analysis_button.setToolTip("Loads analysis regions and standard curve data from a config file.")
                 self.load_analysis_button.clicked.connect(self.load_analysis_from_config)
-                self.clear_predict_button = QPushButton("Reset Analysis")
+                self.clear_predict_button = QPushButton("Clear Markers")
                 self.clear_predict_button.setToolTip("Clears MW prediction line, all analysis regions, and standard curve data.\nShortcut: Ctrl+Shift+P")
                 self.clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
                 self.table_export_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
