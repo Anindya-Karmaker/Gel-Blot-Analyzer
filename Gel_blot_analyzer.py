@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v5.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v5.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
@@ -162,7 +162,7 @@ if __name__ == "__main__":
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, 
         )
         from PySide6.QtGui import (
-            QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF,
+            QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
@@ -4896,6 +4896,65 @@ if __name__ == "__main__":
                                 painter.drawLine(last_clicked_point, cursor_point)
                             
                             painter.restore()
+                        
+                        if self.app_instance:
+                            app = self.app_instance
+                            # 1. Draw committed regions (filled tint + numbered label)
+                            regions = getattr(app, 'overlay_blend_regions', [])
+                            if regions:
+                                img = app.image if (app.image and not app.image.isNull()) else None
+                                if img:
+                                    img_w, img_h = float(img.width()), float(img.height())
+                                    lbl_w, lbl_h = float(self.width()), float(self.height())
+                                    scale = min(lbl_w / img_w, lbl_h / img_h)
+                                    disp_w, disp_h = img_w * scale, img_h * scale
+                                    off_x = (lbl_w - disp_w) / 2.0
+                                    off_y = (lbl_h - disp_h) / 2.0
+
+                                    for i, nr in enumerate(regions):
+                                        rx = off_x + nr.x() * disp_w
+                                        ry = off_y + nr.y() * disp_h
+                                        rw = nr.width() * disp_w
+                                        rh = nr.height() * disp_h
+                                        r = QRectF(rx, ry, rw, rh)
+
+                                        painter.save()
+                                        pen_w = max(1.0, 2.0 / self.zoom_level)
+                                        painter.setPen(QPen(QColor(50, 180, 80, 220), pen_w, Qt.SolidLine))
+                                        painter.setBrush(QBrush(QColor(50, 200, 80, 35)))
+                                        painter.drawRect(r)
+
+                                        # Number badge
+                                        badge_font = QFont("Arial", max(7, int(11 / self.zoom_level)))
+                                        badge_font.setBold(True)
+                                        painter.setFont(badge_font)
+                                        label_text = str(i + 1)
+                                        fm = QFontMetrics(badge_font)
+                                        tw = fm.horizontalAdvance(label_text) + 6
+                                        th = fm.height() + 4
+                                        badge_rect = QRectF(rx + 3, ry + 3, tw, th)
+                                        painter.setBrush(QColor(30, 140, 60, 200))
+                                        painter.setPen(Qt.NoPen)
+                                        painter.drawRoundedRect(badge_rect, 3, 3)
+                                        painter.setPen(Qt.white)
+                                        painter.drawText(badge_rect, Qt.AlignCenter, label_text)
+                                        painter.restore()
+
+                            # 2. Draw live rubber-band while user is dragging
+                            start = getattr(app, '_region_select_start', None)
+                            current = getattr(app, '_region_select_current', None)
+                            if start is not None and current is not None:
+                                rb_rect = QRectF(
+                                    QPointF(min(start.x(), current.x()), min(start.y(), current.y())),
+                                    QPointF(max(start.x(), current.x()), max(start.y(), current.y()))
+                                )
+                                if not rb_rect.isNull():
+                                    painter.save()
+                                    pen_w = max(1.0, 2.0 / self.zoom_level)
+                                    painter.setPen(QPen(QColor(50, 180, 80, 255), pen_w, Qt.DashLine))
+                                    painter.setBrush(QBrush(QColor(50, 200, 80, 50)))
+                                    painter.drawRect(rb_rect)
+                                    painter.restore()
 
                 painter.restore()
             
@@ -5397,7 +5456,7 @@ if __name__ == "__main__":
                 self.safe_content_width = 1000
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v5.0"
+                self.window_title="GEL BLOT ANALYZER v5.5"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -9517,16 +9576,54 @@ if __name__ == "__main__":
                 # --- Mixing Controls ---
                 # FIX: Updated Label text to be explicit about mixing
                 global_controls_layout.addWidget(QLabel("Mixing % (Overlay):"), 1, 0)
+
                 self.blend_slider = QSlider(Qt.Horizontal)
-                self.blend_slider.setRange(0, 100); self.blend_slider.setValue(50)
-                self.blend_slider.setToolTip("Sets the mixing percentage for Image 2 (Overlay).\n0% = Overlay invisible (100% Base)\n50% = 50% Overlay / 50% Base\n100% = Overlay opaque (0% Base)")
-                self.blend_slider.valueChanged.connect(lambda: self.update_live_view()); self.blend_slider.valueChanged.connect(lambda: self.blend_slider.setFocus())
-                global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 4)
+                self.blend_slider.setRange(0, 100)
+                self.blend_slider.setValue(50)
+                self.blend_slider.setToolTip(
+                    "Sets the mixing percentage for Image 2 (Overlay).\n"
+                    "0% = Overlay invisible (100% Base)\n"
+                    "50% = 50% Overlay / 50% Base\n"
+                    "100% = Overlay opaque (0% Base)"
+                )
+
+                self.blend_value_label = QLabel("50%")
+                self.blend_value_label.setFixedWidth(38)          # fixed width — never reflows layout
+                self.blend_value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                self.blend_slider.valueChanged.connect(lambda v: self.blend_value_label.setText(f"{v}%"))
+                self.blend_slider.valueChanged.connect(lambda: self.update_live_view())
+                self.blend_slider.valueChanged.connect(lambda: self.blend_slider.setFocus())
+
+                global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 3)   # 3 cols for slider
+                global_controls_layout.addWidget(self.blend_value_label, 1, 4)     # fixed label in last col
 
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
                 finalize_button = QPushButton("Rasterize Image"); finalize_button.clicked.connect(self.finalize_combined_image)
                 global_controls_layout.addWidget(self.interactive_overlay_button, 2, 1, 1, 2)
                 global_controls_layout.addWidget(finalize_button, 2, 3, 1, 2)
+                global_controls_layout.addWidget(QLabel("Blend Region:"), 3, 0)
+
+                self.overlay_region_label = QLabel("No regions — full image")
+                self.overlay_region_label.setStyleSheet(
+                    "color: #555; font-style: italic; border: 1px solid #ccc; padding: 2px; border-radius: 3px;"
+                )
+                self.overlay_region_label.setAlignment(Qt.AlignCenter)
+                global_controls_layout.addWidget(self.overlay_region_label, 3, 1, 1, 2)
+
+                self.select_region_button = QPushButton("Select Regions to Keep")
+                self.select_region_button.setCheckable(True)
+                self.select_region_button.setToolTip(
+                    "Draw a rectangle on the image to add a blend region.\n"
+                    "Multiple regions can be added. Overlay is only drawn inside them."
+                )
+                self.select_region_button.clicked.connect(self.activate_overlay_region_selection)
+                global_controls_layout.addWidget(self.select_region_button, 3, 3, 1, 1)
+
+                clear_region_button = QPushButton("✖ Clear All")
+                clear_region_button.setToolTip("Remove all region restrictions — blend applies to the full image.")
+                clear_region_button.clicked.connect(self.clear_overlay_region)
+                global_controls_layout.addWidget(clear_region_button, 3, 4, 1, 1)
 
                 global_controls_layout.setColumnStretch(1, 1); global_controls_layout.setColumnStretch(3, 1)
                 main_layout.addWidget(global_controls_group)
@@ -9565,20 +9662,18 @@ if __name__ == "__main__":
                 
                 # --- Handle main image transparency setup (existing code) ---
                 if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull():
+                    # Save current main-image adjustments before touching anything
+                    if self.adjustment_context == "Main Image":
+                        self._save_current_ui_adjustments()
+
                     width = self.image_master.width()
                     height = self.image_master.height()
                     transparent_canvas = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
                     transparent_canvas.fill(Qt.transparent)
-                    
+
                     self.image = transparent_canvas
                     self.image_contrasted = self.image.copy()
                     self.image_before_contrast = self.image.copy()
-
-                    default_settings = self._get_default_adjustments()
-                    self.channel_mixer_data = default_settings['channel_mixer'].copy()
-                    self.unsharp_mask_data = default_settings['unsharp_mask'].copy()
-                    self.clahe_data = default_settings['clahe'].copy()
-                    self.main_image_is_inverted = False
 
                     if self.adjustment_context == "Main Image":
                         self._load_adjustments_to_ui("Main Image")
@@ -9598,7 +9693,126 @@ if __name__ == "__main__":
                 self.place_image2()
                 self.adjustment_context_combo.model().item(2).setEnabled(True)
                 self.adjustment_context_combo.setCurrentText("Overlay 2 (Overlay)")
+                self.reset_all_adjustments()
                 QMessageBox.information(self, "Success", "Overlay image loaded (Image 2). Use 'Interactive Alignment' to position it.")
+
+            def _update_region_label(self):
+                """Refresh the region count indicator label."""
+                if not hasattr(self, 'overlay_region_label'):
+                    return
+                n = len(getattr(self, 'overlay_blend_regions', []))
+                if n == 0:
+                    self.overlay_region_label.setText("No regions — full image")
+                    self.overlay_region_label.setStyleSheet(
+                        "color: #555; font-style: italic; border: 1px solid #ccc; "
+                        "padding: 2px; border-radius: 3px;"
+                    )
+                else:
+                    self.overlay_region_label.setText(f"{n} region{'s' if n > 1 else ''} active")
+                    self.overlay_region_label.setStyleSheet(
+                        "color: #1a6e1a; font-style: normal; font-weight: bold; "
+                        "border: 1px solid #4caf50; padding: 2px; border-radius: 3px;"
+                    )
+
+
+            def activate_overlay_region_selection(self, checked):
+                """Enter rubber-band draw mode to add a new blend region."""
+                if not checked:
+                    self._region_select_start = None
+                    self._region_select_current = None
+                    self.live_view_label._custom_mouseMoveEvent_from_app = None
+                    self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.update_live_view()
+                    return
+
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self._region_select_start = None
+                self._region_select_current = None
+
+                _orig_press = type(self.live_view_label).mousePressEvent
+
+                def on_press(event):
+                    if event.button() == Qt.LeftButton:
+                        self._region_select_start = QPointF(event.position())
+                        self._region_select_current = QPointF(event.position())
+
+                def on_move(event):
+                    if self._region_select_start is not None:
+                        self._region_select_current = QPointF(event.position())
+                        self.update_live_view()   # repaints rubber-band
+
+                def on_release(event):
+                    if event.button() == Qt.LeftButton and self._region_select_start is not None:
+                        self._region_select_current = QPointF(event.position())
+                        self._append_overlay_region()
+                        # stay armed — user can draw another region immediately
+                        self._region_select_start = None
+                        self._region_select_current = None
+                        self.update_live_view()
+
+                # Patch press once so we don't lose zoom/pan handling
+                def patched_press(event, _orig=_orig_press):
+                    on_press(event)
+                    _orig(self.live_view_label, event)
+
+                self.live_view_label.mousePressEvent = patched_press
+                self.live_view_label._custom_mouseMoveEvent_from_app = on_move
+                self.live_view_label._custom_mouseReleaseEvent_from_app = on_release
+
+
+            def _append_overlay_region(self):
+                """Convert the current rubber-band drag to normalized coords and append to the list."""
+                if self._region_select_start is None or self._region_select_current is None:
+                    return
+
+                lbl = self.live_view_label
+                lbl_w, lbl_h = float(lbl.width()), float(lbl.height())
+                if lbl_w <= 0 or lbl_h <= 0:
+                    return
+
+                x1, y1 = self._region_select_start.x(), self._region_select_start.y()
+                x2, y2 = self._region_select_current.x(), self._region_select_current.y()
+                rect_label = QRectF(QPointF(min(x1, x2), min(y1, y2)),
+                                    QPointF(max(x1, x2), max(y1, y2)))
+
+                if rect_label.width() < 5 or rect_label.height() < 5:
+                    return  # accidental click, ignore
+
+                img = self.image if (self.image and not self.image.isNull()) else None
+                if img is None:
+                    return
+                img_w, img_h = float(img.width()), float(img.height())
+                scale = min(lbl_w / img_w, lbl_h / img_h)
+                disp_w, disp_h = img_w * scale, img_h * scale
+                off_x, off_y = (lbl_w - disp_w) / 2.0, (lbl_h - disp_h) / 2.0
+
+                nx1 = max(0.0, (rect_label.left()   - off_x) / disp_w)
+                ny1 = max(0.0, (rect_label.top()    - off_y) / disp_h)
+                nx2 = min(1.0, (rect_label.right()  - off_x) / disp_w)
+                ny2 = min(1.0, (rect_label.bottom() - off_y) / disp_h)
+
+                if nx2 - nx1 < 0.01 or ny2 - ny1 < 0.01:
+                    return
+
+                if not hasattr(self, 'overlay_blend_regions'):
+                    self.overlay_blend_regions = []
+                self.overlay_blend_regions.append(QRectF(nx1, ny1, nx2 - nx1, ny2 - ny1))
+                self._update_region_label()
+
+
+            def clear_overlay_region(self):
+                """Remove all blend regions — overlay reverts to full-image blending."""
+                self.overlay_blend_regions = []
+                self._region_select_start = None
+                self._region_select_current = None
+                self._update_region_label()
+                if hasattr(self, 'select_region_button'):
+                    self.select_region_button.setChecked(False)
+                self.live_view_label._custom_mouseMoveEvent_from_app = None
+                self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                self.live_view_label.setCursor(Qt.ArrowCursor)
+                self.update_live_view()
             
             def remove_image1(self):
                 """Hides Image 1 and resets its sliders, without triggering a redraw."""
@@ -9833,22 +10047,46 @@ if __name__ == "__main__":
                 
                 # --- 4. Draw Image 2 (Overlay) ---
                 if has_img2 and adjusted_img2:
-                    # Overlay blended on top. 0% blend = Invisible, 100% blend = Opaque
                     painter.setOpacity(blend_value / 100.0)
-                    
+
                     rect2_native = QRectF(
-                        QPointF(*self.image2_position), 
-                        QSizeF(adjusted_img2.width() * (self.image2_resize_slider.value()/100.0), 
-                               adjusted_img2.height() * (self.image2_resize_slider.value()/100.0))
+                        QPointF(*self.image2_position),
+                        QSizeF(adjusted_img2.width()  * (self.image2_resize_slider.value() / 100.0),
+                            adjusted_img2.height() * (self.image2_resize_slider.value() / 100.0))
                     )
                     rotation2 = self.image2_rotation_slider.value() / 10.0
-                    if abs(rotation2) > 0.01:
-                        center_point = rect2_native.center()
-                        painter.save(); painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
+
+                    blend_regions = getattr(self, 'overlay_blend_regions', [])
+
+                    if blend_regions:
+                        # Build a single union clip path from all regions so Image 2 is
+                        # painted exactly once — preventing double/triple blending in overlaps.
+                        clip_path = QPainterPath()
+                        clip_path.setFillRule(Qt.WindingFill)
+                        for nr in blend_regions:
+                            clip_path.addRect(QRectF(
+                                nr.x()     * canvas_w,
+                                nr.y()     * canvas_h,
+                                nr.width() * canvas_w,
+                                nr.height()* canvas_h,
+                            ))
+                        painter.save()
+                        painter.setClipPath(clip_path)   # union of all rects, drawn through once
+                        if abs(rotation2) > 0.01:
+                            cp = rect2_native.center()
+                            painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
                         painter.drawImage(rect2_native, adjusted_img2)
                         painter.restore()
                     else:
-                        painter.drawImage(rect2_native, adjusted_img2)
+                        # No regions — blend over full canvas
+                        if abs(rotation2) > 0.01:
+                            cp = rect2_native.center()
+                            painter.save()
+                            painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
+                            painter.drawImage(rect2_native, adjusted_img2)
+                            painter.restore()
+                        else:
+                            painter.drawImage(rect2_native, adjusted_img2)
 
                 painter.end()
                 
@@ -9864,6 +10102,7 @@ if __name__ == "__main__":
                 self.main_image_is_inverted = False 
 
                 self.remove_image1(); self.remove_image2()
+                self.clear_overlay_region()
                 self.adjustment_context_combo.model().item(1).setEnabled(False)
                 self.adjustment_context_combo.model().item(2).setEnabled(False)
                 self.adjustment_context_combo.setCurrentText("Main Image")
@@ -10299,9 +10538,6 @@ if __name__ == "__main__":
                     self.image_padded = False
                     self.is_modified = True
                     self.main_image_is_inverted = False 
-                    
-                    # Reset adjustments (Levels/Gamma need reset because bit-depth changed)
-                    self.reset_all_adjustments() 
                     
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
@@ -11327,7 +11563,7 @@ if __name__ == "__main__":
                 self.taper_skew_label = QLabel("Skew (+0.00)")
                 self.taper_skew_label.setFixedWidth(150)
                 self.taper_skew_slider = QSlider(Qt.Horizontal)
-                self.taper_skew_slider.setRange(-70, 70); self.taper_skew_slider.setValue(0)
+                self.taper_skew_slider.setRange(-100, 100); self.taper_skew_slider.setValue(0)
                 self.taper_skew_slider.valueChanged.connect(lambda value: self.taper_skew_label.setText(f"Skew ({value / 100.0:+0.2f})"))
                 self.taper_skew_slider.valueChanged.connect(lambda: self.update_live_view()); self.taper_skew_slider.valueChanged.connect(lambda: self.taper_skew_slider.setFocus())
                 self.skew_button = QPushButton("Apply"); self.skew_button.clicked.connect(self.update_skew)
@@ -14903,7 +15139,8 @@ if __name__ == "__main__":
                     self.is_modified = True
                     
                     # 4. Refresh display and sliders
-                    self.reset_all_adjustments()
+                    #self.reset_all_adjustments()
+                    self.apply_all_adjustments(save_history=True)
 
                     # 5. Now update ranges (uses new self.image dimensions) and sync slider values
                     self._update_status_bar()
@@ -15322,32 +15559,50 @@ if __name__ == "__main__":
                     if has_img2:
                         adjusted_img2 = getattr(self, 'image2_adjusted_preview', None)
                         if adjusted_img2:
-                            # Apply mixing percentage
                             painter.setOpacity(blend_value)
-
                             rect_in_label_space = self._get_overlay_rect_in_label_space(2)
                             if rect_in_label_space:
                                 rect_in_canvas_space = QRectF(
-                                    rect_in_label_space.left() * render_scale, 
-                                    rect_in_label_space.top() * render_scale, 
-                                    rect_in_label_space.width() * render_scale, 
+                                    rect_in_label_space.left()   * render_scale,
+                                    rect_in_label_space.top()    * render_scale,
+                                    rect_in_label_space.width()  * render_scale,
                                     rect_in_label_space.height() * render_scale
                                 )
                                 rotation2 = self.image2_rotation_slider.value() / 10.0 if hasattr(self, 'image2_rotation_slider') else 0.0
+                                blend_regions = getattr(self, 'overlay_blend_regions', [])
 
-                                if abs(rotation2) > 0.01:
-                                    center_point_canvas = rect_in_canvas_space.center()
+                                if blend_regions:
+                                    # Union clip path — Image 2 is composited exactly once through
+                                    # the combined mask, so overlapping regions don't multiply blend.
+                                    clip_path = QPainterPath()
+                                    clip_path.setFillRule(Qt.WindingFill)
+                                    img_cx = x_offset
+                                    img_cy = y_offset
+                                    img_cw = scaled_image.width()
+                                    img_ch = scaled_image.height()
+                                    for nr in blend_regions:
+                                        clip_path.addRect(QRectF(
+                                            img_cx + nr.x()     * img_cw,
+                                            img_cy + nr.y()     * img_ch,
+                                            nr.width()          * img_cw,
+                                            nr.height()         * img_ch,
+                                        ))
                                     painter.save()
-                                    painter.translate(center_point_canvas)
-                                    painter.rotate(rotation2)
-                                    painter.translate(-center_point_canvas)
+                                    painter.setClipPath(clip_path)
+                                    if abs(rotation2) > 0.01:
+                                        cp = rect_in_canvas_space.center()
+                                        painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
                                     painter.drawImage(rect_in_canvas_space, adjusted_img2)
                                     painter.restore()
                                 else:
-                                    painter.drawImage(rect_in_canvas_space, adjusted_img2)
-                            
-                            # Reset opacity for subsequent drawing operations
-                            painter.setOpacity(1.0)
+                                    if abs(rotation2) > 0.01:
+                                        cp = rect_in_canvas_space.center()
+                                        painter.save()
+                                        painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
+                                        painter.drawImage(rect_in_canvas_space, adjusted_img2)
+                                        painter.restore()
+                                    else:
+                                        painter.drawImage(rect_in_canvas_space, adjusted_img2)
                 
                 # --- 3. Draw Guide Lines ---
                 if draw_guides and hasattr(self, 'show_guides_checkbox') and self.show_guides_checkbox.isChecked():
@@ -15409,7 +15664,9 @@ if __name__ == "__main__":
                 self.main_image_is_inverted = False
                 self.is_modified = True
 
-                self.reset_all_adjustments()
+                #self.reset_all_adjustments()
+                self.apply_all_adjustments(save_history=True)
+
 
                 self._update_status_bar()
                 self._update_marker_slider_ranges()
@@ -15594,7 +15851,8 @@ if __name__ == "__main__":
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
                     # User requested reset on permanent changes
-                    self.reset_all_adjustments()
+                    #self.reset_all_adjustments()
+                    self.apply_all_adjustments(save_history=True)
                     # --- END BUG FIX ---
 
                 except Exception as e:
@@ -15751,7 +16009,8 @@ if __name__ == "__main__":
 
                     # --- Update Display Image (Dimensions Change Here) ---
                     # User requested reset of all settings (CLAHE, etc) on permanent changes
-                    self.reset_all_adjustments()
+                    #self.reset_all_adjustments()
+                    self.apply_all_adjustments(save_history=True)
 
                     # --- CRITICAL FIX: Sync Sliders with New Dimensions AND New Shift Values ---
                     self._update_status_bar()
@@ -17005,6 +17264,10 @@ if __name__ == "__main__":
                     self.crop_offset_y = 0
                     self.x_offset_s = 0
                     self.y_offset_s = 0
+
+                    self.overlay_blend_regions = []       # List of QRectF in normalized image coords (0.0–1.0)
+                    self._region_select_start = None
+                    self._region_select_current = None    # live drag point for rubber-band preview
 
                     self.cancel_rectangle_crop_mode()
                     self.crop_rectangle_coords = None
