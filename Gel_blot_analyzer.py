@@ -180,17 +180,16 @@ if __name__ == "__main__":
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
         from matplotlib.gridspec import GridSpec
         from skimage.restoration import rolling_ball 
-        from scipy.signal import find_peaks
+        from scipy.signal import find_peaks, peak_widths, cwt, ricker
         from scipy.ndimage import gaussian_filter1d
+        from scipy.ndimage import median_filter as scipy_median_filter
+        from scipy.special import erfc
+        from scipy import sparse
+        from scipy.sparse.linalg import spsolve
+        from scipy.optimize import curve_fit
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
         from scipy.interpolate import interp1d
-        SCIPY_AVAILABLE = False
-        try:
-            from scipy.optimize import curve_fit
-            SCIPY_AVAILABLE = True
-        except ImportError:
-            pass # print("WARNING: SciPy library not found. Advanced regression models (4-PL) will be disabled.")
-            pass # print("Install it with: pip install scipy")
+        SCIPY_AVAILABLE = True
         import cv2
         import datetime
 
@@ -2982,28 +2981,24 @@ if __name__ == "__main__":
 
         class PeakAreaDialog(QDialog):
             """
-            Interactive dialog to adjust peak regions and calculate peak areas.
-            Handles 8-bit ('L') and 16-bit ('I;16', 'I') grayscale PIL Image input.
-            Peak region boundaries are now manipulated directly on the image strip plot.
-            Optimized for fast, interactive boundary adjustments using blitting.
+            Advanced Densitometry Dialog.
+            Features state-of-the-art Asymmetric Least Squares (AsLS) baseline correction 
+            and Gaussian Peak Deconvolution to resolve overlapping bands (shoulders).
             """
             HANDLE_SIZE = 2 # Pixel size for draggable handles on ax_image
 
             def __init__(self, cropped_data, current_settings, persist_checked, parent=None):
                 super().__init__(parent)
                 self.parent_app = parent
-                self.setWindowTitle("Adjust Peak Regions and Calculate Areas")
+                self.setWindowTitle("Advanced Densitometry & Band Analysis")
                 
-                # --- START FIX: Dynamic Sizing ---
                 screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
                 screen_width = screen_geometry.width()
                 screen_height = screen_geometry.height()
                 
-                # Set size to 80% of screen width/height, but enforce minimums
-                dialog_width = max(600, int(screen_width * 0.6))
+                dialog_width = max(800, int(screen_width * 0.6))
                 dialog_height = max(900, int(screen_height * 0.9))
                 
-                # Ensure it fits on the screen
                 dialog_width = min(dialog_width, screen_width)
                 dialog_height = min(dialog_height, screen_height)
                 
@@ -3038,9 +3033,7 @@ if __name__ == "__main__":
                 if self.intensity_array_original_range.ndim != 2:
                     raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
 
-                # --- START MODIFICATION: Add inversion state ---
                 self.is_inverted = current_settings.get('is_inverted', False)
-                # --- END MODIFICATION ---
 
                 self.profile_original_inverted = None; self.profile = None; self.background = None
                 self.rolling_ball_radius = current_settings.get('rolling_ball_radius', 50)
@@ -3048,30 +3041,31 @@ if __name__ == "__main__":
                 self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = current_settings.get('peak_distance', 10)
                 self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.00)
-                self.area_subtraction_method = current_settings.get('area_subtraction_method', "Rolling-valley")
+                self.min_band_width = current_settings.get('min_band_width', 3)
+                self.area_subtraction_method = current_settings.get('area_subtraction_method', "Gaussian Deconvolution")
                 self.auto_adjust_rb_radius = current_settings.get('auto_adjust_rb_radius', False)
-                self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions = []
+                
+                self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions =[]
                 self.denoise_sigma = current_settings.get('denoise_sigma', 0.0)
-                self.peak_areas_rolling_ball = []; self.peak_areas_straight_line = []; self.peak_areas_valley = []
+                self.peak_areas_rolling_ball = []; self.peak_areas_straight_line =[]; self.peak_areas_valley = []; self.peak_areas_deconv =[]
                 self._final_settings = {}; self._persist_enabled_on_exit = persist_checked
+                
+                self.fitted_gaussian_params =[] 
+                self.tau_values = []
+                self.component_ownership = {}   
                 
                 self.manual_select_mode_active = False
                 self.selected_peak_for_ui_focus = -1
-
                 self.add_peak_mode_active = False; self.selected_peak_index_for_delete = -1
 
                 self.background_blit = None
                 self.dragging_handle_info = None
-                self.interactive_artists = []
-                
-                if rolling_ball is None or find_peaks is None or gaussian_filter1d is None or interp1d is None or cv2 is None or ImageOps is None:
-                    QMessageBox.critical(self, "Dependency Error","Missing required libraries...")
+                self.interactive_artists =[]
                 
                 self._setup_ui(persist_checked)
                 self.regenerate_profile_and_detect()
 
             def _setup_ui(self, persist_checked_initial):
-                # ... (code before peak_detect_group is the same) ...
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
                 self.fig = plt.figure(figsize=(10, 7.5))
@@ -3085,6 +3079,7 @@ if __name__ == "__main__":
                 self.canvas.mpl_connect('motion_notify_event', self.on_canvas_motion)
                 self.canvas.mpl_connect('button_release_event', self.on_canvas_release)
                 main_layout.addWidget(self.canvas, stretch=1)
+                
                 controls_main_hbox = QHBoxLayout()
                 left_controls_vbox = QVBoxLayout()
                 global_settings_group = QGroupBox("Global Settings & Area Method")
@@ -3094,27 +3089,32 @@ if __name__ == "__main__":
                 font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
                 global_settings_layout.addWidget(profile_method_label, 0, 1, 1, 2)
                 global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
+                
                 self.method_combobox = QComboBox()
-                self.method_combobox.addItems(["Rolling-valley", "Rolling Ball", "Straight Line"])
-                self.method_combobox.setCurrentText(self.area_subtraction_method)
+                self.method_combobox.addItems(["Gaussian Deconvolution", "Rolling-valley", "Rolling Ball", "Straight Line"])
+                idx = self.method_combobox.findText(self.area_subtraction_method)
+                if idx >= 0: self.method_combobox.setCurrentIndex(idx)
+                else: self.method_combobox.setCurrentIndex(0)
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
                 global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
+                
                 self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})")
                 self.rolling_ball_label.setMinimumWidth(160)
                 self.rolling_ball_slider = QSlider(Qt.Horizontal)
                 self.rolling_ball_slider.setRange(1, 500)
                 self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
-                self.rolling_ball_slider.valueChanged.connect(lambda: self.rolling_ball_slider.setFocus())
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
+                
                 self.auto_adjust_checkbox = QCheckBox("Auto")
-                self.auto_adjust_checkbox.setToolTip("Automatically calculate the optimal rolling ball radius based on detected peak widths.")
+                self.auto_adjust_checkbox.setToolTip("Automatically calculate optimal background parameters.")
                 self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
                 self.auto_adjust_checkbox.stateChanged.connect(self.toggle_auto_adjust_rb)
                 global_settings_layout.addWidget(self.rolling_ball_label, 2, 0)
                 global_settings_layout.addWidget(self.rolling_ball_slider, 2, 1)
                 global_settings_layout.addWidget(self.auto_adjust_checkbox, 2, 2)
                 left_controls_vbox.addWidget(global_settings_group)
+                
                 manual_actions_group = QGroupBox("Manual Peak Adjustment")
                 manual_actions_layout = QHBoxLayout(manual_actions_group)
                 self.add_peak_manually_button = QPushButton("Add Peak")
@@ -3129,7 +3129,6 @@ if __name__ == "__main__":
                 self.invert_display_button = QPushButton("Invert Profile & Image")
                 self.invert_display_button.setCheckable(True)
                 self.invert_display_button.toggled.connect(self._toggle_inversion_display)
-                self.invert_display_button.setToolTip("Invert the profile for peak detection and area calculation.\nWhen checked, light bands will be treated as peaks.")
                 self.invert_display_button.setChecked(self.is_inverted)
                 manual_actions_layout.addWidget(self.add_peak_manually_button)
                 manual_actions_layout.addWidget(self.delete_selected_peak_button)
@@ -3139,86 +3138,381 @@ if __name__ == "__main__":
 
                 peak_detect_group = QGroupBox("Peak Detection Settings")
                 peak_detect_layout = QGridLayout(peak_detect_group)
-                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0); self.peak_number_input = QLineEdit(); self.peak_number_input.setPlaceholderText("#"); self.peak_number_input.setMaximumWidth(60); self.update_peak_number_button = QPushButton("Set"); self.update_peak_number_button.clicked.connect(self.manual_peak_number_update); peak_detect_layout.addWidget(self.peak_number_input, 0, 1); peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2)
-                
-                # --- START OF FIX: Update signal connections ---
-                self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})"); self.denoise_sigma_slider = QSlider(Qt.Horizontal); self.denoise_sigma_slider.setRange(0,50); self.denoise_sigma_slider.setValue(int(self.denoise_sigma*10))
-                self.denoise_sigma_slider.valueChanged.connect(lambda val, lbl=self.denoise_sigma_label: (lbl.setText(f"Denoise Sigma ({val/10.0:.1f})"), setattr(self, 'denoise_sigma', val/10.0)))
+
+                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0)
+                self.peak_number_input = QLineEdit()
+                self.peak_number_input.setPlaceholderText("#")
+                self.peak_number_input.setMaximumWidth(60)
+                self.update_peak_number_button = QPushButton("Set")
+                self.update_peak_number_button.clicked.connect(self.manual_peak_number_update)
+                peak_detect_layout.addWidget(self.peak_number_input, 0, 1)
+                peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2)
+
+                self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})")
+                self.denoise_sigma_slider = QSlider(Qt.Horizontal)
+                self.denoise_sigma_slider.setRange(0, 50)
+                self.denoise_sigma_slider.setValue(int(self.denoise_sigma * 10))
+                self.denoise_sigma_slider.valueChanged.connect(
+                    lambda val, lbl=self.denoise_sigma_label: (
+                        lbl.setText(f"Denoise Sigma ({val / 10.0:.1f})"),
+                        setattr(self, 'denoise_sigma', val / 10.0)
+                    )
+                )
                 self.denoise_sigma_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                peak_detect_layout.addWidget(self.denoise_sigma_label,1,0); peak_detect_layout.addWidget(self.denoise_sigma_slider,1,1,1,2)
-                
-                self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})"); self.smoothing_slider = QSlider(Qt.Horizontal); self.smoothing_slider.setRange(0,100); self.smoothing_slider.setValue(int(self.smoothing_sigma*10))
-                self.smoothing_slider.valueChanged.connect(lambda val, lbl=self.smoothing_label: (lbl.setText(f"Smoothing Sigma ({val/10.0:.1f})"), setattr(self, 'smoothing_sigma', val/10.0)))
+                peak_detect_layout.addWidget(self.denoise_sigma_label, 1, 0)
+                peak_detect_layout.addWidget(self.denoise_sigma_slider, 1, 1, 1, 2)
+
+                self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
+                self.smoothing_slider = QSlider(Qt.Horizontal)
+                self.smoothing_slider.setRange(0, 100)
+                self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
+                self.smoothing_slider.valueChanged.connect(
+                    lambda val, lbl=self.smoothing_label: (
+                        lbl.setText(f"Smoothing Sigma ({val / 10.0:.1f})"),
+                        setattr(self, 'smoothing_sigma', val / 10.0)
+                    )
+                )
                 self.smoothing_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                peak_detect_layout.addWidget(self.smoothing_label,2,0); peak_detect_layout.addWidget(self.smoothing_slider,2,1,1,2)
-                
+                peak_detect_layout.addWidget(self.smoothing_label, 2, 0)
+                peak_detect_layout.addWidget(self.smoothing_slider, 2, 1, 1, 2)
+
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.3f})")
-                self.peak_prominence_slider = QSlider(Qt.Horizontal); self.peak_prominence_slider.setRange(0, 1000); self.peak_prominence_slider.setValue(int(self.peak_prominence_factor*1000))
-                self.peak_prominence_slider.valueChanged.connect(lambda val, lbl=self.peak_prominence_slider_label: (lbl.setText(f"Min Prominence ({val/1000.0:.3f})"), setattr(self, 'peak_prominence_factor', val/1000.0)))
+                self.peak_prominence_slider = QSlider(Qt.Horizontal)
+                self.peak_prominence_slider.setRange(0, 1000)
+                self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 1000))
+                self.peak_prominence_slider.valueChanged.connect(
+                    lambda val, lbl=self.peak_prominence_slider_label: (
+                        lbl.setText(f"Min Prominence ({val / 1000.0:.3f})"),
+                        setattr(self, 'peak_prominence_factor', val / 1000.0)
+                    )
+                )
                 self.peak_prominence_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.peak_prominence_slider_label,3,0); peak_detect_layout.addWidget(self.peak_prominence_slider,3,1,1,2)
-                
-                self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})"); self.peak_height_slider = QSlider(Qt.Horizontal); self.peak_height_slider.setRange(0,100); self.peak_height_slider.setValue(int(self.peak_height_factor*100))
-                self.peak_height_slider.valueChanged.connect(lambda val, lbl=self.peak_height_slider_label: (lbl.setText(f"Min Height ({val/100.0:.2f})"), setattr(self, 'peak_height_factor', val/100.0)))
+                peak_detect_layout.addWidget(self.peak_prominence_slider_label, 3, 0)
+                peak_detect_layout.addWidget(self.peak_prominence_slider, 3, 1, 1, 2)
+
+                self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})")
+                self.peak_height_slider = QSlider(Qt.Horizontal)
+                self.peak_height_slider.setRange(0, 100)
+                self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
+                self.peak_height_slider.valueChanged.connect(
+                    lambda val, lbl=self.peak_height_slider_label: (
+                        lbl.setText(f"Min Height ({val / 100.0:.2f})"),
+                        setattr(self, 'peak_height_factor', val / 100.0)
+                    )
+                )
                 self.peak_height_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.peak_height_slider_label,4,0); peak_detect_layout.addWidget(self.peak_height_slider,4,1,1,2)
-                
-                self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px"); self.peak_distance_slider = QSlider(Qt.Horizontal); self.peak_distance_slider.setRange(1,200); self.peak_distance_slider.setValue(self.peak_distance)
-                self.peak_distance_slider.valueChanged.connect(lambda val, lbl=self.peak_distance_slider_label: (lbl.setText(f"Min Distance ({val}) px"), setattr(self, 'peak_distance', val)))
+                peak_detect_layout.addWidget(self.peak_height_slider_label, 4, 0)
+                peak_detect_layout.addWidget(self.peak_height_slider, 4, 1, 1, 2)
+
+                self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px")
+                self.peak_distance_slider = QSlider(Qt.Horizontal)
+                self.peak_distance_slider.setRange(1, 200)
+                self.peak_distance_slider.setValue(self.peak_distance)
+                self.peak_distance_slider.valueChanged.connect(
+                    lambda val, lbl=self.peak_distance_slider_label: (
+                        lbl.setText(f"Min Distance ({val}) px"),
+                        setattr(self, 'peak_distance', val)
+                    )
+                )
                 self.peak_distance_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.peak_distance_slider_label,5,0); peak_detect_layout.addWidget(self.peak_distance_slider,5,1,1,2)
-                # --- END OF FIX ---
-                
-                self.copy_regions_button = QPushButton("Copy Regions"); self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app)
-                self.paste_regions_button = QPushButton("Paste Regions"); self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app);
-                if not (self.parent_app and self.parent_app.copied_peak_regions_data.get("regions")): self.paste_regions_button.setEnabled(False)
-                
+                peak_detect_layout.addWidget(self.peak_distance_slider_label, 5, 0)
+                peak_detect_layout.addWidget(self.peak_distance_slider, 5, 1, 1, 2)
+
+                # --- NEW: Minimum band width slider (rejects specks narrower than N pixels at FWHM) ---
+                self.min_band_width_label = QLabel(f"Min Band Width ({self.min_band_width}) px")
+                self.min_band_width_label.setToolTip(
+                    "Minimum peak width at half-maximum (px). Increase to suppress noise specks."
+                )
+                self.min_band_width_slider = QSlider(Qt.Horizontal)
+                self.min_band_width_slider.setRange(1, 30)
+                self.min_band_width_slider.setValue(int(self.min_band_width))
+                self.min_band_width_slider.valueChanged.connect(
+                    lambda val, lbl=self.min_band_width_label: (
+                        lbl.setText(f"Min Band Width ({val}) px"),
+                        setattr(self, 'min_band_width', val)
+                    )
+                )
+                self.min_band_width_slider.sliderReleased.connect(self.detect_peaks)
+                peak_detect_layout.addWidget(self.min_band_width_label, 6, 0)
+                peak_detect_layout.addWidget(self.min_band_width_slider, 6, 1, 1, 2)
+
+                self.copy_regions_button = QPushButton("Copy Regions")
+                self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app)
+                self.paste_regions_button = QPushButton("Paste Regions")
+                self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app)
+                if not (
+                    self.parent_app
+                    and hasattr(self.parent_app, 'copied_peak_regions_data')
+                    and self.parent_app.copied_peak_regions_data.get("regions")
+                ):
+                    self.paste_regions_button.setEnabled(False)
                 copy_paste_layout = QHBoxLayout()
                 copy_paste_layout.addWidget(self.copy_regions_button)
                 copy_paste_layout.addWidget(self.paste_regions_button)
-                peak_detect_layout.addLayout(copy_paste_layout, 6, 0, 1, 3)
+                peak_detect_layout.addLayout(copy_paste_layout, 7, 0, 1, 3)
 
-                left_controls_vbox.addWidget(peak_detect_group); left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
+                left_controls_vbox.addWidget(peak_detect_group)
+                left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
                 self.update_rb_controls_enabled_state()
 
-            # --- START MODIFICATION: New handler method ---
             def _toggle_inversion_display(self, checked):
-                """Toggles the inversion state and re-runs the entire analysis pipeline."""
                 self.is_inverted = checked
                 self.regenerate_profile_and_detect()
-            # --- END MODIFICATION ---
 
             def _on_method_changed(self):
-                """Handles area method changes by recalculating regions and then updating the plot."""
                 self.update_rb_controls_enabled_state()
                 self._recalculate_all_regions()
                 self.update_plot()
             
             def _on_rb_slider_changed(self, value):
-                """Handles real-time updates when the rolling ball slider is moved."""
-                if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
+                if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() in["Rolling Ball", "Rolling-valley"]:
                     self.rolling_ball_radius = value
                     self._recalculate_all_regions()
                     self.update_plot()
 
             def update_rb_controls_enabled_state(self):
-                """Enables/disables controls based on the selected area method."""
-                is_rb_dependent_method = self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
-                
+                is_rb_dependent_method = self.method_combobox.currentText() in["Rolling Ball", "Rolling-valley"]
                 self.rolling_ball_slider.setEnabled(is_rb_dependent_method and not self.auto_adjust_checkbox.isChecked())
                 self.auto_adjust_checkbox.setEnabled(is_rb_dependent_method)
                 self.rolling_ball_label.setEnabled(is_rb_dependent_method)
 
             def toggle_auto_adjust_rb(self, state):
-                """Handles the 'Auto' checkbox state change for rolling ball radius."""
                 self.auto_adjust_rb_radius = bool(state)
-                is_rb_dependent_method = self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
-                self.rolling_ball_slider.setEnabled(is_rb_dependent_method and not self.auto_adjust_rb_radius)
+                self.update_rb_controls_enabled_state()
                 self.detect_peaks()
 
+            # --- MATH ENGINE: ASLS BASELINE ---
+            def _baseline_als(self, y, lam=1e5, p=0.01, niter=10):
+                """Asymmetric Least Squares Smoothing for robust background estimation."""
+                L = len(y)
+                # Construct difference matrix cleanly
+                D = sparse.diags([1, -2, 1],[0, -1, -2], shape=(L, L - 2))
+                D_sq = lam * D.dot(D.transpose())
+                w = np.ones(L)
+                for i in range(niter):
+                    W = sparse.spdiags(w, 0, L, L)
+                    Z = W + D_sq
+                    z = spsolve(Z, w * y)
+                    w = p * (y > z) + (1 - p) * (y < z)
+                return z
+
+            # --- MATH ENGINE: GAUSSIAN FITTING ---
+            def _gaussian(self, x, amp, cen, wid):
+                return amp * np.exp(-(x - cen)**2 / (2 * wid**2))
+
+            def _multi_gaussian(self, x, *params):
+                y = np.zeros_like(x, dtype=np.float64)
+                for i in range(0, len(params), 3):
+                    a, c, w = params[i:i+3]
+                    y += self._gaussian(x, a, c, w)
+                return y
+
+            def _fit_gaussians(self, profile_subtracted):
+                """
+                Two-stage deconvolution:
+                Stage 1 — lmfit multi-Gaussian for robust initial convergence.
+                Stage 2 — lmfit multi-EMG initialized from Stage 1 to capture
+                            asymmetric band tailing.
+
+                Component count is determined by AIC-based model selection
+                (_select_optimal_components) which auto-discovers undetected shoulders.
+
+                Falls back gracefully to scipy curve_fit + pure Gaussian if lmfit is
+                not installed.
+
+                TAU INITIALISATION RULE: tau must always start at >= sig * 0.3.
+                Values smaller than sig * 0.05 cause _emg to collapse to zero
+                (erfc numerical instability), producing zero areas for all peaks.
+                """
+                self.fitted_gaussian_params = []
+                self.tau_values = []
+
+                try:
+                    import lmfit
+                    HAS_LMFIT = True
+                except ImportError:
+                    HAS_LMFIT = False
+                    print(
+                        "Warning: lmfit not installed — using scipy fallback. "
+                        "Install with:  pip install lmfit"
+                    )
+
+                # AIC-based component selection (includes shoulder discovery)
+                optimal_peaks = self._select_optimal_components(profile_subtracted)
+
+                if len(optimal_peaks) == 0:
+                    return
+
+                n       = len(profile_subtracted)
+                x       = np.arange(n, dtype=np.float64)
+                max_val = np.max(profile_subtracted)
+                if max_val <= 0:
+                    return
+                y_norm = profile_subtracted / max_val
+
+                # Width estimates for initial parameter guesses
+                try:
+                    widths_obj = peak_widths(
+                        profile_subtracted,
+                        np.clip(optimal_peaks, 0, n - 1),
+                        rel_height=0.5
+                    )
+                    fwhms = np.where(widths_obj[0] < 1.0, 15.0, widths_obj[0])
+                except Exception:
+                    fwhms = np.full(len(optimal_peaks), 15.0)
+                sigmas = np.clip(fwhms / 2.355, 1.0, n / 4.0)
+                n_comp = len(optimal_peaks)
+
+                if HAS_LMFIT:
+                    # ------------------------------------------------------------------ #
+                    # STAGE 1 — Multi-Gaussian fit (stable warm-start)                   #
+                    # ------------------------------------------------------------------ #
+                    params_g = lmfit.Parameters()
+                    for i, p in enumerate(optimal_peaks):
+                        p_int = int(np.clip(p, 0, n - 1))
+                        amp   = max(0.01, float(y_norm[p_int]))
+                        sig   = float(sigmas[i])
+                        tol   = max(8.0, sig * 1.5)
+                        params_g.add(f'amp_{i}', value=amp,      min=0.0,            max=max(2.0, amp * 2.5))
+                        params_g.add(f'cen_{i}', value=float(p), min=float(p) - tol, max=float(p) + tol)
+                        params_g.add(f'sig_{i}', value=sig,      min=0.5,            max=n / 3.0)
+
+                    def _residual_gaussian(pars, x_data, y_data):
+                        model = np.zeros_like(x_data, dtype=np.float64)
+                        for idx in range(n_comp):
+                            a = pars[f'amp_{idx}'].value
+                            c = pars[f'cen_{idx}'].value
+                            s = max(pars[f'sig_{idx}'].value, 1e-6)
+                            model += a * np.exp(-(x_data - c) ** 2 / (2.0 * s ** 2))
+                        return model - y_data
+
+                    gauss_result_params = params_g  # fallback = initial guess
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            result_g = lmfit.minimize(
+                                _residual_gaussian, params_g,
+                                args=(x, y_norm),
+                                method='least_squares'
+                            )
+                        gauss_result_params = result_g.params
+                    except Exception as e:
+                        print(f"Stage 1 Gaussian fit failed: {e}")
+
+                    # ------------------------------------------------------------------ #
+                    # STAGE 2 — Multi-EMG fit warm-started from Stage 1                  #
+                    # tau initialised at 30% of sigma — MUST stay above sig*0.05 floor   #
+                    # to prevent _emg numerical collapse.                                 #
+                    # ------------------------------------------------------------------ #
+                    params_emg = lmfit.Parameters()
+                    for i in range(n_comp):
+                        amp_init = float(gauss_result_params[f'amp_{i}'].value)
+                        cen_init = float(gauss_result_params[f'cen_{i}'].value)
+                        sig_init = max(float(gauss_result_params[f'sig_{i}'].value), 0.5)
+                        # tau start = 30 % of sigma — safely above the 5 % collapse threshold
+                        tau_init = sig_init * 0.3
+                        tol      = max(8.0, sig_init * 1.5)
+
+                        params_emg.add(f'amp_{i}', value=amp_init, min=0.0,
+                                    max=max(2.0, amp_init * 2.5))
+                        params_emg.add(f'cen_{i}', value=cen_init,
+                                    min=cen_init - tol, max=cen_init + tol)
+                        params_emg.add(f'sig_{i}', value=sig_init, min=0.5, max=n / 3.0)
+                        # tau lower bound = sig*0.06 keeps us just above the collapse threshold
+                        params_emg.add(f'tau_{i}', value=tau_init,
+                                    min=sig_init * 0.06, max=sig_init * 5.0)
+
+                    def _residual_emg(pars, x_data, y_data):
+                        model = np.zeros_like(x_data, dtype=np.float64)
+                        for idx in range(n_comp):
+                            a = pars[f'amp_{idx}'].value
+                            c = pars[f'cen_{idx}'].value
+                            s = pars[f'sig_{idx}'].value
+                            t = pars[f'tau_{idx}'].value
+                            model += self._emg(x_data, a, c, s, t)
+                        return model - y_data
+
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            result_emg = lmfit.minimize(
+                                _residual_emg, params_emg,
+                                args=(x, y_norm),
+                                method='least_squares'
+                            )
+                        fp = result_emg.params
+                        for i in range(n_comp):
+                            sig_i = max(float(fp[f'sig_{i}'].value), 0.5)
+                            tau_i = max(float(fp[f'tau_{i}'].value), sig_i * 0.06)
+                            self.fitted_gaussian_params.append((
+                                float(fp[f'amp_{i}'].value) * max_val,
+                                float(fp[f'cen_{i}'].value),
+                                sig_i
+                            ))
+                            self.tau_values.append(tau_i)
+
+                    except Exception as e:
+                        print(f"Stage 2 EMG fit failed — keeping Stage 1 Gaussian: {e}")
+                        for i in range(n_comp):
+                            sig_i = max(float(gauss_result_params[f'sig_{i}'].value), 0.5)
+                            # FIXED: was 0.01 (caused erfc collapse). Use 30% of sigma.
+                            tau_i = sig_i * 0.3
+                            self.fitted_gaussian_params.append((
+                                float(gauss_result_params[f'amp_{i}'].value) * max_val,
+                                float(gauss_result_params[f'cen_{i}'].value),
+                                sig_i
+                            ))
+                            self.tau_values.append(tau_i)
+
+                else:
+                    # ------------------------------------------------------------------ #
+                    # FALLBACK — scipy curve_fit, pure Gaussian, no shoulder detection   #
+                    # ------------------------------------------------------------------ #
+                    initial_guess  = []
+                    lower_bounds   = []
+                    upper_bounds   = []
+                    for i, p in enumerate(optimal_peaks):
+                        p_int = int(np.clip(p, 0, n - 1))
+                        amp   = max(0.01, float(y_norm[p_int]))
+                        sig   = float(sigmas[i])
+                        tol   = max(8.0, sig * 1.5)
+                        initial_guess.extend([amp, float(p), sig])
+                        lower_bounds.extend([0.0, float(p) - tol, 0.5])
+                        upper_bounds.extend([max(2.0, amp * 2.5), float(p) + tol, n / 3.0])
+
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            popt, _ = curve_fit(
+                                self._multi_gaussian, x, y_norm,
+                                p0=initial_guess,
+                                bounds=(lower_bounds, upper_bounds),
+                                maxfev=5000
+                            )
+                        for i in range(0, len(popt), 3):
+                            sig_i = max(float(popt[i + 2]), 0.5)
+                            # FIXED: was sig * 0.01 (caused erfc collapse). Use 30% of sigma.
+                            tau_i = sig_i * 0.3
+                            self.fitted_gaussian_params.append((
+                                float(popt[i]) * max_val, float(popt[i + 1]), sig_i
+                            ))
+                            self.tau_values.append(tau_i)
+
+                    except Exception as e:
+                        print(f"Fallback Gaussian fit failed: {e}")
+                        for i in range(0, len(initial_guess), 3):
+                            sig_i = max(float(initial_guess[i + 2]), 0.5)
+                            # FIXED: was sig * 0.01 (caused erfc collapse). Use 30% of sigma.
+                            tau_i = sig_i * 0.3
+                            self.fitted_gaussian_params.append((
+                                float(initial_guess[i]) * max_val,
+                                float(initial_guess[i + 1]),
+                                sig_i
+                            ))
+                            self.tau_values.append(tau_i)
+
             def _calculate_optimal_rb_radius(self):
-                if self.profile is None or len(self.peaks) == 0:
-                    return 50 
+                if self.profile is None or len(self.peaks) == 0: return 50 
                 try:
                     profile_range = np.ptp(self.profile)
                     if profile_range < 1e-6: profile_range = 1.0
@@ -3230,409 +3524,746 @@ if __name__ == "__main__":
                     )
                     if 'widths' in properties and len(properties['widths']) > 0:
                         avg_width = np.mean(properties['widths'])
-                        optimal_radius = int(np.clip(2.5 * avg_width, 10, 500))
-                        pass # print(f"Auto-calculated optimal rolling ball radius: {optimal_radius} (from avg peak width: {avg_width:.2f})")
-                        return optimal_radius
-                    else:
-                        return 50
-                except Exception as e:
-                    pass # print(f"Error calculating optimal rolling ball radius: {e}")
-                    return 50
+                        return int(np.clip(2.5 * avg_width, 10, 500))
+                    else: return 50
+                except: return 50
 
             def _recalculate_all_regions(self):
-                """
-                Single source of truth for peak_regions.
-                Now uses SNIP as an additional floor to handle smeared-band local
-                background elevation that the rolling ball alone can miss.
-                """
                 self.method = self.method_combobox.currentText()
-
                 if self.profile_original_inverted is None:
                     return
 
                 profile_float = self.profile_original_inverted.astype(np.float64)
+                profile_len   = len(profile_float)
+                n_peaks       = len(self.peaks)
 
-                if self.method in ["Rolling Ball", "Rolling-valley"]:
+                # ------------------------------------------------------------------ #
+                # Shared: compute midpoint fences between adjacent detected peaks.    #
+                # A peak's handles can never expand past its fence into a neighbour.  #
+                # ------------------------------------------------------------------ #
+                def _fences():
+                    left_fences  = []
+                    right_fences = []
+                    for i in range(n_peaks):
+                        lf = int((self.peaks[i - 1] + self.peaks[i]) // 2) if i > 0          else 0
+                        rf = int((self.peaks[i] + self.peaks[i + 1]) // 2) if i < n_peaks - 1 else profile_len - 1
+                        left_fences.append(lf)
+                        right_fences.append(rf)
+                    return left_fences, right_fences
+
+                # ------------------------------------------------------------------ #
+                # Shared: place handles tight around each peak via threshold          #
+                # intersection, constrained within the midpoint fences.              #
+                # Produces exactly n_peaks entries — guaranteed.                     #
+                # ------------------------------------------------------------------ #
+                def _tight_regions(background, threshold_fraction=0.02):
+                    left_fences, right_fences = _fences()
+                    regions = []
+                    for i, peak_x in enumerate(self.peaks):
+                        peak_x = int(peak_x)
+                        start_handle, end_handle = self._find_intersection_boundaries(
+                            profile_float, background, peak_x,
+                            left_fences[i], right_fences[i],
+                            threshold_fraction=threshold_fraction
+                        )
+                        # Prevent overlap with immediately preceding region
+                        if i > 0 and regions:
+                            prev_end = regions[-1][1]
+                            if start_handle <= prev_end:
+                                start_handle = prev_end + 1
+
+                        start_handle = int(np.clip(start_handle, 0, profile_len - 1))
+                        end_handle   = int(np.clip(end_handle,   0, profile_len - 1))
+
+                        if start_handle < end_handle:
+                            regions.append((start_handle, end_handle))
+                        else:
+                            regions.append((
+                                max(0,            peak_x - 10),
+                                min(profile_len - 1, peak_x + 10)
+                            ))
+                    return regions
+
+                # ================================================================== #
+                if self.method == "Gaussian Deconvolution":
+
+                    # Step 1 — AsLS baseline
+                    self.background = self._baseline_als(profile_float, lam=1e5, p=0.01)
+                    self.background = np.minimum(self.background, profile_float)
+                    self.background = np.maximum(self.background, 0.0)
+
+                    # Step 2 — Initial tight handle placement (guaranteed n_peaks entries)
+                    self.peak_regions = _tight_regions(self.background, threshold_fraction=0.02)
+
+                    # Step 3 — EMG fitting (may discover components outside current handles)
+                    subtracted = np.maximum(profile_float - self.background, 0.0)
+                    self._fit_gaussians(subtracted)
+
+                    # Step 4 — Component ownership (area math only)
+                    self.component_ownership = {}
+                    if n_peaks > 0 and len(self.fitted_gaussian_params) > 0:
+                        for comp_idx, (amp, cen, sig) in enumerate(self.fitted_gaussian_params):
+                            owner = int(np.argmin(np.abs(self.peaks.astype(float) - float(cen))))
+                            self.component_ownership.setdefault(owner, []).append(comp_idx)
+
+                    # Step 5 — Expand handles to cover fitted component bodies.
+                    # Critical case: _select_optimal_components may discover a large component
+                    # (e.g. the main band at pixel 80) whose center lies OUTSIDE the tight
+                    # threshold handles of its owner peak (e.g. peak at pixel 95 with handles
+                    # 92–125). Without this step the integration only catches the tail,
+                    # producing catastrophically wrong areas.
+                    if len(self.fitted_gaussian_params) > 0:
+                        left_fences, right_fences = _fences()
+                        updated_regions = list(self.peak_regions)
+
+                        for peak_idx in range(n_peaks):
+                            owned = self.component_ownership.get(peak_idx, [])
+                            if not owned:
+                                continue
+
+                            current_start, current_end = updated_regions[peak_idx]
+                            lf = left_fences[peak_idx]
+                            rf = right_fences[peak_idx]
+
+                            for comp_idx in owned:
+                                if comp_idx >= len(self.fitted_gaussian_params):
+                                    continue
+                                amp, cen, sig = self.fitted_gaussian_params[comp_idx]
+                                tau = (self.tau_values[comp_idx]
+                                    if comp_idx < len(self.tau_values) else sig * 0.3)
+                                # Component body = centre ± 3σ (+3τ on right for EMG tail)
+                                comp_left  = int(cen - 3.0 * sig)
+                                comp_right = int(cen + 3.0 * sig + 3.0 * tau)
+                                # Expand handles to cover the component, but never past fences
+                                current_start = max(min(current_start, comp_left),  lf)
+                                current_end   = min(max(current_end,   comp_right), rf)
+
+                            updated_regions[peak_idx] = (
+                                int(np.clip(current_start, 0, profile_len - 1)),
+                                int(np.clip(current_end,   0, profile_len - 1))
+                            )
+
+                        self.peak_regions = updated_regions
+
+                # ================================================================== #
+                elif self.method in ["Rolling Ball", "Rolling-valley"]:
                     try:
-                        safe_radius = max(1, min(self.rolling_ball_radius,
-                                                len(profile_float) // 2 - 1))
-                        rb_bg   = self._custom_rolling_ball(profile_float, safe_radius)
-
-                        # SNIP gives a tighter (lower) background under smears —
-                        # take the MINIMUM of both estimates as the true floor.
-                        # This prevents the rolling ball from riding on broad smears.
-                        snip_bg = self._snip_background(profile_float)
-                        
+                        safe_radius = max(1, min(self.rolling_ball_radius, profile_len // 2 - 1))
+                        rb_bg       = self._custom_rolling_ball(profile_float, safe_radius)
+                        snip_bg     = self._snip_background(profile_float)
                         self.background = np.minimum(rb_bg, snip_bg)
                         self.background = np.maximum(self.background, 0.0)
-
                     except Exception:
-                        self.background = np.zeros_like(self.profile_original_inverted)
-                else:
-                    # Straight Line method: still compute a SNIP background as floor
-                    # so even a linear baseline cannot dip below true background
+                        self.background = np.zeros_like(profile_float)
+
+                    self.peak_regions = _tight_regions(self.background, threshold_fraction=0.02)
+
+                # ================================================================== #
+                else:  # Straight Line
                     try:
                         self.background = self._snip_background(profile_float)
                     except Exception:
-                        self.background = np.zeros_like(self.profile_original_inverted)
+                        self.background = np.zeros_like(profile_float)
 
-                if self.method == "Rolling Ball":
-                    self._redefine_regions_from_background(self.background)
-                else:
-                    self._redefine_all_valley_regions()
+                    self.peak_regions = _tight_regions(self.background, threshold_fraction=0.02)
 
             def _redefine_regions_from_background(self, background):
+                """
+                Places integration boundary handles tight around each peak using
+                threshold intersection on the background-subtracted signal.
+                """
                 self.peak_regions = []
                 profile = self.profile_original_inverted
                 if profile is None or len(profile) <= 1 or len(self.peaks) == 0:
                     return
 
-                profile_len  = len(profile)
-                n_peaks      = len(self.peaks)
-                midpoints    = (self.peaks[:-1] + self.peaks[1:]) // 2 if n_peaks > 1 else []
-                left_fences  = np.concatenate(([0],              midpoints))
-                right_fences = np.concatenate((midpoints, [profile_len - 1]))
+                profile_len = len(profile)
+                n_peaks     = len(self.peaks)
 
                 for i, peak_x in enumerate(self.peaks):
-                    start, end = self._find_intersection_boundaries(
+                    peak_x = int(peak_x)
+
+                    left_fence  = int((self.peaks[i - 1] + peak_x) // 2) if i > 0          else 0
+                    right_fence = int((peak_x + self.peaks[i + 1]) // 2) if i < n_peaks - 1 else profile_len - 1
+
+                    start_handle, end_handle = self._find_intersection_boundaries(
                         profile, background, peak_x,
-                        int(left_fences[i]), int(right_fences[i]),
-                        threshold_fraction=0.05
+                        left_fence, right_fence,
+                        threshold_fraction=0.02
                     )
-                    self.peak_regions.append((start, end))
+
+                    if i > 0 and self.peak_regions:
+                        prev_end = self.peak_regions[-1][1]
+                        if start_handle <= prev_end:
+                            start_handle = prev_end + 1
+
+                    start_handle = int(np.clip(start_handle, 0,            profile_len - 1))
+                    end_handle   = int(np.clip(end_handle,   0,            profile_len - 1))
+
+                    if start_handle < end_handle:
+                        self.peak_regions.append((start_handle, end_handle))
+                    else:
+                        self.peak_regions.append((
+                            max(0,            peak_x - 5),
+                            min(profile_len - 1, peak_x + 5)
+                        ))
             
             def detect_peaks(self):
                 if self.profile is None or len(self.profile) == 0:
                     self.peaks = np.array([])
                 else:
-                    # --- START OF FIX ---
-                    # REMOVED: self.peak_height_factor = self.peak_height_slider.value()/100.0
-                    # REMOVED: self.peak_distance = self.peak_distance_slider.value()
-                    # REMOVED: self.peak_prominence_factor = self.peak_prominence_slider.value()/1000.0
-                    # The method now uses the instance attributes directly.
-                    # --- END OF FIX ---
                     profile_range = np.ptp(self.profile)
                     min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
                     min_prominence_abs = profile_range * self.peak_prominence_factor
                     try:
-                        self.peaks, _ = find_peaks(self.profile, height=min_height_abs, prominence=min_prominence_abs, distance=self.peak_distance, width=1)
+                        self.peaks, properties = find_peaks(
+                            self.profile,
+                            height=min_height_abs,
+                            prominence=min_prominence_abs,
+                            distance=self.peak_distance,
+                            width=1,
+                            rel_height=0.5  # measure FWHM — needed for width and sharpness filters
+                        )
+
+                        if len(self.peaks) > 0 and 'widths' in properties:
+                            # --- Filter 1: Minimum physical band width ---
+                            # Real gel bands occupy several pixels at FWHM; specks do not.
+                            width_mask = properties['widths'] >= self.min_band_width
+                            filtered_peaks = self.peaks[width_mask]
+                            filtered_widths = properties['widths'][width_mask]
+                            filtered_heights = (
+                                properties['peak_heights'][width_mask]
+                                if 'peak_heights' in properties else None
+                            )
+
+                            # --- Filter 2: Sharpness ratio ---
+                            # Specks have anomalously high amplitude relative to their width.
+                            # Reject any peak whose height/width ratio exceeds 4× the median.
+                            if filtered_heights is not None and len(filtered_peaks) > 1:
+                                sharpness = filtered_heights / np.maximum(filtered_widths, 1.0)
+                                median_sharp = np.median(sharpness)
+                                if median_sharp > 0:
+                                    sharpness_mask = sharpness <= (median_sharp * 4.0)
+                                    filtered_peaks = filtered_peaks[sharpness_mask]
+
+                            self.peaks = filtered_peaks
+
                     except Exception:
                         self.peaks = np.array([])
-                
-                if self.auto_adjust_rb_radius:
+
+                if self.auto_adjust_rb_radius and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
                     self.rolling_ball_radius = self._calculate_optimal_rb_radius()
                     if hasattr(self, 'rolling_ball_slider'):
                         self.rolling_ball_slider.blockSignals(True)
                         self.rolling_ball_slider.setValue(self.rolling_ball_radius)
                         self.rolling_ball_slider.blockSignals(False)
-                    if hasattr(self, 'rolling_ball_label'):
                         self.rolling_ball_label.setText(f"Rolling Ball Radius ({self.rolling_ball_radius})")
 
                 if hasattr(self, 'peak_number_input') and not self.peak_number_input.hasFocus():
                     self.peak_number_input.setText(str(len(self.peaks)))
-                
+
                 self._recalculate_all_regions()
                 self.update_plot()
 
             def accept_and_close(self):
-                # --- START OF FIX ---
-                # Read from instance attributes, not UI elements
                 self._final_settings = {
                     'rolling_ball_radius': self.rolling_ball_radius,
                     'denoise_sigma': self.denoise_sigma,
                     'peak_height_factor': self.peak_height_factor,
                     'peak_distance': self.peak_distance,
                     'peak_prominence_factor': self.peak_prominence_factor,
+                    'min_band_width': self.min_band_width,
                     'band_estimation_method': "Sum",
                     'area_subtraction_method': self.method_combobox.currentText(),
                     'smoothing_sigma': self.smoothing_sigma,
                     'auto_adjust_rb_radius': self.auto_adjust_checkbox.isChecked(),
                     'is_inverted': self.is_inverted,
                 }
-                # --- END OF FIX ---
                 self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked()
                 self.accept()
                 
             def update_plot(self):
-                if self.canvas is None: return
+                if self.canvas is None:
+                    return
                 profile_to_plot_and_calc = self.profile_original_inverted
-                
-                # --- Theme Colors (Unchanged) ---
-                is_dark_theme = self.parent_app and self.parent_app.current_theme == "dark"
+
+                is_dark_theme = (
+                    self.parent_app
+                    and hasattr(self.parent_app, 'current_theme')
+                    and self.parent_app.current_theme == "dark"
+                )
                 if is_dark_theme:
                     bg_color, ax_bg_color = '#2D2D30', '#38383C'
                     text_color, spine_color, grid_color = '#F1F1F1', '#707070', '#5A5A60'
-                    profile_color, peak_marker_color, focused_peak_color, selected_peak_color = '#4DB6AC', '#FF8A65', '#FFCA28', '#42A5F5'
-                    bg_line_color, sl_line_color, rv_line_color = '#7E57C2', '#5C6BC0', '#42A5F5'
+                    profile_color      = '#4DB6AC'
+                    peak_marker_color  = '#FF8A65'
+                    focused_peak_color = '#FFCA28'
+                    selected_peak_color= '#42A5F5'
+                    bg_line_color      = '#7E57C2'
+                    sl_line_color      = '#5C6BC0'
+                    rv_line_color      = '#42A5F5'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.5
                 else:
                     bg_color, ax_bg_color = 'white', 'white'
                     text_color, spine_color, grid_color = 'black', 'black', '#DDDDDD'
-                    profile_color, peak_marker_color, focused_peak_color, selected_peak_color = 'black', 'red', 'orange', 'blue'
-                    bg_line_color, sl_line_color, rv_line_color = 'purple', 'magenta', 'blue'
+                    profile_color      = 'black'
+                    peak_marker_color  = 'red'
+                    focused_peak_color = 'orange'
+                    selected_peak_color= 'blue'
+                    bg_line_color      = 'purple'
+                    sl_line_color      = 'magenta'
+                    rv_line_color      = 'blue'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
                 self.fig.clf()
-                
-                # --- FIX 1: Adjusted height_ratios (2:1) and increased hspace (0.5) ---
-                # This gives the bottom image more height and adds a larger gap between plots.
                 gs = GridSpec(2, 1, height_ratios=[2, 1], hspace=0.15, figure=self.fig)
-                
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
                 self.fig.patch.set_facecolor(bg_color)
                 self.interactive_artists.clear()
-                
+
                 for axis in [self.ax, self.ax_image]:
                     axis.patch.set_facecolor(ax_bg_color)
-                    for spine in axis.spines.values(): spine.set_color(spine_color)
+                    for spine in axis.spines.values():
+                        spine.set_color(spine_color)
                     axis.tick_params(axis='x', colors=text_color, labelsize=9)
                     axis.tick_params(axis='y', colors=text_color, labelsize=9)
-                    axis.yaxis.label.set_color(text_color); axis.xaxis.label.set_color(text_color); axis.title.set_color(text_color)
-                
-                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0 :
-                     self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=7)
-                     self.ax.tick_params(axis='x', labelbottom=False)
-                     self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center', color=text_color, transform=self.ax_image.transAxes)
-                     self.canvas.draw_idle(); return
-                
+                    axis.yaxis.label.set_color(text_color)
+                    axis.xaxis.label.set_color(text_color)
+                    axis.title.set_color(text_color)
+
+                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0:
+                    self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=7)
+                    self.ax.tick_params(axis='x', labelbottom=False)
+                    self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center',
+                                    color=text_color, transform=self.ax_image.transAxes)
+                    self.canvas.draw_idle()
+                    return
+
                 profile_for_display = profile_to_plot_and_calc
 
-                if not hasattr(self, 'background') or self.background is None or self.background.shape != profile_to_plot_and_calc.shape:
+                if (not hasattr(self, 'background')
+                        or self.background is None
+                        or self.background.shape != profile_to_plot_and_calc.shape):
                     self.background = np.zeros_like(profile_to_plot_and_calc)
 
                 self.ax.plot(profile_for_display, label="Profile", color=profile_color, lw=1.2, zorder=10)
-                
+
                 if len(self.peaks) > 0:
-                     valid_peaks_indices = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
-                     if len(valid_peaks_indices) > 0:
-                         peak_y_on_displayed = profile_for_display[valid_peaks_indices]
-                         self.ax.scatter(valid_peaks_indices, peak_y_on_displayed, color=peak_marker_color, marker='x', s=40, label="Peaks", zorder=15) 
-                         if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
-                             focused_peak_x_val = self.peaks[self.selected_peak_for_ui_focus]
-                             self.ax.plot(focused_peak_x_val, profile_for_display[focused_peak_x_val], 'o', markersize=12, markeredgecolor=focused_peak_color, markerfacecolor='none', label='Focused', zorder=16)
-                         if self.selected_peak_index_for_delete != -1:
-                             self.ax.plot(self.selected_peak_index_for_delete, profile_for_display[self.selected_peak_index_for_delete], 's', markersize=14, markeredgecolor=selected_peak_color, markerfacecolor='none', label='Selected for Delete', zorder=17)
-                
-                self.peak_areas_rolling_ball.clear(); self.peak_areas_straight_line.clear(); self.peak_areas_valley.clear()
-                
+                    valid_peaks = self.peaks[(self.peaks >= 0) & (self.peaks < len(profile_to_plot_and_calc))]
+                    if len(valid_peaks) > 0:
+                        self.ax.scatter(
+                            valid_peaks, profile_for_display[valid_peaks],
+                            color=peak_marker_color, marker='x', s=40,
+                            label="Detected Peaks", zorder=15
+                        )
+                        if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
+                            fx = self.peaks[self.selected_peak_for_ui_focus]
+                            self.ax.plot(fx, profile_for_display[fx], 'o', markersize=12,
+                                        markeredgecolor=focused_peak_color, markerfacecolor='none',
+                                        label='Focused', zorder=16)
+                        if self.selected_peak_index_for_delete != -1:
+                            sdx = self.selected_peak_index_for_delete
+                            self.ax.plot(sdx, profile_for_display[sdx], 's', markersize=14,
+                                        markeredgecolor=selected_peak_color, markerfacecolor='none',
+                                        label='Selected for Delete', zorder=17)
+
+                # --- Clear area accumulators ---
+                self.peak_areas_rolling_ball.clear()
+                self.peak_areas_straight_line.clear()
+                self.peak_areas_valley.clear()
+                self.peak_areas_deconv.clear()
+
                 profile_range_plot = np.ptp(profile_for_display) if np.ptp(profile_for_display) > 0 else 1.0
-                max_y_for_plot_limit = np.max(profile_for_display) if len(profile_for_display) > 0 else 1
+                max_y_for_plot_limit = np.max(profile_for_display) if len(profile_for_display) > 0 else 1.0
                 text_positions = []
                 global_sl_baseline = None
-                if self.peak_regions:
+
+                if self.peak_regions and self.method == "Straight Line":
                     trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
                     trough_y = [profile_to_plot_and_calc[x] for x in trough_x]
                     if len(trough_x) >= 2:
-                        x_all              = np.arange(len(profile_to_plot_and_calc))
+                        x_all = np.arange(len(profile_to_plot_and_calc))
                         global_sl_baseline = np.interp(x_all, trough_x, trough_y)
 
-                
+                x_full = np.arange(len(profile_for_display), dtype=np.float64)
 
-                # --- First pass: Calculate all areas ---
-                for i in range(len(self.peak_regions)):
-                    start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
-                    if start_handle >= end_handle or i >= len(self.peaks):
-                        self.peak_areas_valley.append(0)
-                        self.peak_areas_straight_line.append(0)
-                        self.peak_areas_rolling_ball.append(0)
+                # ------------------------------------------------------------------ #
+                # PASS 1 — Area Integration                                           #
+                # ------------------------------------------------------------------ #
+                for i in range(len(self.peaks)):
+                    if i >= len(self.peak_regions):
+                        if self.method == "Gaussian Deconvolution":
+                            self.peak_areas_deconv.append(0.0)
+                        else:
+                            self.peak_areas_rolling_ball.append(0.0)
+                            self.peak_areas_straight_line.append(0.0)
+                            self.peak_areas_valley.append(0.0)
                         continue
 
-                    # --- Rolling Ball: smooth curved background ---
-                    area_rb = np.trapezoid(
-                        np.maximum(0, profile_to_plot_and_calc[start_handle:end_handle + 1]
-                                - self.background[start_handle:end_handle + 1])
-                    )
-                    self.peak_areas_rolling_ball.append(max(0, area_rb))
+                    start_handle = int(self.peak_regions[i][0])
+                    end_handle   = int(self.peak_regions[i][1])
 
-                    # --- Straight Line: global interpolated baseline ---
-                    area_sl = 0.0
-                    if global_sl_baseline is not None:
-                        area_sl = np.trapezoid(np.maximum(
-                            0, profile_to_plot_and_calc[start_handle:end_handle + 1]
-                            - global_sl_baseline[start_handle:end_handle + 1]
+                    if start_handle >= end_handle:
+                        if self.method == "Gaussian Deconvolution":
+                            self.peak_areas_deconv.append(0.0)
+                        else:
+                            self.peak_areas_rolling_ball.append(0.0)
+                            self.peak_areas_straight_line.append(0.0)
+                            self.peak_areas_valley.append(0.0)
+                        continue
+
+                    if self.method == "Gaussian Deconvolution":
+                        owned        = getattr(self, 'component_ownership', {}).get(i, [])
+                        start_handle = int(self.peak_regions[i][0])
+                        end_handle   = int(self.peak_regions[i][1])
+
+                        x_region = np.arange(start_handle, end_handle + 1, dtype=np.float64)
+
+                        # Actual baseline-subtracted signal within the handles
+                        actual_subtracted = np.maximum(
+                            profile_to_plot_and_calc[start_handle:end_handle + 1].astype(np.float64)
+                            - self.background[start_handle:end_handle + 1].astype(np.float64),
+                            0.0
+                        )
+
+                        if owned and len(self.fitted_gaussian_params) > 0:
+                            # --- Fractional attribution ---
+                            # The fit is used ONLY to determine what fraction of the
+                            # overlapping signal belongs to this peak at each pixel.
+                            # The actual area is always integrated from real data.
+
+                            # Signal from components owned by THIS peak
+                            this_peak_fit = np.zeros(len(x_region), dtype=np.float64)
+                            for comp_idx in owned:
+                                if (comp_idx < len(self.fitted_gaussian_params)
+                                        and comp_idx < len(self.tau_values)):
+                                    amp, cen, sig = self.fitted_gaussian_params[comp_idx]
+                                    tau = self.tau_values[comp_idx]
+                                    this_peak_fit += np.maximum(
+                                        self._emg(x_region, amp, cen, sig, tau), 0.0
+                                    )
+
+                            # Total signal from ALL fitted components at these pixels
+                            total_fit = np.zeros(len(x_region), dtype=np.float64)
+                            for comp_idx_all, (amp_all, cen_all, sig_all) in enumerate(
+                                    self.fitted_gaussian_params):
+                                tau_all = (self.tau_values[comp_idx_all]
+                                        if comp_idx_all < len(self.tau_values)
+                                        else sig_all * 0.3)
+                                total_fit += np.maximum(
+                                    self._emg(x_region, amp_all, cen_all, sig_all, tau_all), 0.0
+                                )
+
+                            # Pixel-wise fraction — where no fit signal exists default to
+                            # equal share so we never discard real data
+                            n_total_comp = max(len(self.fitted_gaussian_params), 1)
+                            fraction = np.where(
+                                total_fit > 1e-9,
+                                this_peak_fit / total_fit,
+                                1.0 / n_total_comp
+                            )
+
+                            # Integrate the ACTUAL data weighted by the fractional attribution
+                            area = float(np.trapezoid(actual_subtracted * fraction))
+
+                        else:
+                            # No fit available — integrate actual data directly
+                            area = float(np.trapezoid(actual_subtracted))
+
+                        self.peak_areas_deconv.append(max(0.0, area))
+
+                    else:
+                        # Rolling Ball area
+                        area_rb = np.trapezoid(np.maximum(
+                            0.0,
+                            profile_to_plot_and_calc[start_handle:end_handle + 1]
+                            - self.background[start_handle:end_handle + 1]
                         ))
-                    self.peak_areas_straight_line.append(max(0, area_sl))
+                        self.peak_areas_rolling_ball.append(max(0.0, area_rb))
 
-                    # --- Rolling-valley: FLAT straight line between the two valley
-                    #     boundary points only — no rolling ball curve involvement.
-                    #     The rolling ball was only used to FIND those boundary positions.
-                    #     y_start / y_end are the raw profile values at the boundaries,
-                    #     connected by a single straight horizontal-ish line segment. ---
-                    y_start_rv = float(profile_to_plot_and_calc[start_handle])
-                    y_end_rv   = float(profile_to_plot_and_calc[end_handle])
-                    baseline_rv = np.interp(
-                        np.arange(start_handle, end_handle + 1),
-                        [start_handle, end_handle],
-                        [y_start_rv, y_end_rv]          # pure straight line, no background max
-                    )
-                    area_valley = np.trapezoid(np.maximum(
-                        0, profile_to_plot_and_calc[start_handle:end_handle + 1] - baseline_rv
-                    ))
-                    self.peak_areas_valley.append(max(0, area_valley))
+                        # Straight Line area
+                        area_sl = 0.0
+                        if global_sl_baseline is not None:
+                            area_sl = np.trapezoid(np.maximum(
+                                0.0,
+                                profile_to_plot_and_calc[start_handle:end_handle + 1]
+                                - global_sl_baseline[start_handle:end_handle + 1]
+                            ))
+                        self.peak_areas_straight_line.append(max(0.0, area_sl))
 
+                        # Rolling-valley (local straight-line) area
+                        y_start_rv  = float(self.background[start_handle])
+                        y_end_rv    = float(self.background[end_handle])
+                        baseline_rv = np.interp(
+                            np.arange(start_handle, end_handle + 1),
+                            [start_handle, end_handle],
+                            [y_start_rv, y_end_rv]
+                        )
+                        area_valley = np.trapezoid(np.maximum(
+                            0.0,
+                            profile_to_plot_and_calc[start_handle:end_handle + 1] - baseline_rv
+                        ))
+                        self.peak_areas_valley.append(max(0.0, area_valley))
+
+                # --- Total area for percentage labels ---
                 total_area = 0.0
-                if   self.method == "Rolling-valley": total_area = sum(self.peak_areas_valley)
-                elif self.method == "Rolling Ball":   total_area = sum(self.peak_areas_rolling_ball)
-                elif self.method == "Straight Line":  total_area = sum(self.peak_areas_straight_line)
+                if   self.method == "Rolling-valley":        total_area = sum(self.peak_areas_valley)
+                elif self.method == "Rolling Ball":          total_area = sum(self.peak_areas_rolling_ball)
+                elif self.method == "Straight Line":         total_area = sum(self.peak_areas_straight_line)
+                elif self.method == "Gaussian Deconvolution": total_area = sum(self.peak_areas_deconv)
                 if total_area < 1e-9:
                     total_area = 0.0
 
-                # ── SECOND PASS: draw fills and labels ───────────────────────────────
-                for i in range(len(self.peak_regions)):
-                    start_handle, end_handle = int(self.peak_regions[i][0]), int(self.peak_regions[i][1])
-                    if start_handle >= end_handle or i >= len(self.peaks):
-                        continue
+                # ------------------------------------------------------------------ #
+                # Background / composite profile lines                                #
+                # ------------------------------------------------------------------ #
+                if self.method == "Gaussian Deconvolution":
+                    self.ax.plot(x_full, self.background, color=bg_line_color,
+                                ls="--", lw=1.5, label="AsLS Baseline", zorder=2)
+                    if self.fitted_gaussian_params:
+                        # Composite = background + sum of all EMG components
+                        composite = self.background.copy().astype(np.float64)
+                        for comp_idx, (amp, cen, sig) in enumerate(self.fitted_gaussian_params):
+                            tau = self.tau_values[comp_idx] if comp_idx < len(self.tau_values) else sig * 0.01
+                            composite += np.maximum(self._emg(x_full, amp, cen, sig, tau), 0.0)
+                        self.ax.plot(x_full, composite, color='magenta', ls=":", lw=1.5,
+                                    label="Deconvoluted Fit", zorder=11)
+
+                # ------------------------------------------------------------------ #
+                # PASS 2 — Fill visualizations + text labels                          #
+                # ------------------------------------------------------------------ #
+                for i in range(len(self.peaks)):
                     peak_x = self.peaks[i]
                     area_to_display = 0.0
 
-                    if self.method == "Rolling-valley":
-                        x_region_rv = np.arange(start_handle, end_handle + 1)
+                    if i >= len(self.peak_regions):
+                        continue
+                    start_handle = int(self.peak_regions[i][0])
+                    end_handle   = int(self.peak_regions[i][1])
+                    if start_handle >= end_handle:
+                        continue
 
-                        # Flat straight line between the two valley boundary points
-                        y_start_rv = float(profile_to_plot_and_calc[start_handle])
-                        y_end_rv   = float(profile_to_plot_and_calc[end_handle])
+                    if self.method == "Gaussian Deconvolution":
+                        area_to_display = self.peak_areas_deconv[i] if i < len(self.peak_areas_deconv) else 0.0
+                        owned = getattr(self, 'component_ownership', {}).get(i, [])
+
+                        x_region = np.arange(start_handle, end_handle + 1, dtype=np.float64)
+                        x_int    = x_region.astype(int)
+
+                        # Actual baseline-subtracted profile — this is what we fill under,
+                        # NOT the EMG curve. The fill now exactly matches the black profile.
+                        actual_subtracted = np.maximum(
+                            profile_for_display[x_int].astype(np.float64)
+                            - self.background[x_int].astype(np.float64),
+                            0.0
+                        )
+
+                        if owned and len(self.fitted_gaussian_params) > 0:
+                            # Build fractional mask — same logic as Pass 1
+                            this_peak_fit = np.zeros(len(x_region), dtype=np.float64)
+                            for comp_idx in owned:
+                                if (comp_idx < len(self.fitted_gaussian_params)
+                                        and comp_idx < len(self.tau_values)):
+                                    amp, cen, sig = self.fitted_gaussian_params[comp_idx]
+                                    tau = self.tau_values[comp_idx]
+                                    this_peak_fit += np.maximum(
+                                        self._emg(x_region, amp, cen, sig, tau), 0.0
+                                    )
+
+                            total_fit = np.zeros(len(x_region), dtype=np.float64)
+                            for comp_idx_all, (amp_all, cen_all, sig_all) in enumerate(
+                                    self.fitted_gaussian_params):
+                                tau_all = (self.tau_values[comp_idx_all]
+                                        if comp_idx_all < len(self.tau_values)
+                                        else sig_all * 0.3)
+                                total_fit += np.maximum(
+                                    self._emg(x_region, amp_all, cen_all, sig_all, tau_all), 0.0
+                                )
+
+                            n_total_comp = max(len(self.fitted_gaussian_params), 1)
+                            fraction = np.where(
+                                total_fit > 1e-9,
+                                this_peak_fit / total_fit,
+                                1.0 / n_total_comp
+                            )
+
+                            # Fill height = fraction of the actual data signal.
+                            # For a non-overlapping peak fraction ≈ 1 everywhere so the
+                            # cyan fill traces the black profile exactly.
+                            # For overlapping peaks the fill tapers where the neighbour
+                            # component dominates — giving an intuitive visual split.
+                            fill_top = self.background[x_int] + actual_subtracted * fraction
+
+                            self.ax.fill_between(
+                                x_region,
+                                self.background[x_int],
+                                fill_top,
+                                color="cyan", alpha=0.45, zorder=1
+                            )
+
+                        else:
+                            # Fallback — fill directly under actual profile
+                            self.ax.fill_between(
+                                x_region,
+                                self.background[x_int],
+                                self.background[x_int] + actual_subtracted,
+                                color="cyan", alpha=0.45, zorder=1
+                            )
+
+                    elif self.method == "Rolling-valley":
+                        x_region_rv = np.arange(start_handle, end_handle + 1)
+                        # Anchor to rolling ball background — matches RB Guide line
+                        y_start_rv  = float(self.background[start_handle])
+                        y_end_rv    = float(self.background[end_handle])
                         baseline_rv = np.interp(
                             x_region_rv,
                             [start_handle, end_handle],
                             [y_start_rv, y_end_rv]
                         )
-
                         self.ax.fill_between(
-                            x_region_rv,
-                            baseline_rv,
-                            profile_for_display[x_region_rv],
+                            x_region_rv, baseline_rv, profile_for_display[x_region_rv],
                             where=(profile_for_display[x_region_rv] >= baseline_rv),
-                            color=fill_color_rv, alpha=fill_alpha_rv,
-                            interpolate=True, zorder=1
+                            color=fill_color_rv, alpha=fill_alpha_rv, zorder=1
                         )
-                        # Draw the straight line baseline between valley edges
                         self.ax.plot(
-                            [start_handle, end_handle],
-                            [y_start_rv,   y_end_rv],
+                            [start_handle, end_handle], [y_start_rv, y_end_rv],
                             color=rv_line_color, lw=1.5, zorder=4,
                             label="Valley BG" if i == 0 else "_nolegend_"
                         )
-                        # Show rolling ball as a dotted guide only — it found the
-                        # boundaries but is NOT used as the baseline itself
                         if i == 0:
                             self.ax.plot(
                                 np.arange(len(self.background)), self.background,
-                                color='magenta', ls=":", lw=1.0,
-                                label="RB Guide (boundary detection)", zorder=3
+                                color='magenta', ls=":", lw=1.0, label="RB Guide", zorder=3
                             )
-
-                        area_to_display = self.peak_areas_valley[i]
+                        area_to_display = self.peak_areas_valley[i] if i < len(self.peak_areas_valley) else 0.0
 
                     elif self.method == "Rolling Ball":
                         x_region = np.arange(start_handle, end_handle + 1)
-
-                        # Smooth curved rolling ball IS the baseline
                         self.ax.fill_between(
                             x_region,
-                            self.background[x_region],
-                            profile_for_display[x_region],
+                            self.background[x_region], profile_for_display[x_region],
                             where=(profile_for_display[x_region] >= self.background[x_region]),
-                            color="yellow", alpha=0.4, interpolate=True, zorder=1
+                            color="yellow", alpha=0.4, zorder=1
                         )
                         if i == 0:
-                            self.ax.plot(
-                                np.arange(len(self.background)), self.background,
-                                color=bg_line_color, ls="--", lw=1.5,
-                                label="Rolling Ball BG", zorder=2
-                            )
-
-                        area_to_display = self.peak_areas_rolling_ball[i]
+                            self.ax.plot(np.arange(len(self.background)), self.background,
+                                        color=bg_line_color, ls="--", lw=1.5,
+                                        label="Rolling Ball BG", zorder=2)
+                        area_to_display = self.peak_areas_rolling_ball[i] if i < len(self.peak_areas_rolling_ball) else 0.0
 
                     elif self.method == "Straight Line":
                         if global_sl_baseline is not None:
                             x_region = np.arange(start_handle, end_handle + 1)
                             self.ax.fill_between(
                                 x_region,
-                                global_sl_baseline[x_region],
-                                profile_for_display[x_region],
+                                global_sl_baseline[x_region], profile_for_display[x_region],
                                 where=(profile_for_display[x_region] >= global_sl_baseline[x_region]),
-                                color="cyan", alpha=0.4, interpolate=True, zorder=1
+                                color="cyan", alpha=0.4, zorder=1
                             )
                             if i == 0:
-                                self.ax.plot(
-                                    np.arange(len(global_sl_baseline)), global_sl_baseline,
-                                    color=sl_line_color, ls="--", lw=1.2,
-                                    label="SL BG", zorder=2
-                                )
+                                self.ax.plot(np.arange(len(global_sl_baseline)), global_sl_baseline,
+                                            color=sl_line_color, ls="--", lw=1.2,
+                                            label="SL BG", zorder=2)
+                        area_to_display = self.peak_areas_straight_line[i] if i < len(self.peak_areas_straight_line) else 0.0
 
-                        area_to_display = self.peak_areas_straight_line[i]
-
+                    # --- Area label ---
                     text_y_pos = profile_for_display[peak_x] + profile_range_plot * 0.03
-                    text_str = (f"{(area_to_display / total_area * 100):.1f}%"
-                                if total_area > 0 else f"{area_to_display:.0f}")
+                    text_str = (
+                        f"{(area_to_display / total_area * 100):.1f}%"
+                        if total_area > 0 else f"{area_to_display:.0f}"
+                    )
                     text_positions.append((peak_x, text_y_pos, text_str))
                     max_y_for_plot_limit = max(max_y_for_plot_limit, text_y_pos)
 
+                # --- Stagger overlapping labels ---
                 last_text_end_x = -np.inf
                 text_spacing_pixels = 5
                 text_positions.sort(key=lambda item: item[0])
-                for x, y, text_str in text_positions:
-                    text_artist = self.ax.text(x, y, text_str, ha="center", va="bottom", fontsize=7, color=text_color, zorder=20,
-                                               bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8))
+                for x_t, y_t, text_str in text_positions:
+                    text_artist = self.ax.text(
+                        x_t, y_t, text_str,
+                        ha="center", va="bottom", fontsize=7, color=text_color, zorder=20,
+                        bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8)
+                    )
                     renderer = self.canvas.get_renderer()
                     bbox = text_artist.get_window_extent(renderer=renderer)
                     bbox_data = self.ax.transData.inverted().transform(bbox)
-                    if bbox_data[0,0] < last_text_end_x + text_spacing_pixels:
-                        new_y = y + profile_range_plot * 0.08; text_artist.set_y(new_y)
+                    if bbox_data[0, 0] < last_text_end_x + text_spacing_pixels:
+                        new_y = y_t + profile_range_plot * 0.08
+                        text_artist.set_y(new_y)
                         max_y_for_plot_limit = max(max_y_for_plot_limit, new_y)
                         bbox = text_artist.get_window_extent(renderer=renderer)
                         bbox_data = self.ax.transData.inverted().transform(bbox)
-                    last_text_end_x = bbox_data[1,0]
-                
+                    last_text_end_x = bbox_data[1, 0]
+
+                # --- Legend ---
                 handles, labels = self.ax.get_legend_handles_labels()
                 if handles:
-                    # Legend placed in the extra bottom space
-                    leg = self.fig.legend(handles, labels, loc='lower center', ncol=len(handles), bbox_to_anchor=(0.5, 0.01), fontsize='small', facecolor=bg_color, edgecolor=spine_color)
-                    for text in leg.get_texts(): text.set_color(text_color)
-                
+                    leg = self.fig.legend(
+                        handles, labels, loc='lower center',
+                        ncol=len(handles), bbox_to_anchor=(0.5, 0.01),
+                        fontsize='small', facecolor=bg_color, edgecolor=spine_color
+                    )
+                    for text in leg.get_texts():
+                        text.set_color(text_color)
+
                 self.ax.set_ylabel("Intensity", fontsize=9)
-                self.ax.set_title(f"Profile & Peak Regions ({self.method})", fontsize=9, weight='bold')
+                self.ax.set_title(f"Profile & Peak Engine ({self.method})", fontsize=10, weight='bold')
                 self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
-                
-                # --- FIX 2: Set X/Y limits with extra top padding for labels ---
+
                 if len(profile_to_plot_and_calc) > 1:
                     self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1)
-                    # Increased multiplier from 1.1 to 1.25 to prevent label cutoff
-                    self.ax.set_ylim(bottom=min(0, np.min(profile_for_display)), top=max_y_for_plot_limit * 1.25)
-                
-                if np.max(profile_to_plot_and_calc) > 10000:
-                    self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
-                
-                self.ax_image.clear() 
-                if hasattr(self, 'enhanced_cropped_image_for_display') and self.enhanced_cropped_image_for_display:
-                    rotated_pil_image_display = self.enhanced_cropped_image_for_display.rotate(90, expand=True)
-                    image_extent = [0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil_image_display.height]
-                    
-                    cmap_val = 'gray_r' if self.is_inverted else 'gray'
-                    self.ax_image.imshow(np.array(rotated_pil_image_display), cmap=cmap_val, aspect='auto', extent=image_extent)
+                    self.ax.set_ylim(
+                        bottom=min(0.0, float(np.min(profile_for_display))),
+                        top=max_y_for_plot_limit * 1.25
+                    )
 
-                    self.ax_image.set_yticks([]); self.ax_image.set_ylabel("Lane Width", fontsize=9)
+                if np.max(profile_to_plot_and_calc) > 10000:
+                    self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
+
+                # --- Lane image panel ---
+                self.ax_image.clear()
+                if hasattr(self, 'enhanced_cropped_image_for_display') and self.enhanced_cropped_image_for_display:
+                    rotated_pil = self.enhanced_cropped_image_for_display.rotate(90, expand=True)
+                    image_extent = [0, len(profile_to_plot_and_calc) - 1, 0, rotated_pil.height]
+                    cmap_val = 'gray_r' if self.is_inverted else 'gray'
+                    self.ax_image.imshow(
+                        np.array(rotated_pil), cmap=cmap_val, aspect='auto', extent=image_extent
+                    )
+                    self.ax_image.set_yticks([])
+                    self.ax_image.set_ylabel("Lane Width", fontsize=9)
                     self.ax_image.set_xlabel("Pixel Index", fontsize=9)
 
                     for p in self.peaks:
-                        self.ax_image.axvline(p, color='red', alpha=0.5, linewidth=1, linestyle='-', zorder=9)
-                    
-                    # Draw handles on image
+                        self.ax_image.axvline(p, color='red', alpha=0.5, linewidth=1,
+                                            linestyle='-', zorder=9)
+
                     for peak_idx, (start_px, end_px) in enumerate(self.peak_regions):
-                        is_focused = peak_idx == self.selected_peak_for_ui_focus
-                        line_color, zorder_val, lw = (focused_peak_color, 11, 2.0) if is_focused else ('blue', 10, 1.5)
-                        start_line = mlines.Line2D([start_px, start_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(start_line); self.interactive_artists.append((peak_idx, 'start_line', start_line))
-                        end_line = mlines.Line2D([end_px, end_px], [0, rotated_pil_image_display.height], color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val); self.ax_image.add_line(end_line); self.interactive_artists.append((peak_idx, 'end_line', end_line))
-                
-                # --- FIX 3: Adjusted Margins for Title, Axis Labels, and Legend ---
-                # top=0.85 (more room for title), bottom=0.22 (room for legend), left=0.15 (room for Y-label)
+                        is_focused = (peak_idx == self.selected_peak_for_ui_focus)
+                        line_color = focused_peak_color if is_focused else 'blue'
+                        zorder_val = 11 if is_focused else 10
+                        lw = 2.0 if is_focused else 1.5
+
+                        start_line = mlines.Line2D(
+                            [start_px, start_px], [0, rotated_pil.height],
+                            color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val
+                        )
+                        end_line = mlines.Line2D(
+                            [end_px, end_px], [0, rotated_pil.height],
+                            color=line_color, lw=lw, picker=self.HANDLE_SIZE, zorder=zorder_val
+                        )
+                        self.ax_image.add_line(start_line)
+                        self.ax_image.add_line(end_line)
+                        self.interactive_artists.append((peak_idx, 'start_line', start_line))
+                        self.interactive_artists.append((peak_idx, 'end_line', end_line))
+
                 self.fig.subplots_adjust(left=0.1, right=0.9, top=0.92, bottom=0.25)
-                
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
             def on_draw(self, event): self.background_blit = self.canvas.copy_from_bbox(self.fig.bbox)
+            
             def on_canvas_press(self, event):
                 if event.inaxes != self.ax_image or event.button != 1:
                     if event.inaxes == self.ax: self.handle_profile_plot_click(event)
@@ -3647,6 +4278,7 @@ if __name__ == "__main__":
                         self.canvas.draw()
                         return
                 self.dragging_handle_info = None
+
             def on_canvas_motion(self, event):
                 if not self.dragging_handle_info or event.inaxes != self.ax_image: return
                 self.canvas.restore_region(self.background_blit)
@@ -3655,6 +4287,7 @@ if __name__ == "__main__":
                 artist.set_xdata([new_x, new_x])
                 self.ax_image.draw_artist(artist)
                 self.canvas.blit(self.ax_image.bbox)
+
             def on_canvas_release(self, event):
                 if not self.dragging_handle_info: return
                 artist = self.dragging_handle_info['artist']
@@ -3675,6 +4308,7 @@ if __name__ == "__main__":
                 self.dragging_handle_info = None
                 self.update_plot()
                 self.canvas.draw_idle()
+
             def handle_profile_plot_click(self, event):
                 if self.add_peak_mode_active:
                     if event.button == 1 and event.xdata is not None:
@@ -3699,78 +4333,80 @@ if __name__ == "__main__":
                             self.delete_selected_peak_button.setEnabled(False)
                         self.update_plot()
                 self.setFocus()
-            def _find_intersection_boundaries(self, profile, background, peak_x,
-                                   search_start, search_end,
-                                   threshold_fraction=0.05):
-                """
-                Find left and right boundaries where the profile rises above
-                background + threshold_fraction * (peak_height - background_at_peak).
-                Replaces the old zero-crossing approach which placed boundaries too
-                far from the band on gradual slopes.
-                """
-                profile_len  = len(profile)
-                peak_x       = int(np.clip(peak_x,       0, profile_len - 1))
-                search_start = int(np.clip(search_start,  0, profile_len - 1))
-                search_end   = int(np.clip(search_end,    0, profile_len - 1))
 
-                bg_at_peak    = float(background[peak_x])
-                peak_height   = float(profile[peak_x])
+            def _find_intersection_boundaries(self, profile, background, peak_x, search_start, search_end, threshold_fraction=0.05):
+                profile_len = len(profile)
+                peak_x = int(np.clip(peak_x, 0, profile_len - 1))
+                search_start = int(np.clip(search_start, 0, profile_len - 1))
+                search_end = int(np.clip(search_end, 0, profile_len - 1))
+
+                bg_at_peak = float(background[peak_x])
+                peak_height = float(profile[peak_x])
                 signal_height = peak_height - bg_at_peak
 
-                if signal_height < 1e-6:
-                    return search_start, search_end
-
+                if signal_height < 1e-6: return search_start, search_end
                 threshold = bg_at_peak + threshold_fraction * signal_height
 
-                # Scan left from peak until profile drops below threshold
                 left_bound = search_start
                 for idx in range(peak_x, search_start - 1, -1):
                     if profile[idx] <= threshold:
-                        left_bound = idx
-                        break
+                        left_bound = idx; break
 
-                # Scan right from peak until profile drops below threshold
                 right_bound = search_end
                 for idx in range(peak_x, search_end + 1):
                     if profile[idx] <= threshold:
-                        right_bound = idx
-                        break
+                        right_bound = idx; break
 
                 return int(left_bound), int(right_bound)
 
             def get_final_peak_info(self):
                 peak_info_list = []
-                num_valid_peaks = len(self.peak_regions)
-                current_area_list = []
-                if self.method == "Rolling Ball": current_area_list = self.peak_areas_rolling_ball
+                current_area_list =[]
+                
+                # Link UI selections appropriately to standard methods
+                if self.method == "Gaussian Deconvolution": current_area_list = self.peak_areas_deconv
+                elif self.method == "Rolling Ball": current_area_list = self.peak_areas_rolling_ball
                 elif self.method == "Straight Line": current_area_list = self.peak_areas_straight_line
                 elif self.method == "Rolling-valley": current_area_list = self.peak_areas_valley
-                num_peaks_to_process = min(num_valid_peaks, len(self.peaks), len(current_area_list))
+                
+                num_valid_peaks = len(self.peaks)
+                num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
+                
                 for i in range(num_peaks_to_process):
                     try:
                         original_peak_x_in_profile = int(self.peaks[i])
                         peak_info_list.append({'area': current_area_list[i],'y_coord_in_lane_image': original_peak_x_in_profile,'original_peak_index': original_peak_x_in_profile})
                     except IndexError: peak_info_list.append({'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1})
                 return peak_info_list
+
             def toggle_manual_select_mode(self, checked):
                 self.manual_select_mode_active = checked
                 if checked:
                     if self.add_peak_mode_active: self.add_peak_manually_button.setChecked(False); self.toggle_add_peak_mode(False) 
                     QMessageBox.information(self, "Identify Peak", "Click a peak in the profile plot to focus its handles.")
                 else: self.selected_peak_for_ui_focus = -1; self.update_plot()
+
             def toggle_add_peak_mode(self, checked):
                 self.add_peak_mode_active = checked
                 if checked:
                     if self.manual_select_mode_active: self.identify_peak_button.setChecked(False); self.toggle_manual_select_mode(False)
                     self.selected_peak_index_for_delete = -1; self.delete_selected_peak_button.setEnabled(False)
                     self.update_plot(); QMessageBox.information(self, "Add Peak", "Click on the profile plot to add a peak.")
+
             def add_manual_peak(self, x_coord):
                 if self.profile_original_inverted is None or x_coord in self.peaks: return
                 self.peaks = np.array(sorted(self.peaks.tolist() + [x_coord]))
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self._recalculate_all_regions()
                 self.update_plot()
+
             def _redefine_all_valley_regions(self):
+                """
+                Places integration boundary handles as close as possible to each peak
+                base using threshold-based intersection detection.
+                Handles are constrained to the midpoint between adjacent peaks so they
+                never overlap.
+                """
                 self.peak_regions = []
                 profile = self.profile_original_inverted
                 if profile is None or len(profile) == 0 or len(self.peaks) == 0:
@@ -3780,38 +4416,32 @@ if __name__ == "__main__":
                 n_peaks     = len(self.peaks)
 
                 for i, peak_x in enumerate(self.peaks):
-                    # Midpoint fences — hard limits so peaks never overlap
-                    left_limit  = (self.peaks[i - 1] + peak_x) // 2 if i > 0           else 0
-                    right_limit = (peak_x + self.peaks[i + 1]) // 2 if i < n_peaks - 1 else profile_len - 1
+                    peak_x = int(peak_x)
 
-                    # Use threshold scan for ALL boundaries — inner and outer.
-                    # threshold_fraction=0.10 means boundary lands where profile
-                    # drops to background + 10% of peak signal → tight to band foot.
-                    # _find_outward_troughs was causing empty regions on gradual slopes
-                    # because slope reversal never occurs on smeared bands.
+                    # Hard fence = midpoint to adjacent peak (handles never cross into neighbour)
+                    left_fence  = int((self.peaks[i - 1] + peak_x) // 2) if i > 0          else 0
+                    right_fence = int((peak_x + self.peaks[i + 1]) // 2) if i < n_peaks - 1 else profile_len - 1
+
                     start_handle, end_handle = self._find_intersection_boundaries(
                         profile, self.background, peak_x,
-                        left_limit, right_limit,
-                        threshold_fraction=0.10
+                        left_fence, right_fence,
+                        threshold_fraction=0.02          # 2 % of peak height — very tight to base
                     )
 
-                    start_handle = int(np.clip(start_handle, 0, profile_len - 1))
-                    end_handle   = int(np.clip(end_handle,   0, profile_len - 1))
-
-                    # Ensure inner boundaries between adjacent peaks never share
-                    # the same pixel — right peak starts 1 after left peak ends
+                    # Enforce non-overlap with previous region
                     if i > 0 and self.peak_regions:
                         prev_end = self.peak_regions[-1][1]
                         if start_handle <= prev_end:
                             start_handle = prev_end + 1
 
-                    start_handle = int(np.clip(start_handle, 0, profile_len - 1))
+                    start_handle = int(np.clip(start_handle, 0,            profile_len - 1))
+                    end_handle   = int(np.clip(end_handle,   0,            profile_len - 1))
 
                     if start_handle < end_handle:
                         self.peak_regions.append((start_handle, end_handle))
                     else:
                         self.peak_regions.append((
-                            max(0, peak_x - 5),
+                            max(0,            peak_x - 5),
                             min(profile_len - 1, peak_x + 5)
                         ))
 
@@ -3822,22 +4452,24 @@ if __name__ == "__main__":
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self._recalculate_all_regions()
                 self.update_plot()
+
             def copy_peak_regions_to_app(self):
                 if not self.parent_app: return
                 if not self.peak_regions: QMessageBox.information(self, "No Regions", "No peak regions to copy."); return
-                self.parent_app.copied_peak_regions_data["regions"] = [tuple(r) for r in self.peak_regions]
+                self.parent_app.copied_peak_regions_data["regions"] =[tuple(r) for r in self.peak_regions]
                 self.parent_app.copied_peak_regions_data["profile_length"] = len(self.profile_original_inverted) if self.profile_original_inverted is not None else 0
                 self.parent_app.copied_peak_regions_data["peaks"] = self.peaks.tolist()
                 QMessageBox.information(self, "Regions Copied", f"{len(self.peak_regions)} regions copied.")
                 if hasattr(self, 'paste_regions_button'): self.paste_regions_button.setEnabled(True)
+
             def paste_peak_regions_from_app(self):
                 if not self.parent_app or not self.parent_app.copied_peak_regions_data.get("regions"): QMessageBox.information(self, "No Regions to Paste", "No peak regions have been copied yet."); return
                 if self.profile_original_inverted is None or len(self.profile_original_inverted) == 0: QMessageBox.warning(self, "Error", "Current profile not available for pasting regions."); return
-                copied_data = self.parent_app.copied_peak_regions_data; regions_to_paste = copied_data["regions"]; original_profile_len = copied_data["profile_length"]; copied_peaks_indices = np.array(copied_data.get("peaks", []))
-                current_profile_len = len(self.profile_original_inverted); self.peak_regions = []
+                copied_data = self.parent_app.copied_peak_regions_data; regions_to_paste = copied_data["regions"]; original_profile_len = copied_data["profile_length"]; copied_peaks_indices = np.array(copied_data.get("peaks",[]))
+                current_profile_len = len(self.profile_original_inverted); self.peak_regions =[]
                 scale_factor = 1.0
                 if original_profile_len > 0 and current_profile_len > 0 and original_profile_len != current_profile_len: scale_factor = float(current_profile_len) / original_profile_len
-                temp_derived_peaks = []
+                temp_derived_peaks =[]
                 if len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste): self.peaks = np.clip((copied_peaks_indices * scale_factor).round().astype(int), 0, current_profile_len - 1)
                 for i, (start_orig, end_orig) in enumerate(regions_to_paste):
                     start_scaled = int(round(start_orig * scale_factor)); end_scaled = int(round(end_orig * scale_factor))
@@ -3848,47 +4480,264 @@ if __name__ == "__main__":
                 if temp_derived_peaks: self.peaks = np.array(sorted(temp_derived_peaks))
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self.update_plot(); QMessageBox.information(self, "Regions Pasted", f"{len(self.peak_regions)} regions applied.")
+
             def get_current_settings(self): return self._final_settings
+
             def should_persist_settings(self): return self._persist_enabled_on_exit
+
             def get_final_peak_area(self): return [info['area'] for info in self.get_final_peak_info()]
             
             def regenerate_profile_and_detect(self):
-                if gaussian_filter1d is None or cv2 is None or ImageOps is None: return
-                
-                # --- START OF FIX ---
-                # REMOVED: self.smoothing_sigma = self.smoothing_slider.value() / 10.0
-                # REMOVED: self.denoise_sigma = self.denoise_sigma_slider.value() / 10.0
-                # The method now uses self.smoothing_sigma and self.denoise_sigma directly,
-                # which are updated by the slider signals.
-                # --- END OF FIX ---
-
                 base_img = self.original_pil_cropped_data.copy()
+
                 if self.denoise_sigma > 0.01:
                     try:
-                        base_img = Image.fromarray(cv2.GaussianBlur(np.array(base_img), (0,0), self.denoise_sigma).astype(np.array(base_img).dtype))
-                    except: pass
-                
-                if base_img.mode.startswith('I') or base_img.mode == 'F': self.enhanced_cropped_image_for_display = Image.fromarray((np.clip((np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) / (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9), 0.0, 1.0) * 255).astype(np.uint8), mode='L')
-                else: self.enhanced_cropped_image_for_display = ImageOps.autocontrast(base_img.convert('L'))
-                
+                        base_img = Image.fromarray(
+                            cv2.GaussianBlur(np.array(base_img), (0, 0), self.denoise_sigma)
+                            .astype(np.array(base_img).dtype)
+                        )
+                    except Exception:
+                        pass
+
+                if base_img.mode.startswith('I') or base_img.mode == 'F':
+                    self.enhanced_cropped_image_for_display = Image.fromarray(
+                        (np.clip(
+                            (np.array(base_img, dtype=np.float32) - np.percentile(base_img, 2)) /
+                            (np.percentile(base_img, 98) - np.percentile(base_img, 2) + 1e-9),
+                            0.0, 1.0
+                        ) * 255).astype(np.uint8),
+                        mode='L'
+                    )
+                else:
+                    self.enhanced_cropped_image_for_display = ImageOps.autocontrast(base_img.convert('L'))
+
                 base_array = self.intensity_array_original_range.astype(np.float64)
                 if self.is_inverted:
                     array_for_summing = base_array
                 else:
                     array_for_summing = self.original_max_value - base_array
-                
+
                 profile_to_process = np.sum(array_for_summing, axis=1)
 
-                if self.smoothing_sigma > 0.1: 
+                # --- Median filter BEFORE Gaussian smoothing ---
+                # Median kills isolated impulse noise (specks) without broadening real band
+                # edges the way a Gaussian would. Pipeline: median → Gaussian.
+                if self.denoise_sigma > 0.01:
+                    kernel_size = max(3, int(self.denoise_sigma * 2))
+                    if kernel_size % 2 == 0:
+                        kernel_size += 1  # must be odd
+                    profile_to_process = scipy_median_filter(profile_to_process, size=kernel_size)
+
+                if self.smoothing_sigma > 0.1:
                     self.profile_original_inverted = gaussian_filter1d(profile_to_process, sigma=self.smoothing_sigma)
                 else:
                     self.profile_original_inverted = profile_to_process
-                
-                prof_min, prof_max = np.min(self.profile_original_inverted), np.max(self.profile_original_inverted)
-                if prof_max > prof_min + 1e-6: self.profile = (self.profile_original_inverted - prof_min) / (prof_max - prof_min) * 255.0
-                else: self.profile = np.zeros_like(self.profile_original_inverted)
-                
+
+                prof_min = np.min(self.profile_original_inverted)
+                prof_max = np.max(self.profile_original_inverted)
+                if prof_max > prof_min + 1e-6:
+                    self.profile = (self.profile_original_inverted - prof_min) / (prof_max - prof_min) * 255.0
+                else:
+                    self.profile = np.zeros_like(self.profile_original_inverted)
+
                 self.detect_peaks()
+
+            def _emg(self, x, amp, cen, sig, tau):
+                """
+                Exponentially Modified Gaussian (EMG).
+
+                Models the asymmetric tailing seen in real gel electrophoresis bands.
+                tau > 0 produces right-side tailing; tau → 0 → pure Gaussian.
+
+                CRITICAL NUMERICAL NOTE:
+                When tau < sig * 0.05 the standard EMG formula becomes numerically
+                degenerate — erfc(sig / (tau*sqrt(2))) → erfc(very_large) → 0 while
+                the pre-factor exp(0.5*(sig/tau)^2) → exp(overflow). The product is
+                indeterminate and evaluates to 0 in floating point even though the
+                true limit is the Gaussian. We therefore detect this regime and return
+                a pure Gaussian directly.
+                """
+                tau = max(abs(float(tau)), 1e-9)
+                sig = max(abs(float(sig)), 1e-6)
+                x   = np.asarray(x, dtype=np.float64)
+
+                # --- Gaussian limit: return pure Gaussian to avoid erfc/exp instability ---
+                if tau < sig * 0.05:
+                    return amp * np.exp(-(x - cen) ** 2 / (2.0 * sig ** 2))
+
+                # --- Full EMG formula ---
+                # erfc argument
+                arg = (cen - x) / (np.sqrt(2.0) * sig) + sig / (np.sqrt(2.0) * tau)
+                # Clamp to prevent erfc overflow on extreme inputs
+                arg = np.clip(arg, -26.0, 26.0)
+
+                # Exponent: clip to prevent exp overflow on very long tails
+                exponent = np.clip(
+                    0.5 * (sig / tau) ** 2 - (x - cen) / tau,
+                    -500.0, 500.0
+                )
+
+                result = (amp * sig / tau) * np.sqrt(np.pi / 2.0) * np.exp(exponent) * erfc(arg)
+                return np.where(np.isfinite(result), result, 0.0)
+
+            def _find_shoulder_candidates(self, profile_subtracted, detected_peaks):
+                """
+                Finds hidden shoulder positions using the second derivative of the
+                baseline-subtracted profile.
+
+                Inflection points in the second derivative reveal components that are
+                too merged to appear as independent peaks via find_peaks, but which
+                contribute measurably to band area.
+
+                Returns a sorted array of all candidate positions (detected + shoulders).
+                """
+                n = len(profile_subtracted)
+                if n < 5:
+                    return detected_peaks.copy() if len(detected_peaks) > 0 else np.array([], dtype=int)
+
+                # Lightly smooth before differentiation to suppress noise amplification
+                smoothed = gaussian_filter1d(profile_subtracted.astype(np.float64), sigma=2.0)
+                d2 = np.gradient(np.gradient(smoothed))
+
+                # Significant negative second-derivative = concave-down region (peak or shoulder)
+                d2_threshold = np.percentile(d2, 15)
+
+                try:
+                    d2_candidates, _ = find_peaks(
+                        -d2,
+                        height=-d2_threshold,
+                        distance=max(3, self.peak_distance // 3)
+                    )
+                except Exception:
+                    return detected_peaks.copy() if len(detected_peaks) > 0 else np.array([], dtype=int)
+
+                max_signal = np.max(profile_subtracted) if n > 0 else 1.0
+                if max_signal <= 0:
+                    max_signal = 1.0
+
+                new_candidates = []
+                for cand in d2_candidates:
+                    # Skip if already too close to a known detected peak
+                    if len(detected_peaks) > 0:
+                        if np.min(np.abs(detected_peaks.astype(float) - float(cand))) <= self.peak_distance // 2:
+                            continue
+                    # Must carry meaningful signal above baseline (not just baseline ripple)
+                    if profile_subtracted[cand] > max_signal * 0.05:
+                        new_candidates.append(int(cand))
+
+                if len(detected_peaks) > 0:
+                    all_peaks = np.sort(np.unique(
+                        np.concatenate([
+                            detected_peaks.astype(int),
+                            np.array(new_candidates, dtype=int)
+                        ])
+                    ))
+                else:
+                    all_peaks = np.array(new_candidates, dtype=int)
+
+                return all_peaks
+            
+            def _quick_gaussian_rss(self, profile_subtracted, peak_positions):
+                """
+                Performs a fast, low-iteration multi-Gaussian fit and returns the
+                residual sum of squares on the normalized profile.
+
+                Used exclusively by _select_optimal_components for AIC scoring —
+                not for final area calculation.
+                """
+                n = len(profile_subtracted)
+                if len(peak_positions) == 0 or n == 0:
+                    return float(np.sum(profile_subtracted ** 2)) + 1e-12
+
+                max_val = np.max(profile_subtracted)
+                if max_val <= 0:
+                    return 1e-12
+
+                y_norm = profile_subtracted / max_val
+                x = np.arange(n, dtype=np.float64)
+
+                # Clip all peak positions to valid array range
+                peak_positions = np.clip(np.asarray(peak_positions, dtype=int), 0, n - 1)
+
+                try:
+                    widths_obj = peak_widths(profile_subtracted, peak_positions, rel_height=0.5)
+                    fwhms = np.where(widths_obj[0] < 1.0, 15.0, widths_obj[0])
+                    sigmas = np.clip(fwhms / 2.355, 1.0, n / 4.0)
+                except Exception:
+                    sigmas = np.full(len(peak_positions), 15.0)
+
+                initial_guess = []
+                lower_bounds = []
+                upper_bounds = []
+                for i, p in enumerate(peak_positions):
+                    amp = max(0.01, float(y_norm[p]))
+                    sig = float(sigmas[i])
+                    tol = max(8.0, sig * 1.5)
+                    initial_guess.extend([amp, float(p), sig])
+                    lower_bounds.extend([0.0, float(p) - tol, 0.5])
+                    upper_bounds.extend([max(2.0, amp * 2.5), float(p) + tol, n / 3.0])
+
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        popt, _ = curve_fit(
+                            self._multi_gaussian, x, y_norm,
+                            p0=initial_guess,
+                            bounds=(lower_bounds, upper_bounds),
+                            maxfev=2000
+                        )
+                    y_fit = self._multi_gaussian(x, *popt)
+                    rss = float(np.sum((y_norm - y_fit) ** 2))
+                except Exception:
+                    y_init = self._multi_gaussian(x, *initial_guess)
+                    rss = float(np.sum((y_norm - y_init) ** 2))
+
+                return max(rss, 1e-12)
+            
+            def _select_optimal_components(self, profile_subtracted):
+                """
+                Uses the Akaike Information Criterion (AIC) to decide whether adding
+                shoulder components (found via the second derivative) is statistically
+                justified.
+
+                Tests: (a) detected peaks only, (b) detected peaks + each shoulder
+                candidate individually.  Returns the peak set with the lowest AIC,
+                requiring at least a 2-unit improvement per added component to prevent
+                over-fitting.
+                """
+                n = len(profile_subtracted)
+                if n < 5 or len(self.peaks) == 0:
+                    return self.peaks.copy() if len(self.peaks) > 0 else np.array([], dtype=int)
+
+                all_candidates = self._find_shoulder_candidates(profile_subtracted, self.peaks)
+                extra_candidates = [
+                    int(p) for p in all_candidates
+                    if not np.any(self.peaks == p)
+                ]
+
+                # Baseline AIC: detected peaks only
+                rss_base = self._quick_gaussian_rss(profile_subtracted, self.peaks)
+                n_params_base = len(self.peaks) * 3  # amp, cen, sig per component
+                aic_base = n * np.log(max(rss_base / n, 1e-30)) + 2.0 * n_params_base
+
+                best_aic = aic_base
+                best_peaks = self.peaks.copy()
+
+                # Test each shoulder candidate independently
+                for cand in extra_candidates:
+                    test_peaks = np.sort(np.concatenate([self.peaks.astype(int), [cand]]))
+                    try:
+                        rss = self._quick_gaussian_rss(profile_subtracted, test_peaks)
+                        n_params = len(test_peaks) * 3
+                        aic = n * np.log(max(rss / n, 1e-30)) + 2.0 * n_params
+                        # Require at least 2 AIC units improvement (standard Burnham & Anderson threshold)
+                        if aic < best_aic - 2.0:
+                            best_aic = aic
+                            best_peaks = test_peaks.copy()
+                    except Exception:
+                        continue
+
+                return best_peaks
 
             def _find_outward_troughs(self, profile, peak_idx, left_bound, right_bound):
                 profile_len = len(profile)
@@ -3909,6 +4758,7 @@ if __name__ == "__main__":
                     w = max(1, self.peak_distance // 8 if hasattr(self, 'peak_distance') else 2)
                     return max(0, peak_idx - w), min(profile_len - 1, peak_idx + w)
                 return valley_left_idx, valley_right_idx
+
             def manual_peak_number_update(self):
                 if self.profile_original_inverted is None: return
                 try:
@@ -3922,76 +4772,46 @@ if __name__ == "__main__":
                     self._recalculate_all_regions()
                     self.update_plot()
                 except ValueError: self.peak_number_input.setText(str(len(self.peaks)))
+
             def _custom_rolling_ball(self, profile, radius):
-                """
-                True parabolic 1D rolling ball with fine sampling + multi-pass
-                smoothing to produce a smooth background under smeared bands.
-                """
-                if (profile is None or profile.ndim != 1 or
-                        profile.size == 0 or radius <= 0):
+                if (profile is None or profile.ndim != 1 or profile.size == 0 or radius <= 0):
                     return np.zeros_like(profile) if profile is not None else np.array([])
-
-                n      = len(profile)
+                n = len(profile)
                 radius = float(radius)
-                p      = profile.astype(np.float64)
-
-                # --- Step 1: Parabolic erosion ---
-                # step=1 means EVERY pixel is sampled → no jagged gaps in the ball
+                p = profile.astype(np.float64)
                 eroded = np.full(n, np.inf)
-                j_vals      = np.arange(-int(radius), int(radius) + 1)   # step=1, full resolution
-                ball_curves = (j_vals ** 2) / (2.0 * radius)             # parabolic height at each j
+                j_vals = np.arange(-int(radius), int(radius) + 1)
+                ball_curves = (j_vals ** 2) / (2.0 * radius)
 
                 for j, bc in zip(j_vals, ball_curves):
                     shifted = np.empty(n)
-                    if j < 0:
-                        shifted[:n + j] = p[-j:]          # shift left
-                        shifted[n + j:] = p[-1]           # pad right edge
-                    elif j > 0:
-                        shifted[j:]     = p[:n - j]       # shift right
-                        shifted[:j]     = p[0]            # pad left edge
-                    else:
-                        shifted = p
+                    if j < 0: shifted[:n + j] = p[-j:]; shifted[n + j:] = p[-1]
+                    elif j > 0: shifted[j:] = p[:n - j]; shifted[:j] = p[0]
+                    else: shifted = p
                     eroded = np.minimum(eroded, shifted - bc)
 
-                # --- Step 2: Parabolic dilation of eroded signal ---
                 background = np.full(n, -np.inf)
                 for j, bc in zip(j_vals, ball_curves):
                     shifted = np.empty(n)
-                    if j < 0:
-                        shifted[:n + j] = eroded[-j:]
-                        shifted[n + j:] = eroded[-1]
-                    elif j > 0:
-                        shifted[j:]     = eroded[:n - j]
-                        shifted[:j]     = eroded[0]
-                    else:
-                        shifted = eroded
+                    if j < 0: shifted[:n + j] = eroded[-j:]; shifted[n + j:] = eroded[-1]
+                    elif j > 0: shifted[j:] = eroded[:n - j]; shifted[:j] = eroded[0]
+                    else: shifted = eroded
                     background = np.maximum(background, shifted + bc)
 
-                # --- Step 3: Multi-pass Gaussian smoothing ---
-                # Two passes: first pass removes high-frequency jaggedness,
-                # second pass blends any remaining step artefacts at smear edges.
                 smooth_sigma = max(2.0, radius / 8.0)
-                background   = gaussian_filter1d(background, sigma=smooth_sigma)
-                background   = gaussian_filter1d(background, sigma=smooth_sigma / 2.0)
-
+                background = gaussian_filter1d(background, sigma=smooth_sigma)
+                background = gaussian_filter1d(background, sigma=smooth_sigma / 2.0)
                 background = np.minimum(background, p)
                 background = np.maximum(background, 0.0)
                 return background
 
-
             def _snip_background(self, profile, n_iterations=None):
-                """
-                SNIP background with Gaussian smoothing on output to remove
-                the staircase artefacts that iterative clipping can introduce.
-                """
                 if profile is None or len(profile) == 0:
                     return np.zeros_like(profile)
 
                 n = len(profile)
-                if n_iterations is None:
-                    n_iterations = max(5, int(np.sqrt(n / 2)))
+                if n_iterations is None: n_iterations = max(5, int(np.sqrt(n / 2)))
 
-                # Work in sqrt-space (Poisson variance stabilisation)
                 w = np.sqrt(np.maximum(profile.astype(np.float64), 0.0))
 
                 for m in range(1, n_iterations + 1):
@@ -4000,12 +4820,8 @@ if __name__ == "__main__":
                     w     = np.minimum(w, (left + right) / 2.0)
 
                 bg = w ** 2
-
-                # Smooth SNIP output — iterative clipping creates small steps
-                # between iterations that appear as jagged lines on the plot
                 smooth_sigma = max(2.0, n_iterations / 4.0)
                 bg = gaussian_filter1d(bg, sigma=smooth_sigma)
-
                 bg = np.minimum(bg, profile)
                 bg = np.maximum(bg, 0.0)
                 return bg
@@ -4017,8 +4833,6 @@ if __name__ == "__main__":
                         self.delete_selected_peak_action()
                         event.accept()
                         return
-                
-                # Pass other keys (like Escape) to the parent implementation
                 super().keyPressEvent(event)
             
 
