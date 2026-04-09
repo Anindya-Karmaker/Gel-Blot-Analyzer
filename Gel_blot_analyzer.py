@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v5.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer 5.6\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 11)
         font.setBold(True)
         self.label.setFont(font)
@@ -4879,6 +4879,11 @@ if __name__ == "__main__":
                 self.crop_rect_end_view = None
                 self.crop_rect_final_view = None
 
+                # --- Perspective Correction State ---
+                self.perspective_mode_active = False
+                self.perspective_corners = None  # List of 4 QPointF in label-space, or None
+                self.perspective_dragging_index = -1  # Index of corner being dragged (-1 = none)
+
                 # --- Custom Handlers ---
                 self._custom_left_click_handler_from_app = None
                 self._custom_mouseMoveEvent_from_app = None
@@ -5417,6 +5422,46 @@ if __name__ == "__main__":
                         if self.app_instance.drawing_mode == 'line': painter.drawLine(start_pt_ls, end_pt_ls)
                         elif self.app_instance.drawing_mode == 'rectangle': painter.drawRect(QRectF(start_pt_ls, end_pt_ls).normalized())
                     except Exception as e: pass # print(f"Error drawing live shape preview in paintEvent: {e}")
+
+                # --- Perspective Correction Overlay ---
+                if self.perspective_mode_active and self.perspective_corners and len(self.perspective_corners) == 4:
+                    try:
+                        corners = self.perspective_corners
+                        # Draw connecting lines (quadrilateral)
+                        persp_pen = QPen(QColor(0, 200, 255, 220))  # Cyan
+                        persp_pen_width = max(0.8, 2.0 / self.zoom_level if self.zoom_level > 0 else 2.0)
+                        persp_pen.setWidthF(persp_pen_width)
+                        persp_pen.setStyle(Qt.DashLine)
+                        painter.setPen(persp_pen)
+                        painter.setBrush(Qt.NoBrush)
+                        for i in range(4):
+                            painter.drawLine(corners[i], corners[(i + 1) % 4])
+
+                        # Draw corner handles
+                        handle_radius = max(4.0, self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level if self.zoom_level > 0 else self.CORNER_HANDLE_BASE_RADIUS)
+                        corner_labels = ["TL", "TR", "BR", "BL"]
+                        for i, pt in enumerate(corners):
+                            # Highlight the handle being dragged
+                            if i == self.perspective_dragging_index:
+                                painter.setPen(QPen(QColor(255, 100, 0), persp_pen_width))
+                                painter.setBrush(QBrush(QColor(255, 100, 0, 180)))
+                                painter.drawEllipse(pt, handle_radius * 1.3, handle_radius * 1.3)
+                            else:
+                                painter.setPen(QPen(QColor(0, 200, 255), persp_pen_width))
+                                painter.setBrush(QBrush(QColor(0, 200, 255, 150)))
+                                painter.drawEllipse(pt, handle_radius, handle_radius)
+
+                            # Draw corner label
+                            label_font = painter.font()
+                            label_font_size = max(7, int(11 / self.zoom_level)) if self.zoom_level > 0 else 11
+                            label_font.setPixelSize(label_font_size)
+                            label_font.setBold(True)
+                            painter.setFont(label_font)
+                            painter.setPen(QPen(Qt.white))
+                            painter.drawText(pt + QPointF(handle_radius + 2, -handle_radius - 2), corner_labels[i])
+                        painter.setBrush(Qt.NoBrush)
+                    except Exception as e:
+                        pass  # print(f"Error drawing perspective overlay: {e}")
 
                 # --- Draw MW Prediction Lines ---
                 anchor_point_ls = None
@@ -6270,7 +6315,7 @@ if __name__ == "__main__":
                 self.safe_content_width = 1000
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v5.5"
+                self.window_title="GEL BLOT ANALYZER v5.6"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -6364,6 +6409,8 @@ if __name__ == "__main__":
                 self.crop_rectangle_coords = None # Stores final (x, y, w, h) in *image* coordinates
                 self.crop_offset_x = 0
                 self.crop_offset_y = 0
+                self.perspective_correction_active = False  # Whether perspective editing mode is active
+                self.perspective_src_points_img = None  # 4 source points in image coordinates
                 
                 self.copied_peak_regions_data = {
                     "regions": None,        # List of (start, end) tuples
@@ -12388,6 +12435,35 @@ if __name__ == "__main__":
                 skew_layout.addWidget(self.reset_skew_button, 0, 3)
                 skew_layout.setColumnStretch(1, 1)
                 left_column_layout.addWidget(skew_group)
+
+                # --- Perspective Correction Group ---
+                perspective_group = QGroupBox("Perspective Correction")
+                perspective_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+                perspective_layout = QVBoxLayout(perspective_group)
+                perspective_layout.setSpacing(8)
+                perspective_info_label = QLabel("Drag the 4 corner handles to correct perspective distortion.")
+                perspective_info_label.setWordWrap(True)
+                perspective_info_label.setStyleSheet("QLabel { font-weight: normal; color: gray; }")
+                perspective_layout.addWidget(perspective_info_label)
+                perspective_buttons_layout = QHBoxLayout()
+                self.perspective_edit_button = QPushButton("Edit Corners")
+                self.perspective_edit_button.setCheckable(True)
+                self.perspective_edit_button.setToolTip("Toggle 4-point perspective correction mode. Drag corners to adjust.")
+                self.perspective_edit_button.clicked.connect(self.toggle_perspective_mode)
+                self.perspective_apply_button = QPushButton("Apply")
+                self.perspective_apply_button.setToolTip("Permanently apply the current perspective correction to the image.")
+                self.perspective_apply_button.clicked.connect(self.apply_perspective_correction)
+                self.perspective_apply_button.setEnabled(False)
+                self.perspective_reset_button = QPushButton("Reset")
+                self.perspective_reset_button.setToolTip("Reset corner positions to the image edges.")
+                self.perspective_reset_button.clicked.connect(self.reset_perspective_correction)
+                self.perspective_reset_button.setEnabled(False)
+                perspective_buttons_layout.addWidget(self.perspective_edit_button, 1)
+                perspective_buttons_layout.addStretch()
+                perspective_buttons_layout.addWidget(self.perspective_apply_button)
+                perspective_buttons_layout.addWidget(self.perspective_reset_button)
+                perspective_layout.addLayout(perspective_buttons_layout)
+                left_column_layout.addWidget(perspective_group)
                 left_column_layout.addStretch(1)
                 
                 main_layout.addLayout(left_column_layout,1) # Add the completed left column layout
@@ -16996,6 +17072,355 @@ if __name__ == "__main__":
                     if self.undo_stack:
                         self.undo_action_m()
 
+            # =====================================================================
+            # === PERSPECTIVE CORRECTION METHODS ===
+            # =====================================================================
+
+            def toggle_perspective_mode(self, checked):
+                """Toggle the 4-point perspective editing mode on/off."""
+                if checked:
+                    self._activate_perspective_mode()
+                else:
+                    self._deactivate_perspective_mode()
+
+            def _activate_perspective_mode(self):
+                """Activate perspective corner editing mode."""
+                if not self.image or self.image.isNull():
+                    QMessageBox.warning(self, "No Image", "Please load an image first.")
+                    if hasattr(self, 'perspective_edit_button'):
+                        self.perspective_edit_button.setChecked(False)
+                    return
+
+                self.marker_mode = None  # Deactivate other modes
+                self.cancel_rectangle_crop_mode() if self.crop_rectangle_mode else None
+                
+                self.perspective_correction_active = True
+                self._init_perspective_corners()
+                self.live_view_label.perspective_mode_active = True
+
+                # Wire up custom mouse handlers for corner dragging
+                self._reset_live_view_label_custom_handlers()
+                self.live_view_label._custom_left_click_handler_from_app = self._perspective_mouse_press
+                self.live_view_label._custom_mouseMoveEvent_from_app = self._perspective_mouse_move
+                self.live_view_label._custom_mouseReleaseEvent_from_app = self._perspective_mouse_release
+                self.live_view_label.setCursor(Qt.CrossCursor)
+
+                # Enable Apply/Reset buttons
+                if hasattr(self, 'perspective_apply_button'):
+                    self.perspective_apply_button.setEnabled(True)
+                if hasattr(self, 'perspective_reset_button'):
+                    self.perspective_reset_button.setEnabled(True)
+                if hasattr(self, 'perspective_edit_button'):
+                    self.perspective_edit_button.setChecked(True)
+
+                self.update_live_view()
+
+            def _deactivate_perspective_mode(self):
+                """Deactivate perspective corner editing mode and clear overlay."""
+                self.perspective_correction_active = False
+                self.perspective_src_points_img = None
+                self.live_view_label.perspective_mode_active = False
+                self.live_view_label.perspective_corners = None
+                self.live_view_label.perspective_dragging_index = -1
+                self._reset_live_view_label_custom_handlers()
+
+                # Disable Apply/Reset buttons
+                if hasattr(self, 'perspective_apply_button'):
+                    self.perspective_apply_button.setEnabled(False)
+                if hasattr(self, 'perspective_reset_button'):
+                    self.perspective_reset_button.setEnabled(False)
+                if hasattr(self, 'perspective_edit_button'):
+                    self.perspective_edit_button.setChecked(False)
+
+                self.update_live_view()
+
+            def _init_perspective_corners(self):
+                """Initialize the 4 perspective corner points at the image edges, mapped to label-space."""
+                if not self.image or self.image.isNull():
+                    return
+
+                img_w = float(self.image.width())
+                img_h = float(self.image.height())
+                label_w = float(self.live_view_label.width())
+                label_h = float(self.live_view_label.height())
+
+                if img_w <= 0 or img_h <= 0 or label_w <= 0 or label_h <= 0:
+                    return
+
+                scale_factor = min(label_w / img_w, label_h / img_h)
+                if scale_factor <= 1e-9:
+                    scale_factor = 1.0
+
+                display_img_w = img_w * scale_factor
+                display_img_h = img_h * scale_factor
+                offset_x = (label_w - display_img_w) / 2.0
+                offset_y = (label_h - display_img_h) / 2.0
+
+                # Default corners at image edges (TL, TR, BR, BL) in label-space
+                self.live_view_label.perspective_corners = [
+                    QPointF(offset_x, offset_y),                                      # TL
+                    QPointF(offset_x + display_img_w, offset_y),                      # TR
+                    QPointF(offset_x + display_img_w, offset_y + display_img_h),      # BR
+                    QPointF(offset_x, offset_y + display_img_h),                      # BL
+                ]
+
+                # Also store the image-space points
+                self.perspective_src_points_img = [
+                    [0.0, 0.0],           # TL
+                    [img_w, 0.0],         # TR
+                    [img_w, img_h],       # BR
+                    [0.0, img_h],         # BL
+                ]
+
+            def _perspective_mouse_press(self, event):
+                """Handle mouse press to start dragging a perspective corner."""
+                if not self.perspective_correction_active or not self.live_view_label.perspective_corners:
+                    return
+
+                if event.button() == Qt.LeftButton:
+                    click_pos = self.live_view_label.transform_point(event.position())
+                    hit_radius = max(12.0, self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 2.0 / self.live_view_label.zoom_level) if self.live_view_label.zoom_level > 0 else 12.0
+
+                    # Find the closest corner within hit radius
+                    closest_idx = -1
+                    closest_dist = float('inf')
+                    for i, corner in enumerate(self.live_view_label.perspective_corners):
+                        dx = click_pos.x() - corner.x()
+                        dy = click_pos.y() - corner.y()
+                        dist = (dx * dx + dy * dy) ** 0.5
+                        if dist < hit_radius and dist < closest_dist:
+                            closest_dist = dist
+                            closest_idx = i
+
+                    self.live_view_label.perspective_dragging_index = closest_idx
+                    if closest_idx >= 0:
+                        self.live_view_label.setCursor(Qt.ClosedHandCursor)
+                    self.live_view_label.update()
+
+            def _perspective_mouse_move(self, event):
+                """Handle mouse move to update the dragged corner position."""
+                if not self.perspective_correction_active or not self.live_view_label.perspective_corners:
+                    return
+
+                current_pos = self.live_view_label.transform_point(event.position())
+
+                if self.live_view_label.perspective_dragging_index >= 0 and (event.buttons() & Qt.LeftButton):
+                    # Update dragged corner position
+                    idx = self.live_view_label.perspective_dragging_index
+                    self.live_view_label.perspective_corners[idx] = current_pos
+
+                    # Convert to image coords and update the stored points
+                    img_pt = self._label_point_to_image_point(current_pos)
+                    if img_pt and self.perspective_src_points_img:
+                        self.perspective_src_points_img[idx] = [img_pt.x(), img_pt.y()]
+
+                    self.live_view_label.update()  # Only repaint overlay, no image re-render
+                else:
+                    # Change cursor on hover over handles
+                    hit_radius = max(12.0, self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 2.0 / self.live_view_label.zoom_level) if self.live_view_label.zoom_level > 0 else 12.0
+                    hovering = False
+                    for corner in self.live_view_label.perspective_corners:
+                        dx = current_pos.x() - corner.x()
+                        dy = current_pos.y() - corner.y()
+                        if (dx * dx + dy * dy) ** 0.5 < hit_radius:
+                            hovering = True
+                            break
+                    self.live_view_label.setCursor(Qt.OpenHandCursor if hovering else Qt.CrossCursor)
+
+            def _perspective_mouse_release(self, event):
+                """Handle mouse release to finalize corner drag."""
+                if not self.perspective_correction_active:
+                    return
+
+                if event.button() == Qt.LeftButton:
+                    self.live_view_label.perspective_dragging_index = -1
+                    self.live_view_label.setCursor(Qt.CrossCursor)
+                    self.live_view_label.update()
+
+            def _label_point_to_image_point(self, label_point):
+                """Convert a point from label-space (view) coordinates to image coordinates."""
+                if not self.image or self.image.isNull():
+                    return None
+
+                img_w = float(self.image.width())
+                img_h = float(self.image.height())
+                label_w = float(self.live_view_label.width())
+                label_h = float(self.live_view_label.height())
+
+                if img_w <= 0 or img_h <= 0 or label_w <= 0 or label_h <= 0:
+                    return None
+
+                scale_factor = min(label_w / img_w, label_h / img_h)
+                if scale_factor <= 1e-9:
+                    return None
+
+                display_img_w = img_w * scale_factor
+                display_img_h = img_h * scale_factor
+                offset_x = (label_w - display_img_w) / 2.0
+                offset_y = (label_h - display_img_h) / 2.0
+
+                img_x = (label_point.x() - offset_x) / scale_factor
+                img_y = (label_point.y() - offset_y) / scale_factor
+                return QPointF(img_x, img_y)
+
+            def apply_perspective_correction(self):
+                """Permanently apply the 4-point perspective warp to the image."""
+                if not self.image_master or self.image_master.isNull():
+                    QMessageBox.warning(self, "Perspective Error", "No master image loaded.")
+                    return
+
+                if not self.perspective_src_points_img:
+                    QMessageBox.warning(self, "Perspective Error", "No perspective correction defined.")
+                    return
+
+                # Check if corners are at defaults (no correction needed)
+                img_w = float(self.image_master.width())
+                img_h = float(self.image_master.height())
+                default_pts = [[0.0, 0.0], [img_w, 0.0], [img_w, img_h], [0.0, img_h]]
+                is_default = True
+                for i in range(4):
+                    dx = abs(self.perspective_src_points_img[i][0] - default_pts[i][0])
+                    dy = abs(self.perspective_src_points_img[i][1] - default_pts[i][1])
+                    if dx > 2.0 or dy > 2.0:
+                        is_default = False
+                        break
+                if is_default:
+                    QMessageBox.information(self, "Info", "Corners are at default positions. No correction to apply.")
+                    return
+
+                self.save_state()  # Save state before applying (for undo)
+
+                try:
+                    # 1. Warn/clear standard markers (same as rotation/skew)
+                    if self.left_markers or self.right_markers or self.top_markers:
+                        QMessageBox.warning(self, "Warning",
+                            "Standard markers (L/R/Top) were cleared due to perspective correction, "
+                            "as they rely on a rectangular coordinate system alignment.")
+                        self.left_markers.clear()
+                        self.right_markers.clear()
+                        self.top_markers.clear()
+                        self.left_marker_shift_added = 0
+                        self.right_marker_shift_added = 0
+                        self.top_marker_shift_added = 0
+
+                    # 2. Calculate perspective matrix
+                    src_np = np.float32(self.perspective_src_points_img)
+                    dst_np = np.float32(default_pts)
+                    matrix = cv2.getPerspectiveTransform(src_np, dst_np)
+
+                    # 3. Transform custom markers using the perspective matrix
+                    new_custom_markers = []
+                    if hasattr(self, "custom_markers") and self.custom_markers:
+                        points_to_transform = np.array(
+                            [[[m[0], m[1]]] for m in self.custom_markers], dtype=np.float32
+                        )
+                        transformed_points = cv2.perspectiveTransform(points_to_transform, matrix)
+                        for i, marker_data in enumerate(self.custom_markers):
+                            m_list = list(marker_data)
+                            m_list[0] = float(transformed_points[i, 0, 0])
+                            m_list[1] = float(transformed_points[i, 0, 1])
+                            new_custom_markers.append(m_list)
+                    self.custom_markers = new_custom_markers
+
+                    # 4. Transform custom shapes
+                    new_custom_shapes = []
+                    if hasattr(self, "custom_shapes") and self.custom_shapes:
+                        for shape_data in self.custom_shapes:
+                            shape_copy = dict(shape_data)
+                            shape_type = shape_copy.get('type')
+                            if shape_type == 'line':
+                                points = np.array(
+                                    [[shape_copy['start'], shape_copy['end']]], dtype=np.float32
+                                )
+                                transformed = cv2.perspectiveTransform(points, matrix)
+                                shape_copy['start'] = (float(transformed[0, 0, 0]), float(transformed[0, 0, 1]))
+                                shape_copy['end'] = (float(transformed[0, 1, 0]), float(transformed[0, 1, 1]))
+                            elif shape_type == 'rectangle':
+                                x, y, w, h = shape_copy['rect']
+                                corners = np.array(
+                                    [[[x, y], [x + w, y], [x + w, y + h], [x, y + h]]], dtype=np.float32
+                                )
+                                transformed_corners = cv2.perspectiveTransform(corners, matrix)[0]
+                                new_x_min, new_y_min = np.min(transformed_corners, axis=0)
+                                new_x_max, new_y_max = np.max(transformed_corners, axis=0)
+                                shape_copy['rect'] = (
+                                    float(new_x_min), float(new_y_min),
+                                    float(new_x_max - new_x_min), float(new_y_max - new_y_min)
+                                )
+                            new_custom_shapes.append(shape_copy)
+                    self.custom_shapes = new_custom_shapes
+
+                    # 5. Apply perspective warp to the actual image
+                    np_img = self.qimage_to_numpy(self.image_master)
+                    if np_img is None:
+                        raise ValueError("Failed to convert master image for perspective correction.")
+
+                    h, w = np_img.shape[:2]
+                    np_img_4ch = None
+                    is_16bit = (np_img.dtype == np.uint16)
+
+                    if np_img.ndim == 2:  # Grayscale
+                        if is_16bit:
+                            gray = np_img
+                            alpha = np.full((h, w), 65535, dtype=np.uint16)
+                            np_img_4ch = cv2.merge([gray, gray, gray, alpha])
+                        else:
+                            np_img_4ch = cv2.cvtColor(np_img, cv2.COLOR_GRAY2BGRA)
+                    elif np_img.ndim == 3:
+                        if np_img.shape[2] == 3:  # RGB/BGR
+                            if is_16bit:
+                                c1, c2, c3 = cv2.split(np_img)
+                                alpha = np.full((h, w), 65535, dtype=np.uint16)
+                                np_img_4ch = cv2.merge([c1, c2, c3, alpha])
+                            else:
+                                np_img_4ch = cv2.cvtColor(np_img, cv2.COLOR_BGR2BGRA)
+                        else:
+                            np_img_4ch = np_img
+
+                    # Recalculate matrix using original image dimensions
+                    src_np = np.float32(self.perspective_src_points_img)
+                    dst_np = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+                    matrix = cv2.getPerspectiveTransform(src_np, dst_np)
+
+                    warped_np = cv2.warpPerspective(
+                        np_img_4ch, matrix, (w, h),
+                        flags=cv2.INTER_CUBIC,
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=(0, 0, 0, 0)
+                    )
+
+                    warped_image = self.numpy_to_qimage(warped_np)
+                    if warped_image.isNull():
+                        raise ValueError("Perspective correction resulted in an invalid image.")
+
+                    # 6. Update image state
+                    self.image_master = warped_image.copy()
+                    self.image_before_contrast = self.image_master.copy()
+                    self.image_contrasted = self.image_master.copy()
+                    self.image_before_padding = None
+                    self.image_padded = False
+                    self.is_modified = True
+
+                    # 7. Deactivate perspective mode and reset UI
+                    self._deactivate_perspective_mode()
+
+                    # 8. Refresh everything
+                    self._update_status_bar()
+                    self._update_marker_slider_ranges()
+                    self._update_overlay_slider_ranges()
+                    self.apply_all_adjustments()
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Perspective Error", f"Failed to apply perspective correction: {e}")
+                    traceback.print_exc()
+                    if self.undo_stack:
+                        self.undo_action_m()
+
+            def reset_perspective_correction(self):
+                """Reset perspective corner positions to the image edges."""
+                self._init_perspective_corners()
+                self.update_live_view()
+
             def _draw_oligomer_overlay_on_canvas(self, painter, render_scale, font_scale_factor):
                 """Helper to draw the oligomer overlay on a high-res canvas (Save/Copy)."""
                 if not (hasattr(self, 'show_oligomer_glyco_overlay_checkbox') and 
@@ -18130,6 +18555,15 @@ if __name__ == "__main__":
 
                     if hasattr(self, 'orientation_slider'): self.orientation_slider.setValue(0)
                     if hasattr(self, 'taper_skew_slider'): self.taper_skew_slider.setValue(0)
+                    # Reset perspective correction state
+                    self.perspective_correction_active = False
+                    self.perspective_src_points_img = None
+                    self.live_view_label.perspective_mode_active = False
+                    self.live_view_label.perspective_corners = None
+                    self.live_view_label.perspective_dragging_index = -1
+                    if hasattr(self, 'perspective_edit_button'): self.perspective_edit_button.setChecked(False)
+                    if hasattr(self, 'perspective_apply_button'): self.perspective_apply_button.setEnabled(False)
+                    if hasattr(self, 'perspective_reset_button'): self.perspective_reset_button.setEnabled(False)
 
                     self.marker_mode = None
                     self.current_left_marker_index = 0; self.current_right_marker_index = 0; self.current_top_label_index = 0
