@@ -6326,6 +6326,7 @@ if __name__ == "__main__":
                 self.oligomer_products = [] # Combined list for all forms
                 self.last_mw_prediction_model = None
                 self.last_mw_prediction_min_max_pos = None
+                self.last_marker_source_choice = None
                 # --- Initialize Status Bar Labels ---
                 self.size_label = QLabel("Image Size: N/A")
                 self.depth_label = QLabel("Bit Depth: N/A")
@@ -6411,6 +6412,7 @@ if __name__ == "__main__":
                 self.crop_offset_y = 0
                 self.perspective_correction_active = False  # Whether perspective editing mode is active
                 self.perspective_src_points_img = None  # 4 source points in image coordinates
+                self.perspective_target_ratio = 0.0     # Target H:W ratio for correction (0 = auto)
                 
                 self.copied_peak_regions_data = {
                     "regions": None,        # List of (start, end) tuples
@@ -12445,6 +12447,23 @@ if __name__ == "__main__":
                 perspective_info_label.setWordWrap(True)
                 perspective_info_label.setStyleSheet("QLabel { font-weight: normal; color: gray; }")
                 perspective_layout.addWidget(perspective_info_label)
+                
+                # --- Target Aspect Ratio (H:W) ---
+                perspective_ratio_layout = QHBoxLayout()
+                perspective_ratio_label = QLabel("Target H:W Ratio (0 for Auto):")
+                perspective_ratio_label.setStyleSheet("font-weight: normal;")
+                self.perspective_ratio_input = QDoubleSpinBox()
+                self.perspective_ratio_input.setRange(0.0, 100.0)
+                self.perspective_ratio_input.setSingleStep(0.1)
+                self.perspective_ratio_input.setDecimals(2)
+                self.perspective_ratio_input.setValue(self.perspective_target_ratio)
+                self.perspective_ratio_input.setToolTip("Specify the physical height-to-width ratio (Height / Diameter). Set to 0.0 for automatic optimization based on selected area.")
+                self.perspective_ratio_input.valueChanged.connect(self._on_perspective_ratio_changed)
+                perspective_ratio_layout.addWidget(perspective_ratio_label)
+                perspective_ratio_layout.addWidget(self.perspective_ratio_input)
+                perspective_ratio_layout.addStretch()
+                perspective_layout.addLayout(perspective_ratio_layout)
+
                 perspective_buttons_layout = QHBoxLayout()
                 self.perspective_edit_button = QPushButton("Edit Corners")
                 self.perspective_edit_button.setCheckable(True)
@@ -15498,6 +15517,12 @@ if __name__ == "__main__":
                     self.black_point_slider.setValue(lg_settings.get('black_point', 0))
                     self.white_point_slider.setValue(lg_settings.get('white_point', 65535))
                     self.gamma_slider.setValue(lg_settings.get('gamma', 100))
+                    
+                    self.perspective_target_ratio = adj_settings.get("perspective_target_ratio", 0.0)
+                    if hasattr(self, 'perspective_ratio_input'):
+                        self.perspective_ratio_input.blockSignals(True)
+                        self.perspective_ratio_input.setValue(self.perspective_target_ratio)
+                        self.perspective_ratio_input.blockSignals(False)
 
                 self.apply_all_adjustments()
 
@@ -15706,7 +15731,8 @@ if __name__ == "__main__":
                         },
                         "channel_mixer": self.channel_mixer_data.copy(),
                         "unsharp_mask": self.unsharp_mask_data.copy(),
-                        "clahe": self.clahe_data.copy()
+                        "clahe": self.clahe_data.copy(),
+                        "perspective_target_ratio": self.perspective_target_ratio
                     }
                 }
 
@@ -17303,9 +17329,29 @@ if __name__ == "__main__":
                         self.right_marker_shift_added = 0
                         self.top_marker_shift_added = 0
 
-                    # 2. Calculate perspective matrix
+                    # 2. Calculate optimized target dimensions
+                    def get_dist(p1, p2):
+                        return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+                    pts = self.perspective_src_points_img
+                    w_top = get_dist(pts[0], pts[1])
+                    w_bot = get_dist(pts[3], pts[2])
+                    h_left = get_dist(pts[0], pts[3])
+                    h_right = get_dist(pts[1], pts[2])
+
+                    avg_w = (w_top + w_bot) / 2.0
+                    if self.perspective_target_ratio > 0:
+                        target_h = avg_w * self.perspective_target_ratio
+                        target_w = avg_w
+                    else:
+                        target_w = avg_w
+                        target_h = (h_left + h_right) / 2.0
+
+                    new_w = max(1, int(round(target_w)))
+                    new_h = max(1, int(round(target_h)))
+
                     src_np = np.float32(self.perspective_src_points_img)
-                    dst_np = np.float32(default_pts)
+                    dst_np = np.float32([[0, 0], [new_w, 0], [new_w, new_h], [0, new_h]])
                     matrix = cv2.getPerspectiveTransform(src_np, dst_np)
 
                     # 3. Transform custom markers using the perspective matrix
@@ -17377,13 +17423,8 @@ if __name__ == "__main__":
                         else:
                             np_img_4ch = np_img
 
-                    # Recalculate matrix using original image dimensions
-                    src_np = np.float32(self.perspective_src_points_img)
-                    dst_np = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
-                    matrix = cv2.getPerspectiveTransform(src_np, dst_np)
-
                     warped_np = cv2.warpPerspective(
-                        np_img_4ch, matrix, (w, h),
+                        np_img_4ch, matrix, (new_w, new_h),
                         flags=cv2.INTER_CUBIC,
                         borderMode=cv2.BORDER_CONSTANT,
                         borderValue=(0, 0, 0, 0)
@@ -17415,6 +17456,9 @@ if __name__ == "__main__":
                     traceback.print_exc()
                     if self.undo_stack:
                         self.undo_action_m()
+
+            def _on_perspective_ratio_changed(self, value):
+                self.perspective_target_ratio = value
 
             def reset_perspective_correction(self):
                 """Reset perspective corner positions to the image edges."""
@@ -18166,12 +18210,17 @@ if __name__ == "__main__":
                 # --- Step 2: Prompt user to select the marker source ---
                 source = choices[0] # Default to the first available option
                 if len(choices) > 1:
+                    # Remember the user's last selection as the default
+                    default_index = 0
+                    if self.last_marker_source_choice and self.last_marker_source_choice in choices:
+                        default_index = choices.index(self.last_marker_source_choice)
                     selected_source, ok = QInputDialog.getItem(self, "Select Marker Source",
                                                                "Which markers should be used for the standard curve?",
-                                                               choices, 2, False)
+                                                               choices, default_index, False)
                     if not ok or not selected_source:
                         return # User cancelled
                     source = selected_source
+                self.last_marker_source_choice = source
         
                 # --- Step 3: Prepare the marker data based on user's choice ---
                 markers_raw_tuples = []
@@ -18549,6 +18598,12 @@ if __name__ == "__main__":
                     if hasattr(self, 'right_markers'): self.right_markers.clear()
                     if hasattr(self, 'top_markers'): self.top_markers.clear()
                     if hasattr(self, 'custom_markers'): self.custom_markers.clear()
+                    
+                    self.perspective_target_ratio = 0.0
+                    if hasattr(self, 'perspective_ratio_input'):
+                        self.perspective_ratio_input.blockSignals(True)
+                        self.perspective_ratio_input.setValue(0.0)
+                        self.perspective_ratio_input.blockSignals(False)
                     if hasattr(self, 'custom_shapes'): self.custom_shapes.clear()
                     self.cancel_drawing_mode()
                     self.clear_predict_molecular_weight()
