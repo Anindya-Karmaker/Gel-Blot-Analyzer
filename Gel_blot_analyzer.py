@@ -1162,7 +1162,8 @@ if __name__ == "__main__":
                     Qt.Window |
                     Qt.CustomizeWindowHint |
                     Qt.WindowMinimizeButtonHint |
-                    Qt.WindowCloseButtonHint
+                    Qt.WindowCloseButtonHint |
+                    Qt.WindowType.WindowStaysOnTopHint
                 )
                 self.setMinimumWidth(350)
                 
