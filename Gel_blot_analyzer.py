@@ -6314,6 +6314,7 @@ if __name__ == "__main__":
                 self.viewer_fixed_width = 550
                 self.viewer_fixed_height = 350
                 self.safe_content_width = 1000
+                self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
                 self.window_title="GEL BLOT ANALYZER v5.6"
@@ -9098,13 +9099,6 @@ if __name__ == "__main__":
                 self.live_view_label._custom_left_click_handler_from_app = self.handle_measurement_mouse_press
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_measurement_mouse_move
                 
-                if mode == 'set_scale':
-                    QMessageBox.information(self, "Set Scale", "Click two points to define the calibration line.")
-                elif mode == 'measure_distance':
-                    QMessageBox.information(self, "Measure Distance", "Click two points to measure the distance.")
-                elif mode == 'measure_area':
-                    QMessageBox.information(self, "Measure Area", "Click points to draw a polygon.\nClick the first point again to close the shape and calculate the area.")
-
             def _exit_current_tool_mode(self):
                 """Helper to reset the UI interaction state of any measurement tool."""
                 self.measurement_mode = None
@@ -18309,9 +18303,11 @@ if __name__ == "__main__":
                     return
         
                 # --- Step 5: Set up the click handler with the processed marker data ---
-                QMessageBox.information(self, "Instruction",
-                                        f"Using '{source}' for calculation.\n\n"
-                                        "Click on the target protein location in the preview window.")
+                if (self.show_once_prompt == True):
+                    QMessageBox.information(self, "Instruction",
+                                            f"Using '{source}' for calculation.\n\n"
+                                            "Click on the target protein location in the preview window.")
+                    self.show_once_prompt = False
                 
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = lambda event: self.get_protein_location_and_clear_preview(
@@ -18547,6 +18543,7 @@ if __name__ == "__main__":
 
                 # 2. LOCK: Prevent sub-functions from saving state or clearing redo stack
                 self._is_restoring_state = True 
+                self.show_once_prompt = True
 
                 try:
                     self.crop_offset_x = 0
