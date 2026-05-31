@@ -151,10 +151,10 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 If you use Gel Blot Analyzer in your research, presentations, or publications, please cite it. Your citation helps other researchers and students discover this tool.
 
 #### APA Style (7th Edition)
-Karmaker, A. (2026). _Gel Blot Analyzer_ (Version 5.6) [Computer software]. https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer
+Karmaker, A. (2026). _Gel Blot Analyzer_ (Version 5.8) [Computer software]. https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer
 
 #### MLA Style (9th Edition)
-Karmaker, Anindya. _Gel Blot Analyzer_, Version 5.6, 2026. GitHub, https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer.
+Karmaker, Anindya. _Gel Blot Analyzer_, Version 5.8, 2026. GitHub, https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer.
 
 #### BibTeX Format
 ```bibtex
@@ -163,5 +163,5 @@ Karmaker, Anindya. _Gel Blot Analyzer_, Version 5.6, 2026. GitHub, https://githu
   title        = {{Gel Blot Analyzer}},
   year         = {2026},
   howpublished = {\url{https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer}},
-  note         = {Version 5.6}
+  note         = {Version 5.8}
 }
