@@ -31,8 +31,8 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer 5.6\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
-        font = QFont("Arial", 11)
+        self.label = QLabel("Gel Blot Analyzer v5.8\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
         self.label.setAlignment(Qt.AlignCenter)
@@ -2339,26 +2339,52 @@ if __name__ == "__main__":
             
             def _create_results_display_widget(self, results_data, std_dict, is_multi_lane, is_for_history):
                 container = QWidget()
-                layout = QVBoxLayout(container); layout.setContentsMargins(0,0,0,0)
+                layout = QVBoxLayout(container)
+                layout.setContentsMargins(0, 0, 0, 0)
                 is_std_mode = bool(std_dict)
 
                 if is_multi_lane and len(results_data) > 0:
                     tabs = QTabWidget()
+
+                    # --- Scrollable tab bar so tabs never truncate ---
+                    tabs.setTabPosition(QTabWidget.North)
+                    tabs.setUsesScrollButtons(True)          # arrow buttons appear when tabs overflow
+                    tabs.setElideMode(Qt.ElideNone)          # never truncate tab text to "Lan..."
+                    tabs.setStyleSheet("""
+                        QTabBar::tab {
+                            min-width: 48px;
+                            padding: 4px 8px;
+                        }
+                    """)
+
                     for lane_id in sorted(results_data.keys()):
                         lane_data = results_data[lane_id]
                         pil_img = self.current_lane_pil_images.get(lane_id) if not is_for_history else None
                         details = lane_data.get('details', [])
-                        widget = self._create_lane_data_display_widget(lane_id, lane_data.get('areas', []), lane_data.get('quantities', []), is_std_mode, pil_img, details, is_for_history)
+                        widget = self._create_lane_data_display_widget(
+                            lane_id,
+                            lane_data.get('areas', []),
+                            lane_data.get('quantities', []),
+                            is_std_mode, pil_img, details, is_for_history
+                        )
                         tabs.addTab(widget, f"Lane {lane_id}")
+
                     layout.addWidget(tabs)
+
                 elif 1 in results_data:
                     lane_data = results_data[1]
                     pil_img = self.current_lane_pil_images.get(1) if not is_for_history else None
                     details = lane_data.get('details', [])
-                    widget = self._create_lane_data_display_widget(1, lane_data.get('areas',[]), lane_data.get('quantities',[]), is_std_mode, pil_img, details, is_for_history)
+                    widget = self._create_lane_data_display_widget(
+                        1,
+                        lane_data.get('areas', []),
+                        lane_data.get('quantities', []),
+                        is_std_mode, pil_img, details, is_for_history
+                    )
                     layout.addWidget(widget)
                 else:
                     layout.addWidget(QLabel("No analysis data to display.", alignment=Qt.AlignCenter))
+
                 return container
 
             def _on_history_session_selected(self):
@@ -2545,88 +2571,196 @@ if __name__ == "__main__":
                 except TypeError as e:
                     QMessageBox.critical(self, "Save History Error",
                                         f"Data contains non-serializable type: {e}")
+            def _render_lane_pixmap(self, pil_lane_image, peak_details_for_lane, font_size):
+                """
+                Render lane image with band labels drawn in a white left margin using Qt painter.
+                PIL handles image normalisation; Qt handles all text rendering.
+                """
+                try:
+                    display_pil = pil_lane_image.copy()
+
+                    # --- Normalise to RGBA via PIL ---
+                    if display_pil.mode in ['I', 'I;16'] or display_pil.mode.startswith("I;16"):
+                        arr = np.array(display_pil, dtype=np.float32)
+                        lo, hi = np.percentile(arr, 1), np.percentile(arr, 99)
+                        if hi <= lo:
+                            lo, hi = np.min(arr), np.max(arr)
+                        norm = np.clip((arr - lo) / (hi - lo + 1e-9), 0.0, 1.0)
+                        display_pil_rgba = Image.fromarray((norm * 255).astype(np.uint8)).convert("RGBA")
+                    elif display_pil.mode == 'L':
+                        display_pil_rgba = ImageOps.autocontrast(display_pil, cutoff=1).convert("RGBA")
+                    else:
+                        display_pil_rgba = display_pil.convert("RGBA")
+
+                    if display_pil_rgba is None:
+                        return None
+
+                    # --- Convert normalised PIL image to QPixmap ---
+                    q_image = ImageQt.ImageQt(display_pil_rgba)
+                    if q_image.isNull():
+                        return None
+                    lane_pixmap = QPixmap.fromImage(q_image)
+
+                    orig_w = lane_pixmap.width()
+                    orig_h = lane_pixmap.height()
+
+                    # --- Use Qt to measure text so margin is always correct ---
+                    qt_font = QFont()
+                    qt_font.setPixelSize(max(8, font_size))
+                    qt_font.setBold(True)
+                    fm = QFontMetrics(qt_font)
+
+                    num_bands = len(peak_details_for_lane) if peak_details_for_lane else 0
+                    max_tw = 0
+                    for i in range(num_bands):
+                        max_tw = max(max_tw, fm.horizontalAdvance(str(i + 1)))
+                    text_h = fm.height()
+
+                    left_pad  = 6
+                    tick_len  = 10
+                    gap       = 6
+                    margin_w  = left_pad + max_tw + tick_len + gap
+                    margin_w  = max(margin_w, font_size + 20)
+
+                    # --- Build final QPixmap: white margin + lane image ---
+                    total_w = orig_w + margin_w
+                    final_pixmap = QPixmap(total_w, orig_h)
+                    final_pixmap.fill(Qt.white)
+
+                    painter = QPainter(final_pixmap)
+                    painter.setRenderHint(QPainter.Antialiasing)
+                    painter.setRenderHint(QPainter.TextAntialiasing)
+
+                    # Draw the lane image on the right
+                    painter.drawPixmap(margin_w, 0, lane_pixmap)
+
+                    # Draw labels and tick lines in the margin
+                    if peak_details_for_lane:
+                        painter.setFont(qt_font)
+
+                        for i, peak_info in enumerate(peak_details_for_lane):
+                            y_px = int(peak_info['y_coord_in_lane_image'])
+                            y_px = max(0, min(y_px, orig_h - 1))
+
+                            label = str(i + 1)
+                            tw = fm.horizontalAdvance(label)
+
+                            # Right-align text in margin, vertically centred on band
+                            x_text = left_pad + (max_tw - tw)
+                            y_text = y_px - text_h // 2
+                            y_text = max(0, min(y_text, orig_h - text_h - 1))
+
+                            # Draw number in dark red
+                            painter.setPen(QColor(180, 0, 0))
+                            painter.drawText(x_text, y_text + fm.ascent(), label)
+
+                            # Draw tick line in green from end of text to gel edge
+                            tick_x0 = left_pad + max_tw + 3
+                            tick_x1 = margin_w - gap
+                            if tick_x1 > tick_x0:
+                                pen = QPen(QColor(0, 160, 0))
+                                pen.setWidth(max(1, font_size // 12))
+                                painter.setPen(pen)
+                                painter.drawLine(tick_x0, y_px, tick_x1, y_px)
+
+                    painter.end()
+                    return final_pixmap
+
+                except Exception:
+                    traceback.print_exc()
+                return None
+
+
             def _create_lane_data_display_widget(self, lane_id, peak_areas, calculated_quantities, is_std_mode,
-                                                 pil_lane_image=None, peak_details_for_lane=None, is_for_history=False):
+                                                pil_lane_image=None, peak_details_for_lane=None, is_for_history=False):
                 lane_widget = QWidget()
                 lane_layout = QHBoxLayout(lane_widget)
 
-                table_scroll_area = QScrollArea(); table_scroll_area.setWidgetResizable(True)
-                table_for_lane = QTableWidget(); table_for_lane.setColumnCount(4)
+                # --- Table (left side, unchanged) ---
+                table_scroll_area = QScrollArea()
+                table_scroll_area.setWidgetResizable(True)
+                table_for_lane = QTableWidget()
+                table_for_lane.setColumnCount(4)
                 table_for_lane.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
-                table_for_lane.setEditTriggers(QTableWidget.NoEditTriggers); table_for_lane.setSelectionBehavior(QTableWidget.SelectRows)
-                single_lane_data_for_populator = {1: {'areas': peak_areas, 'quantities': calculated_quantities}}
-                self._populate_table_generic(table_for_lane, single_lane_data_for_populator, is_std_mode, is_multi_lane_data=False)
+                table_for_lane.setEditTriggers(QTableWidget.NoEditTriggers)
+                table_for_lane.setSelectionBehavior(QTableWidget.SelectRows)
+                single_lane_data = {1: {'areas': peak_areas, 'quantities': calculated_quantities}}
+                self._populate_table_generic(table_for_lane, single_lane_data, is_std_mode, is_multi_lane_data=False)
                 table_scroll_area.setWidget(table_for_lane)
                 lane_layout.addWidget(table_scroll_area, 3)
 
+                # --- Image preview (right side) ---
                 if pil_lane_image and not is_for_history:
-                    # Create the label directly, no QGroupBox
-                    lane_image_label = QLabel(f"Lane {lane_id} Preview")
+                    image_panel = QWidget()
+                    image_panel.setStyleSheet("background-color: white;")
+                    image_panel_layout = QVBoxLayout(image_panel)
+                    image_panel_layout.setContentsMargins(4, 4, 4, 4)
+                    image_panel_layout.setSpacing(4)
+
+                    # Font-size control row
+                    font_ctrl_layout = QHBoxLayout()
+                    font_ctrl_layout.addWidget(QLabel("Label size:"))
+                    font_size_spinbox = QSpinBox()
+                    font_size_spinbox.setRange(8, 500)
+                    font_size_spinbox.setValue(30)
+                    font_size_spinbox.setSuffix(" px")
+                    font_size_spinbox.setToolTip("Font size of band-number labels")
+                    font_ctrl_layout.addWidget(font_size_spinbox)
+                    font_ctrl_layout.addStretch()
+                    image_panel_layout.addLayout(font_ctrl_layout)
+
+                    # Aspect-ratio-preserving image label
+                    class AspectLabel(QLabel):
+                        def __init__(self, *args, **kwargs):
+                            super().__init__(*args, **kwargs)
+                            self._source_pixmap = None
+
+                        def setSourcePixmap(self, px):
+                            self._source_pixmap = px
+                            self._refresh()
+
+                        def _refresh(self):
+                            if self._source_pixmap and not self._source_pixmap.isNull():
+                                scaled = self._source_pixmap.scaled(
+                                    self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                super().setPixmap(scaled)
+
+                        def resizeEvent(self, event):
+                            self._refresh()
+                            super().resizeEvent(event)
+
+                    lane_image_label = AspectLabel(f"Lane {lane_id} Preview")
                     lane_image_label.setMinimumSize(150, 200)
-                    lane_image_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding) 
+                    lane_image_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
                     lane_image_label.setAlignment(Qt.AlignCenter)
-                    lane_image_label.setStyleSheet("border: 1px solid #C0C5CB; background-color: #333; border-radius: 4px;")
-                    lane_image_label.setScaledContents(True)
+                    # White background, subtle border
+                    lane_image_label.setStyleSheet(
+                        "border: 1px solid #C0C5CB; background-color: white; border-radius: 4px;")
 
-                    try:
-                        display_pil_image_oriented = pil_lane_image.copy()
-                        
-                        display_pil_image_rgba = None
-                        if display_pil_image_oriented.mode in ['I', 'I;16'] or display_pil_image_oriented.mode.startswith("I;16"):
-                            img_array = np.array(display_pil_image_oriented, dtype=np.float32); 
-                            min_val, max_val = np.percentile(img_array, 1), np.percentile(img_array, 99)
-                            if max_val <= min_val: min_val, max_val = np.min(img_array), np.max(img_array)
-                            normalized_array = (img_array - min_val) / (max_val - min_val + 1e-9) 
-                            normalized_array = np.clip(normalized_array, 0.0, 1.0)
-                            img_8bit_gray = (normalized_array * 255).astype(np.uint8)
-                            display_pil_image_rgba = Image.fromarray(img_8bit_gray).convert("RGBA")
-                        elif display_pil_image_oriented.mode == 'L':
-                            display_pil_image_rgba = ImageOps.autocontrast(display_pil_image_oriented, cutoff=1).convert("RGBA")
+                    # Capture variables explicitly to avoid closure scoping bugs
+                    def _refresh_image(
+                        _fs_unused=None,
+                        _label=lane_image_label,
+                        _pil=pil_lane_image,
+                        _details=peak_details_for_lane,
+                        _spinbox=font_size_spinbox,
+                        _lid=lane_id
+                    ):
+                        px = self._render_lane_pixmap(_pil, _details, _spinbox.value())
+                        if px:
+                            _label.setSourcePixmap(px)
                         else:
-                            display_pil_image_rgba = display_pil_image_oriented.convert("RGBA")
+                            _label.setText(f"Cannot display Lane {_lid}\n(render error)")
 
-                        if display_pil_image_rgba:
-                            draw = ImageDraw.Draw(display_pil_image_rgba)
-                            
-                            # --- FIX: Use a fixed, large pixel font size for cross-platform consistency ---
-                            band_number_pil_font_size = 28 # Fixed pixel size
-                            try:
-                                font_pil = ImageFont.truetype("arialbd.ttf", band_number_pil_font_size)
-                            except IOError: 
-                                try: font_pil = ImageFont.truetype("arial.ttf", band_number_pil_font_size)
-                                except: font_pil = ImageFont.load_default()
-                            
-                            text_color = (255, 0, 0, 255) # Bright Red
+                    # Connect AFTER capturing everything — this is what was broken before
+                    font_size_spinbox.valueChanged.connect(_refresh_image)
 
-                            if peak_details_for_lane:
-                                for i, peak_info in enumerate(peak_details_for_lane):
-                                    y_pixel_on_oriented_image = int(peak_info['y_coord_in_lane_image'])
-                                    y_pixel_on_oriented_image = max(0, min(y_pixel_on_oriented_image, display_pil_image_rgba.height -1))
-                                    band_num_str = str(i + 1)
-                                    text_bbox = draw.textbbox((0, 0), band_num_str, font=font_pil)
-                                    text_width = text_bbox[2] - text_bbox[0]
-                                    text_height = text_bbox[3] - text_bbox[1]
-                                    
-                                    x_text_pos = 5 # Small padding from the left edge
-                                    actual_y_draw_pos = y_pixel_on_oriented_image - (text_height // 2) - text_bbox[1] 
-                                    draw.text((x_text_pos, actual_y_draw_pos), band_num_str, fill=text_color, font=font_pil)
-                                    
-                                    line_start_x = x_text_pos + text_width + 4
-                                    line_end_x = x_text_pos + text_width + 12
-                                    line_y = y_pixel_on_oriented_image 
-                                    draw.line([(line_start_x, line_y), (line_end_x, line_y)], fill=(0,255,0,180), width=2)
+                    # Initial render
+                    _refresh_image()
 
-                            q_image_lane = ImageQt.ImageQt(display_pil_image_rgba)
-                            if not q_image_lane.isNull():
-                                pixmap_lane = QPixmap.fromImage(q_image_lane)
-                                lane_image_label.setPixmap(pixmap_lane)
-                        else:
-                             lane_image_label.setText(f"Cannot display Lane {lane_id}\n(format error)")
-                    except Exception as e_img: 
-                        traceback.print_exc()
-                        lane_image_label.setText(f"Error displaying\nlane {lane_id} preview")
-                
-                    lane_layout.addWidget(lane_image_label, 1) # Image takes less horizontal stretch
+                    image_panel_layout.addWidget(lane_image_label, 1)
+                    lane_layout.addWidget(image_panel, 1)
+
                 return lane_widget
             def _copy_active_lane_table_data(self):
                 table_to_copy = None
@@ -3741,11 +3875,14 @@ if __name__ == "__main__":
                             # Specks have anomalously high amplitude relative to their width.
                             # Reject any peak whose height/width ratio exceeds 4× the median.
                             if filtered_heights is not None and len(filtered_peaks) > 1:
-                                sharpness = filtered_heights / np.maximum(filtered_widths, 1.0)
+                                sharpness    = filtered_heights / np.maximum(filtered_widths, 1.0)
                                 median_sharp = np.median(sharpness)
-                                if median_sharp > 0:
-                                    sharpness_mask = sharpness <= (median_sharp * 4.0)
-                                    filtered_peaks = filtered_peaks[sharpness_mask]
+                                max_height   = np.max(filtered_heights)
+                                if median_sharp > 0 and max_height > 0:
+                                    is_sharp = sharpness > (median_sharp * 4.0)
+                                    is_small = filtered_heights < (max_height * 0.10)   # <10% of the strongest band
+                                    keep     = ~(is_sharp & is_small)
+                                    filtered_peaks = filtered_peaks[keep]
 
                             self.peaks = filtered_peaks
 
@@ -6212,7 +6349,7 @@ if __name__ == "__main__":
 
             def __init__(self):
                 super().__init__()
-                
+                self.showonce = False
                 self.resize_timer = QTimer()
                 self.resize_timer.setSingleShot(True)
                 self.resize_timer.setInterval(1000) # Save 1 second after resizing stops
@@ -6317,7 +6454,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v5.6"
+                self.window_title="GEL BLOT ANALYZER v5.8"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -8980,6 +9117,11 @@ if __name__ == "__main__":
                 quant_workflow_layout.setSpacing(8)
                 step1_group = QGroupBox("Define and Manage Analysis Regions")
                 step1_layout = QGridLayout(step1_group)
+                self.btn_auto_lane_click = QPushButton("Auto-Mark Lane")
+                self.btn_auto_lane_click.setToolTip("Click on the center of a lane to automatically mark its rectangular region.\nPress ESC to finish the session.")
+                self.btn_auto_lane_click.clicked.connect(lambda: self.start_region_definition_session('auto_lane_click'))
+                self.btn_auto_lane_click.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                
                 self.btn_define_quad = QPushButton("Quadrilateral Region")
                 self.btn_define_quad.setToolTip("Start a session to define one or more skewed lane regions by clicking 4 corner points for each.\nPress ESC to finish the session.")
                 self.btn_define_quad.clicked.connect(lambda: self.start_region_definition_session('quad'))
@@ -9002,9 +9144,10 @@ if __name__ == "__main__":
                 )
                 self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
                 self.btn_sel_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                step1_layout.addWidget(self.btn_define_quad, 0, 0)
-                step1_layout.addWidget(self.btn_define_rec, 0, 1)
-                step1_layout.addWidget(self.btn_sel_rec, 0, 2)
+                step1_layout.addWidget(self.btn_auto_lane_click, 0, 0)
+                step1_layout.addWidget(self.btn_define_quad, 0, 1)
+                step1_layout.addWidget(self.btn_define_rec, 1, 0)
+                step1_layout.addWidget(self.btn_sel_rec, 1, 1)
                 quant_workflow_layout.addWidget(step1_group,0)
                 step2_group = QGroupBox("Process Regions and View Results")
                 step2_layout = QGridLayout(step2_group)
@@ -9548,22 +9691,34 @@ if __name__ == "__main__":
                 if region_type == 'quad':
                     self.live_view_label.mode = 'define_quad'
                     self.live_view_label.current_preview_points = []
-                    QMessageBox.information(self, "Define Lane", f"Click 4 corners for Lane {next_lane_id}.\nPress ESC to finish the session.")
+                    if self.showonce == False: 
+                        QMessageBox.information(self, "Define Lane", f"Click 4 corners for Lane {next_lane_id}.\nPress ESC to finish the session.")
+                        self.showonce = True
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_click
                 elif region_type == 'rectangle':
                     self.live_view_label.mode = 'define_rect'
                     self.live_view_label.current_preview_points = []
-                    QMessageBox.information(self, "Define Lane", f"Draw Lane {next_lane_id}.\nPress ESC to finish the session.")
+                    if self.showonce == False: 
+                        QMessageBox.information(self, "Define Lane", f"Draw Lane {next_lane_id}.\nPress ESC to finish the session.")
+                        self.showonce = True
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_start
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_region_definition_move
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_current_multi_lane_definition
+                elif region_type == 'auto_lane_click':
+                    self.live_view_label.mode = 'auto_lane_click'
+                    self.live_view_label.current_preview_points = []
+                    if self.showonce == False: 
+                        QMessageBox.information(self, "Define Lane", f"Click the center of Lane {next_lane_id} to automatically mark it.\nPress ESC to finish the session.")
+                        self.showonce = True
+                    self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_click
+
                 
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 self.live_view_label.setMouseTracking(True)
                 self.update_live_view()
 
             def handle_region_definition_click(self, event):
-                """Handles clicks for point-by-point shape definitions (e.g., quadrilaterals)."""
+                """Handles clicks for point-by-point shape definitions (e.g., quadrilaterals or auto-lane clicks)."""
                 if not self.multi_lane_mode_active or event.button() != Qt.LeftButton: return
 
                 point_transformed = self.live_view_label.transform_point(event.position())
@@ -9573,6 +9728,119 @@ if __name__ == "__main__":
 
                 if self.multi_lane_definition_type == 'quad' and len(self.live_view_label.current_preview_points) == 4:
                     self.finalize_current_multi_lane_definition(event)
+                elif self.multi_lane_definition_type == 'auto_lane_click':
+                    # Auto-Mark Lane: center a uniform-width rect exactly on the click.
+                    # No peak-snapping — the user clicks where they want the lane center.
+                    try:
+                        import numpy as np
+
+                        # Collect existing lane dimensions (in label space) for consistency
+                        existing_widths_ls = []
+                        existing_tops_ls = []
+                        existing_bottoms_ls = []
+                        for lane_def in self.multi_lane_definitions:
+                            if lane_def.get('type') == 'rectangle':
+                                rect = lane_def['points_label'][0]
+                                existing_widths_ls.append(rect.width())
+                                existing_tops_ls.append(rect.top())
+                                existing_bottoms_ls.append(rect.bottom())
+
+                        # --- 1. Lane Width (label space) ---
+                        if len(existing_widths_ls) > 0:
+                            use_width_ls = existing_widths_ls[-1]
+                        else:
+                            # Compute default: 5% of the displayed image width
+                            img_ref = self.image if (self.image and not self.image.isNull()) else self.image_master
+                            if img_ref and not img_ref.isNull():
+                                ref_w = float(img_ref.width())
+                                ref_h = float(img_ref.height())
+                                lbl_w = float(self.live_view_label.width())
+                                lbl_h = float(self.live_view_label.height())
+                                sf = min(lbl_w / ref_w, lbl_h / ref_h)
+                                displayed_img_w = ref_w * sf
+                                use_width_ls = max(20.0, displayed_img_w * 0.05)
+                            else:
+                                use_width_ls = 40.0
+
+                        # --- 2. Lane Height / Top-Bottom (label space) ---
+                        if len(existing_tops_ls) > 0:
+                            top_ls = existing_tops_ls[-1]
+                            bottom_ls = existing_bottoms_ls[-1]
+                        else:
+                            # Detect gel vertical extent from the image
+                            img_ref = self.image if (self.image and not self.image.isNull()) else self.image_master
+                            if img_ref and not img_ref.isNull():
+                                ref_w = float(img_ref.width())
+                                ref_h = float(img_ref.height())
+                                lbl_w = float(self.live_view_label.width())
+                                lbl_h = float(self.live_view_label.height())
+                                sf = min(lbl_w / ref_w, lbl_h / ref_h)
+                                off_y = (lbl_h - ref_h * sf) / 2.0
+
+                                img_np = self.qimage_to_numpy(img_ref)
+                                if img_np is not None:
+                                    if img_np.ndim == 3:
+                                        gray = np.dot(img_np[..., :3], [0.2989, 0.5870, 0.1140])
+                                    else:
+                                        gray = img_np.astype(float)
+                                    img_h_px, img_w_px = gray.shape
+
+                                    # Corner sampling for background intensity
+                                    ch = min(10, img_h_px // 2)
+                                    cw = min(10, img_w_px // 2)
+                                    bg_val = np.median([
+                                        np.mean(gray[0:ch, 0:cw]),
+                                        np.mean(gray[0:ch, img_w_px - cw:]),
+                                        np.mean(gray[img_h_px - ch:, 0:cw]),
+                                        np.mean(gray[img_h_px - ch:, img_w_px - cw:])
+                                    ])
+                                    row_means = np.mean(gray, axis=1)
+
+                                    if bg_val > 127:
+                                        inside = np.where(row_means < bg_val - 10)[0]
+                                    else:
+                                        inside = np.where(row_means > bg_val + 10)[0]
+
+                                    if len(inside) > 0:
+                                        pad = int(img_h_px * 0.01)
+                                        top_y_img = max(0, int(inside[0]) - pad)
+                                        bot_y_img = min(img_h_px - 1, int(inside[-1]) + pad)
+                                    else:
+                                        top_y_img = int(img_h_px * 0.05)
+                                        bot_y_img = int(img_h_px * 0.95)
+
+                                    top_ls = off_y + top_y_img * sf
+                                    bottom_ls = off_y + bot_y_img * sf
+                                else:
+                                    # Fallback: use full image extent
+                                    top_ls = off_y
+                                    bottom_ls = off_y + ref_h * sf
+                            else:
+                                top_ls = 0.0
+                                bottom_ls = float(self.live_view_label.height())
+
+                        # --- 3. Center the rect exactly on the click ---
+                        x_center_ls = snapped_point.x()
+                        left_ls = x_center_ls - use_width_ls / 2.0
+                        right_ls = x_center_ls + use_width_ls / 2.0
+
+                        rect_ls = QRectF(QPointF(left_ls, top_ls), QPointF(right_ls, bottom_ls)).normalized()
+
+                    except Exception as e:
+                        print(f"Auto lane detection failed: {e}")
+                        # Ultimate fallback: fixed-size rect centered on click
+                        use_width_ls = 40.0
+                        x_center_ls = snapped_point.x()
+                        rect_ls = QRectF(
+                            QPointF(x_center_ls - use_width_ls / 2.0, 0.0),
+                            QPointF(x_center_ls + use_width_ls / 2.0, float(self.live_view_label.height()))
+                        ).normalized()
+
+                    lane_id = len(self.multi_lane_definitions) + 1
+                    self.multi_lane_definitions.append({'type': 'rectangle', 'points_label': [rect_ls], 'id': lane_id})
+                    self.is_modified = True
+                    self.live_view_label.current_preview_points = []
+                    self._set_next_region_type(self.multi_lane_definition_type)
 
             def handle_region_definition_start(self, event):
                 """Handles mouse press for drag-based shape definitions (e.g., rectangles)."""
@@ -10069,7 +10337,7 @@ if __name__ == "__main__":
                     self.analyze_bounding_box(processed_data_pil, standard=True)
                 else:
                     QMessageBox.warning(self, "Error", f"Could not convert {region_type_for_message} to grayscale for analysis.")
-                
+                self.save_state()
                 self._reset_to_selection_mode()
             
             def process_sample(self):
@@ -10205,7 +10473,8 @@ if __name__ == "__main__":
                     self.target_protein_areas_text.setText("\n".join(all_lanes_text_results))
                 else:
                     self.target_protein_areas_text.setText("N/A or analysis failed for all lanes.")
-                
+
+                self.save_state()
                 self._reset_to_selection_mode()
                 self.update_live_view()
                 
@@ -18540,7 +18809,7 @@ if __name__ == "__main__":
             def reset_image(self):
                 # 1. Save state exactly ONCE at the start
                 self.save_state() 
-
+                self.showonce = False
                 # 2. LOCK: Prevent sub-functions from saving state or clearing redo stack
                 self._is_restoring_state = True 
                 self.show_once_prompt = True
