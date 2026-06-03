@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v5.8\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v6.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -2091,6 +2091,9 @@ if __name__ == "__main__":
                 
                 self.current_model_name = "Linear"
                 self.current_fit_params = None
+                self.current_model_name = "Linear"
+                self.current_fit_params = None
+                self.current_label_font_size = 30
 
                 if self.is_current_data_multi_lane:
                     for lane_id_key in current_peak_areas_data.keys():
@@ -2124,7 +2127,7 @@ if __name__ == "__main__":
                             img_coords_s = self.parent_app._map_label_rect_to_image_rect(QRectF(QPointF(self.parent_app.live_view_label.bounding_box_preview[0],self.parent_app.live_view_label.bounding_box_preview[1]),QPointF(self.parent_app.live_view_label.bounding_box_preview[2],self.parent_app.live_view_label.bounding_box_preview[3])).normalized())
                             if img_coords_s: extracted_qimage_single = self.parent_app.image.copy(*img_coords_s)
                         if extracted_qimage_single and not extracted_qimage_single.isNull():
-                            pil_for_lane = self.parent_app.convert_qimage_to_grayscale_pil(extracted_qimage)
+                            pil_for_lane = self.parent_app.convert_qimage_to_grayscale_pil(extracted_qimage_single)  # was extracted_qimage
                             if pil_for_lane: self.current_lane_pil_images[1] = pil_for_lane
 
                 self.current_standard_dictionary = current_standard_dictionary if current_standard_dictionary is not None else {}
@@ -2220,7 +2223,12 @@ if __name__ == "__main__":
                 copy_current_button = QPushButton("Copy Active Lane Table")
                 copy_current_button.clicked.connect(self._copy_active_lane_table_data)
                 export_current_button = QPushButton("Export All Lanes to Excel")
-                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(self.current_results_data, self.analysis_name_input_widget.text() or self.source_image_name_current, self.current_standard_dictionary, is_multi_lane_data=self.is_current_data_multi_lane))
+                export_current_button.clicked.connect(lambda: self._export_to_excel_generic(
+                    self.current_results_data,
+                    self.analysis_name_input_widget.text() or self.source_image_name_current,
+                    self.current_standard_dictionary,
+                    is_multi_lane_data=self.is_current_data_multi_lane,
+                    lane_pil_images=self.current_lane_pil_images))
                 current_buttons_layout.addWidget(copy_current_button); current_buttons_layout.addStretch(); current_buttons_layout.addWidget(export_current_button)
                 current_main_layout.addLayout(current_buttons_layout)
                 self.tab_widget.addTab(current_tab_widget, "Current Analysis")
@@ -2343,13 +2351,23 @@ if __name__ == "__main__":
                 layout.setContentsMargins(0, 0, 0, 0)
                 is_std_mode = bool(std_dict)
 
+                # --- Shared font-size control for ALL lanes in this display ---
+                font_registry = {'spinboxes': [], 'refreshers': []}
+                def _sync_font(new_size):
+                    self.current_label_font_size = new_size
+                    for sb in font_registry['spinboxes']:
+                        if sb.value() != new_size:
+                            sb.blockSignals(True)
+                            sb.setValue(new_size)
+                            sb.blockSignals(False)
+                    for fn in font_registry['refreshers']:
+                        fn()
+
                 if is_multi_lane and len(results_data) > 0:
                     tabs = QTabWidget()
-
-                    # --- Scrollable tab bar so tabs never truncate ---
                     tabs.setTabPosition(QTabWidget.North)
-                    tabs.setUsesScrollButtons(True)          # arrow buttons appear when tabs overflow
-                    tabs.setElideMode(Qt.ElideNone)          # never truncate tab text to "Lan..."
+                    tabs.setUsesScrollButtons(True)
+                    tabs.setElideMode(Qt.ElideNone)
                     tabs.setStyleSheet("""
                         QTabBar::tab {
                             min-width: 48px;
@@ -2365,7 +2383,8 @@ if __name__ == "__main__":
                             lane_id,
                             lane_data.get('areas', []),
                             lane_data.get('quantities', []),
-                            is_std_mode, pil_img, details, is_for_history
+                            is_std_mode, pil_img, details, is_for_history,
+                            font_registry=font_registry, on_font_size_changed=_sync_font
                         )
                         tabs.addTab(widget, f"Lane {lane_id}")
 
@@ -2379,7 +2398,8 @@ if __name__ == "__main__":
                         1,
                         lane_data.get('areas', []),
                         lane_data.get('quantities', []),
-                        is_std_mode, pil_img, details, is_for_history
+                        is_std_mode, pil_img, details, is_for_history,
+                        font_registry=font_registry, on_font_size_changed=_sync_font
                     )
                     layout.addWidget(widget)
                 else:
@@ -2672,7 +2692,8 @@ if __name__ == "__main__":
 
 
             def _create_lane_data_display_widget(self, lane_id, peak_areas, calculated_quantities, is_std_mode,
-                                                pil_lane_image=None, peak_details_for_lane=None, is_for_history=False):
+                                                pil_lane_image=None, peak_details_for_lane=None, is_for_history=False,
+                                                font_registry=None, on_font_size_changed=None):
                 lane_widget = QWidget()
                 lane_layout = QHBoxLayout(lane_widget)
 
@@ -2702,7 +2723,7 @@ if __name__ == "__main__":
                     font_ctrl_layout.addWidget(QLabel("Label size:"))
                     font_size_spinbox = QSpinBox()
                     font_size_spinbox.setRange(8, 500)
-                    font_size_spinbox.setValue(30)
+                    font_size_spinbox.setValue(self.current_label_font_size)
                     font_size_spinbox.setSuffix(" px")
                     font_size_spinbox.setToolTip("Font size of band-number labels")
                     font_ctrl_layout.addWidget(font_size_spinbox)
@@ -2753,8 +2774,14 @@ if __name__ == "__main__":
                             _label.setText(f"Cannot display Lane {_lid}\n(render error)")
 
                     # Connect AFTER capturing everything — this is what was broken before
-                    font_size_spinbox.valueChanged.connect(_refresh_image)
-
+                    if font_registry is not None:
+                        font_registry['spinboxes'].append(font_size_spinbox)
+                        font_registry['refreshers'].append(_refresh_image)
+                    if on_font_size_changed is not None:
+                        # Shared handler syncs every lane and triggers all refreshers
+                        font_size_spinbox.valueChanged.connect(on_font_size_changed)
+                    else:
+                        font_size_spinbox.valueChanged.connect(_refresh_image)
                     # Initial render
                     _refresh_image()
 
@@ -2998,145 +3025,216 @@ if __name__ == "__main__":
                 
                 QApplication.clipboard().setText(clipboard_string.strip())
                 QMessageBox.information(self, "Copied", "The active table's content has been copied to the clipboard.")
-            def _export_to_excel_generic(self, results_data_for_export, analysis_name_for_filename_base="Analysis_Results", 
-                                         standard_dict_for_export=None, is_multi_lane_data=False):
+
+            def _export_to_excel_generic(self, results_data_for_export, analysis_name_for_filename_base="Analysis_Results",
+                                         standard_dict_for_export=None, is_multi_lane_data=False, lane_pil_images=None):
+                from openpyxl.styles import Font, Border, Side, PatternFill, Alignment
+                from openpyxl.utils import get_column_letter
+                import tempfile
+
+                # ---- Default filename ----
                 safe_analysis_name = str(analysis_name_for_filename_base).replace('.', '_').replace(' ', '_').replace(':', '-')
                 current_timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                final_default_filename = ""
-                if "Analysis_" in safe_analysis_name and any(char.isdigit() for char in safe_analysis_name): 
+                if "Analysis_" in safe_analysis_name and any(ch.isdigit() for ch in safe_analysis_name):
                     final_default_filename = safe_analysis_name
-                else: 
-                    final_default_filename = f"Analysis_{current_timestamp_str}_{safe_analysis_name}"
-                options = QFileDialog.Options(); file_path, _ = QFileDialog.getSaveFileName(
-                    self, "Save Excel File", f"{final_default_filename}.xlsx", "Excel Files (*.xlsx)", options=options)
-                if not file_path: return
-                
-                workbook = openpyxl.Workbook()
-                if "Sheet" in workbook.sheetnames: workbook.remove(workbook["Sheet"])
-                if is_multi_lane_data and results_data_for_export:
-                    worksheet_data = workbook.create_sheet("Multi-Lane Analysis")
-                    headers = ["Lane ID", "Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"]
-                    for col, header in enumerate(headers, start=1):
-                        cell = worksheet_data.cell(row=1, column=col, value=header); cell.font = Font(bold=True)
-                    current_excel_row = 2
-                    for lane_id_sorted in sorted(results_data_for_export.keys()):
-                        lane_data = results_data_for_export[lane_id_sorted]
-                        peak_areas = lane_data.get('areas', [])
-                        calculated_quantities = lane_data.get('quantities', [])
-                        if not peak_areas: continue
-                        total_area_this_lane = sum(peak_areas)
-
-                        for band_idx, area_val in enumerate(peak_areas):
-                            worksheet_data.cell(row=current_excel_row, column=1, value=lane_id_sorted)
-                            worksheet_data.cell(row=current_excel_row, column=2, value=f"Band {band_idx + 1}")
-                            worksheet_data.cell(row=current_excel_row, column=3, value=float(f"{area_val:.3f}"))
-                            perc_val_str = f"{(area_val / total_area_this_lane * 100):.2f}%" if total_area_this_lane != 0 else "0.00%"
-                            try:
-                                perc_num = float(perc_val_str.replace('%','')) / 100.0
-                                cell_perc = worksheet_data.cell(row=current_excel_row, column=4, value=perc_num)
-                                cell_perc.number_format = '0.00%'
-                            except ValueError: worksheet_data.cell(row=current_excel_row, column=4, value=perc_val_str)
-                            qty_str_val = ""
-                            if self.current_is_standard_mode and calculated_quantities and band_idx < len(calculated_quantities):
-                                qty_str_val = f"{calculated_quantities[band_idx]:.3f}" # More precision
-                                try: worksheet_data.cell(row=current_excel_row, column=5, value=float(qty_str_val))
-                                except ValueError: worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
-                            else: worksheet_data.cell(row=current_excel_row, column=5, value=qty_str_val)
-                            current_excel_row += 1
-                    for col_idx_letter in range(1, worksheet_data.max_column + 1):
-                        column_letter = openpyxl.utils.get_column_letter(col_idx_letter)
-                        max_length = 0; header_len = len(headers[col_idx_letter-1])
-                        for cell in worksheet_data[column_letter]:
-                            try: 
-                                if cell.value: max_length = max(max_length, len(str(cell.value)) + (1 if cell.number_format == '0.00%' else 0) )
-                            except: pass
-                        adjusted_width = (max(max_length, header_len) + 2) * 1.1 
-                        worksheet_data.column_dimensions[column_letter].width = min(max(adjusted_width, 10), 50)
-
-                elif not is_multi_lane_data and results_data_for_export and 1 in results_data_for_export:
-                    worksheet_data_single = workbook.create_sheet("Single Lane Analysis")
-                    headers_single = ["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"]
-                    for col, header in enumerate(headers_single, start=1):
-                        cell = worksheet_data_single.cell(row=1, column=col, value=header); cell.font = Font(bold=True)
-                    single_lane_actual_data = results_data_for_export[1]
-                    peak_areas_single = single_lane_actual_data.get('areas', [])
-                    calculated_quantities_single = single_lane_actual_data.get('quantities', [])
-                    total_area_single = sum(peak_areas_single) if peak_areas_single else 0.0
-
-                    for r_idx, area_val in enumerate(peak_areas_single):
-                        excel_r = r_idx + 2
-                        worksheet_data_single.cell(row=excel_r, column=1, value=f"Band {r_idx+1}")
-                        worksheet_data_single.cell(row=excel_r, column=2, value=float(f"{area_val:.3f}"))
-                        perc_val_str = f"{(area_val / total_area_single * 100):.2f}%" if total_area_single != 0 else "0.00%"
-                        try: 
-                            perc_num = float(perc_val_str.replace('%','')) / 100.0
-                            cell_perc = worksheet_data_single.cell(row=excel_r, column=3, value=perc_num)
-                            cell_perc.number_format = '0.00%'
-                        except ValueError: worksheet_data_single.cell(row=excel_r, column=3, value=perc_val_str)
-                        qty_str_val = ""
-                        if self.current_is_standard_mode and calculated_quantities_single and r_idx < len(calculated_quantities_single):
-                            qty_str_val = f"{calculated_quantities_single[r_idx]:.3f}" # More precision
-                            try: worksheet_data_single.cell(row=excel_r, column=4, value=float(qty_str_val))
-                            except ValueError: worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
-                        else: worksheet_data_single.cell(row=excel_r, column=4, value=qty_str_val)
-
-                    for col_idx_letter in range(1, worksheet_data_single.max_column + 1):
-                        column_letter = openpyxl.utils.get_column_letter(col_idx_letter)
-                        max_length = 0; header_len = len(headers_single[col_idx_letter-1])
-                        for cell in worksheet_data_single[column_letter]:
-                            try: 
-                                if cell.value: max_length = max(max_length, len(str(cell.value)) + (1 if cell.number_format == '0.00%' else 0))
-                            except: pass
-                        adjusted_width = (max(max_length, header_len) + 2) * 1.1
-                        worksheet_data_single.column_dimensions[column_letter].width = min(max(adjusted_width, 10), 50)
                 else:
-                    no_data_sheet = workbook.create_sheet("No Analysis Data")
-                    no_data_sheet.cell(row=1, column=1, value="No analysis data was available for export.")
+                    final_default_filename = f"Analysis_{current_timestamp_str}_{safe_analysis_name}"
 
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Save Excel File", f"{final_default_filename}.xlsx",
+                    "Excel Files (*.xlsx)", options=QFileDialog.Options())
+                if not file_path:
+                    return
+
+                # ---- Image support ----
+                try:
+                    from openpyxl.drawing.image import Image as XLImage
+                    images_supported = True
+                except Exception:
+                    images_supported = False
+                temp_image_files = []
+                font_size_for_labels = getattr(self, "current_label_font_size", 30)
+
+                # ---- Lanes that actually have data ----
+                lane_ids = [lid for lid in sorted(results_data_for_export.keys())
+                            if results_data_for_export.get(lid, {}).get('areas')]
+                has_quantities = any(results_data_for_export[lid].get('quantities') for lid in lane_ids)
+                is_std_mode = bool(standard_dict_for_export) or has_quantities
+
+                # ---- Styles ----
+                header_font = Font(bold=True, color="FFFFFF")
+                title_font  = Font(bold=True, size=13)
+                total_font  = Font(bold=True)
+                header_fill = PatternFill("solid", fgColor="4472C4")
+                total_fill  = PatternFill("solid", fgColor="D9E1F2")
+                center      = Alignment(horizontal="center", vertical="center")
+                thin        = Side(style="thin", color="BBBBBB")
+                box         = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+                def set_widths(ws, widths):
+                    for idx, w in enumerate(widths, start=1):
+                        ws.column_dimensions[get_column_letter(idx)].width = w
+
+                def write_band_table(ws, top_row, areas, quantities, with_lane_col=False, lane_id=None):
+                    """Header + band rows + a Total (sum of areas) row. Returns first row after the total."""
+                    cols = (["Lane ID"] if with_lane_col else []) + ["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"]
+                    for j, h in enumerate(cols, start=1):
+                        c = ws.cell(row=top_row, column=j, value=h)
+                        c.font = header_font; c.fill = header_fill; c.border = box; c.alignment = center
+
+                    total_area = float(sum(areas)) if areas else 0.0
+                    r = top_row + 1
+                    for i, area in enumerate(areas):
+                        j = 1
+                        if with_lane_col:
+                            cc = ws.cell(row=r, column=j, value=lane_id); cc.border = box; cc.alignment = center; j += 1
+                        cc = ws.cell(row=r, column=j, value=f"Band {i + 1}"); cc.border = box; j += 1
+                        cc = ws.cell(row=r, column=j, value=float(f"{area:.3f}")); cc.border = box; j += 1
+                        perc = (area / total_area) if total_area else 0.0
+                        cc = ws.cell(row=r, column=j, value=perc); cc.number_format = '0.00%'; cc.border = box; j += 1
+                        cc = ws.cell(row=r, column=j)
+                        if is_std_mode and quantities and i < len(quantities):
+                            try: cc.value = float(f"{float(quantities[i]):.3f}")
+                            except (ValueError, TypeError): cc.value = quantities[i]
+                        cc.border = box
+                        r += 1
+
+                    # ---- Total row (sum of areas) ----
+                    j = 1
+                    if with_lane_col:
+                        cc = ws.cell(row=r, column=j, value=f"Lane {lane_id}"); cc.font = total_font; cc.fill = total_fill; cc.border = box; cc.alignment = center; j += 1
+                    cc = ws.cell(row=r, column=j, value="Total"); cc.font = total_font; cc.fill = total_fill; cc.border = box; j += 1
+                    cc = ws.cell(row=r, column=j, value=float(f"{total_area:.3f}")); cc.font = total_font; cc.fill = total_fill; cc.border = box; j += 1
+                    cc = ws.cell(row=r, column=j); cc.fill = total_fill; cc.border = box; j += 1  # blank percentage
+                    cc = ws.cell(row=r, column=j)
+                    if is_std_mode and quantities:
+                        try: cc.value = float(f"{sum(float(x) for x in quantities):.3f}")
+                        except (ValueError, TypeError): pass
+                    cc.font = total_font; cc.fill = total_fill; cc.border = box
+                    return r + 1
+
+                workbook = openpyxl.Workbook()
+                if "Sheet" in workbook.sheetnames:
+                    workbook.remove(workbook["Sheet"])
+
+                # ================= SUMMARY SHEET =================
+                if lane_ids:
+                    ws_sum = workbook.create_sheet("Summary")
+                    ws_sum.cell(row=1, column=1, value="Summary — All Lanes & Bands").font = title_font
+                    set_widths(ws_sum, [12, 12, 16, 16, 16])
+
+                    row = 3
+                    grand_total_area = 0.0
+                    for lid in lane_ids:
+                        areas = results_data_for_export[lid].get('areas', [])
+                        qtys  = results_data_for_export[lid].get('quantities', [])
+                        grand_total_area += float(sum(areas)) if areas else 0.0
+                        row = write_band_table(ws_sum, row, areas, qtys, with_lane_col=True, lane_id=lid)
+                        row += 1  # blank gap row between lanes
+
+                    if len(lane_ids) > 1:
+                        ws_sum.cell(row=row, column=2, value="Grand Total Area").font = total_font
+                        ws_sum.cell(row=row, column=3, value=float(f"{grand_total_area:.3f}")).font = total_font
+                else:
+                    workbook.create_sheet("No Data").cell(row=1, column=1, value="No analysis data was available for export.")
+
+                # ================= PER-LANE SHEETS (image + table) =================
+                for lid in lane_ids:
+                    ws = workbook.create_sheet(f"Lane {lid}"[:31])
+                    set_widths(ws, [12, 16, 16, 16])
+                    ws.cell(row=1, column=1, value=f"Lane {lid}").font = title_font
+
+                    table_top = 3
+                    pil_img = lane_pil_images.get(lid) if lane_pil_images else None
+                    if images_supported and pil_img is not None:
+                        details = results_data_for_export[lid].get('details', [])
+                        labeled_pixmap = self._render_lane_pixmap(pil_img, details, font_size_for_labels)
+                        if labeled_pixmap is not None and not labeled_pixmap.isNull():
+                            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png"); tmp_path = tmp.name; tmp.close()
+                            if labeled_pixmap.save(tmp_path, "PNG"):
+                                temp_image_files.append(tmp_path)
+                                xl_img = XLImage(tmp_path)
+                                max_w = 260
+                                if xl_img.width and xl_img.width > max_w:
+                                    s = max_w / float(xl_img.width)
+                                    xl_img.width = int(xl_img.width * s)
+                                    xl_img.height = int(xl_img.height * s)
+                                xl_img.anchor = "A3"
+                                ws.add_image(xl_img)
+                                rows_for_image = max(8, int((xl_img.height or 200) / 18) + 3)
+                                table_top = 3 + rows_for_image + 1
+
+                    write_band_table(ws, table_top,
+                                     results_data_for_export[lid].get('areas', []),
+                                     results_data_for_export[lid].get('quantities', []),
+                                     with_lane_col=False)
+
+                # ================= STANDARD CURVE SHEET =================
                 if standard_dict_for_export and len(standard_dict_for_export) >= 2:
-                    worksheet_std = workbook.create_sheet("Standard Curve Data")
-                    worksheet_std.cell(row=1, column=1, value="Known Quantity").font = Font(bold=True)
-                    worksheet_std.cell(row=1, column=2, value="Total Peak Area").font = Font(bold=True)
-                    current_row_std = 2
+                    ws_std = workbook.create_sheet("Standard Curve Data")
+                    ws_std.cell(row=1, column=1, value="Known Quantity").font = Font(bold=True)
+                    ws_std.cell(row=1, column=2, value="Total Peak Area").font = Font(bold=True)
+                    set_widths(ws_std, [18, 18])
+                    r = 2
                     for qty_key, area_val in sorted(standard_dict_for_export.items()):
                         try:
-                            worksheet_std.cell(row=current_row_std, column=1, value=float(qty_key))
-                            worksheet_std.cell(row=current_row_std, column=2, value=float(area_val))
-                            current_row_std += 1
-                        except ValueError: pass # print(f"Warning: Skipping invalid standard data for Excel: Qty={qty_key}, Area={area_val}")
-                    for col_dim_std_letter in range(1, worksheet_std.max_column + 1): 
-                         column_letter_std = openpyxl.utils.get_column_letter(col_dim_std_letter)
-                         worksheet_std.column_dimensions[column_letter_std].auto_size = True
+                            ws_std.cell(row=r, column=1, value=float(qty_key))
+                            ws_std.cell(row=r, column=2, value=float(area_val))
+                            r += 1
+                        except (ValueError, TypeError):
+                            pass
+
+                workbook.active = 0  # open on Summary
+
+                # ================= SAVE =================
                 try:
                     workbook.save(file_path)
                     QMessageBox.information(self, "Success", f"Table data exported to\n{file_path}")
                 except Exception as e:
-                     QMessageBox.critical(self, "Export Error", f"Could not save Excel file:\n{e}")
+                    QMessageBox.critical(self, "Export Error", f"Could not save Excel file:\n{e}")
+                finally:
+                    for p in temp_image_files:
+                        try: os.remove(p)
+                        except OSError: pass
                         
 
         class PeakAreaDialog(QDialog):
             """
             Advanced Densitometry Dialog.
-            Features state-of-the-art Asymmetric Least Squares (AsLS) baseline correction 
-            and Gaussian Peak Deconvolution to resolve overlapping bands (shoulders).
+            Features state-of-the-art Asymmetric Least Squares (AsLS) baseline correction
+            and Gaussian/EMG Peak Deconvolution to resolve overlapping bands (shoulders).
+
+            CHANGES vs. previous version:
+            - Greedy forward AIC component selection (can add multiple shoulders).
+            - Profile-length-adaptive AsLS lambda.
+            - Composite-fit tau fallback made consistent with area math (sig*0.3).
+            - Fractional-attribution fallback assigns stray pixels to the nearest peak
+                instead of spreading them across all components.
+            - Prominence filtering ON by default (the strongest speck rejector).
+            - Robust MAD-based noise floor gate in detect_peaks.
+            - Always-on size-3 median filter to kill single-pixel impulses.
+            - MAD-based sharpness filter (robust at low peak counts).
+            - Tooltips on every control + plain-language method descriptions.
+            - Live quality readout (fit R², peak count, rejected-as-speck count).
+            - Detection controls split into Basic / collapsible Advanced groups.
             """
-            HANDLE_SIZE = 2 # Pixel size for draggable handles on ax_image
+            HANDLE_SIZE = 2  # Pixel size for draggable handles on ax_image
 
             def __init__(self, cropped_data, current_settings, persist_checked, parent=None):
                 super().__init__(parent)
                 self.parent_app = parent
                 self.setWindowTitle("Advanced Densitometry & Band Analysis")
-                
+
                 screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
                 screen_width = screen_geometry.width()
                 screen_height = screen_geometry.height()
-                
+
                 dialog_width = max(800, int(screen_width * 0.6))
                 dialog_height = max(900, int(screen_height * 0.9))
-                
+
                 dialog_width = min(dialog_width, screen_width)
                 dialog_height = min(dialog_height, screen_height)
-                
+
                 self.resize(dialog_width, dialog_height)
 
                 if not isinstance(cropped_data, Image.Image):
@@ -3175,28 +3273,35 @@ if __name__ == "__main__":
                 self.smoothing_sigma = current_settings.get('smoothing_sigma', 0.0)
                 self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
                 self.peak_distance = current_settings.get('peak_distance', 10)
-                self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.00)
+                # CHANGED: prominence filtering is now ON by default. It is the single most
+                # effective control for rejecting noise bumps, and previously defaulted to 0
+                # (i.e. disabled), which let specks survive into detection.
+                self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.02)
                 self.min_band_width = current_settings.get('min_band_width', 3)
                 self.area_subtraction_method = current_settings.get('area_subtraction_method', "Gaussian Deconvolution")
                 self.auto_adjust_rb_radius = current_settings.get('auto_adjust_rb_radius', False)
-                
-                self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions =[]
+
+                self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions = []
                 self.denoise_sigma = current_settings.get('denoise_sigma', 0.0)
-                self.peak_areas_rolling_ball = []; self.peak_areas_straight_line =[]; self.peak_areas_valley = []; self.peak_areas_deconv =[]
+                self.peak_areas_rolling_ball = []; self.peak_areas_straight_line = []; self.peak_areas_valley = []; self.peak_areas_deconv = []
                 self._final_settings = {}; self._persist_enabled_on_exit = persist_checked
-                
-                self.fitted_gaussian_params =[] 
+
+                self.fitted_gaussian_params = []
                 self.tau_values = []
-                self.component_ownership = {}   
-                
+                self.component_ownership = {}
+
+                # Quality / diagnostics
+                self.n_peaks_rejected = 0       # specks removed by the width/sharpness filters
+                self.last_fit_r2 = None         # deconvolution goodness-of-fit
+
                 self.manual_select_mode_active = False
                 self.selected_peak_for_ui_focus = -1
                 self.add_peak_mode_active = False; self.selected_peak_index_for_delete = -1
 
                 self.background_blit = None
                 self.dragging_handle_info = None
-                self.interactive_artists =[]
-                
+                self.interactive_artists = []
+
                 self._setup_ui(persist_checked)
                 self.regenerate_profile_and_detect()
 
@@ -3214,54 +3319,98 @@ if __name__ == "__main__":
                 self.canvas.mpl_connect('motion_notify_event', self.on_canvas_motion)
                 self.canvas.mpl_connect('button_release_event', self.on_canvas_release)
                 main_layout.addWidget(self.canvas, stretch=1)
-                
+
+                # --- Live quality / diagnostics readout -------------------------------- #
+                self.quality_label = QLabel("")
+                qfont = self.quality_label.font(); qfont.setPointSize(max(8, qfont.pointSize())); self.quality_label.setFont(qfont)
+                self.quality_label.setToolTip(
+                    "Diagnostics for the current result.\n"
+                    "Fit R²: how well the deconvolution model matches the trace (1.0 = perfect; "
+                    "below ~0.95 means the fit is struggling and areas may be unreliable).\n"
+                    "Rejected: peaks discarded as specks by the width/sharpness filters."
+                )
+                main_layout.addWidget(self.quality_label)
+
                 controls_main_hbox = QHBoxLayout()
                 left_controls_vbox = QVBoxLayout()
+
+                # ================= GLOBAL SETTINGS & AREA METHOD ===================== #
                 global_settings_group = QGroupBox("Global Settings & Area Method")
                 global_settings_layout = QGridLayout(global_settings_group)
                 global_settings_layout.addWidget(QLabel("Profile Method:"), 0, 0)
                 profile_method_label = QLabel("Sum of Pixel Intensities")
+                profile_method_label.setToolTip(
+                    "Each column of the lane is summed across its width to build the 1D trace.\n"
+                    "Wider, well-aligned lanes give cleaner profiles."
+                )
                 font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
                 global_settings_layout.addWidget(profile_method_label, 0, 1, 1, 2)
                 global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
-                
+
                 self.method_combobox = QComboBox()
                 self.method_combobox.addItems(["Gaussian Deconvolution", "Rolling-valley", "Rolling Ball", "Straight Line"])
+                # Plain-language descriptions for each method (hover the dropdown items).
+                self.method_combobox.setItemData(
+                    0, "Best for overlapping bands and shoulders. Fits curves to separate merged "
+                    "bands, then integrates the REAL data using the fit only to split shared "
+                    "signal. Slowest; most accurate when bands touch.", Qt.ToolTipRole)
+                self.method_combobox.setItemData(
+                    1, "Rolling-valley: a local straight line is drawn under each band between its "
+                    "own edges. Good general-purpose default for reasonably separated bands.", Qt.ToolTipRole)
+                self.method_combobox.setItemData(
+                    2, "Rolling Ball: rolls a ball of the chosen radius beneath the trace to model a "
+                    "curved background. Use for sloping or smeared backgrounds.", Qt.ToolTipRole)
+                self.method_combobox.setItemData(
+                    3, "Straight Line: one global baseline across the band valleys. Fastest; assumes "
+                    "an essentially flat background.", Qt.ToolTipRole)
+                self.method_combobox.setToolTip(
+                    "How the background under each band is estimated before integration. "
+                    "Hover each option for details."
+                )
                 idx = self.method_combobox.findText(self.area_subtraction_method)
                 if idx >= 0: self.method_combobox.setCurrentIndex(idx)
                 else: self.method_combobox.setCurrentIndex(0)
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
                 global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
-                
+
                 self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})")
                 self.rolling_ball_label.setMinimumWidth(160)
                 self.rolling_ball_slider = QSlider(Qt.Horizontal)
                 self.rolling_ball_slider.setRange(1, 500)
                 self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
+                self.rolling_ball_slider.setToolTip(
+                    "Larger = smoother background that ignores narrow features; too large lifts the "
+                    "baseline up into your bands and shrinks areas. Rule of thumb: 2–3× your widest band."
+                )
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
                 self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
-                
+
                 self.auto_adjust_checkbox = QCheckBox("Auto")
-                self.auto_adjust_checkbox.setToolTip("Automatically calculate optimal background parameters.")
+                self.auto_adjust_checkbox.setToolTip("Estimate the rolling-ball radius automatically from detected band widths.")
                 self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
                 self.auto_adjust_checkbox.stateChanged.connect(self.toggle_auto_adjust_rb)
                 global_settings_layout.addWidget(self.rolling_ball_label, 2, 0)
                 global_settings_layout.addWidget(self.rolling_ball_slider, 2, 1)
                 global_settings_layout.addWidget(self.auto_adjust_checkbox, 2, 2)
                 left_controls_vbox.addWidget(global_settings_group)
-                
+
+                # ===================== MANUAL PEAK ADJUSTMENT ======================== #
                 manual_actions_group = QGroupBox("Manual Peak Adjustment")
                 manual_actions_layout = QHBoxLayout(manual_actions_group)
                 self.add_peak_manually_button = QPushButton("Add Peak")
+                self.add_peak_manually_button.setToolTip("Toggle, then click the profile plot to insert a peak the detector missed.")
                 self.add_peak_manually_button.setCheckable(True)
                 self.add_peak_manually_button.clicked.connect(self.toggle_add_peak_mode)
                 self.delete_selected_peak_button = QPushButton("Delete Peak")
+                self.delete_selected_peak_button.setToolTip("Remove the peak currently selected in the profile plot (or press Delete).")
                 self.delete_selected_peak_button.setEnabled(False)
                 self.delete_selected_peak_button.clicked.connect(self.delete_selected_peak_action)
                 self.identify_peak_button = QPushButton("Focus Peak")
+                self.identify_peak_button.setToolTip("Toggle, then click a peak to highlight and edit its integration handles.")
                 self.identify_peak_button.setCheckable(True)
                 self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode)
                 self.invert_display_button = QPushButton("Invert Profile & Image")
+                self.invert_display_button.setToolTip("Flip dark-on-light vs light-on-dark. Use whichever makes bands appear as upward peaks.")
                 self.invert_display_button.setCheckable(True)
                 self.invert_display_button.toggled.connect(self._toggle_inversion_display)
                 self.invert_display_button.setChecked(self.is_inverted)
@@ -3271,50 +3420,30 @@ if __name__ == "__main__":
                 manual_actions_layout.addWidget(self.invert_display_button)
                 left_controls_vbox.addWidget(manual_actions_group)
 
-                peak_detect_group = QGroupBox("Peak Detection Settings")
-                peak_detect_layout = QGridLayout(peak_detect_group)
+                # ================== PEAK DETECTION — BASIC =========================== #
+                basic_group = QGroupBox("Peak Detection — Basic")
+                basic_group.setToolTip("The three controls most people need. Tune these first.")
+                basic_layout = QGridLayout(basic_group)
 
-                peak_detect_layout.addWidget(QLabel("Detected Peaks:"), 0, 0)
+                basic_layout.addWidget(QLabel("Detected Peaks:"), 0, 0)
                 self.peak_number_input = QLineEdit()
                 self.peak_number_input.setPlaceholderText("#")
                 self.peak_number_input.setMaximumWidth(60)
+                self.peak_number_input.setToolTip("Type a target number of peaks and press Set to force exactly that many.")
                 self.update_peak_number_button = QPushButton("Set")
                 self.update_peak_number_button.clicked.connect(self.manual_peak_number_update)
-                peak_detect_layout.addWidget(self.peak_number_input, 0, 1)
-                peak_detect_layout.addWidget(self.update_peak_number_button, 0, 2)
-
-                self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})")
-                self.denoise_sigma_slider = QSlider(Qt.Horizontal)
-                self.denoise_sigma_slider.setRange(0, 50)
-                self.denoise_sigma_slider.setValue(int(self.denoise_sigma * 10))
-                self.denoise_sigma_slider.valueChanged.connect(
-                    lambda val, lbl=self.denoise_sigma_label: (
-                        lbl.setText(f"Denoise Sigma ({val / 10.0:.1f})"),
-                        setattr(self, 'denoise_sigma', val / 10.0)
-                    )
-                )
-                self.denoise_sigma_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                peak_detect_layout.addWidget(self.denoise_sigma_label, 1, 0)
-                peak_detect_layout.addWidget(self.denoise_sigma_slider, 1, 1, 1, 2)
-
-                self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
-                self.smoothing_slider = QSlider(Qt.Horizontal)
-                self.smoothing_slider.setRange(0, 100)
-                self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
-                self.smoothing_slider.valueChanged.connect(
-                    lambda val, lbl=self.smoothing_label: (
-                        lbl.setText(f"Smoothing Sigma ({val / 10.0:.1f})"),
-                        setattr(self, 'smoothing_sigma', val / 10.0)
-                    )
-                )
-                self.smoothing_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                peak_detect_layout.addWidget(self.smoothing_label, 2, 0)
-                peak_detect_layout.addWidget(self.smoothing_slider, 2, 1, 1, 2)
+                basic_layout.addWidget(self.peak_number_input, 0, 1)
+                basic_layout.addWidget(self.update_peak_number_button, 0, 2)
 
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.3f})")
                 self.peak_prominence_slider = QSlider(Qt.Horizontal)
                 self.peak_prominence_slider.setRange(0, 1000)
                 self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 1000))
+                self.peak_prominence_slider.setToolTip(
+                    "How far a peak must rise above the surrounding dips (as a fraction of the full "
+                    "trace range). THE most effective control for ignoring noise bumps — raise this "
+                    "first if you are seeing false peaks."
+                )
                 self.peak_prominence_slider.valueChanged.connect(
                     lambda val, lbl=self.peak_prominence_slider_label: (
                         lbl.setText(f"Min Prominence ({val / 1000.0:.3f})"),
@@ -3322,27 +3451,17 @@ if __name__ == "__main__":
                     )
                 )
                 self.peak_prominence_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.peak_prominence_slider_label, 3, 0)
-                peak_detect_layout.addWidget(self.peak_prominence_slider, 3, 1, 1, 2)
-
-                self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})")
-                self.peak_height_slider = QSlider(Qt.Horizontal)
-                self.peak_height_slider.setRange(0, 100)
-                self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
-                self.peak_height_slider.valueChanged.connect(
-                    lambda val, lbl=self.peak_height_slider_label: (
-                        lbl.setText(f"Min Height ({val / 100.0:.2f})"),
-                        setattr(self, 'peak_height_factor', val / 100.0)
-                    )
-                )
-                self.peak_height_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.peak_height_slider_label, 4, 0)
-                peak_detect_layout.addWidget(self.peak_height_slider, 4, 1, 1, 2)
+                basic_layout.addWidget(self.peak_prominence_slider_label, 1, 0)
+                basic_layout.addWidget(self.peak_prominence_slider, 1, 1, 1, 2)
 
                 self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px")
                 self.peak_distance_slider = QSlider(Qt.Horizontal)
                 self.peak_distance_slider.setRange(1, 200)
                 self.peak_distance_slider.setValue(self.peak_distance)
+                self.peak_distance_slider.setToolTip(
+                    "Minimum spacing (px) between two peaks. Raise it to stop a single broad band "
+                    "being counted as two; lower it to resolve closely spaced bands."
+                )
                 self.peak_distance_slider.valueChanged.connect(
                     lambda val, lbl=self.peak_distance_slider_label: (
                         lbl.setText(f"Min Distance ({val}) px"),
@@ -3350,17 +3469,84 @@ if __name__ == "__main__":
                     )
                 )
                 self.peak_distance_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.peak_distance_slider_label, 5, 0)
-                peak_detect_layout.addWidget(self.peak_distance_slider, 5, 1, 1, 2)
+                basic_layout.addWidget(self.peak_distance_slider_label, 2, 0)
+                basic_layout.addWidget(self.peak_distance_slider, 2, 1, 1, 2)
+                left_controls_vbox.addWidget(basic_group)
 
-                # --- NEW: Minimum band width slider (rejects specks narrower than N pixels at FWHM) ---
+                # ================== PEAK DETECTION — ADVANCED (collapsible) ========== #
+                self.advanced_group = QGroupBox("Advanced Detection")
+                self.advanced_group.setCheckable(True)
+                self.advanced_group.setChecked(False)
+                self.advanced_group.setToolTip("Noise handling and fine speck rejection. Expand only if Basic isn't enough.")
+                advanced_outer = QVBoxLayout(self.advanced_group)
+                self.advanced_container = QWidget()
+                advanced_layout = QGridLayout(self.advanced_container)
+                advanced_outer.addWidget(self.advanced_container)
+
+                self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})")
+                self.denoise_sigma_slider = QSlider(Qt.Horizontal)
+                self.denoise_sigma_slider.setRange(0, 50)
+                self.denoise_sigma_slider.setValue(int(self.denoise_sigma * 10))
+                self.denoise_sigma_slider.setToolTip(
+                    "Blurs the IMAGE before the trace is built, plus widens the impulse-removing "
+                    "median filter. Raise to suppress dust/specks; too high merges adjacent bands. "
+                    "(A small median filter always runs, even at 0.)"
+                )
+                self.denoise_sigma_slider.valueChanged.connect(
+                    lambda val, lbl=self.denoise_sigma_label: (
+                        lbl.setText(f"Denoise Sigma ({val / 10.0:.1f})"),
+                        setattr(self, 'denoise_sigma', val / 10.0)
+                    )
+                )
+                self.denoise_sigma_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
+                advanced_layout.addWidget(self.denoise_sigma_label, 0, 0)
+                advanced_layout.addWidget(self.denoise_sigma_slider, 0, 1, 1, 2)
+
+                self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
+                self.smoothing_slider = QSlider(Qt.Horizontal)
+                self.smoothing_slider.setRange(0, 100)
+                self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
+                self.smoothing_slider.setToolTip(
+                    "Smooths the 1D TRACE. Helps detection on noisy lanes; too high flattens shoulders "
+                    "and can shift peak centres."
+                )
+                self.smoothing_slider.valueChanged.connect(
+                    lambda val, lbl=self.smoothing_label: (
+                        lbl.setText(f"Smoothing Sigma ({val / 10.0:.1f})"),
+                        setattr(self, 'smoothing_sigma', val / 10.0)
+                    )
+                )
+                self.smoothing_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
+                advanced_layout.addWidget(self.smoothing_label, 1, 0)
+                advanced_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
+
+                self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})")
+                self.peak_height_slider = QSlider(Qt.Horizontal)
+                self.peak_height_slider.setRange(0, 100)
+                self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
+                self.peak_height_slider.setToolTip(
+                    "Minimum peak height as a fraction of the trace range. Rejects faint bands. "
+                    "Prominence is usually a better speck filter than this."
+                )
+                self.peak_height_slider.valueChanged.connect(
+                    lambda val, lbl=self.peak_height_slider_label: (
+                        lbl.setText(f"Min Height ({val / 100.0:.2f})"),
+                        setattr(self, 'peak_height_factor', val / 100.0)
+                    )
+                )
+                self.peak_height_slider.sliderReleased.connect(self.detect_peaks)
+                advanced_layout.addWidget(self.peak_height_slider_label, 2, 0)
+                advanced_layout.addWidget(self.peak_height_slider, 2, 1, 1, 2)
+
                 self.min_band_width_label = QLabel(f"Min Band Width ({self.min_band_width}) px")
                 self.min_band_width_label.setToolTip(
-                    "Minimum peak width at half-maximum (px). Increase to suppress noise specks."
+                    "Minimum peak width at half-maximum (px). Real gel bands span several pixels; "
+                    "single-pixel specks do not. Increase to suppress noise specks."
                 )
                 self.min_band_width_slider = QSlider(Qt.Horizontal)
                 self.min_band_width_slider.setRange(1, 30)
                 self.min_band_width_slider.setValue(int(self.min_band_width))
+                self.min_band_width_slider.setToolTip(self.min_band_width_label.toolTip())
                 self.min_band_width_slider.valueChanged.connect(
                     lambda val, lbl=self.min_band_width_label: (
                         lbl.setText(f"Min Band Width ({val}) px"),
@@ -3368,12 +3554,19 @@ if __name__ == "__main__":
                     )
                 )
                 self.min_band_width_slider.sliderReleased.connect(self.detect_peaks)
-                peak_detect_layout.addWidget(self.min_band_width_label, 6, 0)
-                peak_detect_layout.addWidget(self.min_band_width_slider, 6, 1, 1, 2)
+                advanced_layout.addWidget(self.min_band_width_label, 3, 0)
+                advanced_layout.addWidget(self.min_band_width_slider, 3, 1, 1, 2)
 
+                self.advanced_container.setVisible(False)
+                self.advanced_group.toggled.connect(self.advanced_container.setVisible)
+                left_controls_vbox.addWidget(self.advanced_group)
+
+                # ===================== COPY / PASTE REGIONS ========================== #
                 self.copy_regions_button = QPushButton("Copy Regions")
+                self.copy_regions_button.setToolTip("Copy the current integration handles so they can be pasted onto another lane.")
                 self.copy_regions_button.clicked.connect(self.copy_peak_regions_to_app)
                 self.paste_regions_button = QPushButton("Paste Regions")
+                self.paste_regions_button.setToolTip("Apply previously copied handles to this lane (auto-scaled to its length).")
                 self.paste_regions_button.clicked.connect(self.paste_peak_regions_from_app)
                 if not (
                     self.parent_app
@@ -3384,10 +3577,27 @@ if __name__ == "__main__":
                 copy_paste_layout = QHBoxLayout()
                 copy_paste_layout.addWidget(self.copy_regions_button)
                 copy_paste_layout.addWidget(self.paste_regions_button)
-                peak_detect_layout.addLayout(copy_paste_layout, 7, 0, 1, 3)
+                left_controls_vbox.addLayout(copy_paste_layout)
 
-                left_controls_vbox.addWidget(peak_detect_group)
-                left_controls_vbox.addStretch(1); controls_main_hbox.addLayout(left_controls_vbox, stretch=1); main_layout.addLayout(controls_main_hbox); bottom_button_layout = QHBoxLayout(); self.persist_settings_checkbox = QCheckBox("Persist Settings"); self.persist_settings_checkbox.setChecked(persist_checked_initial); bottom_button_layout.addWidget(self.persist_settings_checkbox); bottom_button_layout.addStretch(1); self.ok_button = QPushButton("OK"); self.ok_button.setDefault(True); self.ok_button.clicked.connect(self.accept_and_close); self.cancel_button = QPushButton("Cancel"); self.cancel_button.clicked.connect(self.reject); bottom_button_layout.addWidget(self.ok_button); bottom_button_layout.addWidget(self.cancel_button); main_layout.addLayout(bottom_button_layout); self.setLayout(main_layout)
+                left_controls_vbox.addStretch(1)
+                controls_main_hbox.addLayout(left_controls_vbox, stretch=1)
+                main_layout.addLayout(controls_main_hbox)
+
+                bottom_button_layout = QHBoxLayout()
+                self.persist_settings_checkbox = QCheckBox("Persist Settings")
+                self.persist_settings_checkbox.setToolTip("Remember these settings the next time the dialog opens.")
+                self.persist_settings_checkbox.setChecked(persist_checked_initial)
+                bottom_button_layout.addWidget(self.persist_settings_checkbox)
+                bottom_button_layout.addStretch(1)
+                self.ok_button = QPushButton("OK")
+                self.ok_button.setDefault(True)
+                self.ok_button.clicked.connect(self.accept_and_close)
+                self.cancel_button = QPushButton("Cancel")
+                self.cancel_button.clicked.connect(self.reject)
+                bottom_button_layout.addWidget(self.ok_button)
+                bottom_button_layout.addWidget(self.cancel_button)
+                main_layout.addLayout(bottom_button_layout)
+                self.setLayout(main_layout)
                 self.update_rb_controls_enabled_state()
 
             def _toggle_inversion_display(self, checked):
@@ -3398,15 +3608,15 @@ if __name__ == "__main__":
                 self.update_rb_controls_enabled_state()
                 self._recalculate_all_regions()
                 self.update_plot()
-            
+
             def _on_rb_slider_changed(self, value):
-                if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() in["Rolling Ball", "Rolling-valley"]:
+                if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
                     self.rolling_ball_radius = value
                     self._recalculate_all_regions()
                     self.update_plot()
 
             def update_rb_controls_enabled_state(self):
-                is_rb_dependent_method = self.method_combobox.currentText() in["Rolling Ball", "Rolling-valley"]
+                is_rb_dependent_method = self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
                 self.rolling_ball_slider.setEnabled(is_rb_dependent_method and not self.auto_adjust_checkbox.isChecked())
                 self.auto_adjust_checkbox.setEnabled(is_rb_dependent_method)
                 self.rolling_ball_label.setEnabled(is_rb_dependent_method)
@@ -3416,12 +3626,27 @@ if __name__ == "__main__":
                 self.update_rb_controls_enabled_state()
                 self.detect_peaks()
 
+            def _update_quality_readout(self):
+                """Refresh the diagnostics line under the plot."""
+                if not hasattr(self, 'quality_label'):
+                    return
+                n = len(self.peaks)
+                parts = [f"{n} peak{'s' if n != 1 else ''} detected"]
+                if self.n_peaks_rejected > 0:
+                    parts.append(f"{self.n_peaks_rejected} rejected as specks")
+                if self.method_combobox.currentText() == "Gaussian Deconvolution" and self.last_fit_r2 is not None:
+                    r2 = self.last_fit_r2
+                    n_comp = len(self.fitted_gaussian_params)
+                    parts.append(f"{n_comp} fitted component{'s' if n_comp != 1 else ''}")
+                    flag = "" if r2 >= 0.95 else "  ⚠ low fit quality"
+                    parts.append(f"fit R² = {r2:.3f}{flag}")
+                self.quality_label.setText("   ·   ".join(parts))
+
             # --- MATH ENGINE: ASLS BASELINE ---
             def _baseline_als(self, y, lam=1e5, p=0.01, niter=10):
                 """Asymmetric Least Squares Smoothing for robust background estimation."""
                 L = len(y)
-                # Construct difference matrix cleanly
-                D = sparse.diags([1, -2, 1],[0, -1, -2], shape=(L, L - 2))
+                D = sparse.diags([1, -2, 1], [0, -1, -2], shape=(L, L - 2))
                 D_sq = lam * D.dot(D.transpose())
                 w = np.ones(L)
                 for i in range(niter):
@@ -3472,7 +3697,6 @@ if __name__ == "__main__":
                         "Install with:  pip install lmfit"
                     )
 
-                # AIC-based component selection (includes shoulder discovery)
                 optimal_peaks = self._select_optimal_components(profile_subtracted)
 
                 if len(optimal_peaks) == 0:
@@ -3485,7 +3709,6 @@ if __name__ == "__main__":
                     return
                 y_norm = profile_subtracted / max_val
 
-                # Width estimates for initial parameter guesses
                 try:
                     widths_obj = peak_widths(
                         profile_subtracted,
@@ -3499,9 +3722,7 @@ if __name__ == "__main__":
                 n_comp = len(optimal_peaks)
 
                 if HAS_LMFIT:
-                    # ------------------------------------------------------------------ #
-                    # STAGE 1 — Multi-Gaussian fit (stable warm-start)                   #
-                    # ------------------------------------------------------------------ #
+                    # STAGE 1 — Multi-Gaussian fit (stable warm-start)
                     params_g = lmfit.Parameters()
                     for i, p in enumerate(optimal_peaks):
                         p_int = int(np.clip(p, 0, n - 1))
@@ -3521,7 +3742,7 @@ if __name__ == "__main__":
                             model += a * np.exp(-(x_data - c) ** 2 / (2.0 * s ** 2))
                         return model - y_data
 
-                    gauss_result_params = params_g  # fallback = initial guess
+                    gauss_result_params = params_g
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
@@ -3534,17 +3755,12 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"Stage 1 Gaussian fit failed: {e}")
 
-                    # ------------------------------------------------------------------ #
-                    # STAGE 2 — Multi-EMG fit warm-started from Stage 1                  #
-                    # tau initialised at 30% of sigma — MUST stay above sig*0.05 floor   #
-                    # to prevent _emg numerical collapse.                                 #
-                    # ------------------------------------------------------------------ #
+                    # STAGE 2 — Multi-EMG fit warm-started from Stage 1
                     params_emg = lmfit.Parameters()
                     for i in range(n_comp):
                         amp_init = float(gauss_result_params[f'amp_{i}'].value)
                         cen_init = float(gauss_result_params[f'cen_{i}'].value)
                         sig_init = max(float(gauss_result_params[f'sig_{i}'].value), 0.5)
-                        # tau start = 30 % of sigma — safely above the 5 % collapse threshold
                         tau_init = sig_init * 0.3
                         tol      = max(8.0, sig_init * 1.5)
 
@@ -3553,7 +3769,6 @@ if __name__ == "__main__":
                         params_emg.add(f'cen_{i}', value=cen_init,
                                     min=cen_init - tol, max=cen_init + tol)
                         params_emg.add(f'sig_{i}', value=sig_init, min=0.5, max=n / 3.0)
-                        # tau lower bound = sig*0.06 keeps us just above the collapse threshold
                         params_emg.add(f'tau_{i}', value=tau_init,
                                     min=sig_init * 0.06, max=sig_init * 5.0)
 
@@ -3590,7 +3805,6 @@ if __name__ == "__main__":
                         print(f"Stage 2 EMG fit failed — keeping Stage 1 Gaussian: {e}")
                         for i in range(n_comp):
                             sig_i = max(float(gauss_result_params[f'sig_{i}'].value), 0.5)
-                            # FIXED: was 0.01 (caused erfc collapse). Use 30% of sigma.
                             tau_i = sig_i * 0.3
                             self.fitted_gaussian_params.append((
                                 float(gauss_result_params[f'amp_{i}'].value) * max_val,
@@ -3600,9 +3814,7 @@ if __name__ == "__main__":
                             self.tau_values.append(tau_i)
 
                 else:
-                    # ------------------------------------------------------------------ #
-                    # FALLBACK — scipy curve_fit, pure Gaussian, no shoulder detection   #
-                    # ------------------------------------------------------------------ #
+                    # FALLBACK — scipy curve_fit, pure Gaussian, no shoulder detection
                     initial_guess  = []
                     lower_bounds   = []
                     upper_bounds   = []
@@ -3626,7 +3838,6 @@ if __name__ == "__main__":
                             )
                         for i in range(0, len(popt), 3):
                             sig_i = max(float(popt[i + 2]), 0.5)
-                            # FIXED: was sig * 0.01 (caused erfc collapse). Use 30% of sigma.
                             tau_i = sig_i * 0.3
                             self.fitted_gaussian_params.append((
                                 float(popt[i]) * max_val, float(popt[i + 1]), sig_i
@@ -3637,7 +3848,6 @@ if __name__ == "__main__":
                         print(f"Fallback Gaussian fit failed: {e}")
                         for i in range(0, len(initial_guess), 3):
                             sig_i = max(float(initial_guess[i + 2]), 0.5)
-                            # FIXED: was sig * 0.01 (caused erfc collapse). Use 30% of sigma.
                             tau_i = sig_i * 0.3
                             self.fitted_gaussian_params.append((
                                 float(initial_guess[i]) * max_val,
@@ -3647,7 +3857,7 @@ if __name__ == "__main__":
                             self.tau_values.append(tau_i)
 
             def _calculate_optimal_rb_radius(self):
-                if self.profile is None or len(self.peaks) == 0: return 50 
+                if self.profile is None or len(self.peaks) == 0: return 50
                 try:
                     profile_range = np.ptp(self.profile)
                     if profile_range < 1e-6: profile_range = 1.0
@@ -3672,10 +3882,6 @@ if __name__ == "__main__":
                 profile_len   = len(profile_float)
                 n_peaks       = len(self.peaks)
 
-                # ------------------------------------------------------------------ #
-                # Shared: compute midpoint fences between adjacent detected peaks.    #
-                # A peak's handles can never expand past its fence into a neighbour.  #
-                # ------------------------------------------------------------------ #
                 def _fences():
                     left_fences  = []
                     right_fences = []
@@ -3686,11 +3892,6 @@ if __name__ == "__main__":
                         right_fences.append(rf)
                     return left_fences, right_fences
 
-                # ------------------------------------------------------------------ #
-                # Shared: place handles tight around each peak via threshold          #
-                # intersection, constrained within the midpoint fences.              #
-                # Produces exactly n_peaks entries — guaranteed.                     #
-                # ------------------------------------------------------------------ #
                 def _tight_regions(background, threshold_fraction=0.02):
                     left_fences, right_fences = _fences()
                     regions = []
@@ -3701,7 +3902,6 @@ if __name__ == "__main__":
                             left_fences[i], right_fences[i],
                             threshold_fraction=threshold_fraction
                         )
-                        # Prevent overlap with immediately preceding region
                         if i > 0 and regions:
                             prev_end = regions[-1][1]
                             if start_handle <= prev_end:
@@ -3722,19 +3922,22 @@ if __name__ == "__main__":
                 # ================================================================== #
                 if self.method == "Gaussian Deconvolution":
 
-                    # Step 1 — AsLS baseline
-                    self.background = self._baseline_als(profile_float, lam=1e5, p=0.01)
+                    # Step 1 — AsLS baseline.
+                    # CHANGED: lambda now scales with profile length so short lanes are not
+                    # over-smoothed and long lanes are not under-smoothed. (~1e5 at L=200.)
+                    adaptive_lam = float(np.clip(1e5 * (profile_len / 200.0) ** 2, 1e4, 1e8))
+                    self.background = self._baseline_als(profile_float, lam=adaptive_lam, p=0.01)
                     self.background = np.minimum(self.background, profile_float)
                     self.background = np.maximum(self.background, 0.0)
 
-                    # Step 2 — Initial tight handle placement (guaranteed n_peaks entries)
+                    # Step 2 — Initial tight handle placement
                     self.peak_regions = _tight_regions(self.background, threshold_fraction=0.02)
 
-                    # Step 3 — EMG fitting (may discover components outside current handles)
+                    # Step 3 — EMG fitting
                     subtracted = np.maximum(profile_float - self.background, 0.0)
                     self._fit_gaussians(subtracted)
 
-                    # Step 4 — Component ownership (area math only)
+                    # Step 4 — Component ownership
                     self.component_ownership = {}
                     if n_peaks > 0 and len(self.fitted_gaussian_params) > 0:
                         for comp_idx, (amp, cen, sig) in enumerate(self.fitted_gaussian_params):
@@ -3742,11 +3945,6 @@ if __name__ == "__main__":
                             self.component_ownership.setdefault(owner, []).append(comp_idx)
 
                     # Step 5 — Expand handles to cover fitted component bodies.
-                    # Critical case: _select_optimal_components may discover a large component
-                    # (e.g. the main band at pixel 80) whose center lies OUTSIDE the tight
-                    # threshold handles of its owner peak (e.g. peak at pixel 95 with handles
-                    # 92–125). Without this step the integration only catches the tail,
-                    # producing catastrophically wrong areas.
                     if len(self.fitted_gaussian_params) > 0:
                         left_fences, right_fences = _fences()
                         updated_regions = list(self.peak_regions)
@@ -3766,10 +3964,8 @@ if __name__ == "__main__":
                                 amp, cen, sig = self.fitted_gaussian_params[comp_idx]
                                 tau = (self.tau_values[comp_idx]
                                     if comp_idx < len(self.tau_values) else sig * 0.3)
-                                # Component body = centre ± 3σ (+3τ on right for EMG tail)
                                 comp_left  = int(cen - 3.0 * sig)
                                 comp_right = int(cen + 3.0 * sig + 3.0 * tau)
-                                # Expand handles to cover the component, but never past fences
                                 current_start = max(min(current_start, comp_left),  lf)
                                 current_end   = min(max(current_end,   comp_right), rf)
 
@@ -3842,14 +4038,32 @@ if __name__ == "__main__":
                             max(0,            peak_x - 5),
                             min(profile_len - 1, peak_x + 5)
                         ))
-            
+
             def detect_peaks(self):
+                self.n_peaks_rejected = 0
                 if self.profile is None or len(self.profile) == 0:
                     self.peaks = np.array([])
                 else:
                     profile_range = np.ptp(self.profile)
+                    if profile_range < 1e-9:
+                        profile_range = 1.0
                     min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
                     min_prominence_abs = profile_range * self.peak_prominence_factor
+
+                    # --- Robust noise-floor gate (MAD on first differences) -------------- #
+                    # Estimates the trace noise σ data-drivenly and requires peaks to clear
+                    # roughly 3σ above the trace minimum. Clean lanes stay sensitive; noisy
+                    # lanes automatically get stricter, which suppresses specks.
+                    try:
+                        d = np.diff(self.profile)
+                        if d.size > 0:
+                            mad = np.median(np.abs(d - np.median(d)))
+                            noise_sigma = 1.4826 * mad / np.sqrt(2.0)
+                            snr_floor = np.min(self.profile) + 3.0 * noise_sigma
+                            min_height_abs = max(min_height_abs, snr_floor)
+                    except Exception:
+                        pass
+
                     try:
                         self.peaks, properties = find_peaks(
                             self.profile,
@@ -3859,10 +4073,10 @@ if __name__ == "__main__":
                             width=1,
                             rel_height=0.5  # measure FWHM — needed for width and sharpness filters
                         )
+                        n_raw = len(self.peaks)
 
                         if len(self.peaks) > 0 and 'widths' in properties:
                             # --- Filter 1: Minimum physical band width ---
-                            # Real gel bands occupy several pixels at FWHM; specks do not.
                             width_mask = properties['widths'] >= self.min_band_width
                             filtered_peaks = self.peaks[width_mask]
                             filtered_widths = properties['widths'][width_mask]
@@ -3871,20 +4085,23 @@ if __name__ == "__main__":
                                 if 'peak_heights' in properties else None
                             )
 
-                            # --- Filter 2: Sharpness ratio ---
+                            # --- Filter 2: Sharpness ratio (robust, MAD-based) ---
                             # Specks have anomalously high amplitude relative to their width.
-                            # Reject any peak whose height/width ratio exceeds 4× the median.
-                            if filtered_heights is not None and len(filtered_peaks) > 1:
+                            # Using median + 3.5·MAD instead of a flat 4× multiplier makes the
+                            # threshold scale-free and stable even with only a couple of peaks.
+                            if filtered_heights is not None and len(filtered_peaks) >= 2:
                                 sharpness    = filtered_heights / np.maximum(filtered_widths, 1.0)
                                 median_sharp = np.median(sharpness)
+                                mad_sharp    = 1.4826 * np.median(np.abs(sharpness - median_sharp))
                                 max_height   = np.max(filtered_heights)
-                                if median_sharp > 0 and max_height > 0:
-                                    is_sharp = sharpness > (median_sharp * 4.0)
-                                    is_small = filtered_heights < (max_height * 0.10)   # <10% of the strongest band
+                                if mad_sharp > 1e-9 and max_height > 0:
+                                    is_sharp = sharpness > (median_sharp + 3.5 * mad_sharp)
+                                    is_small = filtered_heights < (max_height * 0.10)  # <10% of strongest band
                                     keep     = ~(is_sharp & is_small)
                                     filtered_peaks = filtered_peaks[keep]
 
                             self.peaks = filtered_peaks
+                            self.n_peaks_rejected = int(n_raw - len(self.peaks))
 
                     except Exception:
                         self.peaks = np.array([])
@@ -3919,7 +4136,7 @@ if __name__ == "__main__":
                 }
                 self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked()
                 self.accept()
-                
+
             def update_plot(self):
                 if self.canvas is None:
                     return
@@ -3975,6 +4192,8 @@ if __name__ == "__main__":
                     self.ax.tick_params(axis='x', labelbottom=False)
                     self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center',
                                     color=text_color, transform=self.ax_image.transAxes)
+                    self.last_fit_r2 = None
+                    self._update_quality_readout()
                     self.canvas.draw_idle()
                     return
 
@@ -4026,6 +4245,16 @@ if __name__ == "__main__":
 
                 x_full = np.arange(len(profile_for_display), dtype=np.float64)
 
+                # Helper: per-pixel nearest-peak index, used as the fractional-attribution
+                # fallback (replaces the old "equal share among all components" rule, which
+                # could leak a peak's stray pixels into distant bands).
+                def _nearest_peak_mask(x_region_arr, this_peak_index):
+                    if len(self.peaks) == 0:
+                        return np.ones(len(x_region_arr), dtype=np.float64)
+                    diffs = np.abs(self.peaks.astype(float)[None, :] - x_region_arr[:, None])
+                    nearest = np.argmin(diffs, axis=1)
+                    return (nearest == this_peak_index).astype(np.float64)
+
                 # ------------------------------------------------------------------ #
                 # PASS 1 — Area Integration                                           #
                 # ------------------------------------------------------------------ #
@@ -4058,7 +4287,6 @@ if __name__ == "__main__":
 
                         x_region = np.arange(start_handle, end_handle + 1, dtype=np.float64)
 
-                        # Actual baseline-subtracted signal within the handles
                         actual_subtracted = np.maximum(
                             profile_to_plot_and_calc[start_handle:end_handle + 1].astype(np.float64)
                             - self.background[start_handle:end_handle + 1].astype(np.float64),
@@ -4066,12 +4294,6 @@ if __name__ == "__main__":
                         )
 
                         if owned and len(self.fitted_gaussian_params) > 0:
-                            # --- Fractional attribution ---
-                            # The fit is used ONLY to determine what fraction of the
-                            # overlapping signal belongs to this peak at each pixel.
-                            # The actual area is always integrated from real data.
-
-                            # Signal from components owned by THIS peak
                             this_peak_fit = np.zeros(len(x_region), dtype=np.float64)
                             for comp_idx in owned:
                                 if (comp_idx < len(self.fitted_gaussian_params)
@@ -4082,7 +4304,6 @@ if __name__ == "__main__":
                                         self._emg(x_region, amp, cen, sig, tau), 0.0
                                     )
 
-                            # Total signal from ALL fitted components at these pixels
                             total_fit = np.zeros(len(x_region), dtype=np.float64)
                             for comp_idx_all, (amp_all, cen_all, sig_all) in enumerate(
                                     self.fitted_gaussian_params):
@@ -4093,26 +4314,21 @@ if __name__ == "__main__":
                                     self._emg(x_region, amp_all, cen_all, sig_all, tau_all), 0.0
                                 )
 
-                            # Pixel-wise fraction — where no fit signal exists default to
-                            # equal share so we never discard real data
-                            n_total_comp = max(len(self.fitted_gaussian_params), 1)
-                            fraction = np.where(
-                                total_fit > 1e-9,
-                                this_peak_fit / total_fit,
-                                1.0 / n_total_comp
-                            )
+                            # CHANGED: where the fit carries no signal, attribute the pixel to
+                            # the nearest detected peak rather than splitting it equally.
+                            fallback = _nearest_peak_mask(x_region, i)
+                            fraction = np.where(total_fit > 1e-9, this_peak_fit / total_fit, fallback)
 
-                            # Integrate the ACTUAL data weighted by the fractional attribution
                             area = float(np.trapezoid(actual_subtracted * fraction))
 
                         else:
-                            # No fit available — integrate actual data directly
                             area = float(np.trapezoid(actual_subtracted))
 
                         self.peak_areas_deconv.append(max(0.0, area))
 
                     else:
-                        # Rolling Ball area
+                        # Rolling Ball area (baseline already clamped <= profile, so no
+                        # rectification bias here; the maximum() is a safety no-op).
                         area_rb = np.trapezoid(np.maximum(
                             0.0,
                             profile_to_plot_and_calc[start_handle:end_handle + 1]
@@ -4120,7 +4336,8 @@ if __name__ == "__main__":
                         ))
                         self.peak_areas_rolling_ball.append(max(0.0, area_rb))
 
-                        # Straight Line area
+                        # Straight Line area (linear baseline CAN cross above the trace;
+                        # clipping here is the standard densitometry convention).
                         area_sl = 0.0
                         if global_sl_baseline is not None:
                             area_sl = np.trapezoid(np.maximum(
@@ -4146,27 +4363,38 @@ if __name__ == "__main__":
 
                 # --- Total area for percentage labels ---
                 total_area = 0.0
-                if   self.method == "Rolling-valley":        total_area = sum(self.peak_areas_valley)
-                elif self.method == "Rolling Ball":          total_area = sum(self.peak_areas_rolling_ball)
-                elif self.method == "Straight Line":         total_area = sum(self.peak_areas_straight_line)
+                if   self.method == "Rolling-valley":         total_area = sum(self.peak_areas_valley)
+                elif self.method == "Rolling Ball":           total_area = sum(self.peak_areas_rolling_ball)
+                elif self.method == "Straight Line":          total_area = sum(self.peak_areas_straight_line)
                 elif self.method == "Gaussian Deconvolution": total_area = sum(self.peak_areas_deconv)
                 if total_area < 1e-9:
                     total_area = 0.0
 
                 # ------------------------------------------------------------------ #
-                # Background / composite profile lines                                #
+                # Background / composite profile lines + fit quality                  #
                 # ------------------------------------------------------------------ #
+                self.last_fit_r2 = None
                 if self.method == "Gaussian Deconvolution":
                     self.ax.plot(x_full, self.background, color=bg_line_color,
                                 ls="--", lw=1.5, label="AsLS Baseline", zorder=2)
                     if self.fitted_gaussian_params:
-                        # Composite = background + sum of all EMG components
                         composite = self.background.copy().astype(np.float64)
                         for comp_idx, (amp, cen, sig) in enumerate(self.fitted_gaussian_params):
-                            tau = self.tau_values[comp_idx] if comp_idx < len(self.tau_values) else sig * 0.01
+                            # CHANGED: tau fallback now sig*0.3, matching the area math, so the
+                            # displayed "Deconvoluted Fit" curve is exactly what we integrate.
+                            tau = self.tau_values[comp_idx] if comp_idx < len(self.tau_values) else sig * 0.3
                             composite += np.maximum(self._emg(x_full, amp, cen, sig, tau), 0.0)
                         self.ax.plot(x_full, composite, color='magenta', ls=":", lw=1.5,
                                     label="Deconvoluted Fit", zorder=11)
+
+                        # Goodness-of-fit (R²) on the full trace, for the quality readout.
+                        try:
+                            y_obs = profile_for_display.astype(np.float64)
+                            ss_res = float(np.sum((y_obs - composite) ** 2))
+                            ss_tot = float(np.sum((y_obs - np.mean(y_obs)) ** 2))
+                            self.last_fit_r2 = 1.0 - ss_res / max(ss_tot, 1e-12)
+                        except Exception:
+                            self.last_fit_r2 = None
 
                 # ------------------------------------------------------------------ #
                 # PASS 2 — Fill visualizations + text labels                          #
@@ -4189,8 +4417,6 @@ if __name__ == "__main__":
                         x_region = np.arange(start_handle, end_handle + 1, dtype=np.float64)
                         x_int    = x_region.astype(int)
 
-                        # Actual baseline-subtracted profile — this is what we fill under,
-                        # NOT the EMG curve. The fill now exactly matches the black profile.
                         actual_subtracted = np.maximum(
                             profile_for_display[x_int].astype(np.float64)
                             - self.background[x_int].astype(np.float64),
@@ -4198,7 +4424,6 @@ if __name__ == "__main__":
                         )
 
                         if owned and len(self.fitted_gaussian_params) > 0:
-                            # Build fractional mask — same logic as Pass 1
                             this_peak_fit = np.zeros(len(x_region), dtype=np.float64)
                             for comp_idx in owned:
                                 if (comp_idx < len(self.fitted_gaussian_params)
@@ -4219,29 +4444,15 @@ if __name__ == "__main__":
                                     self._emg(x_region, amp_all, cen_all, sig_all, tau_all), 0.0
                                 )
 
-                            n_total_comp = max(len(self.fitted_gaussian_params), 1)
-                            fraction = np.where(
-                                total_fit > 1e-9,
-                                this_peak_fit / total_fit,
-                                1.0 / n_total_comp
-                            )
+                            fallback = _nearest_peak_mask(x_region, i)
+                            fraction = np.where(total_fit > 1e-9, this_peak_fit / total_fit, fallback)
 
-                            # Fill height = fraction of the actual data signal.
-                            # For a non-overlapping peak fraction ≈ 1 everywhere so the
-                            # cyan fill traces the black profile exactly.
-                            # For overlapping peaks the fill tapers where the neighbour
-                            # component dominates — giving an intuitive visual split.
                             fill_top = self.background[x_int] + actual_subtracted * fraction
-
                             self.ax.fill_between(
-                                x_region,
-                                self.background[x_int],
-                                fill_top,
+                                x_region, self.background[x_int], fill_top,
                                 color="cyan", alpha=0.45, zorder=1
                             )
-
                         else:
-                            # Fallback — fill directly under actual profile
                             self.ax.fill_between(
                                 x_region,
                                 self.background[x_int],
@@ -4251,13 +4462,10 @@ if __name__ == "__main__":
 
                     elif self.method == "Rolling-valley":
                         x_region_rv = np.arange(start_handle, end_handle + 1)
-                        # Anchor to rolling ball background — matches RB Guide line
                         y_start_rv  = float(self.background[start_handle])
                         y_end_rv    = float(self.background[end_handle])
                         baseline_rv = np.interp(
-                            x_region_rv,
-                            [start_handle, end_handle],
-                            [y_start_rv, y_end_rv]
+                            x_region_rv, [start_handle, end_handle], [y_start_rv, y_end_rv]
                         )
                         self.ax.fill_between(
                             x_region_rv, baseline_rv, profile_for_display[x_region_rv],
@@ -4397,11 +4605,12 @@ if __name__ == "__main__":
                         self.interactive_artists.append((peak_idx, 'end_line', end_line))
 
                 self.fig.subplots_adjust(left=0.1, right=0.9, top=0.92, bottom=0.25)
+                self._update_quality_readout()
                 self.canvas.draw_idle()
                 plt.close(self.fig)
 
             def on_draw(self, event): self.background_blit = self.canvas.copy_from_bbox(self.fig.bbox)
-            
+
             def on_canvas_press(self, event):
                 if event.inaxes != self.ax_image or event.button != 1:
                     if event.inaxes == self.ax: self.handle_profile_plot_click(event)
@@ -4499,28 +4708,27 @@ if __name__ == "__main__":
 
             def get_final_peak_info(self):
                 peak_info_list = []
-                current_area_list =[]
-                
-                # Link UI selections appropriately to standard methods
+                current_area_list = []
+
                 if self.method == "Gaussian Deconvolution": current_area_list = self.peak_areas_deconv
                 elif self.method == "Rolling Ball": current_area_list = self.peak_areas_rolling_ball
                 elif self.method == "Straight Line": current_area_list = self.peak_areas_straight_line
                 elif self.method == "Rolling-valley": current_area_list = self.peak_areas_valley
-                
+
                 num_valid_peaks = len(self.peaks)
                 num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
-                
+
                 for i in range(num_peaks_to_process):
                     try:
                         original_peak_x_in_profile = int(self.peaks[i])
-                        peak_info_list.append({'area': current_area_list[i],'y_coord_in_lane_image': original_peak_x_in_profile,'original_peak_index': original_peak_x_in_profile})
+                        peak_info_list.append({'area': current_area_list[i], 'y_coord_in_lane_image': original_peak_x_in_profile, 'original_peak_index': original_peak_x_in_profile})
                     except IndexError: peak_info_list.append({'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1})
                 return peak_info_list
 
             def toggle_manual_select_mode(self, checked):
                 self.manual_select_mode_active = checked
                 if checked:
-                    if self.add_peak_mode_active: self.add_peak_manually_button.setChecked(False); self.toggle_add_peak_mode(False) 
+                    if self.add_peak_mode_active: self.add_peak_manually_button.setChecked(False); self.toggle_add_peak_mode(False)
                     QMessageBox.information(self, "Identify Peak", "Click a peak in the profile plot to focus its handles.")
                 else: self.selected_peak_for_ui_focus = -1; self.update_plot()
 
@@ -4542,8 +4750,6 @@ if __name__ == "__main__":
                 """
                 Places integration boundary handles as close as possible to each peak
                 base using threshold-based intersection detection.
-                Handles are constrained to the midpoint between adjacent peaks so they
-                never overlap.
                 """
                 self.peak_regions = []
                 profile = self.profile_original_inverted
@@ -4556,17 +4762,15 @@ if __name__ == "__main__":
                 for i, peak_x in enumerate(self.peaks):
                     peak_x = int(peak_x)
 
-                    # Hard fence = midpoint to adjacent peak (handles never cross into neighbour)
                     left_fence  = int((self.peaks[i - 1] + peak_x) // 2) if i > 0          else 0
                     right_fence = int((peak_x + self.peaks[i + 1]) // 2) if i < n_peaks - 1 else profile_len - 1
 
                     start_handle, end_handle = self._find_intersection_boundaries(
                         profile, self.background, peak_x,
                         left_fence, right_fence,
-                        threshold_fraction=0.02          # 2 % of peak height — very tight to base
+                        threshold_fraction=0.02
                     )
 
-                    # Enforce non-overlap with previous region
                     if i > 0 and self.peak_regions:
                         prev_end = self.peak_regions[-1][1]
                         if start_handle <= prev_end:
@@ -4594,7 +4798,7 @@ if __name__ == "__main__":
             def copy_peak_regions_to_app(self):
                 if not self.parent_app: return
                 if not self.peak_regions: QMessageBox.information(self, "No Regions", "No peak regions to copy."); return
-                self.parent_app.copied_peak_regions_data["regions"] =[tuple(r) for r in self.peak_regions]
+                self.parent_app.copied_peak_regions_data["regions"] = [tuple(r) for r in self.peak_regions]
                 self.parent_app.copied_peak_regions_data["profile_length"] = len(self.profile_original_inverted) if self.profile_original_inverted is not None else 0
                 self.parent_app.copied_peak_regions_data["peaks"] = self.peaks.tolist()
                 QMessageBox.information(self, "Regions Copied", f"{len(self.peak_regions)} regions copied.")
@@ -4603,11 +4807,11 @@ if __name__ == "__main__":
             def paste_peak_regions_from_app(self):
                 if not self.parent_app or not self.parent_app.copied_peak_regions_data.get("regions"): QMessageBox.information(self, "No Regions to Paste", "No peak regions have been copied yet."); return
                 if self.profile_original_inverted is None or len(self.profile_original_inverted) == 0: QMessageBox.warning(self, "Error", "Current profile not available for pasting regions."); return
-                copied_data = self.parent_app.copied_peak_regions_data; regions_to_paste = copied_data["regions"]; original_profile_len = copied_data["profile_length"]; copied_peaks_indices = np.array(copied_data.get("peaks",[]))
-                current_profile_len = len(self.profile_original_inverted); self.peak_regions =[]
+                copied_data = self.parent_app.copied_peak_regions_data; regions_to_paste = copied_data["regions"]; original_profile_len = copied_data["profile_length"]; copied_peaks_indices = np.array(copied_data.get("peaks", []))
+                current_profile_len = len(self.profile_original_inverted); self.peak_regions = []
                 scale_factor = 1.0
                 if original_profile_len > 0 and current_profile_len > 0 and original_profile_len != current_profile_len: scale_factor = float(current_profile_len) / original_profile_len
-                temp_derived_peaks =[]
+                temp_derived_peaks = []
                 if len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste): self.peaks = np.clip((copied_peaks_indices * scale_factor).round().astype(int), 0, current_profile_len - 1)
                 for i, (start_orig, end_orig) in enumerate(regions_to_paste):
                     start_scaled = int(round(start_orig * scale_factor)); end_scaled = int(round(end_orig * scale_factor))
@@ -4624,7 +4828,7 @@ if __name__ == "__main__":
             def should_persist_settings(self): return self._persist_enabled_on_exit
 
             def get_final_peak_area(self): return [info['area'] for info in self.get_final_peak_info()]
-            
+
             def regenerate_profile_and_detect(self):
                 base_img = self.original_pil_cropped_data.copy()
 
@@ -4657,9 +4861,14 @@ if __name__ == "__main__":
 
                 profile_to_process = np.sum(array_for_summing, axis=1)
 
-                # --- Median filter BEFORE Gaussian smoothing ---
-                # Median kills isolated impulse noise (specks) without broadening real band
-                # edges the way a Gaussian would. Pipeline: median → Gaussian.
+                # --- Median filtering BEFORE Gaussian smoothing ---
+                # CHANGED: a tiny size-3 median now ALWAYS runs, even at denoise_sigma = 0.
+                # It removes isolated single-pixel impulses (specks) at essentially no cost
+                # and without broadening real band edges. A wider kernel kicks in when the
+                # user raises Denoise Sigma.
+                if len(profile_to_process) >= 3:
+                    profile_to_process = scipy_median_filter(profile_to_process, size=3)
+
                 if self.denoise_sigma > 0.01:
                     kernel_size = max(3, int(self.denoise_sigma * 2))
                     if kernel_size % 2 == 0:
@@ -4685,31 +4894,22 @@ if __name__ == "__main__":
                 Exponentially Modified Gaussian (EMG).
 
                 Models the asymmetric tailing seen in real gel electrophoresis bands.
-                tau > 0 produces right-side tailing; tau → 0 → pure Gaussian.
+                tau > 0 produces right-side tailing; tau -> 0 -> pure Gaussian.
 
                 CRITICAL NUMERICAL NOTE:
                 When tau < sig * 0.05 the standard EMG formula becomes numerically
-                degenerate — erfc(sig / (tau*sqrt(2))) → erfc(very_large) → 0 while
-                the pre-factor exp(0.5*(sig/tau)^2) → exp(overflow). The product is
-                indeterminate and evaluates to 0 in floating point even though the
-                true limit is the Gaussian. We therefore detect this regime and return
-                a pure Gaussian directly.
+                degenerate. We therefore detect this regime and return a pure Gaussian.
                 """
                 tau = max(abs(float(tau)), 1e-9)
                 sig = max(abs(float(sig)), 1e-6)
                 x   = np.asarray(x, dtype=np.float64)
 
-                # --- Gaussian limit: return pure Gaussian to avoid erfc/exp instability ---
                 if tau < sig * 0.05:
                     return amp * np.exp(-(x - cen) ** 2 / (2.0 * sig ** 2))
 
-                # --- Full EMG formula ---
-                # erfc argument
                 arg = (cen - x) / (np.sqrt(2.0) * sig) + sig / (np.sqrt(2.0) * tau)
-                # Clamp to prevent erfc overflow on extreme inputs
                 arg = np.clip(arg, -26.0, 26.0)
 
-                # Exponent: clip to prevent exp overflow on very long tails
                 exponent = np.clip(
                     0.5 * (sig / tau) ** 2 - (x - cen) / tau,
                     -500.0, 500.0
@@ -4721,23 +4921,16 @@ if __name__ == "__main__":
             def _find_shoulder_candidates(self, profile_subtracted, detected_peaks):
                 """
                 Finds hidden shoulder positions using the second derivative of the
-                baseline-subtracted profile.
-
-                Inflection points in the second derivative reveal components that are
-                too merged to appear as independent peaks via find_peaks, but which
-                contribute measurably to band area.
-
-                Returns a sorted array of all candidate positions (detected + shoulders).
+                baseline-subtracted profile. Returns a sorted array of all candidate
+                positions (detected + shoulders).
                 """
                 n = len(profile_subtracted)
                 if n < 5:
                     return detected_peaks.copy() if len(detected_peaks) > 0 else np.array([], dtype=int)
 
-                # Lightly smooth before differentiation to suppress noise amplification
                 smoothed = gaussian_filter1d(profile_subtracted.astype(np.float64), sigma=2.0)
                 d2 = np.gradient(np.gradient(smoothed))
 
-                # Significant negative second-derivative = concave-down region (peak or shoulder)
                 d2_threshold = np.percentile(d2, 15)
 
                 try:
@@ -4755,11 +4948,9 @@ if __name__ == "__main__":
 
                 new_candidates = []
                 for cand in d2_candidates:
-                    # Skip if already too close to a known detected peak
                     if len(detected_peaks) > 0:
                         if np.min(np.abs(detected_peaks.astype(float) - float(cand))) <= self.peak_distance // 2:
                             continue
-                    # Must carry meaningful signal above baseline (not just baseline ripple)
                     if profile_subtracted[cand] > max_signal * 0.05:
                         new_candidates.append(int(cand))
 
@@ -4774,14 +4965,11 @@ if __name__ == "__main__":
                     all_peaks = np.array(new_candidates, dtype=int)
 
                 return all_peaks
-            
+
             def _quick_gaussian_rss(self, profile_subtracted, peak_positions):
                 """
-                Performs a fast, low-iteration multi-Gaussian fit and returns the
-                residual sum of squares on the normalized profile.
-
-                Used exclusively by _select_optimal_components for AIC scoring —
-                not for final area calculation.
+                Fast, low-iteration multi-Gaussian fit; returns residual sum of squares on
+                the normalized profile. Used only by _select_optimal_components for AIC.
                 """
                 n = len(profile_subtracted)
                 if len(peak_positions) == 0 or n == 0:
@@ -4794,7 +4982,6 @@ if __name__ == "__main__":
                 y_norm = profile_subtracted / max_val
                 x = np.arange(n, dtype=np.float64)
 
-                # Clip all peak positions to valid array range
                 peak_positions = np.clip(np.asarray(peak_positions, dtype=int), 0, n - 1)
 
                 try:
@@ -4831,16 +5018,18 @@ if __name__ == "__main__":
                     rss = float(np.sum((y_norm - y_init) ** 2))
 
                 return max(rss, 1e-12)
-            
+
             def _select_optimal_components(self, profile_subtracted):
                 """
-                Uses the Akaike Information Criterion (AIC) to decide whether adding
-                shoulder components (found via the second derivative) is statistically
-                justified.
+                Uses the Akaike Information Criterion (AIC) to decide which shoulder
+                components are statistically justified.
 
-                Tests: (a) detected peaks only, (b) detected peaks + each shoulder
-                candidate individually.  Returns the peak set with the lowest AIC,
-                requiring at least a 2-unit improvement per added component to prevent
+                CHANGED: this is now GREEDY FORWARD SELECTION. The previous version tested
+                each shoulder candidate independently and could only ever add the single
+                best one, so a band with two genuine shoulders lost one of them. We now keep
+                adding the candidate that most improves AIC (by at least the standard 2-unit
+                Burnham & Anderson margin) until no remaining candidate helps — allowing any
+                number of real shoulders to be recovered while still guarding against
                 over-fitting.
                 """
                 n = len(profile_subtracted)
@@ -4848,34 +5037,39 @@ if __name__ == "__main__":
                     return self.peaks.copy() if len(self.peaks) > 0 else np.array([], dtype=int)
 
                 all_candidates = self._find_shoulder_candidates(profile_subtracted, self.peaks)
-                extra_candidates = [
-                    int(p) for p in all_candidates
-                    if not np.any(self.peaks == p)
-                ]
+                remaining = [int(p) for p in all_candidates if not np.any(self.peaks == p)]
 
                 # Baseline AIC: detected peaks only
                 rss_base = self._quick_gaussian_rss(profile_subtracted, self.peaks)
                 n_params_base = len(self.peaks) * 3  # amp, cen, sig per component
-                aic_base = n * np.log(max(rss_base / n, 1e-30)) + 2.0 * n_params_base
+                current_aic = n * np.log(max(rss_base / n, 1e-30)) + 2.0 * n_params_base
+                current_peaks = self.peaks.astype(int).copy()
 
-                best_aic = aic_base
-                best_peaks = self.peaks.copy()
+                improved = True
+                while improved and remaining:
+                    improved = False
+                    best_cand = None
+                    best_cand_aic = current_aic
 
-                # Test each shoulder candidate independently
-                for cand in extra_candidates:
-                    test_peaks = np.sort(np.concatenate([self.peaks.astype(int), [cand]]))
-                    try:
-                        rss = self._quick_gaussian_rss(profile_subtracted, test_peaks)
-                        n_params = len(test_peaks) * 3
-                        aic = n * np.log(max(rss / n, 1e-30)) + 2.0 * n_params
-                        # Require at least 2 AIC units improvement (standard Burnham & Anderson threshold)
-                        if aic < best_aic - 2.0:
-                            best_aic = aic
-                            best_peaks = test_peaks.copy()
-                    except Exception:
-                        continue
+                    for cand in remaining:
+                        test_peaks = np.sort(np.concatenate([current_peaks, [cand]]))
+                        try:
+                            rss = self._quick_gaussian_rss(profile_subtracted, test_peaks)
+                            n_params = len(test_peaks) * 3
+                            aic = n * np.log(max(rss / n, 1e-30)) + 2.0 * n_params
+                            if aic < best_cand_aic - 2.0:
+                                best_cand_aic = aic
+                                best_cand = cand
+                        except Exception:
+                            continue
 
-                return best_peaks
+                    if best_cand is not None:
+                        current_peaks = np.sort(np.concatenate([current_peaks, [best_cand]]))
+                        current_aic = best_cand_aic
+                        remaining.remove(best_cand)
+                        improved = True
+
+                return current_peaks
 
             def _find_outward_troughs(self, profile, peak_idx, left_bound, right_bound):
                 profile_len = len(profile)
@@ -5416,20 +5610,26 @@ if __name__ == "__main__":
                     if hasattr(self.app_instance, 'top_markers'):
                         top_marker_offset_y_label = self.app_instance.top_marker_shift_added * _scale_factor_img_to_label
                         rotation_angle = self.app_instance.font_rotation
-                        
-                        # Top markers use standard text drawing as they are usually just labels,
-                        # but we apply the same centering logic for consistency.
+                        rotation_axis = getattr(self.app_instance, 'top_rotation_axis', 'left')
+
                         for x_pos_img, marker_text_val in self.app_instance.top_markers:
                             anchor_x_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, 0)).x()
                             text_to_draw = str(marker_text_val)
-                            
+
                             painter.save()
-                            # Translate to the specific X position and the Y offset
                             draw_baseline_y_ls = _offset_y_img_in_label + top_marker_offset_y_label + y_text_centering_offset
                             painter.translate(anchor_x_label_space, draw_baseline_y_ls)
                             painter.rotate(rotation_angle)
-                            # Draw text at (0,0) relative to rotation center
-                            painter.drawText(QPointF(0, 0), text_to_draw)
+                            # Offset text draw position based on rotation axis
+                            if rotation_axis == 'center':
+                                fm_top = QFontMetrics(painter.font())
+                                text_x_offset = -fm_top.horizontalAdvance(text_to_draw) / 2.0
+                            elif rotation_axis == 'right':
+                                fm_top = QFontMetrics(painter.font())
+                                text_x_offset = -fm_top.horizontalAdvance(text_to_draw)
+                            else:
+                                text_x_offset = 0.0
+                            painter.drawText(QPointF(text_x_offset, 0), text_to_draw)
                             painter.restore()
                 if _image_to_label_space_valid and hasattr(self.app_instance, 'custom_shapes'):
                     for shape_data in self.app_instance.custom_shapes:
@@ -5488,11 +5688,20 @@ if __name__ == "__main__":
                         painter.drawText(QPointF(anchor_x_ls, draw_y_ls), text_to_draw)
                     elif self.standard_marker_preview_mode == 'top':
                         rotation_angle = self.app_instance.font_rotation
+                        rotation_axis = getattr(self.app_instance, 'top_rotation_axis', 'left')
                         is_first = len(self.app_instance.top_markers) == 0
                         anchor_y_ls = preview_pos.y() if is_first else (_offset_y_img_in_label + self.app_instance.top_marker_shift_added * _scale_factor_img_to_label)
                         draw_baseline_y_ls = anchor_y_ls + y_offset_text_baseline_std
                         painter.save(); painter.translate(preview_pos.x(), draw_baseline_y_ls); painter.rotate(rotation_angle)
-                        painter.drawText(QPointF(0, 0), preview_text); painter.restore()
+                        if rotation_axis == 'center':
+                            fm_prev = QFontMetrics(painter.font())
+                            prev_x_off = -fm_prev.horizontalAdvance(preview_text) / 2.0
+                        elif rotation_axis == 'right':
+                            fm_prev = QFontMetrics(painter.font())
+                            prev_x_off = -fm_prev.horizontalAdvance(preview_text)
+                        else:
+                            prev_x_off = 0.0
+                        painter.drawText(QPointF(prev_x_off, 0), preview_text); painter.restore()
                     painter.restore()
 
                 if self.preview_marker_enabled and self.preview_marker_position:
@@ -6454,7 +6663,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v5.8"
+                self.window_title="GEL BLOT ANALYZER v6.0"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -6532,6 +6741,7 @@ if __name__ == "__main__":
                 self.current_right_marker_index = 0
                 self.current_top_label_index = 0
                 self.font_rotation=-45
+                self.top_rotation_axis = "left"
                 self.image_width=0
                 self.image_height=0
                 self.new_image_width=0
@@ -6717,25 +6927,28 @@ if __name__ == "__main__":
                 self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
                 self.grid_shortcut.activated.connect(
                     lambda: (
-                        # Determine the target state (True if both are currently False, False otherwise)
                         target_state := not (self.show_grid_checkbox_x.isChecked() or self.show_grid_checkbox_y.isChecked()),
-                        # Set both checkboxes to the target state
                         self.show_grid_checkbox_x.setChecked(target_state),
                         self.show_grid_checkbox_y.setChecked(target_state)
                     ) if hasattr(self, 'show_grid_checkbox_x') and hasattr(self, 'show_grid_checkbox_y') else None
                 )
-                
-                self.grid_shortcut_x = QShortcut(QKeySequence("Ctrl+Shift+X"), self) # Use uppercase X for consistency
+
+                self.grid_shortcut_x = QShortcut(QKeySequence("Ctrl+Shift+X"), self)
                 self.grid_shortcut_x.activated.connect(
                     lambda: self.show_grid_checkbox_x.setChecked(not self.show_grid_checkbox_x.isChecked())
                     if hasattr(self, 'show_grid_checkbox_x') else None
                 )
 
-                # Shortcut for Y Grid Snapping
-                self.grid_shortcut_y = QShortcut(QKeySequence("Ctrl+Shift+Y"), self) # Use uppercase Y
+                self.grid_shortcut_y = QShortcut(QKeySequence("Ctrl+Shift+Y"), self)
                 self.grid_shortcut_y.activated.connect(
                     lambda: self.show_grid_checkbox_y.setChecked(not self.show_grid_checkbox_y.isChecked())
                     if hasattr(self, 'show_grid_checkbox_y') else None
+                )
+
+                self.snap_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+                self.snap_shortcut.activated.connect(
+                    lambda: self.snap_enabled_checkbox.setChecked(not self.snap_enabled_checkbox.isChecked())
+                    if hasattr(self, 'snap_enabled_checkbox') else None
                 )
 
                 self.guidelines_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
@@ -8869,6 +9082,7 @@ if __name__ == "__main__":
                     "font_size": self.font_size,
                     "font_color": self.font_color.name(),
                     "font_rotation": self.font_rotation,
+                    "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
 
                     # --- Image Adjustments ---
                     "main_image_is_inverted": self.main_image_is_inverted,
@@ -8922,6 +9136,7 @@ if __name__ == "__main__":
                     self.font_size = state_dict['font_size']
                     self.font_color = QColor(state_dict['font_color'])
                     self.font_rotation = state_dict['font_rotation']
+                    self.top_rotation_axis = state_dict.get('top_rotation_axis', 'left')
 
                     self.main_image_is_inverted = state_dict['main_image_is_inverted']
                     self.channel_mixer_data = state_dict['channel_mixer_data']
@@ -8993,6 +9208,13 @@ if __name__ == "__main__":
                     
                     self._update_color_button_style(self.font_color_button, self.font_color)
 
+                    if hasattr(self, 'top_rotation_axis_combo'):
+                        axis = getattr(self, 'top_rotation_axis', 'left')
+                        axis_map = {"left": 0, "center": 1, "right": 2}
+                        self.top_rotation_axis_combo.blockSignals(True)
+                        self.top_rotation_axis_combo.setCurrentIndex(axis_map.get(axis, 0))
+                        self.top_rotation_axis_combo.blockSignals(False)
+
                     # 7. NEW: Restore Preset Selection (Prevent "Bio-Rad" from overwriting "Custom")
                     saved_preset = state_dict.get("selected_preset", "Custom")
                     if hasattr(self, 'combo_box'):
@@ -9059,7 +9281,7 @@ if __name__ == "__main__":
                     "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
                     "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
                     "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
-                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation,
+                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation, "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
                     "left_marker_shift_added": self.left_marker_shift_added, "right_marker_shift_added": self.right_marker_shift_added, "top_marker_shift_added": self.top_marker_shift_added,
                     "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(), "quantities": self.quantities.copy(), "protein_quantities": self.protein_quantities.copy(), "standard_protein_areas": self.standard_protein_areas.copy(),
                     "custom_marker_color": self.custom_marker_color, "custom_font_family": self.custom_font_type_dropdown.currentText(), "custom_font_size": self.custom_font_size_spinbox.value(),
@@ -10187,11 +10409,12 @@ if __name__ == "__main__":
     
                 if hasattr(self, 'grid_size_input'):
                     grid_size = self.grid_size_input.value()
+                snap_globally_enabled = hasattr(self, 'snap_enabled_checkbox') and self.snap_enabled_checkbox.isChecked()
                 if hasattr(self, 'show_grid_checkbox_x'):
-                    snap_x_enabled = self.show_grid_checkbox_x.isChecked()
+                    snap_x_enabled = snap_globally_enabled and self.show_grid_checkbox_x.isChecked()
                 if hasattr(self, 'show_grid_checkbox_y'):
-                    snap_y_enabled = self.show_grid_checkbox_y.isChecked()
-    
+                    snap_y_enabled = snap_globally_enabled and self.show_grid_checkbox_y.isChecked()
+
                 if grid_size > 0:
                     if snap_x_enabled:
                         snapped_x = round(point.x() / grid_size) * grid_size
@@ -13241,6 +13464,7 @@ if __name__ == "__main__":
                 self.font_combo_box = QFontComboBox()
                 self.font_combo_box.setToolTip("Font family for Standard Markers (Left/Right/Top).")
                 self.font_combo_box.setCurrentFont(QFont(self.font_family))
+                ##self.font_combo_box.setWidth(50)
                 self.font_combo_box.currentFontChanged.connect(self.update_font)
                 
                 self.font_size_spinner = QSpinBox()
@@ -13248,30 +13472,43 @@ if __name__ == "__main__":
                 self.font_size_spinner.setValue(self.font_size)
                 self.font_size_spinner.setToolTip("Font size for Standard Markers.")
                 self.font_size_spinner.valueChanged.connect(self.update_font)
+                # +65 accounts for spin arrows + frame + margins cross-platform (Windows needs more than Mac)
+                _fm_sz = self.font_size_spinner.fontMetrics()
+                self.font_size_spinner.setMinimumWidth(_fm_sz.horizontalAdvance("72") + 65)
 
-                # Fit width to content
-                fm = self.font_size_spinner.fontMetrics()
-                width = fm.horizontalAdvance(str(self.font_size_spinner.maximum())) + 40  # +40 for arrows/padding
-                self.font_size_spinner.setFixedWidth(width)
-                
                 self.font_color_button = QPushButton("Color")
                 self.font_color_button.setToolTip("Click to change color for Standard Markers.")
                 self.font_color_button.clicked.connect(self.select_font_color)
                 self._update_color_button_style(self.font_color_button, self.font_color)
-                
+
                 self.font_rotation_input = QSpinBox()
                 self.font_rotation_input.setRange(-180, 180)
                 self.font_rotation_input.setValue(self.font_rotation)
                 self.font_rotation_input.setSuffix(" °")
                 self.font_rotation_input.setToolTip("Rotation angle for Top Markers (e.g., -45°).")
                 self.font_rotation_input.valueChanged.connect(self.update_font)
-                
+                # Widest display string is "-180 °"; +65 for arrows/frame/margins
+                _fm_rot = self.font_rotation_input.fontMetrics()
+                self.font_rotation_input.setMinimumWidth(_fm_rot.horizontalAdvance("-180 °") + 65)
+
+                self.top_rotation_axis_combo = QComboBox()
+                self.top_rotation_axis_combo.addItems(["Left", "Center", "Right"])
+                self.top_rotation_axis_combo.setToolTip("Axis around which Top Marker labels are rotated.\nLeft: rotate from left edge of text.\nCenter: rotate from center of text.\nRight: rotate from right edge of text.\nAlso affects where X-snapping aligns.")
+                axis_map_init = {"left": 0, "center": 1, "right": 2}
+                self.top_rotation_axis_combo.setCurrentIndex(axis_map_init.get(getattr(self, 'top_rotation_axis', 'left'), 0))
+                self.top_rotation_axis_combo.currentIndexChanged.connect(self.update_font)
+                # Widest item is "Center"; +45 for dropdown arrow + frame + margins
+                _fm_ax = self.top_rotation_axis_combo.fontMetrics()
+                self.top_rotation_axis_combo.setMinimumWidth(_fm_ax.horizontalAdvance("Center") + 45)
+
                 font_options_layout.addWidget(QLabel("Font:"))
                 font_options_layout.addWidget(self.font_combo_box, 1)
                 font_options_layout.addWidget(self.font_size_spinner)
                 font_options_layout.addWidget(self.font_color_button)
                 font_options_layout.addWidget(QLabel("Top Rotation:"))
                 font_options_layout.addWidget(self.font_rotation_input)
+                font_options_layout.addWidget(QLabel("Axis:"))
+                font_options_layout.addWidget(self.top_rotation_axis_combo)
                 
                 standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
@@ -13363,6 +13600,9 @@ if __name__ == "__main__":
                 self.custom_font_size_spinbox.setValue(12)
                 self.custom_font_size_spinbox.setPrefix("Size: ")
                 self.custom_font_size_spinbox.setToolTip("Font size for Custom Markers.")
+                # Widest display is "Size: 150"; +65 for arrows/frame/margins cross-platform
+                _fm_csz = self.custom_font_size_spinbox.fontMetrics()
+                self.custom_font_size_spinbox.setMinimumWidth(_fm_csz.horizontalAdvance("Size: 150") + 65)
                 
                 self.custom_marker_color_button = QPushButton("Color")
                 self.custom_marker_color_button.setToolTip("Color for Custom Markers and Shapes.")
@@ -13405,15 +13645,20 @@ if __name__ == "__main__":
                 self.remove_shape_button.setToolTip("Remove Last Shape.")
                 self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
                 
-                self.show_grid_checkbox_x = QCheckBox("Snap X")
-                self.show_grid_checkbox_x.setToolTip("Snap mouse to vertical grid lines.\nShortcut: Ctrl+Shift+X")
-                self.show_grid_checkbox_x.setFixedWidth(100)
+                self.show_grid_checkbox_x = QCheckBox("Grid X")
+                self.show_grid_checkbox_x.setToolTip("Show vertical grid lines.\nShortcut: Ctrl+Shift+X")
+                self.show_grid_checkbox_x.setFixedWidth(70)
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
-                
-                self.show_grid_checkbox_y = QCheckBox("Snap Y")
-                self.show_grid_checkbox_y.setToolTip("Snap mouse to horizontal grid lines.\nShortcut: Ctrl+Shift+Y")
-                self.show_grid_checkbox_y.setFixedWidth(100)
+
+                self.show_grid_checkbox_y = QCheckBox("Grid Y")
+                self.show_grid_checkbox_y.setToolTip("Show horizontal grid lines.\nShortcut: Ctrl+Shift+Y")
+                self.show_grid_checkbox_y.setFixedWidth(70)
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
+
+                self.snap_enabled_checkbox = QCheckBox("Snap")
+                self.snap_enabled_checkbox.setToolTip("Enable snapping to grid lines.\nWhen unchecked, grid is shown but snapping is disabled.\nShortcut: Ctrl+Shift+S")
+                self.snap_enabled_checkbox.setFixedWidth(65)
+                self.snap_enabled_checkbox.stateChanged.connect(self.update_live_view)
                 
                 self.grid_size_input = QSpinBox()
                 self.grid_size_input.setRange(5, 100)
@@ -13424,7 +13669,7 @@ if __name__ == "__main__":
                 
                 self.move_resize_button = QPushButton("Move/Resize")
                 self.move_resize_button.setCheckable(True)
-                self.move_resize_button.setToolTip("Select and Move/Resize items.\n- Drag body to move.\n- Drag corners to resize (Shapes).\n- Hold Shift to constrain axis.")
+                self.move_resize_button.setToolTip("Select and Move/Resize items.\n- Drag body to move.\n- Drag corners to resize (Shapes).\n- Hold Shift to constrain axis.\n- Arrow keys to nudge selected item (1 px).\n- Shift+Arrow to nudge by 10 px.")
                 self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
                 
                 self.modify_custom_marker_button = QPushButton("Marker Options")
@@ -13441,6 +13686,7 @@ if __name__ == "__main__":
                 row2_layout.addSpacing(10)
                 row2_layout.addWidget(self.show_grid_checkbox_x)
                 row2_layout.addWidget(self.show_grid_checkbox_y)
+                row2_layout.addWidget(self.snap_enabled_checkbox)
                 row2_layout.addWidget(self.grid_size_input)
                 row2_layout.addStretch(1)
                 row2_layout.addWidget(self.move_resize_button)
@@ -14092,6 +14338,45 @@ if __name__ == "__main__":
                     event.accept()
                     return
 
+                # --- Nudge Selected Custom/Standard Item with Arrow Keys ---
+                if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+                    if (self.current_selection_mode in ["select_custom_item", "dragging_custom_item"]
+                            and self.moving_custom_item_info):
+                        info = self.moving_custom_item_info
+                        item_type = info['type']
+                        item_index = info['index']
+                        step = 10 if (event.modifiers() & Qt.ShiftModifier) else 1
+                        dx = (-step if key == Qt.Key_Left else step if key == Qt.Key_Right else 0)
+                        dy = (-step if key == Qt.Key_Up else step if key == Qt.Key_Down else 0)
+
+                        self.save_state()
+                        if item_type == 'marker':
+                            self.custom_markers[item_index][0] += dx
+                            self.custom_markers[item_index][1] += dy
+                        elif item_type == 'left_marker':
+                            pos, text = self.left_markers[item_index]
+                            self.left_markers[item_index] = (pos + dy, text)
+                        elif item_type == 'right_marker':
+                            pos, text = self.right_markers[item_index]
+                            self.right_markers[item_index] = (pos + dy, text)
+                        elif item_type == 'top_marker':
+                            pos, text = self.top_markers[item_index]
+                            self.top_markers[item_index] = (pos + dx, text)
+                        elif item_type == 'shape':
+                            shape_data = self.custom_shapes[item_index]
+                            if shape_data['type'] == 'rectangle':
+                                x, y, w, h = shape_data['rect']
+                                shape_data['rect'] = (x + dx, y + dy, w, h)
+                            elif shape_data['type'] == 'line':
+                                sx, sy = shape_data['start']
+                                ex, ey = shape_data['end']
+                                shape_data['start'] = (sx + dx, sy + dy)
+                                shape_data['end'] = (ex + dx, ey + dy)
+                        self.is_modified = True
+                        self.update_live_view()
+                        event.accept()
+                        return
+
                 # --- Panning with Arrow Keys (Unchanged) ---
                 if self.live_view_label.zoom_level != 1.0:
                     step = 20; offset_changed = False; current_x = self.live_view_label.pan_offset.x(); current_y = self.live_view_label.pan_offset.y()
@@ -14199,29 +14484,34 @@ if __name__ == "__main__":
                         return QRectF(x_ls, top_y - rect_height / 2, text_width_ls, rect_height)
 
                 elif marker_type == 'top_marker':
-                    # --- START MODIFICATION: Calculate a rotated QPolygonF ---
                     anchor_x_ls = pos * scale + offset_x
                     anchor_y_ls = self.top_marker_shift_added * scale + offset_y + y_offset_baseline
 
-                    # Get the corners of the unrotated bounding rect, relative to a (0,0) draw point
+                    # Mirror the paint code: shift text draw origin based on rotation axis
+                    rotation_axis = getattr(self, 'top_rotation_axis', 'left')
+                    text_str = str(text)
+                    if rotation_axis == 'center':
+                        text_x_offset = -fm.horizontalAdvance(text_str) / 2.0
+                    elif rotation_axis == 'right':
+                        text_x_offset = -fm.horizontalAdvance(text_str)
+                    else:
+                        text_x_offset = 0.0
+
+                    # Get corners of bounding rect offset by rotation axis, matching painter draw position
                     corners = [
-                        text_rect_unscaled.topLeft(),
-                        text_rect_unscaled.topRight(),
-                        text_rect_unscaled.bottomRight(),
-                        text_rect_unscaled.bottomLeft()
+                        QPointF(text_rect_unscaled.left() + text_x_offset, text_rect_unscaled.top()),
+                        QPointF(text_rect_unscaled.right() + text_x_offset, text_rect_unscaled.top()),
+                        QPointF(text_rect_unscaled.right() + text_x_offset, text_rect_unscaled.bottom()),
+                        QPointF(text_rect_unscaled.left() + text_x_offset, text_rect_unscaled.bottom()),
                     ]
 
-                    # Create a transform that rotates around (0,0) and then translates to the anchor.
-                    # This exactly mimics the painter's transformation.
                     transform = QTransform()
                     transform.translate(anchor_x_ls, anchor_y_ls)
                     transform.rotate(self.font_rotation)
-                    
-                    # Map the corners of the original bounding rect to their new rotated and translated positions
+
                     rotated_corners = [transform.map(p) for p in corners]
-                    
+
                     return QPolygonF(rotated_corners)
-                    # --- END MODIFICATION ---
                     
                 return None
 
@@ -14624,12 +14914,13 @@ if __name__ == "__main__":
                     cursor_y = (cursor_y - self.live_view_label.pan_offset.y()) / self.live_view_label.zoom_level
 
                 grid_size = self.grid_size_input.value() # Get grid size once
+                snap_globally_on = hasattr(self, 'snap_enabled_checkbox') and self.snap_enabled_checkbox.isChecked()
 
-                if self.show_grid_checkbox_x.isChecked():
+                if snap_globally_on and self.show_grid_checkbox_x.isChecked():
                     if grid_size > 0: # Avoid division by zero
                          cursor_x = round(cursor_x / grid_size) * grid_size
 
-                if self.show_grid_checkbox_y.isChecked():
+                if snap_globally_on and self.show_grid_checkbox_y.isChecked():
                     if grid_size > 0: # Avoid division by zero
                          cursor_y = round(cursor_y / grid_size) * grid_size
             
@@ -15534,8 +15825,11 @@ if __name__ == "__main__":
                 self.font_size = self.font_size_spinner.value()
                 
                 self.font_rotation = int(self.font_rotation_input.value())
-                
-            
+
+                if hasattr(self, 'top_rotation_axis_combo'):
+                    axis_options = ["left", "center", "right"]
+                    self.top_rotation_axis = axis_options[self.top_rotation_axis_combo.currentIndex()]
+
                 # Once font settings are updated, update the live view immediately
                 self.update_live_view()
             
@@ -15795,6 +16089,7 @@ if __name__ == "__main__":
                 self.font_family = font_options_data.get("font_family", "Arial")
                 self.font_size = int(font_options_data.get("font_size", 12))
                 self.font_rotation = int(font_options_data.get("font_rotation", -45))
+                self.top_rotation_axis = font_options_data.get("top_rotation_axis", "left")
                 font_color_str = font_options_data.get("font_color", "#000000")
                 self.font_color = QColor(font_color_str)
                 if not self.font_color.isValid(): self.font_color = QColor(0,0,0) # Fallback
@@ -15900,6 +16195,11 @@ if __name__ == "__main__":
                     self.font_size_spinner.blockSignals(True); self.font_size_spinner.setValue(self.font_size); self.font_size_spinner.blockSignals(False)
                 if hasattr(self, 'font_rotation_input'):
                     self.font_rotation_input.blockSignals(True); self.font_rotation_input.setValue(self.font_rotation); self.font_rotation_input.blockSignals(False)
+                if hasattr(self, 'top_rotation_axis_combo'):
+                    axis_map_load = {"left": 0, "center": 1, "right": 2}
+                    self.top_rotation_axis_combo.blockSignals(True)
+                    self.top_rotation_axis_combo.setCurrentIndex(axis_map_load.get(getattr(self, 'top_rotation_axis', 'left'), 0))
+                    self.top_rotation_axis_combo.blockSignals(False)
                 if hasattr(self, 'font_color_button'):
                     self._update_color_button_style(self.font_color_button, self.font_color)
                 
@@ -15975,6 +16275,7 @@ if __name__ == "__main__":
                         "font_size": self.font_size,
                         "font_rotation": self.font_rotation,
                         "font_color": self.font_color.name(),
+                        "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
                     },
                     "slider_ranges": {
                          "left": getattr(self, 'left_slider_range', [-100, 1000]),
@@ -17838,7 +18139,7 @@ if __name__ == "__main__":
                 suggested_name = os.path.splitext(os.path.basename(self.image_path))[0] if self.image_path else "untitled_image"
                 base_name_clean_for_dialog = suggested_name.replace("_original", "").replace("_modified", "")
                 save_dir = os.path.dirname(self.image_path) if self.image_path else ""
-                
+
                 options = QFileDialog.Options()
                 base_save_path, selected_filter = QFileDialog.getSaveFileName(
                     self, "Save Image Base Name", os.path.join(save_dir, base_name_clean_for_dialog),
@@ -17849,7 +18150,7 @@ if __name__ == "__main__":
 
                 user_selected_base_name = os.path.splitext(base_save_path)[0]
                 final_clean_base = user_selected_base_name.replace("_original", "").replace("_modified", "")
-                
+
                 suffix = os.path.splitext(base_save_path)[1].lower() or ".png"
                 if "tif" in selected_filter.lower(): suffix = ".tif"
                 elif "jpg" in selected_filter.lower(): suffix = ".jpg"
@@ -17859,13 +18160,15 @@ if __name__ == "__main__":
                 modified_save_path = f"{final_clean_base}_modified{suffix}"
                 config_save_path = f"{final_clean_base}_config.txt"
 
-                # --- Save _original image (Unchanged) ---
+                # --- Save _original image ---
                 if self.image_master and not self.image_master.isNull():
                     save_format = suffix.replace(".", "").upper()
                     if save_format == "TIF": save_format = "TIFF"
                     quality = 95 if save_format in ["JPG", "JPEG"] else -1
                     if not self.image_master.save(original_save_path, format=save_format if save_format else None, quality=quality):
-                        QMessageBox.warning(self, "Error", f"Failed to save original image.")
+                        # TIFF plugin missing / can't write this depth: write it ourselves.
+                        if not (save_format == "TIFF" and self._save_qimage_as_tiff(self.image_master, original_save_path)):
+                            QMessageBox.warning(self, "Error", f"Failed to save original image.")
 
                 # --- Create and save _modified image ---
                 render_scale = 3
@@ -17890,11 +18193,11 @@ if __name__ == "__main__":
                 # --- FIX: Determine Canvas Format based on Image Depth ---
                 canvas_width = native_width * render_scale
                 canvas_height = native_height * render_scale
-                
+
                 # Check Overlays existence
                 has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
                 has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
-                
+
                 # Grab overlay adjusted previews if they exist
                 adjusted_img1 = getattr(self, 'image1_adjusted_preview', None) if has_img1 else None
                 adjusted_img2 = getattr(self, 'image2_adjusted_preview', None) if has_img2 else None
@@ -17902,7 +18205,7 @@ if __name__ == "__main__":
                 # Check if result is high depth (Grayscale16 or RGBA64/RGBX64)
                 fmt = fully_adjusted_master.format()
                 is_high_depth = fmt in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
-                
+
                 # If overlays are present and high bit, we should respect that
                 if has_img1 and adjusted_img1:
                     if adjusted_img1.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]: is_high_depth = True
@@ -17917,15 +18220,15 @@ if __name__ == "__main__":
 
                 modified_canvas = QImage(canvas_width, canvas_height, canvas_format)
                 modified_canvas.fill(Qt.transparent)
-                
+
                 painter = QPainter(modified_canvas)
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
-                # Ensure antialiasing for rotation if needed, though pixel art might prefer otherwise. 
-                # Keeping False for SmoothPixmap like original, but maybe True for rotation? 
+                # Ensure antialiasing for rotation if needed, though pixel art might prefer otherwise.
+                # Keeping False for SmoothPixmap like original, but maybe True for rotation?
                 # Original code used False for image.
-                
+
                 # --- DRAWING LOGIC WITH OVERLAYS ---
-                
+
                 # 0. Draw Background (Master)
                 if True: # Always draw master background to prevent data loss
                     # Determine Main Image Settings
@@ -17942,12 +18245,12 @@ if __name__ == "__main__":
                     main_settings['channel_mixer'] = getattr(self, 'channel_mixer_data', self._get_default_adjustments()['channel_mixer']).copy()
                     main_settings['unsharp_mask'] = getattr(self, 'unsharp_mask_data', self._get_default_adjustments()['unsharp_mask']).copy()
                     main_settings['clahe'] = getattr(self, 'clahe_data', self._get_default_adjustments()['clahe']).copy()
-                    
+
                     # We need to generate the base image with these settings
                     # fully_adjusted_master might range from "Main Settings" (if in Main context) or "Overlay Settings" (bleed)
                     # Safest is to re-generate it here specifically for the background layer
                     base_bg_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
-                    
+
                     painter.setOpacity(1.0)
                     painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_bg_img, QRectF(base_bg_img.rect()))
 
@@ -17955,14 +18258,14 @@ if __name__ == "__main__":
                 if has_img1 and adjusted_img1:
                     # Draw Image 1
                     painter.setOpacity(1.0)
-                    
+
                     w_scaled = adjusted_img1.width() * (self.image1_resize_slider.value()/100.0) * render_scale
                     h_scaled = adjusted_img1.height() * (self.image1_resize_slider.value()/100.0) * render_scale
                     x_scaled = self.image1_position[0] * render_scale
                     y_scaled = self.image1_position[1] * render_scale
-                    
+
                     rect1_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
-                    
+
                     rotation1 = self.image1_rotation_slider.value() / 10.0
                     if abs(rotation1) > 0.01:
                         center_point = rect1_draw.center()
@@ -17978,14 +18281,14 @@ if __name__ == "__main__":
                 if has_img2 and adjusted_img2:
                     blend_val = self.blend_slider.value() if hasattr(self, 'blend_slider') else 50
                     painter.setOpacity(blend_val / 100.0)
-                    
+
                     w_scaled = adjusted_img2.width() * (self.image2_resize_slider.value()/100.0) * render_scale
                     h_scaled = adjusted_img2.height() * (self.image2_resize_slider.value()/100.0) * render_scale
                     x_scaled = self.image2_position[0] * render_scale
                     y_scaled = self.image2_position[1] * render_scale
-                    
+
                     rect2_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
-                    
+
                     rotation2 = self.image2_rotation_slider.value() / 10.0
                     if abs(rotation2) > 0.01:
                         center_point = rect2_draw.center()
@@ -17994,20 +18297,20 @@ if __name__ == "__main__":
                         painter.restore()
                     else:
                         painter.drawImage(rect2_draw, adjusted_img2)
-                    
+
                     # Reset opacity for markers
                     painter.setOpacity(1.0)
 
                 # ... (Draw Annotations - Code remains exactly the same as previous) ...
                 label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
-                
+
                 # Apply UI Scale Preference to the Font Size
                 current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
                 font_scale_factor = (render_scale / scale_native_to_view * current_ui_scale) if scale_native_to_view > 1e-6 else (render_scale * current_ui_scale)
-                
+
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
-                
+
                 def map_img_coords_to_canvas(img_x, img_y):
                     return QPointF(img_x * render_scale, img_y * render_scale)
 
@@ -18023,7 +18326,16 @@ if __name__ == "__main__":
                 for x_img, text in self.top_markers:
                     painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
                     painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
-                    painter.drawText(QPointF(0, 0), str(text)); painter.restore()
+                    _save_axis = getattr(self, 'top_rotation_axis', 'left')
+                    if _save_axis == 'center':
+                        _fm_save = QFontMetrics(painter.font())
+                        _save_x_off = -_fm_save.horizontalAdvance(str(text)) / 2.0
+                    elif _save_axis == 'right':
+                        _fm_save = QFontMetrics(painter.font())
+                        _save_x_off = -_fm_save.horizontalAdvance(str(text))
+                    else:
+                        _save_x_off = 0.0
+                    painter.drawText(QPointF(_save_x_off, 0), str(text)); painter.restore()
                 for marker_data in getattr(self, "custom_markers", []):
                     try:
                         x, y, text, color, font, size, is_bold, is_italic = marker_data
@@ -18043,16 +18355,21 @@ if __name__ == "__main__":
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
                     except Exception: pass
-                
+
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
 
                 save_format_mod = suffix.replace(".", "").upper()
                 if save_format_mod == "TIF": save_format_mod = "TIFF"
-                if not modified_canvas.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=-1):
+                saved_ok = modified_canvas.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=-1)
+                # Qt's TIFF plugin is often missing or can't write 16-bit images;
+                # if the native save failed, write the TIFF from the buffer instead.
+                if not saved_ok and save_format_mod == "TIFF":
+                    saved_ok = self._save_qimage_as_tiff(modified_canvas, modified_save_path)
+                if not saved_ok:
                     QMessageBox.warning(self, "Error", f"Failed to save modified image.")
                     return False
-                
+
                 # --- Save Config File ---
                 config_data = self.get_current_config()
                 try:
@@ -18064,12 +18381,69 @@ if __name__ == "__main__":
 
                 self.is_modified = False
                 self.image_path = original_save_path
-                
+
                 QMessageBox.information(self, "Saved", f"Files saved successfully to '{os.path.dirname(base_save_path)}'")
                 self.setWindowTitle(f"{self.window_title}::{final_clean_base}")
                 self._update_status_bar()
 
                 return True
+            
+            def _save_qimage_as_tiff(self, qimg, path):
+                """Write a TIFF directly from the pixel buffer, bypassing Qt's
+                (often missing or 16-bit-incapable) TIFF plugin.
+                Preserves bit depth AND transparency (alpha channel)."""
+                import numpy as np
+                w, h = qimg.width(), qimg.height()
+                fmt = qimg.format()
+                keep_alpha = qimg.hasAlphaChannel()
+                high_depth = fmt in (QImage.Format_RGBA64, QImage.Format_RGBA64_Premultiplied,
+                                     QImage.Format_RGBX64, QImage.Format_Grayscale16)
+
+                if fmt == QImage.Format_Grayscale16:
+                    # Pure 16-bit grayscale has no alpha.
+                    img = qimg
+                    buf = img.constBits()
+                    arr = np.frombuffer(buf, np.uint16).reshape((h, img.bytesPerLine() // 2))[:, :w].copy()
+                elif high_depth:
+                    # 16-bit; convertToFormat un-premultiplies -> straight alpha.
+                    img = qimg.convertToFormat(QImage.Format_RGBA64)
+                    buf = img.constBits()
+                    arr = np.frombuffer(buf, np.uint16).reshape((h, img.bytesPerLine() // 2))
+                    arr = arr[:, :w * 4].reshape((h, w, 4))
+                    arr = (arr if keep_alpha else arr[:, :, :3]).copy()
+                else:
+                    # 8-bit; RGBA8888 is non-premultiplied (straight) alpha.
+                    img = qimg.convertToFormat(QImage.Format_RGBA8888)
+                    buf = img.constBits()
+                    arr = np.frombuffer(buf, np.uint8).reshape((h, img.bytesPerLine()))
+                    arr = arr[:, :w * 4].reshape((h, w, 4))
+                    arr = (arr if keep_alpha else arr[:, :, :3]).copy()
+
+                has_alpha = (arr.ndim == 3 and arr.shape[2] == 4)
+
+                try:
+                    import tifffile
+                    if has_alpha:
+                        # UNASSALPHA = straight/unassociated alpha, matching Qt's RGBA8888/RGBA64.
+                        tifffile.imwrite(path, arr, photometric='rgb', extrasamples='UNASSALPHA')
+                    else:
+                        tifffile.imwrite(path, arr)
+                    return True
+                except ImportError:
+                    pass
+                try:
+                    from PIL import Image
+                    if arr.dtype == np.uint16 and has_alpha:
+                        Image.fromarray((arr >> 8).astype(np.uint8), 'RGBA').save(path, format='TIFF')  # Pillow can't do 16-bit RGBA
+                    elif arr.dtype == np.uint16:
+                        Image.fromarray(arr, 'I;16').save(path, format='TIFF')
+                    elif has_alpha:
+                        Image.fromarray(arr, 'RGBA').save(path, format='TIFF')
+                    else:
+                        Image.fromarray(arr, 'L').save(path, format='TIFF')
+                    return True
+                except Exception:
+                    return False
                     
             def save_image_svg(self):
                 """Save the processed image along with markers, labels, and custom shapes in SVG format."""
@@ -18175,6 +18549,8 @@ if __name__ == "__main__":
 
                 # --- Add Top Markers ---
                 top_marker_y_pos = self.top_marker_shift_added # Use the absolute offset
+                _svg_axis = getattr(self, 'top_rotation_axis', 'left')
+                _svg_text_anchor = {"left": "start", "center": "middle", "right": "end"}.get(_svg_axis, "start")
                 for x_pos, text in getattr(self, "top_markers", []):
                     dwg.add(
                         dwg.text(
@@ -18183,7 +18559,7 @@ if __name__ == "__main__":
                             fill=svg_font_color,
                             font_family=svg_font_family,
                             font_size=svg_font_size_px,
-                            text_anchor="middle", # Center text horizontally over the x position
+                            text_anchor=_svg_text_anchor,
                             # Apply rotation around the insertion point
                             transform=f"rotate({self.font_rotation}, {x_pos}, {top_marker_y_pos + vertical_offset_adjust})"
                         )
@@ -18343,7 +18719,16 @@ if __name__ == "__main__":
                 for x_img, text in self.top_markers:
                     painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
                     painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
-                    painter.drawText(QPointF(0, 0), str(text)); painter.restore()
+                    _clip_axis = getattr(self, 'top_rotation_axis', 'left')
+                    if _clip_axis == 'center':
+                        _fm_clip = QFontMetrics(painter.font())
+                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text)) / 2.0
+                    elif _clip_axis == 'right':
+                        _fm_clip = QFontMetrics(painter.font())
+                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text))
+                    else:
+                        _clip_x_off = 0.0
+                    painter.drawText(QPointF(_clip_x_off, 0), str(text)); painter.restore()
                 for marker_data in getattr(self, "custom_markers", []):
                     try:
                         x, y, text, color, font, size, is_bold, is_italic = marker_data
@@ -18362,7 +18747,7 @@ if __name__ == "__main__":
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
                     except Exception: pass
-                
+
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
                 
@@ -18858,6 +19243,7 @@ if __name__ == "__main__":
                     
                     if hasattr(self, 'show_grid_checkbox_x'): self.show_grid_checkbox_x.setChecked(False)
                     if hasattr(self, 'show_grid_checkbox_y'): self.show_grid_checkbox_y.setChecked(False)
+                    if hasattr(self, 'snap_enabled_checkbox'): self.snap_enabled_checkbox.setChecked(False)
                     if hasattr(self, 'grid_size_input'): self.grid_size_input.setValue(20)
 
                     self.warped_image=None
