@@ -58,6 +58,8 @@ The easiest way to get started is to download the latest pre-built application f
     *   **For Windows:** Download the `.zip` file for the application.
 3.  Unzip the file and run the application. No installation is needed.
 
+**Note**: Since the application for MacOS is not signed it may not run, so open the application once to trigger the warning, then go to System Settings > Privacy & Security, scroll to Security, click Open Anyway next to the blocked app, and confirm the prompt by entering your password. Despite being signed for Windows, since it is not from a popular publisher it may show an error so open the application and click on More Info and click on Run Anyway.
+
 ### Option 2: Run from Source (For Developers)
 
 If you are a developer and want to run the script directly, you can use Conda for a stable environment.
