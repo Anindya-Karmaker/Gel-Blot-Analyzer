@@ -58,7 +58,7 @@ The easiest way to get started is to download the latest pre-built application f
     *   **For Windows:** Download the `.zip` file for the application.
 3.  Unzip the file and run the application. No installation is needed.
 
-**Note**: Since the application for MacOS is not signed it may not run, so open the application once to trigger the warning, then go to System Settings > Privacy & Security, scroll to Security, click Open Anyway next to the blocked app, and confirm the prompt by entering your password. Despite being signed for Windows, since it is not from a popular publisher it may show an error so open the application and click on More Info and click on Run Anyway.
+**Note**: Since the application for MacOS is not signed it may not run, so copy the .app file to the Applications Folder, open terminal and run this command **xattr -cr "/Applications/Gel Blot Analyzer.app"**. Despite being signed for Windows, since it is not from a popular publisher it may show an error so open the application and click on More Info and click on Run Anyway.
 
 ### Option 2: Run from Source (For Developers)
 
