@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v6.7\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v6.8\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -6468,7 +6468,7 @@ if __name__ == "__main__":
             }
 
             def __init__(self, gel_pil_image, gel_region_def, is_quad_warp,
-                        parent_app, initial_band_settings):
+                        parent_app, initial_band_settings, gel_color_np=None):
                 super().__init__(parent_app)
                 self.setWindowTitle("Auto Gel Analysis  —  One-Step Wizard")
                 screen_geo = QGuiApplication.primaryScreen().availableGeometry()
@@ -6499,6 +6499,42 @@ if __name__ == "__main__":
                 self._gel_arr_raw = arr.copy()
                 self._gel_arr = arr.copy()
                 self._inv_arr = self._max_val - arr
+
+                # ── COLOR PRESERVATION ───────────────────────────────────
+                # _gel_arr above is grayscale ON PURPOSE — densitometry, lane
+                # detection and band profiling all require single-channel
+                # intensity.  But the FINAL committed image must keep the
+                # ORIGINAL color, resolution and bit depth.  So we carry the
+                # full-color pixels alongside the grayscale array and apply the
+                # exact same geometry (rotation/skew/crop) to both, in lock-step.
+                # Stored canonical to numpy_to_qimage's expectations:
+                #   • uint8  4-ch -> BGRA  (committed as Format_ARGB32)
+                #   • uint16 4-ch -> RGBA  (committed as Format_RGBA64)
+                # A 3-channel RGB source (RGB888) is promoted to BGRA so the
+                # round-trip through numpy_to_qimage / qimage_to_numpy (used by
+                # the padding step below) never swaps the red/blue channels.
+                color_raw = None
+                try:
+                    if (gel_color_np is not None and isinstance(gel_color_np, np.ndarray)
+                            and gel_color_np.ndim == 3 and gel_color_np.shape[2] >= 3):
+                        c = gel_color_np
+                        if c.shape[2] == 3:
+                            if c.dtype == np.uint16:
+                                # 16-bit color is delivered as 4-ch RGBA64; a bare
+                                # 3-ch uint16 is unexpected — append opaque alpha.
+                                alpha = np.full(c.shape[:2] + (1,), 65535, dtype=np.uint16)
+                                color_raw = np.concatenate([c, alpha], axis=2)
+                            else:
+                                # RGB (RGB888 order) -> BGRA for Format_ARGB32.
+                                color_raw = cv2.cvtColor(
+                                    np.ascontiguousarray(c.astype(np.uint8)),
+                                    cv2.COLOR_RGB2BGRA)
+                        elif c.shape[2] >= 4:
+                            color_raw = c[..., :4].copy()
+                except Exception:
+                    color_raw = None
+                self._gel_color_raw = color_raw
+                self._gel_color = color_raw.copy() if color_raw is not None else None
 
                 # ── Step 0: Task-selection flags ─────────────────────────
                 self._do_crop         = True
@@ -7061,6 +7097,16 @@ if __name__ == "__main__":
                 arr = self._gel_arr_raw.copy()
                 h, w = arr.shape[:2]
 
+                # Color companion (preserves original color/depth). Transformed
+                # with the IDENTICAL matrices so it stays pixel-aligned with the
+                # grayscale analysis array.  None when the source was grayscale.
+                carr = self._gel_color_raw.copy() if self._gel_color_raw is not None else None
+
+                def _color_fill(a):
+                    # Per-channel mean border fill, matching the grayscale path
+                    # (which fills with the array mean).
+                    return tuple(float(np.mean(a[..., ch])) for ch in range(a.shape[2]))
+
                 # Apply rotation to processed base array
                 if abs(angle) > 0.05:
                     try:
@@ -7072,6 +7118,11 @@ if __name__ == "__main__":
                         M[0, 2] += (new_w / 2.0) - w / 2.0
                         M[1, 2] += (new_h / 2.0) - h / 2.0
                         fill_val = float(np.mean(arr))
+                        if carr is not None:
+                            carr = cv2.warpAffine(carr, M, (new_w, new_h),
+                                                flags=cv2.INTER_LINEAR,
+                                                borderMode=cv2.BORDER_CONSTANT,
+                                                borderValue=_color_fill(carr))
                         arr = cv2.warpAffine(arr.astype(np.float64), M, (new_w, new_h),
                                             flags=cv2.INTER_LINEAR,
                                             borderMode=cv2.BORDER_CONSTANT, borderValue=fill_val)
@@ -7092,6 +7143,11 @@ if __name__ == "__main__":
                             dst_pts[2][0] = w * (1.0 + skew_amt / 2.0)
                         M_sk = cv2.getPerspectiveTransform(src_pts, dst_pts)
                         fill_val = float(np.mean(arr))
+                        if carr is not None:
+                            carr = cv2.warpPerspective(carr, M_sk, (w, h),
+                                                    flags=cv2.INTER_LINEAR,
+                                                    borderMode=cv2.BORDER_CONSTANT,
+                                                    borderValue=_color_fill(carr))
                         arr = cv2.warpPerspective(arr.astype(np.float32), M_sk, (w, h),
                                                 borderMode=cv2.BORDER_CONSTANT,
                                                 borderValue=fill_val).astype(np.float64)
@@ -7102,8 +7158,11 @@ if __name__ == "__main__":
                 # Apply crop
                 if l or r or t or b:
                     arr = arr[t:h - b, l:w - r]
+                    if carr is not None:
+                        carr = carr[t:h - b, l:w - r]
 
                 self._gel_arr = arr.copy()
+                self._gel_color = carr.copy() if carr is not None else None
                 if getattr(self, '_gel_inverted', False):
                     self._inv_arr = self._gel_arr.copy()
                 else:
@@ -8696,11 +8755,21 @@ if __name__ == "__main__":
 
                 try:
                     final_arr = self._gel_arr
-                    is16 = self._max_val > 255.0
-                    out_max = 65535.0 if is16 else 255.0
-                    norm = np.clip(final_arr / max(self._max_val, 1e-9), 0.0, 1.0) * out_max
-                    out_gray = norm.astype(np.uint16 if is16 else np.uint8)
-                    gel_qimg = app.numpy_to_qimage(np.ascontiguousarray(out_gray))
+                    color_out = getattr(self, '_gel_color', None)
+                    if (color_out is not None and color_out.ndim == 3
+                            and color_out.shape[2] >= 3):
+                        # Preserve the ORIGINAL color and bit depth — never force
+                        # the committed gel to grayscale.  The color array is
+                        # already in numpy_to_qimage's canonical channel order
+                        # (BGRA for uint8 -> ARGB32, RGBA for uint16 -> RGBA64).
+                        out_color = np.ascontiguousarray(color_out[..., :4])
+                        gel_qimg = app.numpy_to_qimage(out_color)
+                    else:
+                        is16 = self._max_val > 255.0
+                        out_max = 65535.0 if is16 else 255.0
+                        norm = np.clip(final_arr / max(self._max_val, 1e-9), 0.0, 1.0) * out_max
+                        out_gray = norm.astype(np.uint16 if is16 else np.uint8)
+                        gel_qimg = app.numpy_to_qimage(np.ascontiguousarray(out_gray))
                     if gel_qimg is not None and not gel_qimg.isNull():
                         # The gel is WYSIWYG: inversion, levels, CLAHE and the channel
                         # mixer are already baked in.  Commit it, then clear any leftover
@@ -9748,7 +9817,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v6.7"
+                self.window_title="GEL BLOT ANALYZER v6.8"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -11655,7 +11724,11 @@ if __name__ == "__main__":
                         pil = self.convert_qimage_to_grayscale_pil(region_qimg)
                         if pil is None:
                             raise ValueError("PIL conversion failed.")
-                        self._aag_open_wizard(pil, img_coords, is_quad=False)
+                        # Keep the full-color region (color/resolution/depth) so the
+                        # committed output is never forced to grayscale.
+                        color_np = self.qimage_to_numpy(region_qimg)
+                        self._aag_open_wizard(pil, img_coords, is_quad=False,
+                                              color_np=color_np)
                     except Exception as e:
                         QMessageBox.critical(self, "Error", f"Failed to extract gel region: {e}")
                     finally:
@@ -11677,11 +11750,15 @@ if __name__ == "__main__":
                     pil = self.convert_qimage_to_grayscale_pil(warped)
                     if pil is None:
                         raise ValueError("PIL conversion failed.")
+                    # Keep the full-color warped region so color/resolution/depth
+                    # survive into the committed output (no grayscale conversion).
+                    color_np = self.qimage_to_numpy(warped)
                     # Map label-space quad points to image-space
                     img_pts = self._map_label_points_to_image_points(quad_pts_label)
                     if img_pts is None:
                         img_pts = quad_pts_label
-                    self._aag_open_wizard(pil, img_pts, is_quad=True)
+                    self._aag_open_wizard(pil, img_pts, is_quad=True,
+                                          color_np=color_np)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to extract gel region: {e}")
                 finally:
@@ -11691,13 +11768,14 @@ if __name__ == "__main__":
                     self.live_view_label.setCursor(Qt.ArrowCursor)
                     self.update_live_view()
 
-            def _aag_open_wizard(self, gel_pil, region_def, is_quad):
+            def _aag_open_wizard(self, gel_pil, region_def, is_quad, color_np=None):
                 wizard = AutoGelAnalysisDialog(
                     gel_pil_image     = gel_pil,
                     gel_region_def    = region_def,
                     is_quad_warp      = is_quad,
                     parent_app        = self,
-                    initial_band_settings = self.peak_dialog_settings
+                    initial_band_settings = self.peak_dialog_settings,
+                    gel_color_np      = color_np
                 )
                 wizard.exec()
 
