@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v6.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v6.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -159,7 +159,8 @@ if __name__ == "__main__":
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
-            QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, 
+            QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget,
+            QStackedWidget, QProgressDialog,
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
@@ -2076,9 +2077,7 @@ if __name__ == "__main__":
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
                 
-                # --- START FIX: Dynamic Sizing ---
                 screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
-                # Target 60% width, 80% height, constrained to available screen
                 w = min(int(screen_geometry.width() * 0.5), 1200)
                 h = min(int(screen_geometry.height() * 0.75), screen_geometry.height())
                 self.resize(max(600, w), max(500, h))
@@ -2196,7 +2195,7 @@ if __name__ == "__main__":
                 self.analysis_name_input_widget = QLineEdit(self.current_analysis_custom_name)
                 name_layout.addWidget(self.analysis_name_input_widget)
                 current_main_layout.addWidget(name_group)
-                
+
                 # --- MODIFIED: Create plot group with model selector ---
                 self.plot_group_current = QGroupBox("Standard Curve (Current Analysis)")
                 plot_layout_current = QVBoxLayout(self.plot_group_current)
@@ -2211,7 +2210,7 @@ if __name__ == "__main__":
                 plot_layout_current.addWidget(self.plot_placeholder_current, 1)
                 self.plot_group_current.setMinimumHeight(280)
                 current_main_layout.addWidget(self.plot_group_current)
-                
+
                 results_group = QGroupBox("Band Analysis")
                 results_layout = QVBoxLayout(results_group)
                 results_display_area = QWidget()
@@ -3237,62 +3236,31 @@ if __name__ == "__main__":
 
                 self.resize(dialog_width, dialog_height)
 
-                if not isinstance(cropped_data, Image.Image):
-                    raise TypeError("Input 'cropped_data' must be a PIL Image object")
+                if isinstance(cropped_data, list):
+                    for item in cropped_data:
+                        if not isinstance(item, dict) or 'pil' not in item or 'id' not in item:
+                            raise TypeError("Each item in cropped_data list must be a dict with 'pil' and 'id'")
+                    self.lanes_data = cropped_data
+                else:
+                    if not isinstance(cropped_data, Image.Image):
+                        raise TypeError("Input 'cropped_data' must be a PIL Image object or a list of lane dicts")
+                    self.lanes_data = [{'pil': cropped_data, 'id': 1}]
 
-                self.original_pil_cropped_data = cropped_data
-                self.enhanced_cropped_image_for_display = None
+                self.lanes_state = {}
+                for lane in self.lanes_data:
+                    self.lanes_state[lane['id']] = self._init_lane_state(lane['id'], lane['pil'], current_settings)
 
-                self.original_max_value = 255.0
-                pil_mode = self.original_pil_cropped_data.mode
-                try:
-                    if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
-                        self.intensity_array_original_range = np.array(self.original_pil_cropped_data, dtype=np.float64)
-                        self.original_max_value = 65535.0
-                    elif pil_mode == 'L':
-                        self.intensity_array_original_range = np.array(self.original_pil_cropped_data, dtype=np.float64)
-                        self.original_max_value = 255.0
-                    elif pil_mode == 'F':
-                        self.intensity_array_original_range = np.array(self.original_pil_cropped_data, dtype=np.float64)
-                        max_in_float = np.max(self.intensity_array_original_range) if np.any(self.intensity_array_original_range) else 1.0
-                        self.original_max_value = max(1.0, max_in_float)
-                    else:
-                        gray_img = self.original_pil_cropped_data.convert("L")
-                        self.intensity_array_original_range = np.array(gray_img, dtype=np.float64)
-                        self.original_max_value = 255.0
-                except Exception as e:
-                    raise TypeError(f"Could not process input image mode '{pil_mode}': {e}")
+                # Pre-calculate profiles and peaks for all lanes
+                for lane in self.lanes_data:
+                    self._load_lane_state(lane['id'])
+                    self.regenerate_profile_and_detect()
+                    self._save_current_lane_state()
 
-                if self.intensity_array_original_range.ndim != 2:
-                    raise ValueError(f"Intensity array must be 2D, shape {self.intensity_array_original_range.shape}")
+                # Load the first lane as active
+                self.current_lane_id = self.lanes_data[0]['id']
+                self._load_lane_state(self.current_lane_id)
 
-                self.is_inverted = current_settings.get('is_inverted', False)
-
-                self.profile_original_inverted = None; self.profile = None; self.background = None
-                self.rolling_ball_radius = current_settings.get('rolling_ball_radius', 50)
-                self.smoothing_sigma = current_settings.get('smoothing_sigma', 0.0)
-                self.peak_height_factor = current_settings.get('peak_height_factor', 0.1)
-                self.peak_distance = current_settings.get('peak_distance', 10)
-                # CHANGED: prominence filtering is now ON by default. It is the single most
-                # effective control for rejecting noise bumps, and previously defaulted to 0
-                # (i.e. disabled), which let specks survive into detection.
-                self.peak_prominence_factor = current_settings.get('peak_prominence_factor', 0.02)
-                self.min_band_width = current_settings.get('min_band_width', 3)
-                self.area_subtraction_method = current_settings.get('area_subtraction_method', "Gaussian Deconvolution")
-                self.auto_adjust_rb_radius = current_settings.get('auto_adjust_rb_radius', False)
-
-                self.peaks = np.array([]); self.initial_valley_regions = []; self.peak_regions = []
-                self.denoise_sigma = current_settings.get('denoise_sigma', 0.0)
-                self.peak_areas_rolling_ball = []; self.peak_areas_straight_line = []; self.peak_areas_valley = []; self.peak_areas_deconv = []
                 self._final_settings = {}; self._persist_enabled_on_exit = persist_checked
-
-                self.fitted_gaussian_params = []
-                self.tau_values = []
-                self.component_ownership = {}
-
-                # Quality / diagnostics
-                self.n_peaks_rejected = 0       # specks removed by the width/sharpness filters
-                self.last_fit_r2 = None         # deconvolution goodness-of-fit
 
                 self.manual_select_mode_active = False
                 self.selected_peak_for_ui_focus = -1
@@ -3303,7 +3271,8 @@ if __name__ == "__main__":
                 self.interactive_artists = []
 
                 self._setup_ui(persist_checked)
-                self.regenerate_profile_and_detect()
+                self.update_plot()
+                self._update_quality_readout()
 
             def _setup_ui(self, persist_checked_initial):
                 main_layout = QVBoxLayout(self)
@@ -3333,6 +3302,17 @@ if __name__ == "__main__":
 
                 controls_main_hbox = QHBoxLayout()
                 left_controls_vbox = QVBoxLayout()
+
+                # Lane selector dropdown
+                if len(self.lanes_data) > 1:
+                    self.lane_selector_layout = QHBoxLayout()
+                    self.lane_selector_layout.addWidget(QLabel("<b>Select Lane:</b>"))
+                    self.lane_combo = QComboBox()
+                    for lane in self.lanes_data:
+                        self.lane_combo.addItem(f"Lane {lane['id']}", lane['id'])
+                    self.lane_combo.currentIndexChanged.connect(self._on_lane_selection_changed)
+                    self.lane_selector_layout.addWidget(self.lane_combo)
+                    left_controls_vbox.addLayout(self.lane_selector_layout)
 
                 # ================= GLOBAL SETTINGS & AREA METHOD ===================== #
                 global_settings_group = QGroupBox("Global Settings & Area Method")
@@ -3874,7 +3854,11 @@ if __name__ == "__main__":
                 except: return 50
 
             def _recalculate_all_regions(self):
-                self.method = self.method_combobox.currentText()
+                if hasattr(self, 'method_combobox'):
+                    self.method = self.method_combobox.currentText()
+                    self.area_subtraction_method = self.method  # keep in sync with saved state
+                else:
+                    self.method = getattr(self, 'area_subtraction_method', 'Rolling Ball')
                 if self.profile_original_inverted is None:
                     return
 
@@ -4106,7 +4090,7 @@ if __name__ == "__main__":
                     except Exception:
                         self.peaks = np.array([])
 
-                if self.auto_adjust_rb_radius and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
+                if self.auto_adjust_rb_radius and hasattr(self, 'method_combobox') and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
                     self.rolling_ball_radius = self._calculate_optimal_rb_radius()
                     if hasattr(self, 'rolling_ball_slider'):
                         self.rolling_ball_slider.blockSignals(True)
@@ -4121,6 +4105,8 @@ if __name__ == "__main__":
                 self.update_plot()
 
             def accept_and_close(self):
+                self._save_current_lane_state()
+                self._propagate_settings_to_all_lanes()
                 self._final_settings = {
                     'rolling_ball_radius': self.rolling_ball_radius,
                     'denoise_sigma': self.denoise_sigma,
@@ -4137,8 +4123,258 @@ if __name__ == "__main__":
                 self._persist_enabled_on_exit = self.persist_settings_checkbox.isChecked()
                 self.accept()
 
+            def _init_lane_state(self, lane_id, pil_image, settings):
+                pil_mode = pil_image.mode
+                try:
+                    if pil_mode.startswith('I;16') or pil_mode == 'I' or pil_mode == 'I;16B' or pil_mode == 'I;16L':
+                        intensity_array_original_range = np.array(pil_image, dtype=np.float64)
+                        original_max_value = 65535.0
+                    elif pil_mode == 'L':
+                        intensity_array_original_range = np.array(pil_image, dtype=np.float64)
+                        original_max_value = 255.0
+                    elif pil_mode == 'F':
+                        intensity_array_original_range = np.array(pil_image, dtype=np.float64)
+                        max_in_float = np.max(intensity_array_original_range) if np.any(intensity_array_original_range) else 1.0
+                        original_max_value = max(1.0, max_in_float)
+                    else:
+                        gray_img = pil_image.convert("L")
+                        intensity_array_original_range = np.array(gray_img, dtype=np.float64)
+                        original_max_value = 255.0
+                except Exception as e:
+                    raise TypeError(f"Could not process input image mode '{pil_mode}' for lane {lane_id}: {e}")
+
+                state = {
+                    'pil_image': pil_image,
+                    'intensity_array_original_range': intensity_array_original_range,
+                    'original_max_value': original_max_value,
+                    'enhanced_cropped_image_for_display': None,
+                    'profile_original_inverted': None,
+                    'profile': None,
+                    'background': None,
+                    'peaks': np.array([]),
+                    'initial_valley_regions': [],
+                    'peak_regions': [],
+                    'peak_areas_rolling_ball': [],
+                    'peak_areas_straight_line': [],
+                    'peak_areas_valley': [],
+                    'peak_areas_deconv': [],
+                    'fitted_gaussian_params': [],
+                    'tau_values': [],
+                    'component_ownership': {},
+                    'n_peaks_rejected': 0,
+                    'last_fit_r2': None,
+                    'selected_peak_for_ui_focus': -1,
+                    'selected_peak_index_for_delete': -1,
+                    'is_inverted': settings.get('is_inverted', False),
+                    'rolling_ball_radius': settings.get('rolling_ball_radius', 50),
+                    'smoothing_sigma': settings.get('smoothing_sigma', 0.0),
+                    'peak_height_factor': settings.get('peak_height_factor', 0.1),
+                    'peak_distance': settings.get('peak_distance', 10),
+                    'peak_prominence_factor': settings.get('peak_prominence_factor', 0.02),
+                    'min_band_width': settings.get('min_band_width', 3),
+                    'area_subtraction_method': settings.get('area_subtraction_method', "Gaussian Deconvolution"),
+                    'auto_adjust_rb_radius': settings.get('auto_adjust_rb_radius', False),
+                    'denoise_sigma': settings.get('denoise_sigma', 0.0)
+                }
+                return state
+
+            def _save_current_lane_state(self):
+                if not hasattr(self, 'current_lane_id') or self.current_lane_id not in self.lanes_state:
+                    return
+                state = self.lanes_state[self.current_lane_id]
+                state['pil_image'] = self.original_pil_cropped_data
+                state['intensity_array_original_range'] = self.intensity_array_original_range
+                state['original_max_value'] = self.original_max_value
+                state['enhanced_cropped_image_for_display'] = self.enhanced_cropped_image_for_display
+                state['profile_original_inverted'] = self.profile_original_inverted
+                state['profile'] = self.profile
+                state['background'] = self.background
+                state['peaks'] = self.peaks
+                state['initial_valley_regions'] = self.initial_valley_regions
+                state['peak_regions'] = self.peak_regions
+                state['peak_areas_rolling_ball'] = self.peak_areas_rolling_ball
+                state['peak_areas_straight_line'] = self.peak_areas_straight_line
+                state['peak_areas_valley'] = self.peak_areas_valley
+                state['peak_areas_deconv'] = self.peak_areas_deconv
+                state['fitted_gaussian_params'] = self.fitted_gaussian_params
+                state['tau_values'] = self.tau_values
+                state['component_ownership'] = self.component_ownership
+                state['n_peaks_rejected'] = self.n_peaks_rejected
+                state['last_fit_r2'] = self.last_fit_r2
+                state['selected_peak_for_ui_focus'] = self.selected_peak_for_ui_focus
+                state['selected_peak_index_for_delete'] = self.selected_peak_index_for_delete
+                state['is_inverted'] = self.is_inverted
+                state['rolling_ball_radius'] = self.rolling_ball_radius
+                state['smoothing_sigma'] = self.smoothing_sigma
+                state['peak_height_factor'] = self.peak_height_factor
+                state['peak_distance'] = self.peak_distance
+                state['peak_prominence_factor'] = self.peak_prominence_factor
+                state['min_band_width'] = self.min_band_width
+                state['area_subtraction_method'] = self.area_subtraction_method
+                state['auto_adjust_rb_radius'] = self.auto_adjust_rb_radius
+                state['denoise_sigma'] = self.denoise_sigma
+
+            def _load_lane_state(self, lane_id):
+                if lane_id not in self.lanes_state:
+                    return
+                self.current_lane_id = lane_id
+                state = self.lanes_state[lane_id]
+                self.original_pil_cropped_data = state['pil_image']
+                self.intensity_array_original_range = state['intensity_array_original_range']
+                self.original_max_value = state['original_max_value']
+                self.enhanced_cropped_image_for_display = state['enhanced_cropped_image_for_display']
+                self.profile_original_inverted = state['profile_original_inverted']
+                self.profile = state['profile']
+                self.background = state['background']
+                self.peaks = state['peaks']
+                self.initial_valley_regions = state['initial_valley_regions']
+                self.peak_regions = state['peak_regions']
+                self.peak_areas_rolling_ball = state['peak_areas_rolling_ball']
+                self.peak_areas_straight_line = state['peak_areas_straight_line']
+                self.peak_areas_valley = state['peak_areas_valley']
+                self.peak_areas_deconv = state['peak_areas_deconv']
+                self.fitted_gaussian_params = state['fitted_gaussian_params']
+                self.tau_values = state['tau_values']
+                self.component_ownership = state['component_ownership']
+                self.n_peaks_rejected = state['n_peaks_rejected']
+                self.last_fit_r2 = state['last_fit_r2']
+                self.selected_peak_for_ui_focus = state['selected_peak_for_ui_focus']
+                self.selected_peak_index_for_delete = state['selected_peak_index_for_delete']
+                self.is_inverted = state['is_inverted']
+                self.rolling_ball_radius = state['rolling_ball_radius']
+                self.smoothing_sigma = state['smoothing_sigma']
+                self.peak_height_factor = state['peak_height_factor']
+                self.peak_distance = state['peak_distance']
+                self.peak_prominence_factor = state['peak_prominence_factor']
+                self.min_band_width = state['min_band_width']
+                self.area_subtraction_method = state['area_subtraction_method']
+                self.auto_adjust_rb_radius = state['auto_adjust_rb_radius']
+                self.denoise_sigma = state['denoise_sigma']
+
+            def _update_gui_controls_from_loaded_state(self):
+                controls = [
+                    self.method_combobox,
+                    self.rolling_ball_slider,
+                    self.auto_adjust_checkbox,
+                    self.peak_prominence_slider,
+                    self.peak_distance_slider,
+                    self.denoise_sigma_slider,
+                    self.smoothing_slider,
+                    self.peak_height_slider,
+                    self.min_band_width_slider,
+                    self.invert_display_button
+                ]
+                for c in controls:
+                    if c is not None:
+                        c.blockSignals(True)
+                idx = self.method_combobox.findText(self.area_subtraction_method)
+                if idx >= 0: self.method_combobox.setCurrentIndex(idx)
+                self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
+                self.rolling_ball_label.setText(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})")
+                self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
+                self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 1000))
+                self.peak_prominence_slider_label.setText(f"Min Prominence ({self.peak_prominence_factor:.3f})")
+                self.peak_distance_slider.setValue(self.peak_distance)
+                self.peak_distance_slider_label.setText(f"Min Distance ({self.peak_distance}) px")
+                self.denoise_sigma_slider.setValue(int(self.denoise_sigma * 10))
+                self.denoise_sigma_label.setText(f"Denoise Sigma ({self.denoise_sigma:.1f})")
+                self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
+                self.smoothing_label.setText(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
+                self.peak_height_slider.setValue(int(self.peak_height_factor * 100))
+                self.peak_height_slider_label.setText(f"Min Height ({self.peak_height_factor:.2f})")
+                self.min_band_width_slider.setValue(int(self.min_band_width))
+                self.min_band_width_label.setText(f"Min Band Width ({self.min_band_width}) px")
+                self.invert_display_button.setChecked(self.is_inverted)
+                if hasattr(self, 'peak_number_input'):
+                    self.peak_number_input.setText(str(len(self.peaks)))
+                for c in controls:
+                    if c is not None:
+                        c.blockSignals(False)
+                self.update_rb_controls_enabled_state()
+
+            # ── Detection-setting keys that must stay identical across all lanes ──
+            _SHARED_SETTINGS = (
+                'area_subtraction_method', 'rolling_ball_radius', 'auto_adjust_rb_radius',
+                'smoothing_sigma', 'peak_height_factor', 'peak_distance',
+                'peak_prominence_factor', 'min_band_width', 'denoise_sigma', 'is_inverted',
+            )
+
+            def _propagate_settings_to_all_lanes(self):
+                """Copy current lane's detection settings to every other lane and
+                re-run detection so areas are always computed with the same parameters."""
+                src_id = self.current_lane_id
+                if src_id not in self.lanes_state:
+                    return
+                src = self.lanes_state[src_id]
+                for lane in self.lanes_data:
+                    lid = lane['id']
+                    if lid == src_id:
+                        continue
+                    dst = self.lanes_state[lid]
+                    for key in self._SHARED_SETTINGS:
+                        if key in src:
+                            dst[key] = src[key]
+                    # Re-run detection for the updated lane state
+                    saved_id = self.current_lane_id
+                    self._load_lane_state(lid)
+                    try:
+                        self.regenerate_profile_and_detect()
+                    except Exception:
+                        pass
+                    self._save_current_lane_state()
+                    self._load_lane_state(saved_id)
+
+            def _on_lane_selection_changed(self, index):
+                if index < 0 or index >= len(self.lanes_data):
+                    return
+                self._save_current_lane_state()
+                self._propagate_settings_to_all_lanes()
+                new_lane_id = self.lanes_data[index]['id']
+                self._load_lane_state(new_lane_id)
+                self._update_gui_controls_from_loaded_state()
+                self.ax.cla()
+                self.ax_image.cla()
+                self.background_blit = None
+                self.interactive_artists = []
+                self.selected_peak_for_ui_focus = -1
+                self.update_plot()
+                self._update_quality_readout()
+
+            def get_all_lanes_peak_info(self):
+                self._save_current_lane_state()
+                results = {}
+                for lane in self.lanes_data:
+                    lane_id = lane['id']
+                    state = self.lanes_state[lane_id]
+                    peak_info_list = []
+                    method = state['area_subtraction_method']
+                    if method == "Gaussian Deconvolution": current_area_list = state['peak_areas_deconv']
+                    elif method == "Rolling Ball": current_area_list = state['peak_areas_rolling_ball']
+                    elif method == "Straight Line": current_area_list = state['peak_areas_straight_line']
+                    elif method == "Rolling-valley": current_area_list = state['peak_areas_valley']
+                    else: current_area_list = []
+                    peaks = state['peaks']
+                    num_valid_peaks = len(peaks)
+                    num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
+                    for i in range(num_peaks_to_process):
+                        try:
+                            original_peak_x_in_profile = int(peaks[i])
+                            peak_info_list.append({
+                                'area': current_area_list[i],
+                                'y_coord_in_lane_image': original_peak_x_in_profile,
+                                'original_peak_index': original_peak_x_in_profile
+                            })
+                        except IndexError:
+                            peak_info_list.append({
+                                'area': 0.0,
+                                'y_coord_in_lane_image': 0,
+                                'original_peak_index': -1
+                            })
+                    results[lane_id] = peak_info_list
+                return results
+
             def update_plot(self):
-                if self.canvas is None:
+                if not hasattr(self, 'canvas') or self.canvas is None:
                     return
                 profile_to_plot_and_calc = self.profile_original_inverted
 
@@ -5568,43 +5804,32 @@ if __name__ == "__main__":
                     dash_gap = 6 # Pixel gap between line and text
 
                     # --- LEFT MARKERS ---
+                    # The configurable marker symbol (e.g. "⎯") is drawn as text next to
+                    # the value and acts as the tick; the group's right edge sits at the
+                    # anchor so it points at the band.
                     if hasattr(self.app_instance, 'left_markers'):
                         left_marker_offset_x_label_space = self.app_instance.left_marker_shift_added * _scale_factor_img_to_label
                         for y_pos_img, marker_text_val in self.app_instance.left_markers:
                             # Exact center Y in label space (corresponds to band center)
                             center_y = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
-                            
-                            # 1. Draw the geometric line (Perfectly centered on the band)
-                            # Anchor X is the rightmost point of the marker group
-                            line_end_x = _offset_x_img_in_label + left_marker_offset_x_label_space
-                            line_start_x = line_end_x - dash_len
-                            painter.drawLine(QPointF(line_start_x, center_y), QPointF(line_end_x, center_y))
-                            
-                            # 2. Draw Text (Vertically centered relative to the line)
-                            if marker_text_val:
-                                text_to_draw = str(marker_text_val)
-                                text_width = font_metrics_std.horizontalAdvance(text_to_draw)
-                                text_x = line_start_x - dash_gap - text_width
-                                text_baseline_y = center_y + y_text_centering_offset
-                                painter.drawText(QPointF(text_x, text_baseline_y), text_to_draw)
+                            anchor_x = _offset_x_img_in_label + left_marker_offset_x_label_space
+                            text_to_draw = self.app_instance.marker_label_text(marker_text_val, 'left')
+                            if not text_to_draw:
+                                continue
+                            text_width = font_metrics_std.horizontalAdvance(text_to_draw)
+                            text_baseline_y = center_y + self.app_instance.marker_baseline_offset(font_metrics_std, text_to_draw)
+                            painter.drawText(QPointF(anchor_x - text_width, text_baseline_y), text_to_draw)
 
                     # --- RIGHT MARKERS ---
                     if hasattr(self.app_instance, 'right_markers'):
                             right_marker_start_x_label_space = _offset_x_img_in_label + (self.app_instance.right_marker_shift_added * _scale_factor_img_to_label)
                             for y_pos_img, marker_text_val in self.app_instance.right_markers:
                                 center_y = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
-                                
-                                # 1. Draw the geometric line
-                                line_start_x = right_marker_start_x_label_space
-                                line_end_x = line_start_x + dash_len
-                                painter.drawLine(QPointF(line_start_x, center_y), QPointF(line_end_x, center_y))
-                                
-                                # 2. Draw Text
-                                if marker_text_val:
-                                    text_to_draw = str(marker_text_val)
-                                    text_x = line_end_x + dash_gap
-                                    text_baseline_y = center_y + y_text_centering_offset
-                                    painter.drawText(QPointF(text_x, text_baseline_y), text_to_draw)
+                                text_to_draw = self.app_instance.marker_label_text(marker_text_val, 'right')
+                                if not text_to_draw:
+                                    continue
+                                text_baseline_y = center_y + self.app_instance.marker_baseline_offset(font_metrics_std, text_to_draw)
+                                painter.drawText(QPointF(right_marker_start_x_label_space, text_baseline_y), text_to_draw)
 
                     # --- TOP MARKERS ---
                     if hasattr(self.app_instance, 'top_markers'):
@@ -5675,16 +5900,16 @@ if __name__ == "__main__":
                     font_metrics_std = QFontMetrics(std_marker_font); y_offset_text_baseline_std = font_metrics_std.height() * 0.3
                     preview_text = self.standard_marker_preview_text; preview_pos = self.standard_marker_preview_position
                     if self.standard_marker_preview_mode == 'left':
-                        text_to_draw = f"{preview_text} ⎯"; text_width = font_metrics_std.horizontalAdvance(text_to_draw)
+                        text_to_draw = self.app_instance.marker_label_text(preview_text, 'left'); text_width = font_metrics_std.horizontalAdvance(text_to_draw)
                         is_first = len(self.app_instance.left_markers) == 0
                         anchor_x_ls = preview_pos.x() if is_first else (_offset_x_img_in_label + self.app_instance.left_marker_shift_added * _scale_factor_img_to_label)
-                        draw_x_ls = anchor_x_ls - text_width; draw_y_ls = preview_pos.y() + y_offset_text_baseline_std
+                        draw_x_ls = anchor_x_ls - text_width; draw_y_ls = preview_pos.y() + self.app_instance.marker_baseline_offset(font_metrics_std, text_to_draw)
                         painter.drawText(QPointF(draw_x_ls, draw_y_ls), text_to_draw)
                     elif self.standard_marker_preview_mode == 'right':
-                        text_to_draw = f"⎯ {preview_text}"
+                        text_to_draw = self.app_instance.marker_label_text(preview_text, 'right')
                         is_first = len(self.app_instance.right_markers) == 0
                         anchor_x_ls = preview_pos.x() if is_first else (_offset_x_img_in_label + self.app_instance.right_marker_shift_added * _scale_factor_img_to_label)
-                        draw_y_ls = preview_pos.y() + y_offset_text_baseline_std
+                        draw_y_ls = preview_pos.y() + self.app_instance.marker_baseline_offset(font_metrics_std, text_to_draw)
                         painter.drawText(QPointF(anchor_x_ls, draw_y_ls), text_to_draw)
                     elif self.standard_marker_preview_mode == 'top':
                         rotation_angle = self.app_instance.font_rotation
@@ -5921,26 +6146,31 @@ if __name__ == "__main__":
 
                 # --- START OF NEW STREAMLINED PREVIEW LOGIC ---
                 # This single block replaces all the old, fragmented preview drawing logic for analysis regions.
-                if self.mode in ['define_rect', 'define_quad', 'auto_lane_rect', 'auto_lane_quad']:
+                if self.mode in ['define_rect', 'define_quad', 'auto_lane_rect', 'auto_lane_quad',
+                                  'auto_analyze_rect', 'auto_analyze_quad']:
                     preview_pen_width = max(0.5, 1.5 / self.zoom_level if self.zoom_level > 0 else 1.5)
                     handle_radius_view = self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level if self.zoom_level > 0 else self.CORNER_HANDLE_BASE_RADIUS
                     points_to_draw = self.current_preview_points
 
-                    if self.mode in ['define_rect', 'auto_lane_rect'] and len(points_to_draw) == 2:
-                        painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
+                    if self.mode in ['define_rect', 'auto_lane_rect', 'auto_analyze_rect'] and len(points_to_draw) == 2:
+                        color = Qt.darkCyan if self.mode == 'auto_analyze_rect' else Qt.darkMagenta
+                        painter.setPen(QPen(color, preview_pen_width * 2, Qt.DashLine))
                         painter.drawRect(QRectF(points_to_draw[0], points_to_draw[1]).normalized())
 
-                    elif self.mode in ['define_quad', 'auto_lane_quad'] and points_to_draw:
-                        painter.setPen(QPen(Qt.magenta, preview_pen_width * 1.5, Qt.SolidLine))
+                    elif self.mode in ['define_quad', 'auto_lane_quad', 'auto_analyze_quad'] and points_to_draw:
+                        color = QColor(0, 200, 200) if self.mode == 'auto_analyze_quad' else QColor(255, 0, 255)
+                        painter.setPen(QPen(color, preview_pen_width * 1.5, Qt.SolidLine))
                         for p_ls in points_to_draw:
                             painter.drawEllipse(p_ls, handle_radius_view, handle_radius_view)
                         if 0 < len(points_to_draw) < 4:
-                            painter.setPen(QPen(Qt.darkMagenta, preview_pen_width, Qt.DotLine))
+                            painter.setPen(QPen(color, preview_pen_width, Qt.DotLine))
                             painter.drawPolyline(QPolygonF(points_to_draw))
                 # --- END OF NEW STREAMLINED PREVIEW LOGIC ---
 
                 # --- Draw Finalized Multi-Lane Shapes ---
-                if self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions') and self.app_instance.multi_lane_definitions:
+                if (self.app_instance and hasattr(self.app_instance, 'multi_lane_definitions')
+                        and self.app_instance.multi_lane_definitions
+                        and getattr(self.app_instance, 'markers_visible', True)):
                     lane_font = QFont("Arial")
                     font_pixel_size = max(4, int(10 * current_ui_scale / self.zoom_level if self.zoom_level > 0 else 10 * current_ui_scale))
                     lane_font.setPixelSize(font_pixel_size)
@@ -6177,6 +6407,2809 @@ if __name__ == "__main__":
                             return
                 
                 super().keyPressEvent(event)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Automated Gel Analysis wizard — v3 (one-step)
+        # ─────────────────────────────────────────────────────────────────────
+        class AutoGelAnalysisDialog(QDialog):
+            """
+            Five-phase one-stop gel/blot analysis wizard.
+
+            Step 1 – Task Selection.
+            Step 2 – Image Adjustment (Rotation, Skew correction, draggable crop box, grid).
+            Step 3 – Lane Detection (Column profile, draggable boundaries on prepared canvas).
+            Step 4 – Labels & MWM setup (Lane top-labels, marker type).
+            Step 5 – Band detection settings + analysis type selection.
+            """
+
+            MWM_PRESETS = {
+                "None (labels only)": [],
+                "Precision Plus Protein All Blue Prestained (Bio-Rad)":
+                    [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
+                "Precision Plus Protein Dual Color Prestained (Bio-Rad)":
+                    [250, 150, 100, 75, 50, 37, 25, 20, 15, 10],
+                "PageRuler Prestained Protein Ladder (Thermo)":
+                    [250, 130, 100, 70, 55, 35, 25, 15, 10],
+                "PageRuler Plus Prestained Protein Ladder (Thermo)":
+                    [250, 130, 100, 70, 55, 35, 25, 17, 11],
+                "Spectra Multicolor Broad Range Protein Ladder (Thermo)":
+                    [260, 140, 100, 75, 60, 45, 35, 25, 15, 10],
+                "1 kb DNA Ladder (NEB N3232)":
+                    [10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 500],
+                "GeneRuler 1 kb Plus DNA Ladder (Thermo)":
+                    [20000, 10000, 7000, 5000, 4000, 3000, 2000, 1500, 1000,
+                    700, 500, 400, 300, 200, 75],
+                "Custom": [],
+            }
+
+            def __init__(self, gel_pil_image, gel_region_def, is_quad_warp,
+                        parent_app, initial_band_settings):
+                super().__init__(parent_app)
+                self.setWindowTitle("Auto Gel Analysis  —  One-Step Wizard")
+                screen_geo = QGuiApplication.primaryScreen().availableGeometry()
+                self.resize(min(1200, int(screen_geo.width() * 0.88)),
+                            min(920,  int(screen_geo.height() * 0.92)))
+
+                self.gel_pil        = gel_pil_image
+                self.gel_region_def = gel_region_def
+                self.is_quad_warp   = is_quad_warp
+                self.parent_app     = parent_app
+                self.band_settings  = dict(initial_band_settings)
+
+                # Raw float-based array extraction for clean precision mapping
+                pil_mode = self.gel_pil.mode
+                if pil_mode in ('I', 'I;16', 'I;16L', 'I;16B', 'I;16N'):
+                    arr = np.array(self.gel_pil, dtype=np.float64)
+                    self._max_val = 65535.0
+                elif pil_mode == 'F':
+                    arr = np.array(self.gel_pil, dtype=np.float64)
+                    self._max_val = max(1.0, float(np.max(arr)))
+                else:
+                    arr = np.array(self.gel_pil.convert('L'), dtype=np.float64)
+                    self._max_val = 255.0
+                if arr.ndim == 3:
+                    arr = np.mean(arr[:, :, :3], axis=2)
+
+                # Baseline storage (Raw pristine state is never modified directly)
+                self._gel_arr_raw = arr.copy()
+                self._gel_arr = arr.copy()
+                self._inv_arr = self._max_val - arr
+
+                # ── Step 0: Task-selection flags ─────────────────────────
+                self._do_crop         = True
+                self._do_padding      = True
+                self._do_markers      = True
+                self._do_densitometry = True
+
+                # White-border padding (auto-computed from labels before output)
+                self._pad_top = 0; self._pad_bottom = 0
+                self._pad_left = 0; self._pad_right = 0
+                self._label_anchor_shift = 0   # top-label baseline offset (px), set with padding
+
+                # ── Step 1: Image preparation parameters ─────────────────
+                self._rotation_angle  = 0.0
+                self._skew_amount     = 0.0
+                self._crop_l = 0; self._crop_r = 0
+                self._crop_t = 0; self._crop_b = 0
+                # Interactive crop boundary-box + grid overlay (Step 2 — Image Adjustment)
+                self._prep_crop_mode   = None     # 'edge-l/r/t/b' | 'corner' | 'move' | 'draw'
+                self._prep_crop_corner = None     # (x_side, y_side) while resizing a corner
+                self._prep_crop_anchor = None     # press-time geometry snapshot
+                self._prep_show_grid_x = False
+                self._prep_show_grid_y = False
+                self._prep_grid_size   = 40
+                self._prep_last_dims   = None     # (h, w) of last rendered preview array
+
+                # ── Step 2: Lane detection parameters ────────────────────
+                self._lane_smooth     = 5.0
+                self._lane_prom       = 0.05
+                self._lane_height     = 0.05
+                self._lane_dist       = 15
+                self._lane_peaks      = np.array([], dtype=int)
+                self._lane_bounds     = []
+                self._gel_inverted    = False
+                self._drag_info       = None
+                self._drag_lines      = []
+                self._selected_lane_idx = -1
+
+                # ── Step 3: Labels & MWM parameters ──────────────────────
+                self._lane_label_edits = []
+                self._mwm_checkboxes   = []
+                self._mwm_preset_name  = "None (labels only)"
+                self._mwm_custom_text  = ""
+
+                # ── Step 4: Band detection parameters ────────────────────
+                self._band_method     = self.band_settings.get('area_subtraction_method', 'Rolling Ball')
+                self._band_smooth     = self.band_settings.get('smoothing_sigma', 0.5)
+                self._band_prom       = self.band_settings.get('peak_prominence_factor', 0.02)
+                self._band_height     = self.band_settings.get('peak_height_factor', 0.05)
+                self._band_dist       = self.band_settings.get('peak_distance', 10)
+                self._band_min_w      = self.band_settings.get('min_band_width', 3)
+                self._band_invert     = self.band_settings.get('is_inverted', False)
+                self._band_rb_radius  = int(self.band_settings.get('rolling_ball_radius', 50))
+                self._band_auto_rb    = bool(self.band_settings.get('auto_adjust_rb_radius', False))
+
+                self._phase            = 0
+                self._preview_lane_idx = 0
+
+                # Live fence adjustments in Page 4
+                self._p4_drag_fence    = None
+                self._p4_current_info  = []
+                self._fence_overrides  = {}
+
+                self._setup_ui()
+
+            def _setup_ui(self):
+                root = QVBoxLayout(self)
+                root.setContentsMargins(6, 6, 6, 6)
+                root.setSpacing(4)
+
+                self._step_label = QLabel()
+                self._step_label.setAlignment(Qt.AlignCenter)
+                f = self._step_label.font()
+                f.setBold(True); f.setPointSize(11)
+                self._step_label.setFont(f)
+                root.addWidget(self._step_label)
+
+                self._stack = QStackedWidget()
+                root.addWidget(self._stack, stretch=1)
+
+                self._build_page0()   # Index 0: Task Selection
+                self._build_page1()   # Index 1: Image Prep (Crop, Rotate, Skew)
+                self._build_page2()   # Index 2: Lane Detection
+                self._build_page3()   # Index 3: Labels & MWM
+                self._build_page4()   # Index 4: Band Detection Settings
+
+                self._stack.setCurrentIndex(0)
+                self._step_label.setText("Step 1 — Select Analysis Tasks")
+
+            # ── Page 0: Task Selection ─────────────────────────────────
+            def _build_page0(self):
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setSpacing(10)
+                layout.setContentsMargins(20, 20, 20, 20)
+
+                info_lbl = QLabel(
+                    "<b>Select what you want to do:</b><br>"
+                    "All options are enabled by default. "
+                    "Uncheck any step you want to skip.")
+                info_lbl.setWordWrap(True)
+                info_lbl.setStyleSheet("padding:8px; background:#eef4fb; border-radius:4px;")
+                layout.addWidget(info_lbl)
+
+                task_grp = QGroupBox("Analysis Tasks")
+                task_lay = QVBoxLayout(task_grp)
+                task_lay.setSpacing(10)
+
+                self._p0_crop_chk = QCheckBox("Crop image to gel boundary")
+                self._p0_crop_chk.setChecked(True)
+                self._p0_crop_chk.setToolTip(
+                    "Automatically crop the image to the drawn gel boundary.\n"
+                    "Recommended white padding is added automatically after you set "
+                    "lane labels, so the top labels always fit.")
+                self._p0_crop_chk.toggled.connect(self._on_p0_crop_toggled)
+
+                self._p0_markers_chk = QCheckBox("Place Molecular Weight Markers (MWM)")
+                self._p0_markers_chk.setChecked(True)
+                self._p0_markers_chk.setToolTip("Set up lane labels and molecular weight marker bands (Step 4)")
+                self._p0_markers_chk.toggled.connect(self._on_p0_markers_toggled)
+
+                self._p0_density_chk = QCheckBox("Run Densitometric Analysis")
+                self._p0_density_chk.setChecked(True)
+                self._p0_density_chk.setToolTip("Detect and quantify bands in each lane (Step 5)")
+                self._p0_density_chk.toggled.connect(self._on_p0_density_toggled)
+
+                task_lay.addWidget(self._p0_crop_chk)
+                task_lay.addWidget(self._p0_markers_chk)
+                task_lay.addWidget(self._p0_density_chk)
+                layout.addWidget(task_grp)
+                layout.addStretch()
+
+                nav = QHBoxLayout()
+                p0_cancel_btn = QPushButton("Cancel")
+                p0_cancel_btn.clicked.connect(self.reject)
+                p0_next_btn = QPushButton("Next: Image Adjustment  →")
+                p0_next_btn.setDefault(True)
+                f0 = p0_next_btn.font(); f0.setBold(True)
+                p0_next_btn.setFont(f0)
+                p0_next_btn.clicked.connect(self._go_to_phase1)
+                nav.addWidget(p0_cancel_btn)
+                nav.addStretch()
+                nav.addWidget(p0_next_btn)
+                layout.addLayout(nav)
+
+                self._stack.addWidget(page)
+
+            def _on_p0_crop_toggled(self, checked):
+                self._do_crop = checked
+                self._do_padding = checked
+
+            def _on_p0_markers_toggled(self, checked):
+                self._do_markers = checked
+
+            def _on_p0_density_toggled(self, checked):
+                self._do_densitometry = checked
+
+            # ── Page 1: Image Adjustment (Rotate, Skew, Crop box) ───────
+            def _build_page1(self):
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setSpacing(6)
+
+                hint = QLabel(
+                    "Straighten with the <b>Rotation</b> / <b>Skew</b> sliders. Crop with the mouse on the "
+                    "<span style='color:#cc00cc;'><b>magenta box</b></span>: drag an <b>edge</b> or "
+                    "<b>corner</b> to resize, drag <b>inside</b> to move it, or drag on the image to "
+                    "<b>draw a new box</b> (the spin boxes stay in sync). Toggle a grid to help align lanes.")
+                hint.setWordWrap(True)
+                hint.setStyleSheet("padding:5px; background:#eef4fb; border-radius:4px;")
+                layout.addWidget(hint)
+
+                self._prep_fig = plt.figure(figsize=(11, 5))
+                self._prep_ax = self._prep_fig.add_subplot(111)
+                self._prep_canvas = FigureCanvas(self._prep_fig)
+                self._prep_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                self._prep_canvas.mpl_connect('button_press_event',   self._on_prep_crop_press)
+                self._prep_canvas.mpl_connect('motion_notify_event',  self._on_prep_crop_motion)
+                self._prep_canvas.mpl_connect('button_release_event', self._on_prep_crop_release)
+                layout.addWidget(self._prep_canvas, stretch=3)
+
+                ctrl = QGroupBox("Image Adjustment — Straighten & Crop")
+                g = QGridLayout(ctrl)
+                g.setSpacing(5)
+
+                # Rotation slider setup (±45 deg)
+                self._prep_lbl_rot = QLabel("Rotation: +0.0°")
+                self._prep_sl_rot = QSlider(Qt.Horizontal)
+                self._prep_sl_rot.setRange(-450, 450)
+                self._prep_sl_rot.setValue(0)
+                self._prep_sl_rot.valueChanged.connect(self._on_prep_geometry_changed)
+                self._prep_rot_reset = QPushButton("Reset")
+                self._prep_rot_reset.setFixedWidth(56)
+                self._prep_rot_reset.clicked.connect(lambda: self._prep_sl_rot.setValue(0))
+                g.addWidget(self._prep_lbl_rot, 0, 0)
+                g.addWidget(self._prep_sl_rot, 0, 1)
+                g.addWidget(self._prep_rot_reset, 0, 2)
+
+                # Skew slider setup
+                self._prep_lbl_skew = QLabel("Skew: +0.00")
+                self._prep_sl_skew = QSlider(Qt.Horizontal)
+                self._prep_sl_skew.setRange(-100, 100)
+                self._prep_sl_skew.setValue(0)
+                self._prep_sl_skew.valueChanged.connect(self._on_prep_geometry_changed)
+                self._prep_skew_reset = QPushButton("Reset")
+                self._prep_skew_reset.setFixedWidth(56)
+                self._prep_skew_reset.clicked.connect(lambda: self._prep_sl_skew.setValue(0))
+                g.addWidget(self._prep_lbl_skew, 1, 0)
+                g.addWidget(self._prep_sl_skew, 1, 1)
+                g.addWidget(self._prep_skew_reset, 1, 2)
+
+                # Manual edge crop inputs (synced with the draggable crop box)
+                H0, W0 = self._gel_arr_raw.shape[:2]
+                crop_row = QHBoxLayout()
+                crop_row.addWidget(QLabel("Crop box (px) — L:"))
+                self._prep_crop_l = QSpinBox(); self._prep_crop_l.setRange(0, max(0, W0 - 2))
+                self._prep_crop_l.valueChanged.connect(self._on_prep_geometry_changed)
+                crop_row.addWidget(self._prep_crop_l)
+
+                crop_row.addWidget(QLabel("R:"))
+                self._prep_crop_r = QSpinBox(); self._prep_crop_r.setRange(0, max(0, W0 - 2))
+                self._prep_crop_r.valueChanged.connect(self._on_prep_geometry_changed)
+                crop_row.addWidget(self._prep_crop_r)
+
+                crop_row.addWidget(QLabel("T:"))
+                self._prep_crop_t = QSpinBox(); self._prep_crop_t.setRange(0, max(0, H0 - 2))
+                self._prep_crop_t.valueChanged.connect(self._on_prep_geometry_changed)
+                crop_row.addWidget(self._prep_crop_t)
+
+                crop_row.addWidget(QLabel("B:"))
+                self._prep_crop_b = QSpinBox(); self._prep_crop_b.setRange(0, max(0, H0 - 2))
+                self._prep_crop_b.valueChanged.connect(self._on_prep_geometry_changed)
+                crop_row.addWidget(self._prep_crop_b)
+
+                self._prep_crop_reset = QPushButton("Reset Crop")
+                self._prep_crop_reset.clicked.connect(self._reset_prep_crop)
+                crop_row.addWidget(self._prep_crop_reset)
+                crop_row.addStretch()
+                g.addLayout(crop_row, 2, 0, 1, 3)
+
+                # Grid overlay controls (moved here to aid alignment)
+                grid_row = QHBoxLayout()
+                self._prep_grid_x_chk = QCheckBox("Grid X")
+                self._prep_grid_y_chk = QCheckBox("Grid Y")
+                self._prep_grid_x_chk.toggled.connect(self._on_prep_grid_x)
+                self._prep_grid_y_chk.toggled.connect(self._on_prep_grid_y)
+                self._prep_grid_size_spin = QSpinBox()
+                self._prep_grid_size_spin.setRange(5, 500)
+                self._prep_grid_size_spin.setValue(self._prep_grid_size)
+                self._prep_grid_size_spin.setPrefix("Spacing (px): ")
+                self._prep_grid_size_spin.valueChanged.connect(self._on_prep_grid_size)
+                grid_row.addWidget(self._prep_grid_x_chk)
+                grid_row.addWidget(self._prep_grid_y_chk)
+                grid_row.addSpacing(8)
+                grid_row.addWidget(self._prep_grid_size_spin)
+                grid_row.addStretch()
+                g.addLayout(grid_row, 3, 0, 1, 3)
+
+                g.setColumnStretch(1, 1)
+                layout.addWidget(ctrl)
+
+                nav = QHBoxLayout()
+                p1_back_btn = QPushButton("← Back")
+                p1_back_btn.clicked.connect(self._go_to_phase0)
+                p1_cancel_btn = QPushButton("Cancel")
+                p1_cancel_btn.clicked.connect(self.reject)
+                p1_next_btn = QPushButton("Apply Adjustment & Detect Lanes →")
+                p1_next_btn.setDefault(True)
+                p1_next_btn.clicked.connect(self._lock_geometry_and_go_to_lanes)
+
+                nav.addWidget(p1_back_btn)
+                nav.addWidget(p1_cancel_btn)
+                nav.addStretch()
+                nav.addWidget(p1_next_btn)
+                layout.addLayout(nav)
+
+                self._stack.addWidget(page)
+
+            # ── Page 1 grid / crop helpers ─────────────────────────────
+            def _on_prep_grid_x(self, checked):
+                self._prep_show_grid_x = checked
+                self._on_prep_geometry_changed()
+
+            def _on_prep_grid_y(self, checked):
+                self._prep_show_grid_y = checked
+                self._on_prep_geometry_changed()
+
+            def _on_prep_grid_size(self, v):
+                self._prep_grid_size = v
+                if self._prep_show_grid_x or self._prep_show_grid_y:
+                    self._on_prep_geometry_changed()
+
+            def _reset_prep_crop(self):
+                for sp in (self._prep_crop_l, self._prep_crop_r,
+                           self._prep_crop_t, self._prep_crop_b):
+                    sp.blockSignals(True); sp.setValue(0); sp.blockSignals(False)
+                self._on_prep_geometry_changed()
+
+            # Interactive crop box: drag edges, corners, move the whole box, or
+            # rubber-band a brand-new box anywhere on the image.
+            _PREP_CROP_MIN = 8   # smallest allowed crop box (px)
+
+            def _prep_crop_box_px(self, h, w):
+                """Current crop box as pixel coords (x0, y0, x1, y1) on the h×w preview."""
+                l = self._prep_crop_l.value(); r = self._prep_crop_r.value()
+                t = self._prep_crop_t.value(); b = self._prep_crop_b.value()
+                return float(l), float(t), float(w - r), float(h - b)
+
+            def _commit_crop_box_px(self, x0, y0, x1, y1, h, w):
+                """Clamp a pixel box (keeping a minimum size) and write it to L/R/T/B."""
+                m = self._PREP_CROP_MIN
+                x0 = int(np.clip(round(x0), 0, w - m))
+                y0 = int(np.clip(round(y0), 0, h - m))
+                x1 = int(np.clip(round(x1), x0 + m, w))
+                y1 = int(np.clip(round(y1), y0 + m, h))
+                for sp, v in ((self._prep_crop_l, x0), (self._prep_crop_r, w - x1),
+                              (self._prep_crop_t, y0), (self._prep_crop_b, h - y1)):
+                    v = max(0, int(v))
+                    if sp.value() != v:
+                        sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+                # One redraw for the whole box update
+                self._on_prep_geometry_changed()
+
+            def _on_prep_crop_press(self, event):
+                """Decide how a click interacts with the crop box (edge/corner/move/draw)."""
+                if event.inaxes is not self._prep_ax or event.button != 1:
+                    return
+                if event.xdata is None or event.ydata is None or self._prep_last_dims is None:
+                    return
+                h, w = self._prep_last_dims
+                x0, y0, x1, y1 = self._prep_crop_box_px(h, w)
+                px, py = event.xdata, event.ydata
+                tol_x = max(8.0, w * 0.025)
+                tol_y = max(8.0, h * 0.025)
+                near_l = abs(px - x0) < tol_x; near_r = abs(px - x1) < tol_x
+                near_t = abs(py - y0) < tol_y; near_b = abs(py - y1) < tol_y
+                within_y = (y0 - tol_y) <= py <= (y1 + tol_y)
+                within_x = (x0 - tol_x) <= px <= (x1 + tol_x)
+
+                mode = None; corner = None
+                if near_l and near_t:   mode, corner = 'corner', ('l', 't')
+                elif near_r and near_t: mode, corner = 'corner', ('r', 't')
+                elif near_l and near_b: mode, corner = 'corner', ('l', 'b')
+                elif near_r and near_b: mode, corner = 'corner', ('r', 'b')
+                elif near_l and within_y: mode = 'edge-l'
+                elif near_r and within_y: mode = 'edge-r'
+                elif near_t and within_x: mode = 'edge-t'
+                elif near_b and within_x: mode = 'edge-b'
+                elif x0 < px < x1 and y0 < py < y1: mode = 'move'
+                else: mode = 'draw'
+
+                self._prep_crop_mode = mode
+                self._prep_crop_corner = corner
+                if mode == 'draw':
+                    # Anchor a fresh box at the click point; it grows as the mouse moves.
+                    self._prep_crop_anchor = (px, py, px, py, px, py)
+                else:
+                    self._prep_crop_anchor = (px, py, x0, y0, x1, y1)
+
+                cursors = {'move': Qt.SizeAllCursor, 'draw': Qt.CrossCursor,
+                           'edge-l': Qt.SizeHorCursor, 'edge-r': Qt.SizeHorCursor,
+                           'edge-t': Qt.SizeVerCursor, 'edge-b': Qt.SizeVerCursor}
+                cur = cursors.get(mode, Qt.CrossCursor)
+                if mode == 'corner':
+                    cur = (Qt.SizeFDiagCursor if corner in (('l', 't'), ('r', 'b'))
+                           else Qt.SizeBDiagCursor)
+                self._prep_canvas.setCursor(cur)
+
+            def _on_prep_crop_motion(self, event):
+                mode = getattr(self, '_prep_crop_mode', None)
+                if mode is None or self._prep_last_dims is None:
+                    return
+                if event.inaxes is not self._prep_ax or event.xdata is None or event.ydata is None:
+                    return
+                h, w = self._prep_last_dims
+                px, py = event.xdata, event.ydata
+                ax_, ay_, bx0, by0, bx1, by1 = self._prep_crop_anchor
+
+                if mode == 'draw':
+                    # Ignore micro-movements so a stray click doesn't shrink the crop
+                    if abs(px - ax_) < 4 and abs(py - ay_) < 4:
+                        return
+                    nx0, nx1 = sorted((ax_, px)); ny0, ny1 = sorted((ay_, py))
+                    self._commit_crop_box_px(nx0, ny0, nx1, ny1, h, w)
+                elif mode == 'move':
+                    dx = px - ax_; dy = py - ay_
+                    bw = bx1 - bx0; bh = by1 - by0
+                    nx0 = float(np.clip(bx0 + dx, 0, w - bw))
+                    ny0 = float(np.clip(by0 + dy, 0, h - bh))
+                    self._commit_crop_box_px(nx0, ny0, nx0 + bw, ny0 + bh, h, w)
+                elif mode == 'corner':
+                    cx, cy = self._prep_crop_corner
+                    nx0 = px if cx == 'l' else bx0
+                    nx1 = px if cx == 'r' else bx1
+                    ny0 = py if cy == 't' else by0
+                    ny1 = py if cy == 'b' else by1
+                    self._commit_crop_box_px(min(nx0, nx1), min(ny0, ny1),
+                                             max(nx0, nx1), max(ny0, ny1), h, w)
+                elif mode.startswith('edge'):
+                    nx0, ny0, nx1, ny1 = bx0, by0, bx1, by1
+                    side = mode.split('-')[1]
+                    if side == 'l':   nx0 = px
+                    elif side == 'r': nx1 = px
+                    elif side == 't': ny0 = py
+                    elif side == 'b': ny1 = py
+                    self._commit_crop_box_px(min(nx0, nx1), min(ny0, ny1),
+                                             max(nx0, nx1), max(ny0, ny1), h, w)
+
+            def _on_prep_crop_release(self, event):
+                self._prep_crop_mode = None
+                self._prep_crop_corner = None
+                self._prep_crop_anchor = None
+                self._prep_canvas.setCursor(Qt.ArrowCursor)
+
+            def _on_prep_geometry_changed(self):
+                if not hasattr(self, '_prep_sl_rot') or not hasattr(self, '_prep_sl_skew'):
+                    return
+                angle = self._prep_sl_rot.value() / 10.0
+                skew_amt = self._prep_sl_skew.value() / 100.0
+                self._prep_lbl_rot.setText(f"Rotation: {angle:+.1f}°")
+                self._prep_lbl_skew.setText(f"Skew: {skew_amt:+.2f}")
+
+                arr = self._gel_arr_raw.copy()
+                h, w = arr.shape[:2]
+
+                # Rotate
+                if abs(angle) > 0.05:
+                    try:
+                        M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), -angle, 1.0)
+                        cos_a = abs(np.cos(np.radians(angle)))
+                        sin_a = abs(np.sin(np.radians(angle)))
+                        new_w = int(h * sin_a + w * cos_a)
+                        new_h = int(h * cos_a + w * sin_a)
+                        M[0, 2] += (new_w / 2.0) - w / 2.0
+                        M[1, 2] += (new_h / 2.0) - h / 2.0
+                        fill_val = float(np.mean(arr))
+                        arr = cv2.warpAffine(arr.astype(np.float64), M, (new_w, new_h),
+                                            flags=cv2.INTER_LINEAR,
+                                            borderMode=cv2.BORDER_CONSTANT, borderValue=fill_val)
+                        h, w = arr.shape[:2]
+                    except Exception:
+                        pass
+
+                # Skew
+                if abs(skew_amt) > 0.005:
+                    try:
+                        src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+                        dst_pts = src_pts.copy()
+                        if skew_amt > 0:
+                            dst_pts[0][0] = w * skew_amt / 2.0
+                            dst_pts[1][0] = w * (1.0 - skew_amt / 2.0)
+                        elif skew_amt < 0:
+                            dst_pts[3][0] = w * (-skew_amt) / 2.0
+                            dst_pts[2][0] = w * (1.0 + skew_amt / 2.0)
+                        M_sk = cv2.getPerspectiveTransform(src_pts, dst_pts)
+                        fill_val = float(np.mean(arr))
+                        arr = cv2.warpPerspective(arr.astype(np.float32), M_sk, (w, h),
+                                                borderMode=cv2.BORDER_CONSTANT,
+                                                borderValue=fill_val).astype(np.float64)
+                    except Exception:
+                        pass
+
+                # Remember dims so the interactive crop handlers map clicks correctly
+                self._prep_last_dims = (h, w)
+
+                # Visualizing the changes
+                try:
+                    self._prep_ax.cla()
+                    lo = float(np.percentile(arr, 2))
+                    hi = float(np.percentile(arr, 98))
+                    dsp = np.clip((arr - lo) / max(hi - lo, 1e-9), 0, 1)
+                    self._prep_ax.imshow(dsp, cmap='gray', aspect='auto',
+                                         interpolation='nearest',
+                                         extent=[-0.5, w - 0.5, h - 0.5, -0.5])
+
+                    # Clamp crop spinbox maxima to the (possibly resized) image
+                    for sp, lim in ((self._prep_crop_l, w - 2), (self._prep_crop_r, w - 2),
+                                    (self._prep_crop_t, h - 2), (self._prep_crop_b, h - 2)):
+                        if sp.maximum() != max(0, lim):
+                            sp.blockSignals(True); sp.setMaximum(max(0, lim)); sp.blockSignals(False)
+
+                    # Optional alignment grid — drawn as a STATIONARY reference overlay
+                    # fixed to the canvas (axes fraction), so it never shifts when the
+                    # image is rotated/skewed/cropped. Spacing is anchored to the
+                    # original gel width/height so it stays constant on screen.
+                    _gsz = max(5, int(self._prep_grid_size))
+                    ref_h, ref_w = self._gel_arr_raw.shape[:2]
+                    trans = self._prep_ax.transAxes
+                    if self._prep_show_grid_x:
+                        step = _gsz / float(max(1, ref_w))
+                        f = step
+                        while f < 1.0:
+                            self._prep_ax.plot([f, f], [0, 1], transform=trans,
+                                               color='red', lw=0.5, alpha=0.4, zorder=2)
+                            f += step
+                    if self._prep_show_grid_y:
+                        step = _gsz / float(max(1, ref_h))
+                        f = step
+                        while f < 1.0:
+                            self._prep_ax.plot([0, 1], [f, f], transform=trans,
+                                               color='red', lw=0.5, alpha=0.4, zorder=2)
+                            f += step
+
+                    # Crop boundary box (always drawn so it can be grabbed/dragged)
+                    l = self._prep_crop_l.value()
+                    r = self._prep_crop_r.value()
+                    t = self._prep_crop_t.value()
+                    b = self._prep_crop_b.value()
+                    box_w = max(1, w - r - l)
+                    box_h = max(1, h - b - t)
+                    rect = plt.Rectangle(
+                        (l, t), box_w, box_h,
+                        edgecolor='magenta', facecolor='none',
+                        linewidth=1.8, linestyle='--', zorder=7)
+                    self._prep_ax.add_patch(rect)
+                    # Dim the area outside the crop box
+                    for sx0, sy0, sx1, sy1 in (
+                            (-0.5, -0.5, w - 0.5, t),
+                            (-0.5, h - b, w - 0.5, h - 0.5),
+                            (-0.5, t, l, h - b),
+                            (w - r, t, w - 0.5, h - b)):
+                        if sx1 > sx0 and sy1 > sy0:
+                            self._prep_ax.add_patch(plt.Rectangle(
+                                (sx0, sy0), sx1 - sx0, sy1 - sy0,
+                                facecolor='magenta', edgecolor='none',
+                                alpha=0.18, zorder=6))
+                    # Corner grab handles
+                    for hx, hy in ((l, t), (w - r, t), (l, h - b), (w - r, h - b)):
+                        self._prep_ax.plot([hx], [hy], marker='s', color='magenta',
+                                           markersize=6, zorder=8)
+
+                    self._prep_ax.set_xlim(-0.5, w - 0.5)
+                    self._prep_ax.set_ylim(h - 0.5, -0.5)
+                    self._prep_ax.set_title(
+                        "Crop: drag box edge/corner to resize · inside to move · on image to draw new",
+                        fontsize=9, pad=3)
+                    self._prep_ax.tick_params(labelsize=7)
+                    self._prep_fig.tight_layout(pad=0.5)
+                    self._prep_canvas.draw_idle()
+                except Exception:
+                    pass
+
+            def _lock_geometry_and_go_to_lanes(self):
+                """
+                Calculates and bakes cumulative transformations into the core active array 
+                to yield a straightened, pre-cropped baseline image.
+                """
+                angle = self._prep_sl_rot.value() / 10.0
+                skew_amt = self._prep_sl_skew.value() / 100.0
+                l = self._prep_crop_l.value()
+                r = self._prep_crop_r.value()
+                t = self._prep_crop_t.value()
+                b = self._prep_crop_b.value()
+
+                self._rotation_angle = angle
+                self._skew_amount = skew_amt
+                self._crop_l = l; self._crop_r = r
+                self._crop_t = t; self._crop_b = b
+
+                arr = self._gel_arr_raw.copy()
+                h, w = arr.shape[:2]
+
+                # Apply rotation to processed base array
+                if abs(angle) > 0.05:
+                    try:
+                        M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), -angle, 1.0)
+                        cos_a = abs(np.cos(np.radians(angle)))
+                        sin_a = abs(np.sin(np.radians(angle)))
+                        new_w = int(h * sin_a + w * cos_a)
+                        new_h = int(h * cos_a + w * sin_a)
+                        M[0, 2] += (new_w / 2.0) - w / 2.0
+                        M[1, 2] += (new_h / 2.0) - h / 2.0
+                        fill_val = float(np.mean(arr))
+                        arr = cv2.warpAffine(arr.astype(np.float64), M, (new_w, new_h),
+                                            flags=cv2.INTER_LINEAR,
+                                            borderMode=cv2.BORDER_CONSTANT, borderValue=fill_val)
+                        h, w = arr.shape[:2]
+                    except Exception:
+                        pass
+
+                # Apply skew to processed base array
+                if abs(skew_amt) > 0.005:
+                    try:
+                        src_pts = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+                        dst_pts = src_pts.copy()
+                        if skew_amt > 0:
+                            dst_pts[0][0] = w * skew_amt / 2.0
+                            dst_pts[1][0] = w * (1.0 - skew_amt / 2.0)
+                        elif skew_amt < 0:
+                            dst_pts[3][0] = w * (-skew_amt) / 2.0
+                            dst_pts[2][0] = w * (1.0 + skew_amt / 2.0)
+                        M_sk = cv2.getPerspectiveTransform(src_pts, dst_pts)
+                        fill_val = float(np.mean(arr))
+                        arr = cv2.warpPerspective(arr.astype(np.float32), M_sk, (w, h),
+                                                borderMode=cv2.BORDER_CONSTANT,
+                                                borderValue=fill_val).astype(np.float64)
+                        h, w = arr.shape[:2]
+                    except Exception:
+                        pass
+
+                # Apply crop
+                if l or r or t or b:
+                    arr = arr[t:h - b, l:w - r]
+
+                self._gel_arr = arr.copy()
+                if getattr(self, '_gel_inverted', False):
+                    self._inv_arr = self._gel_arr.copy()
+                else:
+                    self._inv_arr = self._max_val - self._gel_arr
+
+                # Proceed directly to Lane Detection operating on the sanitized canvas
+                self._phase = 2
+                self._step_label.setText("Step 3 — Lane Detection")
+                if hasattr(self, '_p2_next_btn'):
+                    self._p2_next_btn.setText(
+                        "Accept Lanes & Label  →" if self._do_markers else "Run Analysis  →")
+                self._stack.setCurrentIndex(2)
+                self._run_lane_detection()
+
+            # ── Page 2: Lane Detection ─────────────────────────────────
+            def _build_page2(self):
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setSpacing(4)
+
+                self._fig1 = plt.figure(figsize=(11, 5))
+                gs1 = self._fig1.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.08)
+                self._ax1_img  = self._fig1.add_subplot(gs1[0])
+                self._ax1_prof = self._fig1.add_subplot(gs1[1], sharex=self._ax1_img)
+                self._canvas1  = FigureCanvas(self._fig1)
+                self._canvas1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                self._canvas1.mpl_connect('button_press_event',   self._p1_mpl_press)
+                self._canvas1.mpl_connect('motion_notify_event',  self._p1_mpl_move)
+                self._canvas1.mpl_connect('button_release_event', self._p1_mpl_release)
+                layout.addWidget(self._canvas1, stretch=3)
+
+                ctrl = QGroupBox("Lane Detection Parameters (acting on aligned workspace)")
+                g = QGridLayout(ctrl)
+                g.setSpacing(5)
+
+                self._p1_lbl_sm = QLabel(f"Smoothing σ  {self._lane_smooth:.1f}")
+                self._p1_sl_sm  = QSlider(Qt.Horizontal)
+                self._p1_sl_sm.setRange(0, 200)
+                self._p1_sl_sm.setValue(int(self._lane_smooth * 10))
+                g.addWidget(self._p1_lbl_sm, 0, 0)
+                g.addWidget(self._p1_sl_sm,  0, 1)
+                self._p1_sl_sm.valueChanged.connect(self._on_p1_smooth_changed)
+
+                self._p1_lbl_pr = QLabel(f"Min Prominence  {self._lane_prom:.2f}")
+                self._p1_sl_pr  = QSlider(Qt.Horizontal)
+                self._p1_sl_pr.setRange(0, 100)
+                self._p1_sl_pr.setValue(int(self._lane_prom * 100))
+                g.addWidget(self._p1_lbl_pr, 1, 0)
+                g.addWidget(self._p1_sl_pr,  1, 1)
+                self._p1_sl_pr.valueChanged.connect(self._on_p1_prom_changed)
+
+                self._p1_lbl_ht = QLabel(f"Min Height  {self._lane_height:.2f}")
+                self._p1_sl_ht  = QSlider(Qt.Horizontal)
+                self._p1_sl_ht.setRange(0, 100)
+                self._p1_sl_ht.setValue(int(self._lane_height * 100))
+                g.addWidget(self._p1_lbl_ht, 2, 0)
+                g.addWidget(self._p1_sl_ht,  2, 1)
+                self._p1_sl_ht.valueChanged.connect(self._on_p1_ht_changed)
+
+                self._p1_lbl_d  = QLabel(f"Min Spacing  {self._lane_dist} px")
+                self._p1_sl_d   = QSlider(Qt.Horizontal)
+                self._p1_sl_d.setRange(1, 300)
+                self._p1_sl_d.setValue(self._lane_dist)
+                g.addWidget(self._p1_lbl_d, 3, 0)
+                g.addWidget(self._p1_sl_d,  3, 1)
+                self._p1_sl_d.valueChanged.connect(self._on_p1_dist_changed)
+
+                count_row = QHBoxLayout()
+                count_row.addStretch()
+                self._p1_count_lbl = QLabel("Lanes: 0")
+                self._p1_count_lbl.setStyleSheet("font-weight:bold; color:#0066cc;")
+                count_row.addWidget(self._p1_count_lbl)
+                g.addLayout(count_row, 4, 0, 1, 2)
+
+                self._p1_inv_btn = QPushButton("Invert Alignment")
+                self._p1_inv_btn.setCheckable(True)
+                self._p1_inv_btn.toggled.connect(self._toggle_inversion)
+                self._p1_add_btn = QPushButton("Add Lane (click profile)")
+                self._p1_add_btn.setCheckable(True)
+                self._p1_del_btn = QPushButton("Delete Selected Lane")
+                self._p1_del_btn.setEnabled(False)
+                self._p1_del_btn.clicked.connect(self._delete_selected_lane)
+                
+                btn_row = QHBoxLayout()
+                btn_row.addWidget(self._p1_inv_btn)
+                btn_row.addWidget(self._p1_add_btn)
+                btn_row.addWidget(self._p1_del_btn)
+                g.addLayout(btn_row, 5, 0, 1, 2)
+
+                g.setColumnStretch(1, 1)
+                layout.addWidget(ctrl)
+
+                nav = QHBoxLayout()
+                p2_back_btn = QPushButton("← Back to Image Adjustment")
+                p2_back_btn.clicked.connect(self._go_to_phase1)
+                p2_cancel_btn = QPushButton("Cancel")
+                p2_cancel_btn.clicked.connect(self.reject)
+                self._p2_next_btn = QPushButton("Accept Lanes  →")
+                self._p2_next_btn.setDefault(True)
+                self._p2_next_btn.clicked.connect(self._p2_go_next)
+
+                nav.addWidget(p2_back_btn)
+                nav.addWidget(p2_cancel_btn)
+                nav.addStretch()
+                nav.addWidget(self._p2_next_btn)
+                layout.addLayout(nav)
+
+                self._stack.addWidget(page)
+
+            def _on_p1_smooth_changed(self, v):
+                self._lane_smooth = v / 10.0
+                self._p1_lbl_sm.setText(f"Smoothing σ  {self._lane_smooth:.1f}")
+                self._run_lane_detection()
+
+            def _on_p1_prom_changed(self, v):
+                self._lane_prom = v / 100.0
+                self._p1_lbl_pr.setText(f"Min Prominence  {self._lane_prom:.2f}")
+                self._run_lane_detection()
+
+            def _on_p1_ht_changed(self, v):
+                self._lane_height = v / 100.0
+                self._p1_lbl_ht.setText(f"Min Height  {self._lane_height:.2f}")
+                self._run_lane_detection()
+
+            def _on_p1_dist_changed(self, v):
+                self._lane_dist = v
+                self._p1_lbl_d.setText(f"Min Spacing  {v} px")
+                self._run_lane_detection()
+
+            # ── Page 3: Labels & MWM setup ─────────────────────────────
+            def _build_page3(self):
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setSpacing(6)
+                layout.setContentsMargins(10, 10, 10, 10)
+
+                info_lbl = QLabel(
+                    "<b>Step 4: Lane Labels &amp; Molecular Weight Marker</b><br>"
+                    "Assign labels and define marker lanes for alignment referencing.")
+                info_lbl.setWordWrap(True)
+                info_lbl.setStyleSheet("padding:6px; background:#eef4fb; border-radius:4px;")
+                layout.addWidget(info_lbl)
+
+                lane_grp = QGroupBox("Lane Labels")
+                lane_layout = QVBoxLayout(lane_grp)
+                self._p3_scroll = QScrollArea()
+                self._p3_scroll.setWidgetResizable(True)
+                self._p3_scroll.setMaximumHeight(220)
+                self._p3_inner = QWidget()
+                self._p3_grid  = QGridLayout(self._p3_inner)
+                self._p3_grid.setSpacing(4)
+                self._p3_grid.addWidget(QLabel("<b>Lane</b>"), 0, 0)
+                self._p3_grid.addWidget(QLabel("<b>MWM Lane</b>"), 0, 1)
+                self._p3_grid.addWidget(QLabel("<b>Top Label</b>"), 0, 2)
+                self._p3_scroll.setWidget(self._p3_inner)
+                lane_layout.addWidget(self._p3_scroll)
+                layout.addWidget(lane_grp)
+
+                mwm_grp = QGroupBox("Marker Presets")
+                mwm_lay = QGridLayout(mwm_grp)
+                mwm_lay.addWidget(QLabel("Marker type:"), 0, 0)
+                self._p3_mwm_combo = QComboBox()
+                self._p3_mwm_combo.addItems(list(self.MWM_PRESETS.keys()))
+                self._p3_mwm_combo.currentTextChanged.connect(self._on_p3_mwm_preset_changed)
+                mwm_lay.addWidget(self._p3_mwm_combo, 0, 1)
+
+                self._p3_custom_lbl  = QLabel("Custom band sizes (kDa, comma-sep):")
+                self._p3_custom_edit = QLineEdit()
+                self._p3_custom_edit.textChanged.connect(self._on_p3_custom_changed)
+                self._p3_custom_lbl.setVisible(False)
+                self._p3_custom_edit.setVisible(False)
+                mwm_lay.addWidget(self._p3_custom_lbl,  1, 0)
+                mwm_lay.addWidget(self._p3_custom_edit, 1, 1)
+
+                self._p3_mwm_note = QLabel("")
+                self._p3_mwm_note.setStyleSheet("color:#555; font-style:italic;")
+                self._p3_mwm_note.setWordWrap(True)
+                mwm_lay.addWidget(self._p3_mwm_note, 2, 0, 1, 2)
+                layout.addWidget(mwm_grp)
+
+                # ── Top-label styling (font, size, colour, rotation, axis) ──
+                app = self.parent_app
+                style_grp = QGroupBox("Top Label Style")
+                sg = QGridLayout(style_grp)
+                sg.setSpacing(6)
+
+                sg.addWidget(QLabel("Font:"), 0, 0)
+                self._p3_font_combo = QFontComboBox()
+                self._p3_font_combo.setCurrentFont(QFont(str(getattr(app, 'font_family', 'Arial'))))
+                self._p3_font_combo.currentFontChanged.connect(self._apply_label_style)
+                sg.addWidget(self._p3_font_combo, 0, 1, 1, 3)
+
+                sg.addWidget(QLabel("Size:"), 1, 0)
+                self._p3_font_size = QSpinBox()
+                self._p3_font_size.setRange(4, 200)
+                self._p3_font_size.setValue(int(getattr(app, 'font_size', 16)))
+                self._p3_font_size.setSuffix(" pt")
+                self._p3_font_size.valueChanged.connect(self._apply_label_style)
+                sg.addWidget(self._p3_font_size, 1, 1)
+
+                sg.addWidget(QLabel("Color:"), 1, 2)
+                self._p3_font_color_btn = QPushButton("Color")
+                self._p3_font_color_btn.setToolTip("Top label text colour")
+                self._p3_font_color_btn.clicked.connect(self._on_p3_pick_color)
+                sg.addWidget(self._p3_font_color_btn, 1, 3)
+
+                sg.addWidget(QLabel("Rotation:"), 2, 0)
+                self._p3_font_rot = QSpinBox()
+                self._p3_font_rot.setRange(-180, 180)
+                self._p3_font_rot.setValue(int(getattr(app, 'font_rotation', -45)))
+                self._p3_font_rot.setSuffix(" °")
+                self._p3_font_rot.valueChanged.connect(self._apply_label_style)
+                sg.addWidget(self._p3_font_rot, 2, 1)
+
+                sg.addWidget(QLabel("Axis:"), 2, 2)
+                self._p3_axis_combo = QComboBox()
+                self._p3_axis_combo.addItems(["Left", "Center", "Right"])
+                self._p3_axis_combo.setToolTip(
+                    "Axis the label rotates around (Left/Center/Right edge of the text).")
+                _amap = {'left': 0, 'center': 1, 'right': 2}
+                self._p3_axis_combo.setCurrentIndex(
+                    _amap.get(str(getattr(app, 'top_rotation_axis', 'left')), 0))
+                self._p3_axis_combo.currentIndexChanged.connect(self._apply_label_style)
+                sg.addWidget(self._p3_axis_combo, 2, 3)
+
+                style_note = QLabel(
+                    "These apply to the top labels in the output. White padding auto-fits the "
+                    "rotated labels so they never clip the border.")
+                style_note.setWordWrap(True)
+                style_note.setStyleSheet("color:#555; font-style:italic;")
+                sg.addWidget(style_note, 3, 0, 1, 4)
+                sg.setColumnStretch(1, 1); sg.setColumnStretch(3, 1)
+                layout.addWidget(style_grp)
+                self._update_p3_color_swatch()
+
+                layout.addStretch()
+
+                nav = QHBoxLayout()
+                p3_back_btn = QPushButton("← Back to Detection")
+                p3_back_btn.clicked.connect(self._p3_go_back)
+                p3_cancel_btn = QPushButton("Cancel")
+                p3_cancel_btn.clicked.connect(self.reject)
+                p3_next_btn = QPushButton("Run Analysis  →")
+                p3_next_btn.setDefault(True)
+                p3_next_btn.clicked.connect(self._p3_go_next)
+                
+                nav.addWidget(p3_back_btn)
+                nav.addWidget(p3_cancel_btn)
+                nav.addStretch()
+                nav.addWidget(p3_next_btn)
+                layout.addLayout(nav)
+
+                self._stack.addWidget(page)
+
+            # ── Page 4: Band Detection Settings ────────────────────────
+            def _build_page4(self):
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setSpacing(4)
+
+                self._fig2 = plt.figure(figsize=(11, 3.5))
+                gs2 = self._fig2.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.12)
+                self._ax2_gel  = self._fig2.add_subplot(gs2[0])
+                self._ax2_prof = self._fig2.add_subplot(gs2[1])
+                self._canvas2  = FigureCanvas(self._fig2)
+                self._canvas2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                layout.addWidget(self._canvas2, stretch=3)
+                self._canvas2.mpl_connect('button_press_event',   self._on_p4_fence_press)
+                self._canvas2.mpl_connect('motion_notify_event',  self._on_p4_fence_motion)
+                self._canvas2.mpl_connect('button_release_event', self._on_p4_fence_release)
+
+                global_grp = QGroupBox("Area Quantification Methods")
+                global_g   = QGridLayout(global_grp)
+                global_g.setSpacing(5)
+
+                global_g.addWidget(QLabel("Method:"), 0, 0)
+                self._p2_method = QComboBox()
+                self._p2_method.addItems(["Gaussian Deconvolution", "Rolling-valley", "Rolling Ball", "Straight Line"])
+                idx = self._p2_method.findText(self._band_method)
+                if idx >= 0: self._p2_method.setCurrentIndex(idx)
+                self._p2_method.currentTextChanged.connect(self._on_p2_method_changed)
+                global_g.addWidget(self._p2_method, 0, 1, 1, 2)
+
+                self._p2_lbl_rb = QLabel(f"Rolling Ball Radius ({self._band_rb_radius})")
+                self._p2_lbl_rb.setMinimumWidth(180)
+                self._p2_sl_rb  = QSlider(Qt.Horizontal)
+                self._p2_sl_rb.setRange(1, 500)
+                self._p2_sl_rb.setValue(self._band_rb_radius)
+                self._p2_sl_rb.valueChanged.connect(self._on_p2_rb_changed)
+                self._p2_auto_rb_chk = QCheckBox("Auto")
+                self._p2_auto_rb_chk.setChecked(self._band_auto_rb)
+                self._p2_auto_rb_chk.toggled.connect(self._on_p2_auto_rb_toggled)
+                
+                global_g.addWidget(self._p2_lbl_rb, 1, 0)
+                global_g.addWidget(self._p2_sl_rb,  1, 1)
+                global_g.addWidget(self._p2_auto_rb_chk, 1, 2)
+                global_g.setColumnStretch(1, 1)
+                layout.addWidget(global_grp)
+                self._p4_update_rb_visibility()
+
+                basic_grp = QGroupBox("Peak Discovery Controls")
+                basic_g   = QGridLayout(basic_grp)
+                basic_g.setSpacing(5)
+
+                self._p2_lbl_pr = QLabel(f"Min Prominence  {self._band_prom:.3f}")
+                self._p2_sl_pr  = QSlider(Qt.Horizontal)
+                self._p2_sl_pr.setRange(0, 1000)
+                self._p2_sl_pr.setValue(int(self._band_prom * 1000))
+                basic_g.addWidget(self._p2_lbl_pr, 0, 0)
+                basic_g.addWidget(self._p2_sl_pr,  0, 1)
+                self._p2_sl_pr.valueChanged.connect(self._on_p2_prom_changed)
+
+                self._p2_lbl_d  = QLabel(f"Min Distance  {self._band_dist} px")
+                self._p2_sl_d   = QSlider(Qt.Horizontal)
+                self._p2_sl_d.setRange(1, 200)
+                self._p2_sl_d.setValue(self._band_dist)
+                basic_g.addWidget(self._p2_lbl_d, 1, 0)
+                basic_g.addWidget(self._p2_sl_d,  1, 1)
+                self._p2_sl_d.valueChanged.connect(self._on_p2_dist_changed)
+                basic_g.setColumnStretch(1, 1)
+                layout.addWidget(basic_grp)
+
+                adv_grp = QGroupBox("Signal Advanced Tuning")
+                adv_grp.setCheckable(True)
+                adv_grp.setChecked(False)
+                adv_outer = QVBoxLayout(adv_grp)
+                adv_container = QWidget()
+                adv_g = QGridLayout(adv_container)
+                adv_g.setSpacing(5)
+                adv_outer.addWidget(adv_container)
+
+                self._p2_lbl_sm = QLabel(f"Smoothing σ  {self._band_smooth:.1f}")
+                self._p2_sl_sm  = QSlider(Qt.Horizontal)
+                self._p2_sl_sm.setRange(0, 100)
+                self._p2_sl_sm.setValue(int(self._band_smooth * 10))
+                adv_g.addWidget(self._p2_lbl_sm, 0, 0)
+                adv_g.addWidget(self._p2_sl_sm,  0, 1)
+                self._p2_sl_sm.valueChanged.connect(self._on_p2_smooth_changed)
+
+                self._p2_lbl_ht = QLabel(f"Min Height  {self._band_height:.2f}")
+                self._p2_sl_ht  = QSlider(Qt.Horizontal)
+                self._p2_sl_ht.setRange(0, 100)
+                self._p2_sl_ht.setValue(int(self._band_height * 100))
+                adv_g.addWidget(self._p2_lbl_ht, 1, 0)
+                adv_g.addWidget(self._p2_sl_ht,  1, 1)
+                self._p2_sl_ht.valueChanged.connect(self._on_p2_ht_changed)
+
+                self._p2_lbl_mw = QLabel(f"Min Band Width  {self._band_min_w} px")
+                self._p2_sl_mw  = QSlider(Qt.Horizontal)
+                self._p2_sl_mw.setRange(1, 50)
+                self._p2_sl_mw.setValue(self._band_min_w)
+                adv_g.addWidget(self._p2_lbl_mw, 2, 0)
+                adv_g.addWidget(self._p2_sl_mw,  2, 1)
+                self._p2_sl_mw.valueChanged.connect(self._on_p2_minw_changed)
+                adv_g.setColumnStretch(1, 1)
+                adv_container.setVisible(False)
+                adv_grp.toggled.connect(adv_container.setVisible)
+                layout.addWidget(adv_grp)
+
+                self._p2_inv_btn = QPushButton("Invert Alignment Profiling")
+                self._p2_inv_btn.setCheckable(True)
+                self._p2_inv_btn.setChecked(self._band_invert)
+                self._p2_inv_btn.toggled.connect(self._on_p2_invert_toggled)
+                self._p2_lane_combo = QComboBox()
+                self._p2_lane_combo.currentIndexChanged.connect(self._on_p2_lane_changed)
+                self._p4_reset_fences_btn = QPushButton("↺ Reset Band Edges")
+                self._p4_reset_fences_btn.clicked.connect(self._p4_reset_fences)
+                
+                row_inv = QHBoxLayout()
+                row_inv.addWidget(self._p2_inv_btn)
+                row_inv.addWidget(self._p4_reset_fences_btn)
+                row_inv.addStretch()
+                row_inv.addWidget(QLabel("Preview Lane:"))
+                row_inv.addWidget(self._p2_lane_combo)
+                layout.addLayout(row_inv)
+
+                hint_lbl = QLabel("💡 Drag the green dashed fence lines in the profile to manually modify analysis integration widths.")
+                hint_lbl.setStyleSheet("color:#666; font-size:10px; padding:2px;")
+                layout.addWidget(hint_lbl)
+
+                nav = QHBoxLayout()
+                p4_back_btn = QPushButton("← Back")
+                p4_back_btn.clicked.connect(self._p4_go_back)
+                p4_cancel_btn = QPushButton("Cancel")
+                p4_cancel_btn.clicked.connect(self.reject)
+                self._p4_run_btn = QPushButton("▶ Run Analysis & Finish")
+                self._p4_run_btn.setDefault(True)
+                f4 = self._p4_run_btn.font(); f4.setBold(True)
+                self._p4_run_btn.setFont(f4)
+                self._p4_run_btn.clicked.connect(self._run_full_analysis)
+                
+                nav.addWidget(p4_back_btn)
+                nav.addWidget(p4_cancel_btn)
+                nav.addStretch()
+                nav.addWidget(self._p4_run_btn)
+                layout.addLayout(nav)
+
+                self._stack.addWidget(page)
+
+            # ── Band Detection Callbacks ──────────────────────────────
+            def _on_p2_method_changed(self, t):
+                self._band_method = t
+                self._p4_update_rb_visibility()
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_rb_changed(self, v):
+                self._band_rb_radius = v
+                if hasattr(self, '_p2_lbl_rb'): self._p2_lbl_rb.setText(f"Rolling Ball Radius ({v})")
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_auto_rb_toggled(self, checked):
+                self._band_auto_rb = checked
+                if hasattr(self, '_p2_sl_rb'): self._p2_sl_rb.setEnabled(not checked)
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _p4_update_rb_visibility(self):
+                rb_methods = {"Rolling Ball", "Rolling-valley"}
+                visible = self._band_method in rb_methods
+                if hasattr(self, '_p2_lbl_rb'): self._p2_lbl_rb.setVisible(visible)
+                if hasattr(self, '_p2_sl_rb'):
+                    self._p2_sl_rb.setVisible(visible)
+                    self._p2_sl_rb.setEnabled(visible and not self._band_auto_rb)
+                if hasattr(self, '_p2_auto_rb_chk'): self._p2_auto_rb_chk.setVisible(visible)
+
+            def _on_p2_smooth_changed(self, v):
+                self._band_smooth = v / 10.0
+                self._p2_lbl_sm.setText(f"Smoothing σ  {self._band_smooth:.1f}")
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_prom_changed(self, v):
+                self._band_prom = v / 1000.0
+                self._p2_lbl_pr.setText(f"Min Prominence  {self._band_prom:.3f}")
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_ht_changed(self, v):
+                self._band_height = v / 100.0
+                self._p2_lbl_ht.setText(f"Min Height  {self._band_height:.2f}")
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_dist_changed(self, v):
+                self._band_dist = v
+                self._p2_lbl_d.setText(f"Min Distance  {v} px")
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_minw_changed(self, v):
+                self._band_min_w = v
+                self._p2_lbl_mw.setText(f"Min Band Width  {v} px")
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_invert_toggled(self, checked):
+                self._band_invert = checked
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            def _on_p2_lane_changed(self, i):
+                self._preview_lane_idx = i
+                self._refresh_band_preview()
+
+            # ── Phase Transitions ──────────────────────────────────────
+            def _go_to_phase0(self):
+                self._phase = 0
+                self._step_label.setText("Step 1 — Select Analysis Tasks")
+                self._stack.setCurrentIndex(0)
+
+            def _go_to_phase1(self):
+                self._phase = 1
+                self._step_label.setText("Step 2 — Image Adjustment")
+                self._stack.setCurrentIndex(1)
+                # Render the preview immediately (fixes blank canvas until first
+                # rotation) and again after layout settles so it fills the canvas.
+                self._on_prep_geometry_changed()
+                QTimer.singleShot(60, self._on_prep_geometry_changed)
+
+            def _go_to_phase3(self):
+                self._phase = 3
+                self._step_label.setText("Step 4 — Labels & Molecular Weight Marker")
+                self._populate_phase3()
+                self._stack.setCurrentIndex(3)
+
+            def _go_to_phase4(self):
+                self._phase = 4
+                self._step_label.setText("Step 5 — Band Detection & Analysis Type")
+                self._p2_lane_combo.blockSignals(True)
+                self._p2_lane_combo.clear()
+                for i in range(len(self._lane_bounds)):
+                    self._p2_lane_combo.addItem(f"Lane {i + 1}")
+                self._p2_lane_combo.blockSignals(False)
+                self._preview_lane_idx = 0
+                self._stack.setCurrentIndex(4)
+                self._refresh_band_preview()
+
+            def _p2_go_next(self):
+                if len(self._lane_bounds) == 0:
+                    QMessageBox.warning(self, "No Lanes", "Identify at least one lane boundary to proceed.")
+                    return
+                if self._do_markers:
+                    self._go_to_phase3()
+                else:
+                    # Densitometry (if enabled) runs in the "Advanced Densitometry &
+                    # Band Analysis" dialog opened from _run_full_analysis — no separate
+                    # in-wizard band page.
+                    self._run_full_analysis()
+
+            def _p3_go_next(self):
+                self._run_full_analysis()
+
+            def _p3_go_back(self):
+                self._phase = 2
+                self._step_label.setText("Step 3 — Lane Detection")
+                self._stack.setCurrentIndex(2)
+
+            def _p4_go_back(self):
+                if self._do_markers:
+                    self._go_to_phase3()
+                else:
+                    self._phase = 2
+                    self._step_label.setText("Step 3 — Lane Detection")
+                    self._stack.setCurrentIndex(2)
+
+            # ── Lane Finding Processing ────────────────────────────────
+            def _toggle_inversion(self, checked):
+                self._gel_inverted = checked
+                if checked:
+                    self._inv_arr = self._gel_arr.copy()
+                else:
+                    self._inv_arr = self._max_val - self._gel_arr
+                self._run_lane_detection()
+
+            def _run_lane_detection(self):
+                H, W = self._gel_arr.shape[:2]
+                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64) / float(H)
+
+                if self._lane_smooth > 0.05:
+                    col_profile = gaussian_filter1d(col_profile, sigma=self._lane_smooth)
+
+                p_range = np.ptp(col_profile)
+                if p_range < 1e-9:
+                    col_norm = np.zeros(W)
+                    self._lane_peaks  = np.array([], dtype=int)
+                    self._lane_bounds = []
+                    self._p1_count_lbl.setText("Lanes: 0")
+                    self._draw_phase1_figure(col_norm)
+                    return
+
+                col_norm = (col_profile - col_profile.min()) / p_range
+
+                try:
+                    peaks, _ = find_peaks(
+                        col_norm,
+                        height=self._lane_height,
+                        prominence=self._lane_prom,
+                        distance=max(1, self._lane_dist),
+                        width=1)
+                except Exception:
+                    peaks = np.array([], dtype=int)
+
+                self._lane_peaks  = peaks.astype(int)
+                self._lane_bounds = []
+
+                if len(peaks) == 0:
+                    self._p1_count_lbl.setText("Lanes: 0")
+                    self._draw_phase1_figure(col_norm)
+                    return
+
+                if len(peaks) >= 3:
+                    try:
+                        x_idx  = np.arange(len(peaks), dtype=float)
+                        coeffs = np.polyfit(x_idx, peaks.astype(float), 1)
+                        spacing = abs(coeffs[0])
+                        if spacing > 2:
+                            fitted = np.polyval(coeffs, x_idx)
+                            regularized = []
+                            for raw, fit in zip(peaks, fitted):
+                                if abs(raw - fit) < 0.25 * spacing:
+                                    regularized.append(int(round(fit)))
+                                else:
+                                    regularized.append(int(raw))
+                            peaks = np.array(regularized, dtype=int)
+                    except Exception:
+                        pass
+
+                peaks = np.unique(peaks)
+                peaks = peaks[(peaks >= 0) & (peaks < W)]
+                if len(peaks) == 0:
+                    self._p1_count_lbl.setText("Lanes: 0")
+                    self._draw_phase1_figure(col_norm)
+                    return
+
+                n_peaks = len(peaks)
+                if n_peaks >= 2:
+                    spacings = np.diff(peaks)
+                    spacings = spacings[spacings > 0]
+                    median_spacing = float(np.median(spacings)) if len(spacings) else float(self._lane_dist) * 2.0
+                else:
+                    median_spacing = float(self._lane_dist) * 2.0
+
+                half_w = max(1.0, median_spacing / 2.0)
+                boundaries = []
+
+                search_start = max(0, int(peaks[0] - half_w))
+                left_seg     = col_norm[search_start : peaks[0] + 1]
+                boundaries.append(search_start + int(np.argmin(left_seg)) if len(left_seg) > 0 else search_start)
+
+                for i in range(n_peaks - 1):
+                    p0, p1 = int(peaks[i]), int(peaks[i + 1])
+                    if p1 <= p0:
+                        boundaries.append((p0 + p1) // 2)
+                        continue
+                    seg = col_norm[p0 : p1 + 1]
+                    boundaries.append(p0 + int(np.argmin(seg)) if len(seg) > 0 else (p0 + p1) // 2)
+
+                search_end = min(W, int(peaks[-1] + half_w) + 1)
+                right_seg  = col_norm[peaks[-1] : search_end]
+                boundaries.append(peaks[-1] + int(np.argmin(right_seg)) if len(right_seg) > 0 else min(W - 1, search_end - 1))
+
+                lane_bounds = []
+                for i in range(n_peaks):
+                    x0 = max(0,     boundaries[i])
+                    x1 = min(W - 1, boundaries[i + 1])
+                    if x1 > x0:
+                        lane_bounds.append([x0, x1])
+
+                self._lane_peaks  = peaks[:len(lane_bounds)].astype(int)
+                self._lane_bounds = lane_bounds
+
+                self._p1_count_lbl.setText(f"Lanes: {len(self._lane_bounds)}")
+                self._selected_lane_idx = -1
+                if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(False)
+                self._draw_phase1_figure(col_norm)
+
+            def _draw_phase1_figure(self, col_norm):
+                self._last_col_norm = col_norm
+                try:
+                    self._ax1_img.cla()
+                    self._ax1_prof.cla()
+                    self._drag_lines.clear()
+                except Exception:
+                    return
+
+                try:
+                    disp = self._gel_arr
+                    Hd, Wd = disp.shape[:2]
+
+                    lo = float(np.percentile(disp, 2))
+                    hi = float(np.percentile(disp, 98))
+                    dsp = np.clip((disp - lo) / max(hi - lo, 1e-9), 0, 1)
+                    
+                    self._ax1_img.imshow(
+                        dsp, cmap='gray', aspect='auto', interpolation='nearest',
+                        extent=[-0.5, Wd - 0.5, Hd - 0.5, -0.5])
+                    self._ax1_img.set_ylabel("Row", fontsize=7)
+                    self._ax1_img.tick_params(labelsize=6)
+                    self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=8, pad=3)
+
+                    colors = plt.cm.tab10.colors
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        c   = colors[i % len(colors)]
+                        sel = (i == self._selected_lane_idx)
+                        lw  = 2.5 if sel else 1.5
+                        rect = plt.Rectangle(
+                            (x0, 0), x1 - x0, Hd,
+                            edgecolor=c,
+                            facecolor=(*c[:3], 0.25 if sel else 0.10),
+                            linewidth=lw, linestyle='-')
+                        self._ax1_img.add_patch(rect)
+                        self._ax1_img.text(
+                            (x0 + x1) / 2, Hd * 0.06, f"L{i+1}",
+                            color='white', fontsize=7, ha='center', va='top',
+                            bbox=dict(boxstyle='round,pad=0.15', fc=c, alpha=0.8, ec='none'))
+                        
+                        ll, = self._ax1_img.plot([x0, x0], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
+                        lr, = self._ax1_img.plot([x1, x1], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
+                        self._drag_lines.append(ll)
+                        self._drag_lines.append(lr)
+
+                    self._ax1_img.set_xlim(-0.5, Wd - 0.5)
+                    self._ax1_img.set_ylim(Hd - 0.5, -0.5)
+
+                    # Raw normalized profile mapping directly to clean workspace array
+                    cn = np.asarray(col_norm, dtype=float).ravel()
+                    self._ax1_prof.plot(np.arange(Wd), cn, color='steelblue', lw=1.5)
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        c = colors[i % len(colors)]
+                        if x1 > x0:
+                            self._ax1_prof.fill_between(np.arange(x0, x1 + 1), 0, cn[x0:x1 + 1], alpha=0.40, color=c)
+                    self._ax1_prof.set_xlim(-0.5, Wd - 0.5)
+                    self._ax1_prof.set_ylim(-0.02, 1.15)
+                    self._ax1_prof.set_xlabel("Column (px)", fontsize=7)
+                    self._ax1_prof.set_ylabel("Normalised profile", fontsize=7)
+                    self._ax1_prof.tick_params(labelsize=6)
+                except Exception:
+                    pass
+                finally:
+                    try: self._fig1.tight_layout(pad=0.5, h_pad=2.5)
+                    except Exception: pass
+                    try: self._canvas1.draw_idle()
+                    except Exception: pass
+
+            def _p1_mpl_press(self, event):
+                if event.inaxes not in (self._ax1_img, self._ax1_prof) or event.button != 1:
+                    return
+
+                if hasattr(self, '_p1_add_btn') and self._p1_add_btn.isChecked():
+                    if event.inaxes == self._ax1_prof and event.xdata is not None:
+                        self._add_lane_at(int(round(event.xdata)))
+                        self._p1_add_btn.setChecked(False)
+                    return
+
+                if event.xdata is None:
+                    return
+
+                xd = event.xdata
+                thresh = max(4.0, self._gel_arr.shape[1] * 0.015)
+                best_dist, best_lane, best_side = 1e9, -1, -1
+                for i, (x0, x1) in enumerate(self._lane_bounds):
+                    for side, xv in enumerate([x0, x1]):
+                        d = abs(xd - xv)
+                        if d < best_dist:
+                            best_dist, best_lane, best_side = d, i, side
+
+                if best_lane >= 0 and best_dist < thresh:
+                    self._drag_info = {'lane': best_lane, 'side': best_side}
+                    self._selected_lane_idx = best_lane
+                    if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
+                    self._canvas1.setCursor(Qt.SizeHorCursor)
+                    return
+
+                if event.inaxes == self._ax1_img:
+                    col = int(round(xd))
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        if x0 <= col <= x1:
+                            self._selected_lane_idx = i
+                            if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
+                            self._run_lane_detection()
+                            return
+
+            def _p1_mpl_move(self, event):
+                if self._drag_info is None or event.xdata is None:
+                    return
+                if event.inaxes not in (self._ax1_img, self._ax1_prof):
+                    return
+                off_x = getattr(self, '_disp_off_x', 0)
+                W  = self._gel_arr.shape[1]
+                nv = int(np.clip(round(event.xdata - off_x), 0, W - 1))
+                i, side = self._drag_info['lane'], self._drag_info['side']
+                x0, x1  = self._lane_bounds[i]
+                if side == 0:
+                    nv = min(nv, x1 - 4)
+                else:
+                    nv = max(nv, x0 + 4)
+                self._lane_bounds[i][side] = nv
+                # Fast update: move only the affected line (in display coords)
+                line_idx = i * 2 + side
+                if line_idx < len(self._drag_lines):
+                    self._drag_lines[line_idx].set_xdata([nv + off_x, nv + off_x])
+                self._canvas1.draw_idle()
+
+            def _p1_mpl_release(self, event):
+                if self._drag_info is None:
+                    return
+                self._drag_info = None
+                self._canvas1.setCursor(Qt.ArrowCursor)
+                # Full redraw to update shading + profile markers
+                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
+                pr = np.ptp(col_profile)
+                cn = ((col_profile - col_profile.min()) / pr
+                      if pr > 1e-6 else np.zeros_like(col_profile))
+                self._draw_phase1_figure(cn)
+
+            def _add_lane_at(self, col):
+                W  = self._gel_arr.shape[1]
+                hw = max(self._lane_dist // 2, 5)
+                new_bound = [max(0, col - hw), min(W - 1, col + hw)]
+                # Insert at position that keeps lane bounds sorted left-to-right
+                insert_idx = len(self._lane_bounds)
+                for j, (b0, b1) in enumerate(self._lane_bounds):
+                    if (b0 + b1) / 2.0 > col:
+                        insert_idx = j
+                        break
+                self._lane_bounds.insert(insert_idx, new_bound)
+                self._lane_peaks = np.insert(self._lane_peaks, insert_idx, col)
+                self._p1_count_lbl.setText(f"Lanes: {len(self._lane_bounds)}")
+                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
+                pr = np.ptp(col_profile)
+                cn = ((col_profile - col_profile.min()) / pr
+                      if pr > 1e-6 else np.zeros_like(col_profile))
+                self._draw_phase1_figure(cn)
+
+            def _delete_selected_lane(self):
+                i = self._selected_lane_idx
+                if 0 <= i < len(self._lane_bounds):
+                    self._lane_bounds.pop(i)
+                    if i < len(self._lane_peaks):
+                        self._lane_peaks = np.delete(self._lane_peaks, i)
+                    self._selected_lane_idx = -1
+                    self._p1_del_btn.setEnabled(False)
+                    self._p1_count_lbl.setText(f"Lanes: {len(self._lane_bounds)}")
+                    col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
+                    pr = np.ptp(col_profile)
+                    cn = ((col_profile - col_profile.min()) / pr
+                          if pr > 1e-6 else np.zeros_like(col_profile))
+                    self._draw_phase1_figure(cn)
+
+            def _auto_set_padding_for_labels(self):
+                """Auto-compute white padding so the rotated top labels always fit.
+
+                The renderer draws each top label at (font_size * ui_scale) pixels in
+                *view* space, i.e. (font_size * ui_scale / view_scale) pixels in *image*
+                space — so on a large gel (view_scale < 1) the on-image text is much
+                bigger than the raw point size.  Padding is sized in image pixels, so we
+                must measure the rotated label bounding box at that effective size.
+                Because the padding itself changes the image size (and therefore the
+                view_scale), a short fixed-point iteration is used to converge."""
+                import math
+                try:
+                    H, W = self._gel_arr.shape[:2]
+                except Exception:
+                    return
+                app = self.parent_app
+                font_size  = max(1, int(getattr(app, 'font_size', 16)))
+                family     = str(getattr(app, 'font_family', 'Arial'))
+                rotation   = float(getattr(app, 'font_rotation', -45))
+                axis       = str(getattr(app, 'top_rotation_axis', 'left'))
+                ui_scale   = float(getattr(app, 'ui_scale_factor', 1.0)) or 1.0
+
+                if self._do_markers:
+                    labels = self._collect_lane_labels()
+                else:
+                    labels = [f"L{i+1}" for i in range(len(self._lane_bounds))]
+                labels = [str(s).strip() for s in labels if s and str(s).strip()] or ["L1"]
+
+                try:
+                    lbl_w = float(app.live_view_label.width())
+                    lbl_h = float(app.live_view_label.height())
+                except Exception:
+                    lbl_w = lbl_h = 0.0
+
+                def _extents_for(eff_px):
+                    """Rotated-label extents (above/below anchor, half-width) in px."""
+                    eff_px = max(4, int(round(eff_px)))
+                    top_e = bot_e = half = 0.0
+                    try:
+                        font = QFont(family); font.setPixelSize(eff_px)
+                        fm = QFontMetrics(font)
+                        t = QTransform(); t.rotate(rotation)
+                        for s in labels:
+                            tr  = fm.boundingRect(s).adjusted(-4, -4, 4, 4)
+                            adv = fm.horizontalAdvance(s)
+                            if axis == 'center':  xoff = -adv / 2.0
+                            elif axis == 'right': xoff = -adv
+                            else:                 xoff = 0.0
+                            corners = [
+                                QPointF(tr.left() + xoff,  tr.top()),
+                                QPointF(tr.right() + xoff, tr.top()),
+                                QPointF(tr.right() + xoff, tr.bottom()),
+                                QPointF(tr.left() + xoff,  tr.bottom()),
+                            ]
+                            rc = [t.map(p) for p in corners]
+                            ys = [p.y() for p in rc]; xs = [p.x() for p in rc]
+                            top_e = max(top_e, -min(ys))
+                            bot_e = max(bot_e,  max(ys))
+                            half  = max(half, max(abs(x) for x in xs))
+                    except Exception:
+                        max_len = max((len(s) for s in labels), default=3)
+                        label_px = max_len * 0.6 * eff_px
+                        top_e = label_px * abs(math.sin(math.radians(rotation))) + eff_px
+                        bot_e = eff_px
+                        half  = label_px / 2.0
+                    return top_e, bot_e, half
+
+                # Fixed-point: padding → image size → view_scale → effective font size.
+                pad_top = max(1.0, H * 0.30)
+                pad_lr  = max(8.0, W * 0.12)
+                anchor_shift = 0.0
+                for _ in range(6):
+                    fw = W + 2.0 * pad_lr
+                    fh = H + pad_top
+                    if lbl_w > 0 and lbl_h > 0 and fw > 0 and fh > 0:
+                        view_scale = min(lbl_w / fw, lbl_h / fh)
+                    else:
+                        view_scale = 1.0
+                    view_scale = max(view_scale, 1e-3)
+                    # Effective on-image font size, matching the renderer; clamp to a
+                    # sane range so it can't run away on extreme aspect ratios.
+                    eff_px = font_size * ui_scale / view_scale
+                    eff_px = min(max(eff_px, float(font_size)), font_size * 10.0)
+                    top_e, bot_e, half = _extents_for(eff_px)
+                    margin = max(6.0, eff_px / 3.0)
+                    # Baseline sits `margin` below the border; text rises by top_e and the
+                    # renderer adds fm.height()*0.3 baseline drop (~0.4*eff_px) too.
+                    anchor_shift = math.ceil(top_e) + margin
+                    pad_top = anchor_shift + math.ceil(bot_e) + margin + 0.4 * eff_px
+                    pad_lr  = max(8, W * 0.10, int(math.ceil(half)) + margin + eff_px)
+
+                self._label_anchor_shift = int(math.ceil(anchor_shift))
+                self._pad_top    = int(math.ceil(pad_top))
+                self._pad_bottom = 0
+                self._pad_left   = int(math.ceil(pad_lr))
+                self._pad_right  = int(math.ceil(pad_lr))
+
+            # ─────────────────────────────────────────────────────────
+            # Phase 3 helpers — dynamic label/MWM grid
+            # ─────────────────────────────────────────────────────────
+            def _populate_phase3(self):
+                """Re-build the per-lane label / MWM rows each time Phase 3 is entered."""
+                # Clear old widgets (keep header row 0)
+                for row in range(self._p3_grid.rowCount() - 1, 0, -1):
+                    for col in range(self._p3_grid.columnCount()):
+                        item = self._p3_grid.itemAtPosition(row, col)
+                        if item and item.widget():
+                            item.widget().deleteLater()
+
+                self._lane_label_edits = []
+                self._mwm_checkboxes   = []
+                n = len(self._lane_bounds)
+
+                # Default labels: "MWM" for lane 0, "L1", "L2", … for the rest
+                default_mwm = [False] * n
+                default_labels = []
+                mwm_count = 0
+                for i in range(n):
+                    if i == 0:
+                        default_labels.append("MWM")
+                        default_mwm[i] = True
+                    else:
+                        default_labels.append(f"L{i}")
+
+                for i in range(n):
+                    lbl = QLabel(f"Lane {i + 1}")
+                    chk = QCheckBox("MWM")
+                    chk.setChecked(default_mwm[i])
+                    chk.setToolTip("Mark this lane as the Molecular Weight Marker lane")
+                    edt = QLineEdit(default_labels[i])
+                    edt.setFixedWidth(120)
+                    edt.setToolTip("Top label displayed above this lane")
+                    chk.toggled.connect(lambda checked, e=edt, idx=i:
+                                        self._on_p3_mwm_check(checked, e, idx))
+                    self._p3_grid.addWidget(lbl, i + 1, 0)
+                    self._p3_grid.addWidget(chk, i + 1, 1)
+                    self._p3_grid.addWidget(edt, i + 1, 2)
+                    self._lane_label_edits.append(edt)
+                    self._mwm_checkboxes.append(chk)
+
+                self._p3_inner.adjustSize()
+                self._update_mwm_preset_note()
+
+            def _on_p3_mwm_check(self, checked, edit_widget, lane_idx):
+                if checked:
+                    edit_widget.setText("MWM")
+                else:
+                    # Renumber: count non-MWM lanes before this one
+                    non_mwm_before = sum(
+                        1 for j in range(lane_idx)
+                        if j < len(self._mwm_checkboxes) and
+                        not self._mwm_checkboxes[j].isChecked())
+                    edit_widget.setText(f"L{non_mwm_before + 1}")
+                self._update_mwm_preset_note()
+
+            def _on_p3_mwm_preset_changed(self, text):
+                self._mwm_preset_name = text
+                is_custom = (text == "Custom")
+                self._p3_custom_lbl.setVisible(is_custom)
+                self._p3_custom_edit.setVisible(is_custom)
+                self._update_mwm_preset_note()
+
+            def _on_p3_custom_changed(self, text):
+                self._mwm_custom_text = text
+
+            # ── Top-label style controls (font / size / colour / rotation / axis) ──
+            def _apply_label_style(self, *args):
+                """Push the Step 4 label-style widgets into the parent app so the
+                final top labels render with these settings (and padding auto-fits)."""
+                app = self.parent_app
+                try:
+                    app.font_family   = self._p3_font_combo.currentFont().family()
+                    app.font_size     = int(self._p3_font_size.value())
+                    app.font_rotation = int(self._p3_font_rot.value())
+                    axis_opts = ['left', 'center', 'right']
+                    app.top_rotation_axis = axis_opts[self._p3_axis_combo.currentIndex()]
+                    # Mirror the settings into the main window's own font widgets
+                    if hasattr(app, 'font_combo_box'):
+                        app.font_combo_box.blockSignals(True)
+                        app.font_combo_box.setCurrentFont(QFont(app.font_family))
+                        app.font_combo_box.blockSignals(False)
+                    if hasattr(app, 'font_size_spinner'):
+                        app.font_size_spinner.blockSignals(True)
+                        app.font_size_spinner.setValue(app.font_size)
+                        app.font_size_spinner.blockSignals(False)
+                    if hasattr(app, 'font_rotation_input'):
+                        app.font_rotation_input.blockSignals(True)
+                        app.font_rotation_input.setValue(app.font_rotation)
+                        app.font_rotation_input.blockSignals(False)
+                    if hasattr(app, 'top_rotation_axis_combo'):
+                        _am = {'left': 0, 'center': 1, 'right': 2}
+                        app.top_rotation_axis_combo.blockSignals(True)
+                        app.top_rotation_axis_combo.setCurrentIndex(_am.get(app.top_rotation_axis, 0))
+                        app.top_rotation_axis_combo.blockSignals(False)
+                    app.update_live_view()
+                except Exception:
+                    pass
+
+            def _on_p3_pick_color(self):
+                app = self.parent_app
+                cur = getattr(app, 'font_color', QColor(0, 0, 0))
+                if not isinstance(cur, QColor):
+                    cur = QColor(0, 0, 0)
+                col = QColorDialog.getColor(cur, self, "Select Top Label Color")
+                if col.isValid():
+                    app.font_color = col
+                    self._update_p3_color_swatch()
+                    if hasattr(app, 'font_color_button'):
+                        try:
+                            app._update_color_button_style(app.font_color_button, col)
+                        except Exception:
+                            pass
+                    try:
+                        app.update_live_view()
+                    except Exception:
+                        pass
+
+            def _update_p3_color_swatch(self):
+                if not hasattr(self, '_p3_font_color_btn'):
+                    return
+                col = getattr(self.parent_app, 'font_color', QColor(0, 0, 0))
+                if not isinstance(col, QColor):
+                    col = QColor(0, 0, 0)
+                txt = '#000000' if col.lightness() > 127 else '#ffffff'
+                self._p3_font_color_btn.setStyleSheet(
+                    f"background-color:{col.name()}; color:{txt};")
+
+            def _update_mwm_preset_note(self):
+                if not hasattr(self, '_p3_mwm_note'):
+                    return
+                any_mwm = any(chk.isChecked() for chk in self._mwm_checkboxes)
+                preset  = self._p3_mwm_combo.currentText() if hasattr(
+                    self, '_p3_mwm_combo') else "None (labels only)"
+                if not any_mwm:
+                    self._p3_mwm_note.setText(
+                        "No MWM lane selected — lanes will be labeled without MW values.")
+                elif preset == "None (labels only)":
+                    self._p3_mwm_note.setText(
+                        "MWM lane(s) marked but no preset chosen — "
+                        "labels only, no MW values assigned.")
+                elif preset == "Custom":
+                    self._p3_mwm_note.setText(
+                        "Enter comma-separated band sizes (kDa / bp) above.")
+                else:
+                    vals = self.MWM_PRESETS.get(preset, [])
+                    self._p3_mwm_note.setText(
+                        f"Preset: {preset}\n"
+                        f"Band sizes: {', '.join(str(v) for v in vals)}")
+
+
+            # ─────────────────────────────────────────────────────────
+            # Headless densitometry (no Qt widget overhead)
+            # ─────────────────────────────────────────────────────────
+            def _als_baseline(self, y, lam=1e5, p=0.01, niter=10):
+                L = len(y)
+                if L < 4:
+                    return np.zeros(L)
+                try:
+                    D = sparse.diags([1, -2, 1], [0, 1, 2],
+                                     shape=(L - 2, L), format='csc')
+                    H = lam * D.T.dot(D)
+                    w = np.ones(L)
+                    z = y.copy()
+                    for _ in range(niter):
+                        W_sp = sparse.diags(w, 0, shape=(L, L), format='csc')
+                        z    = spsolve(W_sp + H, w * y)
+                        w    = (p * (y > z).astype(float) +
+                                (1.0 - p) * (y <= z).astype(float))
+                    return np.asarray(z, dtype=np.float64)
+                except Exception:
+                    return np.zeros(L)
+
+            def _headless_densitometry(self, x0, x1, settings):
+                """
+                Run baseline + peak-detection densitometry on lane columns [x0:x1].
+                Returns list of dicts: {area, y_coord_in_lane_image, original_peak_index}.
+                Uses raw float array for higher precision than normalised 8-bit PIL.
+                """
+                x0 = max(0, x0)
+                x1 = min(self._gel_arr.shape[1] - 1, x1)
+                if x1 <= x0:
+                    return []
+
+                lane_arr = self._gel_arr[:, x0:x1 + 1].astype(np.float64)
+
+                # Inverted vertical profile (row-wise sum)
+                if settings.get('is_inverted', False):
+                    inv = lane_arr
+                else:
+                    inv = self._max_val - lane_arr
+                profile_raw = np.sum(inv, axis=1)
+
+                # Preprocessing: median then Gaussian smoothing
+                if len(profile_raw) >= 3:
+                    profile_raw = scipy_median_filter(profile_raw, size=3).astype(np.float64)
+                sigma = settings.get('smoothing_sigma', 0.5)
+                if sigma > 0.1:
+                    profile_raw = gaussian_filter1d(profile_raw, sigma=sigma)
+
+                # Normalise to [0,255] for consistent threshold scaling
+                p_min, p_max = profile_raw.min(), profile_raw.max()
+                if p_max <= p_min + 1e-6:
+                    return []
+                profile_norm = (profile_raw - p_min) / (p_max - p_min) * 255.0
+
+                # Peak detection parameters
+                p_range = float(np.ptp(profile_norm))
+                if p_range < 1e-9:
+                    return []
+                min_h  = (float(profile_norm.min()) +
+                           settings.get('peak_height_factor', 0.05) * p_range)
+                min_pr = settings.get('peak_prominence_factor', 0.02) * p_range
+
+                # MAD-based noise floor (raises threshold for noisy lanes)
+                try:
+                    d   = np.diff(profile_norm)
+                    mad = np.median(np.abs(d - np.median(d)))
+                    noise_floor = (float(profile_norm.min()) +
+                                   3.0 * 1.4826 * mad / np.sqrt(2.0))
+                    min_h = max(min_h, noise_floor)
+                except Exception:
+                    pass
+
+                try:
+                    peaks, props = find_peaks(
+                        profile_norm,
+                        height=min_h, prominence=min_pr,
+                        distance=max(1, settings.get('peak_distance', 10)),
+                        width=1, rel_height=0.5)
+                except Exception:
+                    return []
+
+                # Width filter
+                min_bw = settings.get('min_band_width', 3)
+                if len(peaks) > 0 and 'widths' in props:
+                    keep   = props['widths'] >= min_bw
+                    peaks  = peaks[keep]
+                    widths = props['widths'][keep]
+                    heights = props['peak_heights'][keep] if 'peak_heights' in props else None
+                    # Sharpness outlier rejection
+                    if heights is not None and len(peaks) >= 2:
+                        sharpness = heights / np.maximum(widths, 1.0)
+                        med_s     = np.median(sharpness)
+                        mad_s     = 1.4826 * np.median(np.abs(sharpness - med_s))
+                        max_h     = np.max(heights)
+                        if mad_s > 1e-9 and max_h > 0:
+                            spikes = ((sharpness > med_s + 3.5 * mad_s) &
+                                      (heights < max_h * 0.10))
+                            peaks = peaks[~spikes]
+
+                if len(peaks) == 0:
+                    return []
+
+                n = len(peaks)
+                L = len(profile_raw)
+
+                # Background estimation — choose method
+                method = settings.get('area_subtraction_method', 'Rolling Ball')
+                rb_radius = int(settings.get('rolling_ball_radius', 50))
+                # Auto rolling ball radius: mirror PeakAreaDialog._calculate_optimal_rb_radius
+                if method in ("Rolling Ball", "Rolling-valley") and settings.get('auto_adjust_rb_radius', False):
+                    try:
+                        w_arr = widths if len(peaks) > 0 else np.array([])
+                        if len(w_arr) > 0:
+                            rb_radius = int(np.clip(2.5 * float(np.mean(w_arr)), 10, 500))
+                    except Exception:
+                        pass
+                if method in ("Rolling Ball", "Rolling-valley"):
+                    try:
+                        safe_r = max(1, min(rb_radius, L // 2 - 1))
+                        # Use custom rolling ball
+                        bg_rb = self._rolling_ball_bg(profile_raw, safe_r)
+                        bg    = np.clip(bg_rb, 0.0, profile_raw)
+                    except Exception:
+                        lam = float(np.clip(1e5 * (L / 200.0) ** 2, 1e4, 1e8))
+                        bg  = self._als_baseline(profile_raw, lam=lam, p=0.01)
+                        bg  = np.clip(bg, 0.0, profile_raw)
+                elif method == "Straight Line":
+                    # Global straight-line baseline connecting first/last trough
+                    fences_x = [0]
+                    for i in range(n - 1):
+                        fences_x.append(int((peaks[i] + peaks[i + 1]) // 2))
+                    fences_x.append(L - 1)
+                    fences_y = [float(profile_raw[x]) for x in fences_x]
+                    bg = np.interp(np.arange(L), fences_x, fences_y)
+                    bg = np.clip(bg, 0.0, profile_raw)
+                else:
+                    # Gaussian Deconvolution / default → AsLS
+                    lam = float(np.clip(1e5 * (L / 200.0) ** 2, 1e4, 1e8))
+                    bg  = self._als_baseline(profile_raw, lam=lam, p=0.01)
+                    bg  = np.clip(bg, 0.0, profile_raw)
+
+                # Build midpoint fences between consecutive peaks
+                fences_l = []
+                fences_r = []
+                for i, pk in enumerate(peaks):
+                    lf = int((peaks[i - 1] + pk) // 2) if i > 0     else 0
+                    rf = int((pk + peaks[i + 1]) // 2) if i < n - 1 else L - 1
+                    fences_l.append(max(0, lf))
+                    fences_r.append(min(L - 1, rf))
+
+                # Area integration (trapz between midpoint fences) + sub-pixel band
+                # centre (intensity-weighted center-of-mass of the background-subtracted
+                # signal in a tight window around the peak). This places the marker on
+                # the true band centre rather than the nearest integer row.
+                areas = []
+                centers = []
+                for i in range(n):
+                    lf, rf = fences_l[i], fences_r[i]
+                    seg  = profile_raw[lf:rf + 1]
+                    bg_s = bg[lf:rf + 1]
+                    areas.append(float(np.trapz(np.maximum(seg - bg_s, 0.0))))
+                    centers.append(self._refine_band_center(profile_raw, bg, int(peaks[i]), lf, rf))
+
+                return [{'area': areas[i],
+                         'y_coord_in_lane_image': centers[i],
+                         'original_peak_index':   int(peaks[i]),
+                         'fence_left':  fences_l[i],
+                         'fence_right': fences_r[i]}
+                        for i in range(n)]
+
+            def _refine_band_center(self, profile_raw, bg, peak_idx, fence_l, fence_r):
+                """Intensity-weighted band centre (sub-pixel) around `peak_idx`.
+
+                A symmetric window (capped so neighbouring bands can't pull the centroid)
+                is taken around the peak and the centre of mass of the background-
+                subtracted signal is returned. Falls back to the integer peak if the
+                window carries no signal. Returns an int (row index) so all downstream
+                marker maths stays integer-friendly while still being band-centred."""
+                try:
+                    L = len(profile_raw)
+                    # Window radius: stay inside the fences but don't reach all the way to
+                    # the neighbouring trough (avoid tail bias toward an adjacent band).
+                    rad = max(2, int(min(peak_idx - fence_l, fence_r - peak_idx) * 0.6))
+                    lo = max(0, peak_idx - rad)
+                    hi = min(L, peak_idx + rad + 1)
+                    x = np.arange(lo, hi, dtype=np.float64)
+                    w = np.maximum(profile_raw[lo:hi] - bg[lo:hi], 0.0)
+                    s = float(np.sum(w))
+                    if s > 1e-9:
+                        return int(round(float(np.sum(x * w) / s)))
+                except Exception:
+                    pass
+                return int(peak_idx)
+
+            def _rolling_ball_bg(self, profile, radius):
+                """Simple rolling-ball background estimator for a 1D profile."""
+                L = len(profile)
+                bg = np.full(L, np.inf)
+                for i in range(L):
+                    lo = max(0, i - radius)
+                    hi = min(L, i + radius + 1)
+                    seg = profile[lo:hi]
+                    j_rel = i - lo
+                    r2 = radius ** 2
+                    x_rel = np.arange(len(seg)) - j_rel
+                    sphere_bottom = profile[i] - np.sqrt(np.maximum(r2 - x_rel ** 2, 0.0))
+                    bg[lo:hi] = np.minimum(bg[lo:hi], sphere_bottom + np.sqrt(np.maximum(r2 - x_rel ** 2, 0.0)))
+                return np.clip(bg, 0.0, None)
+
+            # ─────────────────────────────────────────────────────────
+            # Phase 4 preview (band profile)
+            # ─────────────────────────────────────────────────────────
+            def _get_band_settings(self):
+                return {
+                    'area_subtraction_method': self._band_method,
+                    'smoothing_sigma':         self._band_smooth,
+                    'peak_prominence_factor':  self._band_prom,
+                    'peak_height_factor':      self._band_height,
+                    'peak_distance':           self._band_dist,
+                    'min_band_width':          self._band_min_w,
+                    'is_inverted':             self._band_invert,
+                    'rolling_ball_radius':     self._band_rb_radius,
+                    'auto_adjust_rb_radius':   self._band_auto_rb,
+                }
+
+            def _refresh_band_preview(self):
+                if not self._lane_bounds:
+                    return
+                idx = min(self._preview_lane_idx, len(self._lane_bounds) - 1)
+                x0, x1   = self._lane_bounds[idx]
+                settings  = self._get_band_settings()
+                try:
+                    if idx in self._fence_overrides:
+                        info = self._fence_overrides[idx]
+                    else:
+                        info = self._headless_densitometry(x0, x1, settings)
+                    self._p4_current_info = list(info) if info else []
+                    self._draw_phase2_figure(self._p4_current_info, idx)
+                except Exception:
+                    pass
+
+            def _draw_phase2_figure(self, peak_info, lane_idx):
+                try:
+                    self._ax2_gel.cla()
+                    self._ax2_prof.cla()
+
+                    # Gel overview
+                    lo  = np.percentile(self._gel_arr, 2)
+                    hi  = np.percentile(self._gel_arr, 98)
+                    dsp = np.clip((self._gel_arr - lo) / max(hi - lo, 1e-9), 0, 1)
+                    self._ax2_gel.imshow(dsp, cmap='gray', aspect='auto',
+                                         interpolation='nearest')
+
+                    H      = self._gel_arr.shape[0]
+                    colors = plt.cm.tab10.colors
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        c   = colors[i % len(colors)]
+                        sel = (i == lane_idx)
+                        rect = plt.Rectangle(
+                            (x0, 0), x1 - x0, H,
+                            edgecolor=c,
+                            facecolor=(*c[:3], 0.28 if sel else 0.08),
+                            linewidth=2.5 if sel else 1.2, linestyle='-')
+                        self._ax2_gel.add_patch(rect)
+                        self._ax2_gel.text(
+                            (x0 + x1) / 2, H * 0.06, f"L{i+1}",
+                            color='white', fontsize=7, ha='center', va='top',
+                            bbox=dict(boxstyle='round,pad=0.15',
+                                      fc=c, alpha=0.8, ec='none'))
+
+                    n_bands = len(peak_info) if peak_info else 0
+                    self._ax2_gel.set_title(
+                        f"Lane {lane_idx + 1} highlighted  "
+                        f"({n_bands} band(s) detected)", fontsize=9, pad=3)
+                    self._ax2_gel.axis('off')
+
+                    # Band profile
+                    x0_, x1_ = self._lane_bounds[lane_idx]
+                    x0_ = max(0, x0_)
+                    x1_ = min(self._gel_arr.shape[1] - 1, x1_)
+                    if x1_ > x0_:
+                        lane_arr = self._gel_arr[:, x0_:x1_ + 1].astype(np.float64)
+                        inv      = (lane_arr if self._band_invert
+                                    else self._max_val - lane_arr)
+                        prof_raw = np.sum(inv, axis=1)
+                        if len(prof_raw) >= 3:
+                            prof_raw = scipy_median_filter(prof_raw, size=3).astype(np.float64)
+                        prof_sm  = (gaussian_filter1d(prof_raw, sigma=self._band_smooth)
+                                    if self._band_smooth > 0.1 else prof_raw.copy())
+                        self._ax2_prof.plot(prof_sm, color='steelblue', lw=1.2,
+                                            label='Profile')
+
+                        # Draw shaded band regions using fence data from peak_info
+                        if peak_info:
+                            L_p = len(prof_sm)
+                            # Build baseline for display
+                            try:
+                                L_bg = len(prof_raw)
+                                rb_r = max(1, min(self._band_rb_radius, L_bg // 2 - 1))
+                                bg_display = self._rolling_ball_bg(prof_raw, rb_r)
+                                bg_display = np.clip(bg_display, 0.0, prof_raw)
+                                self._ax2_prof.plot(
+                                    bg_display, color='gray', lw=0.8,
+                                    ls='--', label='Background')
+                            except Exception:
+                                bg_display = None
+
+                            for bi, p in enumerate(peak_info):
+                                pk = p['y_coord_in_lane_image']
+                                lf = p.get('fence_left',  max(0, pk - 5))
+                                rf = p.get('fence_right', min(L_p - 1, pk + 5))
+                                if 0 <= pk < L_p:
+                                    x_reg = np.arange(lf, rf + 1)
+                                    y_reg = prof_sm[x_reg]
+                                    bg_r  = (bg_display[x_reg]
+                                             if bg_display is not None
+                                             else np.zeros_like(y_reg))
+                                    self._ax2_prof.fill_between(
+                                        x_reg, bg_r, y_reg,
+                                        where=(y_reg >= bg_r),
+                                        color='cyan', alpha=0.45, zorder=1)
+                                    # Left / right fence lines
+                                    self._ax2_prof.axvline(
+                                        lf, color='green', lw=0.8, ls='--', alpha=0.7)
+                                    self._ax2_prof.axvline(
+                                        rf, color='green', lw=0.8, ls='--', alpha=0.7)
+                                    # Peak marker
+                                    self._ax2_prof.scatter(
+                                        [pk], [prof_sm[pk]],
+                                        color='tomato', zorder=5, s=40)
+                                    # Band number label
+                                    self._ax2_prof.text(
+                                        (lf + rf) / 2, prof_sm[pk],
+                                        str(bi + 1), color='darkred',
+                                        fontsize=6, ha='center', va='bottom')
+
+                        self._ax2_prof.set_xlabel("Row (px)", fontsize=7)
+                        self._ax2_prof.set_ylabel("Intensity", fontsize=7)
+                        n_bands = len(peak_info) if peak_info else 0
+                        self._ax2_prof.set_title(
+                            f"Band profile — Lane {lane_idx + 1}  "
+                            f"({n_bands} band(s))",
+                            fontsize=8, pad=2)
+                        self._ax2_prof.tick_params(labelsize=6)
+
+                    self._fig2.tight_layout(pad=0.5)
+                    self._canvas2.draw_idle()
+                except Exception:
+                    pass
+
+            # ─────────────────────────────────────────────────────────
+            # Phase 4 — Interactive fence editing
+            # ─────────────────────────────────────────────────────────
+            def _on_p4_fence_press(self, event):
+                """Start dragging a fence line if the click is close enough."""
+                if event.inaxes is not self._ax2_prof or event.button != 1:
+                    return
+                if not self._p4_current_info or event.xdata is None:
+                    return
+                x = event.xdata
+                # Find the nearest fence across all bands
+                best_dist = 8.0   # px threshold in data-space
+                best = None
+                L = self._gel_arr.shape[0]
+                for i, p in enumerate(self._p4_current_info):
+                    lf = float(p.get('fence_left',  max(0, p.get('y_coord_in_lane_image', 0) - 5)))
+                    rf = float(p.get('fence_right', min(L - 1, p.get('y_coord_in_lane_image', 0) + 5)))
+                    if abs(x - lf) < best_dist:
+                        best_dist = abs(x - lf)
+                        best = (i, 'left')
+                    if abs(x - rf) < best_dist:
+                        best_dist = abs(x - rf)
+                        best = (i, 'right')
+                self._p4_drag_fence = best
+
+            def _on_p4_fence_motion(self, event):
+                """Update fence position while dragging."""
+                if self._p4_drag_fence is None:
+                    return
+                if event.inaxes is not self._ax2_prof or event.xdata is None:
+                    return
+                i, side = self._p4_drag_fence
+                if i >= len(self._p4_current_info):
+                    return
+                p   = self._p4_current_info[i]
+                pk  = int(p.get('y_coord_in_lane_image', 0))
+                L   = self._gel_arr.shape[0]
+                new_x = int(round(event.xdata))
+                if side == 'left':
+                    p['fence_left']  = max(0, min(new_x, pk - 1))
+                else:
+                    p['fence_right'] = max(pk + 1, min(new_x, L - 1))
+                self._draw_phase2_figure(self._p4_current_info, self._preview_lane_idx)
+
+            def _on_p4_fence_release(self, event):
+                """Persist the dragged fence into overrides."""
+                if self._p4_drag_fence is not None:
+                    self._fence_overrides[self._preview_lane_idx] = [
+                        dict(p) for p in self._p4_current_info]
+                self._p4_drag_fence = None
+
+            def _p4_reset_fences(self):
+                """Remove manual fence overrides for the current preview lane and re-detect."""
+                self._fence_overrides.pop(self._preview_lane_idx, None)
+                self._refresh_band_preview()
+
+            # ─────────────────────────────────────────────────────────
+            # Run Full Analysis
+            # ─────────────────────────────────────────────────────────
+            def _collect_lane_labels(self):
+                """Return list of label strings, one per lane."""
+                labels = []
+                for i in range(len(self._lane_bounds)):
+                    if i < len(self._lane_label_edits):
+                        txt = self._lane_label_edits[i].text().strip()
+                        labels.append(txt if txt else f"L{i+1}")
+                    else:
+                        labels.append(f"L{i+1}")
+                return labels
+
+            def _mwm_lane_indices(self):
+                """Return 0-based indices of lanes marked as MWM."""
+                return [i for i, chk in enumerate(self._mwm_checkboxes)
+                        if chk.isChecked()]
+
+            def _run_full_analysis(self):
+                if not self._lane_bounds:
+                    QMessageBox.warning(
+                        self, "No Lanes",
+                        "No lanes found. Go back and adjust the lane detection settings.")
+                    return
+
+                settings = self._get_band_settings()
+                n        = len(self._lane_bounds)
+                prog = QProgressDialog(
+                    "Preparing analysis…", "Cancel", 0, n + 2, self)
+                prog.setWindowTitle("Auto Gel Analysis")
+                prog.setWindowModality(Qt.WindowModal)
+                prog.setMinimumDuration(0)
+                prog.setValue(0)
+
+                # multi_areas/details are populated later — either from PeakAreaDialog
+                # (when _do_densitometry) or from headless densitometry for MWM bands only.
+                multi_areas      = {}
+                multi_details    = {}
+                multi_quantities = {}
+
+                prog.setValue(n)
+                QApplication.processEvents()
+
+                # ── Push results into parent app ──────────────────────
+                app = self.parent_app
+                app.save_state()
+
+                W = self._gel_arr.shape[1]   # gel-array width (already rotated if rotation was applied)
+                H = self._gel_arr.shape[0]
+
+                # NOTE: self._gel_arr is the WYSIWYG gel — _get_fully_adjusted_image_for_analysis
+                # already baked any inversion into the source PIL.  So the committed image must
+                # stay non-inverted (main_image_is_inverted = False, which
+                # _finalize_permanent_transformation sets).  Re-applying inversion here would
+                # double-invert the result (blank/white output, and a hidden inversion that
+                # only surfaces on "Reset adjustments").
+
+                # Helper: promote any numpy array to 4-channel RGBA with opaque content
+                def _to_rgba(arr):
+                    opaque = 65535 if arr.dtype == np.uint16 else 255
+                    if arr.ndim == 2:
+                        if arr.dtype == np.uint16:
+                            alpha = np.full(arr.shape, opaque, dtype=arr.dtype)
+                            return np.stack([arr, arr, arr, alpha], axis=2)
+                        else:
+                            return cv2.cvtColor(arr, cv2.COLOR_GRAY2BGRA)
+                    elif arr.shape[2] == 3:
+                        if arr.dtype == np.uint16:
+                            c1, c2, c3 = cv2.split(arr)
+                            alpha = np.full(c1.shape, opaque, dtype=arr.dtype)
+                            return cv2.merge([c1, c2, c3, alpha])
+                        else:
+                            return cv2.cvtColor(arr, cv2.COLOR_BGR2BGRA)
+                    return arr  # already 4-channel
+
+                # ─────────────────────────────────────────────────────
+                # Step 0: Commit the adjusted gel as the new working image.
+                #
+                # self._gel_arr already holds the EXACT pixels used for lane
+                # detection — the rotation, skew and manual crop box from Step 2
+                # were baked in by _lock_geometry_and_go_to_lanes.  Building the
+                # output straight from it guarantees the final image matches the
+                # preview and that every lane boundary maps 1:1 with no
+                # coordinate drift.  (Previously rotation/skew/crop were gated on
+                # flags that were never set, so they never reached the output.)
+                # After this commit the gel origin is (0,0) and crop_offset only
+                # needs to account for any padding added below.
+                # ─────────────────────────────────────────────────────
+                crop_offset_x = 0
+                crop_offset_y = 0
+                gx_eff = 0
+                gy_eff = 0
+                gh = int(self._gel_arr.shape[0])
+
+                try:
+                    final_arr = self._gel_arr
+                    is16 = self._max_val > 255.0
+                    out_max = 65535.0 if is16 else 255.0
+                    norm = np.clip(final_arr / max(self._max_val, 1e-9), 0.0, 1.0) * out_max
+                    out_gray = norm.astype(np.uint16 if is16 else np.uint8)
+                    gel_qimg = app.numpy_to_qimage(np.ascontiguousarray(out_gray))
+                    if gel_qimg is not None and not gel_qimg.isNull():
+                        # The gel is WYSIWYG: inversion, levels, CLAHE and the channel
+                        # mixer are already baked in.  Commit it, then clear any leftover
+                        # Main-Image adjustments so they are NOT re-applied on top (which
+                        # would double-process / wash the image out).  Resetting AFTER the
+                        # commit also re-derives the level-slider ranges from the gel's own
+                        # bit depth, avoiding an 8-bit/16-bit mismatch.
+                        app.main_image_is_inverted = False
+                        app._finalize_permanent_transformation(gel_qimg)
+                        app.main_image_is_inverted = False
+                        try:
+                            app.reset_all_adjustments()
+                        except Exception:
+                            pass
+                except Exception:
+                    import traceback; traceback.print_exc()
+
+                # ── Step 1: Apply per-side transparent padding ────────
+                # Padding is auto-computed now (after lanes/labels are known) so the
+                # top padding is large enough for the rotated top labels.
+                if self._do_padding:
+                    self._auto_set_padding_for_labels()
+                applied_pt = 0
+                if self._do_padding:
+                    try:
+                        pl = max(0, self._pad_left)
+                        pr = max(0, self._pad_right)
+                        pt = max(0, self._pad_top)
+                        pb = max(0, self._pad_bottom)
+                        if pl + pr + pt + pb > 0:
+                            app.adjust_elements_for_padding(pl, pt)
+                            np_img = app.qimage_to_numpy(app.image_master)
+                            if np_img is not None:
+                                oh, ow = np_img.shape[:2]
+                                nw = ow + pl + pr
+                                nh = oh + pt + pb
+                                target_dtype = np_img.dtype
+                                padded = np.zeros((nh, nw, 4), dtype=target_dtype)
+                                img_to_insert = _to_rgba(np_img)
+                                padded[pt:pt+oh, pl:pl+ow] = img_to_insert
+                                padded_qimg = app.numpy_to_qimage(padded)
+                                if not padded_qimg.isNull():
+                                    app._finalize_permanent_transformation(padded_qimg)
+                                    crop_offset_x -= pl
+                                    crop_offset_y -= pt
+                                    applied_pt = pt
+                    except Exception:
+                        pass
+
+                # Keep the committed gel non-inverted (it is already WYSIWYG).
+                app.main_image_is_inverted = False
+
+                # gx_eff / gy_eff were set to 0 in Step 0 (the committed gel image
+                # is the coordinate origin). crop_offset_x/y now carry only the
+                # padding offset applied above, so lane coords map as x + pad_left.
+
+                # ── Step 2: Top markers ───────────────────────────────
+                lane_labels = self._collect_lane_labels()
+                app.top_markers.clear()
+                app.current_top_label_index = 0
+                try:
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        center_in_new = gx_eff + (x0 + x1) / 2.0 - crop_offset_x
+                        lbl = lane_labels[i] if i < len(lane_labels) else f"L{i+1}"
+                        app.top_markers.append((center_in_new, lbl))
+                except Exception:
+                    pass
+
+                app.top_label = list(lane_labels)
+                if hasattr(app, 'top_marker_input'):
+                    app.top_marker_input.blockSignals(True)
+                    app.top_marker_input.setText(", ".join(lane_labels))
+                    app.top_marker_input.blockSignals(False)
+
+                # Place the top-label baseline at the anchor offset computed by
+                # _auto_set_padding_for_labels (which sized the padding to the exact
+                # rotated label bounding box).  Clamp into the actual padding applied.
+                _fsz = int(getattr(app, 'font_size', 16))
+                _anchor = int(getattr(self, '_label_anchor_shift', 0))
+                if _anchor > 0 and applied_pt > 0:
+                    app.top_marker_shift_added = min(_anchor, max(1, applied_pt - 2))
+                elif applied_pt > 0:
+                    app.top_marker_shift_added = max(int(_fsz * 1.5), applied_pt * 7 // 10)
+                else:
+                    app.top_marker_shift_added = max(int(_fsz * 1.5), 24)
+                app._update_marker_slider_ranges()
+                if hasattr(app, 'top_padding_slider'):
+                    app.top_padding_slider.blockSignals(True)
+                    app.top_padding_slider.setValue(int(app.top_marker_shift_added))
+                    app.top_padding_slider.blockSignals(False)
+
+                # ── Step 3: MWM preset + left/right markers ───────────
+                mwm_indices = self._mwm_lane_indices() if self._do_markers else []
+                preset_name = self._mwm_preset_name
+                if mwm_indices and preset_name not in ("None (labels only)", "Custom", ""):
+                    try:
+                        if hasattr(app, 'combo_box'):
+                            idx = app.combo_box.findText(preset_name)
+                            if idx >= 0:
+                                app.combo_box.blockSignals(True)
+                                app.combo_box.setCurrentIndex(idx)
+                                app.combo_box.blockSignals(False)
+                                app.marker_values = [
+                                    str(v) for v in
+                                    self.MWM_PRESETS.get(preset_name, [])]
+                    except Exception:
+                        pass
+                elif mwm_indices and preset_name == "Custom":
+                    try:
+                        raw = self._mwm_custom_text.strip()
+                        if raw:
+                            vals = [v.strip() for v in raw.split(',') if v.strip()]
+                            app.marker_values = vals
+                            if hasattr(app, 'marker_values_textbox'):
+                                app.marker_values_textbox.setText(raw)
+                    except Exception:
+                        pass
+
+                if mwm_indices:
+                    try:
+                        preset_vals = getattr(app, 'marker_values', [])
+                        W_gel = self._gel_arr.shape[1]
+                        _left_done = False
+                        _right_done = False
+                        for mwm_idx in mwm_indices:
+                            if mwm_idx >= len(self._lane_bounds):
+                                continue
+                            lx0_mwm, lx1_mwm = self._lane_bounds[mwm_idx]
+                            lane_cx = (lx0_mwm + lx1_mwm) / 2.0
+                            on_right = lane_cx >= W_gel / 2.0
+
+                            if on_right:
+                                if _right_done:
+                                    continue
+                                _right_done = True
+                                app.right_markers.clear()
+                                app.current_right_marker_index = 0
+                                target = app.right_markers
+                                _, rb = app._find_image_content_borders()
+                                if rb is not None:
+                                    x_pos = float(rb + 1)
+                                else:
+                                    x_pos = float(gx_eff + lx1_mwm - crop_offset_x)
+                                app.right_marker_shift_added = x_pos
+                                app._update_marker_slider_ranges()
+                                if hasattr(app, 'right_padding_slider'):
+                                    app.right_padding_slider.blockSignals(True)
+                                    app.right_padding_slider.setValue(int(x_pos))
+                                    app.right_padding_slider.blockSignals(False)
+                            else:
+                                if _left_done:
+                                    continue
+                                _left_done = True
+                                app.left_markers.clear()
+                                app.current_left_marker_index = 0
+                                target = app.left_markers
+                                lb, _ = app._find_image_content_borders()
+                                if lb is not None:
+                                    x_pos = float(lb)
+                                else:
+                                    x_pos = float(gx_eff + lx0_mwm - crop_offset_x)
+                                app.left_marker_shift_added = x_pos
+                                app._update_marker_slider_ranges()
+                                if hasattr(app, 'left_padding_slider'):
+                                    app.left_padding_slider.blockSignals(True)
+                                    app.left_padding_slider.setValue(int(x_pos))
+                                    app.left_padding_slider.blockSignals(False)
+
+                            # Band Y positions (gel-array coords → padded image coords)
+                            lid = mwm_idx + 1
+                            mwm_bands = multi_details.get(lid, [])
+                            if not mwm_bands:
+                                try:
+                                    mwm_bands = self._headless_densitometry(
+                                        lx0_mwm, lx1_mwm, settings) or []
+                                except Exception:
+                                    mwm_bands = []
+                            for band_idx, band in enumerate(mwm_bands):
+                                y_in_image = float(
+                                    gy_eff + band['y_coord_in_lane_image'] - crop_offset_y)
+                                label = (str(preset_vals[band_idx])
+                                         if band_idx < len(preset_vals) else "")
+                                target.append((y_in_image, label))
+                            if _left_done and _right_done:
+                                break
+                    except Exception:
+                        import traceback; traceback.print_exc()
+
+                # ── Step 4: Build multi_lane_definitions (always rect) ─
+                app.multi_lane_definitions = []
+                try:
+                    new_img_w = float(app.image.width())
+                    new_img_h = float(app.image.height())
+                    lbl_w = float(app.live_view_label.width())
+                    lbl_h = float(app.live_view_label.height())
+                    scale = (min(lbl_w / new_img_w, lbl_h / new_img_h)
+                             if new_img_w > 0 and new_img_h > 0 else 1.0)
+                    off_x = (lbl_w - new_img_w * scale) / 2.0
+                    off_y = (lbl_h - new_img_h * scale) / 2.0
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        img_x0 = (gx_eff + x0) - crop_offset_x
+                        img_x1 = (gx_eff + x1) - crop_offset_x
+                        img_y0 = gy_eff - crop_offset_y
+                        img_y1 = (gy_eff + gh) - crop_offset_y
+                        rect_ls = QRectF(
+                            QPointF(img_x0 * scale + off_x, img_y0 * scale + off_y),
+                            QPointF(img_x1 * scale + off_x, img_y1 * scale + off_y)
+                        ).normalized()
+                        app.multi_lane_definitions.append({
+                            'type': 'rectangle',
+                            'points_label': [rect_ls],
+                            'id': i + 1
+                        })
+                except Exception:
+                    pass
+
+                prog.setValue(n + 2)
+                app.update_live_view()
+                # Save geometry needed to re-anchor MWM marker Y-positions in Step 5
+                self._saved_gy_eff        = gy_eff
+                self._saved_crop_offset_y = crop_offset_y
+                self._saved_mwm_indices   = list(mwm_indices) if mwm_indices else []
+                self.accept()
+
+                # ── Step 5: Densitometry — open PeakAreaDialog (dropdown-based) ──
+                if self._do_densitometry:
+                    try:
+                        # Build per-lane PIL images from the gel array
+                        lane_dicts = []
+                        gel_h = self._gel_arr.shape[0]
+                        gel_w = self._gel_arr.shape[1]
+                        for i, (x0, x1) in enumerate(self._lane_bounds):
+                            x0c = max(0, int(x0))
+                            x1c = min(gel_w - 1, int(x1))
+                            if x1c <= x0c:
+                                continue
+                            lane_np = self._gel_arr[:, x0c:x1c + 1]
+                            # Normalise to uint8 for PIL
+                            mn = float(lane_np.min())
+                            mx = float(lane_np.max())
+                            if mx > mn:
+                                lane8 = ((lane_np.astype(np.float32) - mn) /
+                                         (mx - mn) * 255.0).astype(np.uint8)
+                            else:
+                                lane8 = np.zeros((gel_h, x1c - x0c + 1), dtype=np.uint8)
+                            pil_lane = Image.fromarray(lane8, mode='L')
+                            lane_dicts.append({'pil': pil_lane, 'id': i + 1})
+
+                        if lane_dicts:
+                            dlg = PeakAreaDialog(
+                                cropped_data=lane_dicts,
+                                current_settings=app.peak_dialog_settings
+                                    if hasattr(app, 'peak_dialog_settings') else {},
+                                persist_checked=getattr(
+                                    app, 'persist_peak_settings_enabled', False),
+                                parent=app
+                            )
+                            if dlg.exec() == QDialog.Accepted:
+                                all_info = dlg.get_all_lanes_peak_info()
+                                if dlg.should_persist_settings():
+                                    app.peak_dialog_settings = dlg.get_current_settings()
+                                    app.persist_peak_settings_enabled = True
+                                else:
+                                    app.persist_peak_settings_enabled = False
+
+                                # Commit results
+                                app.latest_multi_lane_peak_areas.clear()
+                                app.latest_multi_lane_peak_details.clear()
+                                app.latest_multi_lane_calculated_quantities.clear()
+                                for lid, peak_info_list in all_info.items():
+                                    areas = [float(round(p['area'], 4)) for p in peak_info_list]
+                                    app.latest_multi_lane_peak_areas[lid] = areas
+                                    app.latest_multi_lane_peak_details[lid] = peak_info_list
+                                    app.latest_multi_lane_calculated_quantities[lid] = []
+
+                                if 1 in all_info:
+                                    app.latest_peak_areas = [
+                                        float(round(p['area'], 4)) for p in all_info[1]]
+                                    app.latest_peak_details = all_info[1]
+                                    app.latest_calculated_quantities = []
+
+                                # Summary text
+                                lines = []
+                                for lid, peak_info_list in all_info.items():
+                                    lbl = (lane_labels[lid - 1]
+                                           if lid - 1 < len(lane_labels)
+                                           else f"Lane {lid}")
+                                    areas = [float(round(p['area'], 4))
+                                             for p in peak_info_list]
+                                    lines.append(
+                                        f"{lbl}: {len(areas)} band(s)  "
+                                        f"[{', '.join(f'{a:.3f}' for a in areas)}]")
+                                if hasattr(app, 'target_protein_areas_text') and lines:
+                                    app.target_protein_areas_text.setText(
+                                        "\n".join(lines))
+
+                                # Re-anchor MWM marker Y-positions from user-adjusted peaks.
+                                # Step 3 used headless detection; now replace with dialog results.
+                                try:
+                                    _gy   = getattr(self, '_saved_gy_eff', 0)
+                                    _cy   = getattr(self, '_saved_crop_offset_y', 0)
+                                    _midx = getattr(self, '_saved_mwm_indices', [])
+                                    _pvs  = getattr(app, 'marker_values', [])
+                                    _Wg   = self._gel_arr.shape[1]
+                                    _ld = False; _rd = False
+                                    for _mi in _midx:
+                                        if _mi >= len(self._lane_bounds):
+                                            continue
+                                        _lid = _mi + 1
+                                        _bands = all_info.get(_lid, [])
+                                        if not _bands:
+                                            continue
+                                        _lx0, _lx1 = self._lane_bounds[_mi]
+                                        _right = (_lx0 + _lx1) / 2.0 >= _Wg / 2.0
+                                        if _right:
+                                            if _rd: continue
+                                            _rd = True; _tgt = app.right_markers
+                                        else:
+                                            if _ld: continue
+                                            _ld = True; _tgt = app.left_markers
+                                        _tgt.clear()
+                                        for _bi, _b in enumerate(_bands):
+                                            _y = float(_gy + _b['y_coord_in_lane_image'] - _cy)
+                                            _tgt.append((_y, str(_pvs[_bi]) if _bi < len(_pvs) else ""))
+                                        if _ld and _rd:
+                                            break
+                                    app.update_live_view()
+                                except Exception:
+                                    import traceback; traceback.print_exc()
+
+                                QTimer.singleShot(100, app.open_table_window)
+                    except Exception:
+                        import traceback; traceback.print_exc()
+
+                elif mwm_indices:
+                    # Densitometry is OFF for sample lanes, but open PeakAreaDialog
+                    # for MWM marker lanes only so the user can confirm band positions.
+                    try:
+                        gel_h = self._gel_arr.shape[0]
+                        gel_w = self._gel_arr.shape[1]
+                        mwm_lane_dicts = []
+                        for _mi in mwm_indices:
+                            if _mi >= len(self._lane_bounds):
+                                continue
+                            _x0, _x1 = self._lane_bounds[_mi]
+                            x0c = max(0, int(_x0))
+                            x1c = min(gel_w - 1, int(_x1))
+                            if x1c <= x0c:
+                                continue
+                            lane_np = self._gel_arr[:, x0c:x1c + 1]
+                            mn = float(lane_np.min()); mx = float(lane_np.max())
+                            if mx > mn:
+                                lane8 = ((lane_np.astype(np.float32) - mn) /
+                                         (mx - mn) * 255.0).astype(np.uint8)
+                            else:
+                                lane8 = np.zeros((gel_h, x1c - x0c + 1), dtype=np.uint8)
+                            lbl = (lane_labels[_mi] if _mi < len(lane_labels)
+                                   else f"MWM Lane {_mi + 1}")
+                            mwm_lane_dicts.append({'pil': Image.fromarray(lane8, mode='L'),
+                                                   'id': _mi + 1, 'label': lbl})
+
+                        if mwm_lane_dicts:
+                            dlg = PeakAreaDialog(
+                                cropped_data=mwm_lane_dicts,
+                                current_settings=app.peak_dialog_settings
+                                    if hasattr(app, 'peak_dialog_settings') else {},
+                                persist_checked=getattr(
+                                    app, 'persist_peak_settings_enabled', False),
+                                parent=app
+                            )
+                            dlg.setWindowTitle(
+                                "MWM Band Confirmation  (Densitometry OFF for sample lanes)")
+                            if dlg.exec() == QDialog.Accepted:
+                                all_info = dlg.get_all_lanes_peak_info()
+                                # Re-anchor MWM marker Y-positions from user-adjusted peaks
+                                try:
+                                    _gy   = getattr(self, '_saved_gy_eff', 0)
+                                    _cy   = getattr(self, '_saved_crop_offset_y', 0)
+                                    _midx = getattr(self, '_saved_mwm_indices', [])
+                                    _pvs  = getattr(app, 'marker_values', [])
+                                    _Wg   = self._gel_arr.shape[1]
+                                    _ld = False; _rd = False
+                                    for _mi in _midx:
+                                        if _mi >= len(self._lane_bounds):
+                                            continue
+                                        _lid = _mi + 1
+                                        _bands = all_info.get(_lid, [])
+                                        if not _bands:
+                                            continue
+                                        _lx0, _lx1 = self._lane_bounds[_mi]
+                                        _right = (_lx0 + _lx1) / 2.0 >= _Wg / 2.0
+                                        if _right:
+                                            if _rd: continue
+                                            _rd = True; _tgt = app.right_markers
+                                        else:
+                                            if _ld: continue
+                                            _ld = True; _tgt = app.left_markers
+                                        _tgt.clear()
+                                        for _bi, _b in enumerate(_bands):
+                                            _y = float(_gy + _b['y_coord_in_lane_image'] - _cy)
+                                            _tgt.append((_y, str(_pvs[_bi]) if _bi < len(_pvs) else ""))
+                                        if _ld and _rd:
+                                            break
+                                    app.update_live_view()
+                                except Exception:
+                                    import traceback; traceback.print_exc()
+                    except Exception:
+                        import traceback; traceback.print_exc()
+
+        class SampleResultsTable(QWidget):
+            """
+            Drop-in replacement for the QTextEdit 'Sample Results' box.
+            Exposes setText()/clear() compatible with all existing callsites but
+            renders results as a compact, scrollable QTableWidget instead of raw text.
+            """
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                layout = QVBoxLayout(self)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.setSpacing(0)
+                self._table = QTableWidget()
+                self._table.setEditTriggers(QTableWidget.NoEditTriggers)
+                self._table.setSelectionBehavior(QTableWidget.SelectRows)
+                self._table.setAlternatingRowColors(True)
+                self._table.verticalHeader().setVisible(False)
+                self._table.verticalHeader().setDefaultSectionSize(20)
+                self._table.horizontalHeader().setStretchLastSection(True)
+                self._table.setShowGrid(True)
+                self._placeholder = ""
+                layout.addWidget(self._table)
+
+            # ── QTextEdit compatibility shims ──────────────────────────
+            def setPlaceholderText(self, text):
+                self._placeholder = text
+
+            def setReadOnly(self, _val):
+                pass  # table is always read-only
+
+            def setFixedHeight(self, h):
+                super().setFixedHeight(h)
+
+            def setMinimumHeight(self, h):
+                super().setMinimumHeight(h)
+
+            # ── Main interface ─────────────────────────────────────────
+            def clear(self):
+                self._table.clearContents()
+                self._table.setRowCount(0)
+                self._table.setColumnCount(0)
+
+            def setText(self, text):
+                self.clear()
+                if not text:
+                    return
+                text = text.strip()
+                if not text or text in ("Error", "N/A", "N/A or analysis failed for all lanes."):
+                    self._table.setColumnCount(1)
+                    self._table.setHorizontalHeaderLabels(["Status"])
+                    self._table.setRowCount(1)
+                    self._table.setItem(0, 0, QTableWidgetItem(text))
+                    self._table.resizeColumnsToContents()
+                    return
+
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                rows = []   # (lane_label, band_num, area, qty_or_None)
+
+                for line in lines:
+                    # Format A: "LaneName: N band(s)  [a1, a2, ...]"
+                    mA = re.match(
+                        r'^(.+):\s*\d+\s*band\(s\)\s*\[([^\]]*)\]', line)
+                    if mA:
+                        lbl   = mA.group(1).strip()
+                        areas = [float(x) for x in mA.group(2).split(',')
+                                 if x.strip()]
+                        for bi, a in enumerate(areas):
+                            rows.append((lbl, bi + 1, a, None))
+                        continue
+
+                    # Format B: "Lane N: Areas=[a1,a2], Qty=[q1,q2]"
+                    #        or: "Lane N: Areas=[a1,a2] (No std …)"
+                    mB = re.match(
+                        r'^(Lane\s+\S+):\s*Areas=\[([^\]]*)\]'
+                        r'(?:,\s*Qty=\[([^\]]*)\])?', line)
+                    if mB:
+                        lbl   = mB.group(1).strip()
+                        areas = [float(x) for x in mB.group(2).split(',')
+                                 if x.strip()]
+                        qtys  = ([float(x) for x in mB.group(3).split(',')
+                                  if x.strip()]
+                                 if mB.group(3) else [])
+                        for bi, a in enumerate(areas):
+                            qty = qtys[bi] if bi < len(qtys) else None
+                            rows.append((lbl, bi + 1, a, qty))
+                        continue
+
+                    # Format C: "a1, a2, ..." plain comma-separated areas
+                    try:
+                        parts = [p.strip() for p in line.split(',')]
+                        areas = [float(p) for p in parts if p]
+                        for bi, a in enumerate(areas):
+                            rows.append(("Lane 1", bi + 1, a, None))
+                        continue
+                    except ValueError:
+                        pass
+
+                    # Fallback: show raw text line
+                    rows.append((line, 1, float('nan'), None))
+
+                if not rows:
+                    self._table.setColumnCount(1)
+                    self._table.setHorizontalHeaderLabels(["Info"])
+                    self._table.setRowCount(1)
+                    self._table.setItem(0, 0, QTableWidgetItem(text[:200]))
+                    return
+
+                has_qty   = any(r[3] is not None for r in rows)
+                multi_lane = len({r[0] for r in rows}) > 1
+
+                headers = []
+                if multi_lane:
+                    headers.append("Lane")
+                headers += ["Band", "Area"]
+                headers.append("%")
+                if has_qty:
+                    headers.append("Qty")
+
+                self._table.setColumnCount(len(headers))
+                self._table.setHorizontalHeaderLabels(headers)
+                self._table.setRowCount(len(rows))
+
+                # Per-lane totals for percentage
+                lane_totals = {}
+                for lbl, _bi, a, _q in rows:
+                    if not (isinstance(a, float) and a != a):   # skip NaN
+                        lane_totals[lbl] = lane_totals.get(lbl, 0.0) + a
+
+                for ri, (lbl, bi, area, qty) in enumerate(rows):
+                    ci = 0
+                    if multi_lane:
+                        self._table.setItem(ri, ci, QTableWidgetItem(lbl))
+                        ci += 1
+                    # Band
+                    self._table.setItem(ri, ci,
+                        QTableWidgetItem(str(bi) if not (isinstance(area, float) and area != area) else lbl))
+                    ci += 1
+                    # Area
+                    area_str = f"{area:.3f}" if not (isinstance(area, float) and area != area) else "—"
+                    self._table.setItem(ri, ci, QTableWidgetItem(area_str)); ci += 1
+                    # %
+                    total = lane_totals.get(lbl, 0.0)
+                    if total > 0 and not (isinstance(area, float) and area != area):
+                        pct = f"{area / total * 100:.1f}%"
+                    else:
+                        pct = "—"
+                    self._table.setItem(ri, ci, QTableWidgetItem(pct)); ci += 1
+                    # Qty
+                    if has_qty:
+                        self._table.setItem(ri, ci,
+                            QTableWidgetItem(f"{qty:.2f}" if qty is not None else "—"))
+
+                self._table.resizeColumnsToContents()
 
         class CombinedSDSApp(QMainWindow):
             CONFIG_PRESET_FILE_NAME = "Gel_Blot_Analyzer_preset_config.txt"
@@ -6663,7 +9696,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v6.0"
+                self.window_title="GEL BLOT ANALYZER v6.5"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -6737,11 +9770,15 @@ if __name__ == "__main__":
                 self.right_markers = []
                 self.top_markers = []
                 self.custom_markers=[]
+                self.markers_visible = True
                 self.current_left_marker_index = 0
                 self.current_right_marker_index = 0
                 self.current_top_label_index = 0
                 self.font_rotation=-45
                 self.top_rotation_axis = "left"
+                # Symbol drawn next to Left/Right standard markers (e.g. "250 ⎯").
+                # Empty string = no symbol (value only).
+                self.marker_symbol = "⎯"
                 self.image_width=0
                 self.image_height=0
                 self.new_image_width=0
@@ -7381,6 +10418,7 @@ if __name__ == "__main__":
                 self.pan_up_action = QAction("Pan Up", self)
                 self.pan_down_action = QAction("Pan Down", self)
                 self.auto_lane_action = QAction("&Automatic Lane Markers", self)
+                self.auto_analyze_gel_action = QAction("&Auto Analyze Gel  ▶", self)
 
                 # --- Layout Actions ---
                 self.layout_top_action = QAction("Viewer on Top", self)
@@ -7416,6 +10454,8 @@ if __name__ == "__main__":
                 self.layout_left_action.setToolTip("Place the image viewer to the left of the settings tabs.")
                 self.layout_right_action.setToolTip("Place the image viewer to the right of the settings tabs.")
                 self.auto_lane_action.setToolTip("Automatically detect and place lane markers based on a defined region.")
+                self.auto_analyze_gel_action.setToolTip(
+                    "Draw the gel boundary, then auto-detect lanes + bands and run densitometry in one step.")
                 self.theme_action.setToolTip("Switch between light and dark themes (Ctrl+Shift+D or Cmd+Shift+D).")
                 self.info_action.setToolTip("Open Project GitHub Page")
                 self.load_action.setToolTip("Load an image file (Ctrl+O)")
@@ -7473,6 +10513,7 @@ if __name__ == "__main__":
                 self.layout_left_action.triggered.connect(lambda: self._transition_layout_change("Left"))
                 self.layout_right_action.triggered.connect(lambda: self._transition_layout_change("Right"))
                 self.auto_lane_action.triggered.connect(self.start_auto_lane_marker)
+                self.auto_analyze_gel_action.triggered.connect(self.start_auto_analyze_gel)
                 self.draw_line_action.triggered.connect(self.enable_line_drawing_mode)
                 self.draw_bounding_box_action.triggered.connect(self.enable_rectangle_drawing_mode)
                 self.info_action.triggered.connect(self.open_github)
@@ -8365,6 +11406,8 @@ if __name__ == "__main__":
                 view_menu.addAction(self.zoom_out_action)
                 
                 tools_menu = menubar.addMenu("&Tools")
+                tools_menu.addAction(self.auto_analyze_gel_action)
+                tools_menu.addSeparator()
                 tools_menu.addAction(self.auto_lane_action)
 
                 # --- About Menu ---
@@ -8405,6 +11448,7 @@ if __name__ == "__main__":
                 self.pan_up_action.setIcon(create_text_icon("Arial", icon_size, text_color, "↑"))
                 self.pan_down_action.setIcon(create_text_icon("Arial", icon_size, text_color, "↓"))
                 self.auto_lane_action.setIcon(create_text_icon("Arial", icon_size, text_color, "A"))
+                self.auto_analyze_gel_action.setIcon(create_text_icon("Arial", icon_size, text_color, "▶"))
                 self.layout_top_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "5"))
                 self.layout_bottom_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "6"))
                 self.layout_left_action.setIcon(create_text_icon("Webdings", icon_size, text_color, "7"))
@@ -8442,7 +11486,8 @@ if __name__ == "__main__":
                 self.tool_bar.addAction(self.pan_right_action)
                 self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.auto_lane_action)
-                self.tool_bar.addSeparator() 
+                self.tool_bar.addAction(self.auto_analyze_gel_action)
+                self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.draw_line_action) 
                 self.tool_bar.addAction(self.draw_bounding_box_action) 
                 self.tool_bar.addSeparator() 
@@ -8465,6 +11510,147 @@ if __name__ == "__main__":
                 self.tool_bar.setContextMenuPolicy(Qt.PreventContextMenu)
 
                 
+            # ──────────────────────────────────────────────────────────────
+            # Auto Analyze Gel  (one-shot full pipeline)
+            # ──────────────────────────────────────────────────────────────
+            def start_auto_analyze_gel(self):
+                """
+                One-shot wizard: user draws the gel boundary → lanes auto-detected
+                → bands auto-detected → densitometry run → results window opened.
+                """
+                self._reset_live_view_label_custom_handlers()
+                if not self.image or self.image.isNull():
+                    QMessageBox.warning(self, "Error", "Please load a gel image first.")
+                    return
+
+                # Ask region type (rect or quad)
+                dlg = QDialog(self)
+                dlg.setWindowTitle("Auto Analyze Gel — Draw Gel Boundary")
+                dlg.setMinimumWidth(340)
+                lay = QVBoxLayout(dlg)
+                info = QLabel(
+                    "<b>Step 1:</b> Draw the boundary of the entire gel region.<br>"
+                    "The software will then automatically detect lanes and bands.<br>"
+                    "<br>"
+                    "Choose how to draw the boundary:")
+                info.setWordWrap(True)
+                lay.addWidget(info)
+                rg = QGroupBox("Region Type")
+                rgl = QVBoxLayout(rg)
+                rb_rect = QRadioButton("Rectangle  (straight gel)")
+                rb_quad = QRadioButton("Quadrilateral  (skewed / tilted gel)")
+                rb_rect.setChecked(True)
+                rgl.addWidget(rb_rect); rgl.addWidget(rb_quad)
+                lay.addWidget(rg)
+                bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
+                lay.addWidget(bb)
+                if dlg.exec() != QDialog.Accepted:
+                    return
+
+                use_quad = rb_quad.isChecked()
+
+                # Clear any leftover preview state
+                self.live_view_label.quad_points = []
+                self.live_view_label.current_preview_points = []
+                self.live_view_label.bounding_box_preview  = None
+                self.live_view_label.rectangle_start       = None
+                self.live_view_label.rectangle_end         = None
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self.live_view_label.setMouseTracking(True)
+
+                if use_quad:
+                    self.live_view_label.mode = 'auto_analyze_quad'
+                    self.live_view_label._custom_left_click_handler_from_app = \
+                        self._aag_quad_click
+                else:
+                    self.live_view_label.mode = 'auto_analyze_rect'
+                    self.live_view_label._custom_left_click_handler_from_app  = self.start_rectangle
+                    self.live_view_label._custom_mouseMoveEvent_from_app      = self.update_rectangle_preview
+                    self.live_view_label._custom_mouseReleaseEvent_from_app   = self._aag_rect_finalize
+
+                self.update_live_view()
+
+            def _aag_quad_click(self, event):
+                if self.live_view_label.mode != 'auto_analyze_quad':
+                    return
+                if event.button() == Qt.LeftButton:
+                    pt = self.snap_point_to_grid(self.live_view_label.transform_point(event.position()))
+                    self.live_view_label.current_preview_points.append(pt)
+                    self.update_live_view()
+                    if len(self.live_view_label.current_preview_points) == 4:
+                        self._aag_launch_from_quad(self.live_view_label.current_preview_points)
+
+            def _aag_rect_finalize(self, event):
+                if (self.live_view_label.mode != 'auto_analyze_rect' or
+                        not self.live_view_label.current_preview_points):
+                    return
+                if event.button() == Qt.LeftButton:
+                    try:
+                        pts = self.live_view_label.current_preview_points
+                        if len(pts) != 2:
+                            return
+                        rect_ls    = QRectF(pts[0], pts[1]).normalized()
+                        img_coords = self._map_label_rect_to_image_rect(rect_ls)
+                        if img_coords is None:
+                            raise ValueError("Coordinate mapping failed.")
+                        adj = self._get_fully_adjusted_image_for_analysis()
+                        if not adj or adj.isNull():
+                            raise ValueError("Could not get adjusted image.")
+                        region_qimg = adj.copy(*img_coords)
+                        if region_qimg.isNull():
+                            raise ValueError("Image copy failed.")
+                        pil = self.convert_qimage_to_grayscale_pil(region_qimg)
+                        if pil is None:
+                            raise ValueError("PIL conversion failed.")
+                        self._aag_open_wizard(pil, img_coords, is_quad=False)
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", f"Failed to extract gel region: {e}")
+                    finally:
+                        self._reset_live_view_label_custom_handlers()
+                        self.live_view_label.mode                    = None
+                        self.live_view_label.bounding_box_preview    = None
+                        self.live_view_label.current_preview_points  = []
+                        self.live_view_label.setCursor(Qt.ArrowCursor)
+                        self.update_live_view()
+
+            def _aag_launch_from_quad(self, quad_pts_label):
+                try:
+                    adj = self._get_fully_adjusted_image_for_analysis()
+                    if not adj or adj.isNull():
+                        raise ValueError("Could not get adjusted image.")
+                    warped = self.quadrilateral_to_rect(adj, quad_pts_label)
+                    if warped is None or warped.isNull():
+                        raise ValueError("Quadrilateral warp failed.")
+                    pil = self.convert_qimage_to_grayscale_pil(warped)
+                    if pil is None:
+                        raise ValueError("PIL conversion failed.")
+                    # Map label-space quad points to image-space
+                    img_pts = self._map_label_points_to_image_points(quad_pts_label)
+                    if img_pts is None:
+                        img_pts = quad_pts_label
+                    self._aag_open_wizard(pil, img_pts, is_quad=True)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to extract gel region: {e}")
+                finally:
+                    self._reset_live_view_label_custom_handlers()
+                    self.live_view_label.mode                   = None
+                    self.live_view_label.current_preview_points = []
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.update_live_view()
+
+            def _aag_open_wizard(self, gel_pil, region_def, is_quad):
+                wizard = AutoGelAnalysisDialog(
+                    gel_pil_image     = gel_pil,
+                    gel_region_def    = region_def,
+                    is_quad_warp      = is_quad,
+                    parent_app        = self,
+                    initial_band_settings = self.peak_dialog_settings
+                )
+                wizard.exec()
+
+            # ──────────────────────────────────────────────────────────────
+
             def start_auto_lane_marker(self):
                 self._reset_live_view_label_custom_handlers()
                 """Initiates the automatic lane marker placement process using a single, dynamically created dialog."""
@@ -8871,17 +12057,52 @@ if __name__ == "__main__":
                 """Enable mode to measure protein quantity using the standard curve."""
                 if len(self.quantities) < 2:
                     QMessageBox.warning(self, "Error", "At least two standard protein amounts are needed to measure quantity.")
-                self.measure_quantity_mode = True
-                self.live_view_label.measure_quantity_mode = True
-                self.live_view_label.setCursor(Qt.CrossCursor)
-                self.live_view_label.setMouseTracking(True)  # Ensure mouse events are enabled
-                self.setMouseTracking(True)  # Ensure parent also tracks mouse
-                self._reset_live_view_label_custom_handlers() # Good practice
-                self.live_view_label._custom_left_click_handler_from_app = lambda event: self.start_bounding_box(event)
-                self.live_view_label._custom_mouseReleaseEvent_from_app = lambda event: self.end_measure_bounding_box(event)
+            
+            def calculate_peak_area(self, pil_image_for_dialog):
+                if pil_image_for_dialog is None:
+                    return None
+                
+                if isinstance(pil_image_for_dialog, list):
+                    dialog = PeakAreaDialog(
+                        cropped_data=pil_image_for_dialog,
+                        current_settings=self.peak_dialog_settings,
+                        persist_checked=self.persist_peak_settings_enabled,
+                        parent=self
+                    )
+                    if dialog.exec() == QDialog.Accepted:
+                        all_lanes_info = dialog.get_all_lanes_peak_info()
+                        if dialog.should_persist_settings():
+                            self.peak_dialog_settings = dialog.get_current_settings()
+                            self.persist_peak_settings_enabled = True
+                        else:
+                            self.persist_peak_settings_enabled = False
+                        return all_lanes_info
+                    else:
+                        return None
+                else:
+                    if not isinstance(pil_image_for_dialog, Image.Image):
+                         QMessageBox.critical(self, "Internal Error", f"calculate_peak_area expected PIL Image, got {type(pil_image_for_dialog)}")
+                         return None
 
-            def call_live_view(self):
-                self.update_live_view()      
+                    dialog = PeakAreaDialog(
+                        cropped_data=pil_image_for_dialog,
+                        current_settings=self.peak_dialog_settings,
+                        persist_checked=self.persist_peak_settings_enabled,
+                        parent=self
+                    )
+
+                    peak_info_list = None
+                    if dialog.exec() == QDialog.Accepted:
+                        peak_info_list = dialog.get_final_peak_info()
+                        if dialog.should_persist_settings():
+                            self.peak_dialog_settings = dialog.get_current_settings()
+                            self.persist_peak_settings_enabled = True
+                        else:
+                            self.persist_peak_settings_enabled = False
+                    else:
+                        pass
+                    
+                    return peak_info_list if peak_info_list is not None else []
 
             def analyze_bounding_box(self, pil_image_for_dialog, standard):
                 peak_info_result = None # Will hold list of dicts
@@ -8950,35 +12171,6 @@ if __name__ == "__main__":
                          pass # print("Peak area calculation cancelled or failed for sample.")
                          self.target_protein_areas_text.setText("N/A")
                 self.update_live_view()
-            
-            def calculate_peak_area(self, pil_image_for_dialog):
-                if pil_image_for_dialog is None: # ... (existing validation) ...
-                    pass # print("Error: No PIL Image data provided to calculate_peak_area.")
-                    return None # Return None if no areas/info
-                if not isinstance(pil_image_for_dialog, Image.Image):
-                     QMessageBox.critical(self, "Internal Error", f"calculate_peak_area expected PIL Image, got {type(pil_image_for_dialog)}")
-                     return None
-
-                dialog = PeakAreaDialog(
-                    cropped_data=pil_image_for_dialog,
-                    current_settings=self.peak_dialog_settings,
-                    persist_checked=self.persist_peak_settings_enabled,
-                    parent=self
-                )
-
-                peak_info_list = None # Will be list of dicts
-                if dialog.exec() == QDialog.Accepted:
-                    peak_info_list = dialog.get_final_peak_info() # Get the detailed info
-                    if dialog.should_persist_settings():
-                        self.peak_dialog_settings = dialog.get_current_settings()
-                        self.persist_peak_settings_enabled = True
-                    else:
-                        self.persist_peak_settings_enabled = False
-                else:
-                    pass # print("PeakAreaDialog cancelled.")
-                
-                return peak_info_list if peak_info_list is not None else [] # Return list of dicts or empty list
-            
             
             def _perform_quantification(self, model_name, standard_quantities, standard_areas, sample_areas):
                 """
@@ -9083,6 +12275,7 @@ if __name__ == "__main__":
                     "font_color": self.font_color.name(),
                     "font_rotation": self.font_rotation,
                     "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
+                    "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
 
                     # --- Image Adjustments ---
                     "main_image_is_inverted": self.main_image_is_inverted,
@@ -9137,6 +12330,8 @@ if __name__ == "__main__":
                     self.font_color = QColor(state_dict['font_color'])
                     self.font_rotation = state_dict['font_rotation']
                     self.top_rotation_axis = state_dict.get('top_rotation_axis', 'left')
+                    self.marker_symbol = state_dict.get('marker_symbol', '⎯')
+                    self._sync_marker_symbol_ui_from_value()
 
                     self.main_image_is_inverted = state_dict['main_image_is_inverted']
                     self.channel_mixer_data = state_dict['channel_mixer_data']
@@ -9281,7 +12476,7 @@ if __name__ == "__main__":
                     "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
                     "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
                     "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
-                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation, "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
+                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation, "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'), "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
                     "left_marker_shift_added": self.left_marker_shift_added, "right_marker_shift_added": self.right_marker_shift_added, "top_marker_shift_added": self.top_marker_shift_added,
                     "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(), "quantities": self.quantities.copy(), "protein_quantities": self.protein_quantities.copy(), "standard_protein_areas": self.standard_protein_areas.copy(),
                     "custom_marker_color": self.custom_marker_color, "custom_font_family": self.custom_font_type_dropdown.currentText(), "custom_font_size": self.custom_font_size_spinbox.value(),
@@ -9391,8 +12586,11 @@ if __name__ == "__main__":
                 step2_layout.addWidget(self.update_standards_button, 2, 2)
                 step2_layout.addWidget(QLabel("Std. Areas:"), 3, 0); self.standard_protein_areas_text = QLineEdit(); self.standard_protein_areas_text.setPlaceholderText("Calculated total areas (comma-separated)")
                 step2_layout.addWidget(self.standard_protein_areas_text, 3, 1, 1, 2)
-                step2_layout.addWidget(QLabel("Sample Results:"), 4, 0, Qt.AlignTop); self.target_protein_areas_text = QTextEdit(); self.target_protein_areas_text.setMinimumHeight(50); self.target_protein_areas_text.setPlaceholderText("Calculated peak areas and quantities will appear here for each lane.")
-                self.target_protein_areas_text.setReadOnly(True); self.target_protein_areas_text.setFixedHeight(60)
+                step2_layout.addWidget(QLabel("Sample Results:"), 4, 0, Qt.AlignTop)
+                self.target_protein_areas_text = SampleResultsTable()
+                self.target_protein_areas_text.setMinimumHeight(60)
+                self.target_protein_areas_text.setPlaceholderText(
+                    "Calculated peak areas and quantities will appear here for each lane.")
                 step2_layout.addWidget(self.target_protein_areas_text, 4, 1, 1, 2)
                 bottom_buttons_layout = QHBoxLayout()
                 self.table_export_button = QPushButton("View Full Results and History")
@@ -9407,13 +12605,19 @@ if __name__ == "__main__":
                 self.clear_predict_button = QPushButton("Clear Markers")
                 self.clear_predict_button.setToolTip("Clears MW prediction line, all analysis regions, and standard curve data.\nShortcut: Ctrl+Shift+P")
                 self.clear_predict_button.clicked.connect(self.clear_predict_molecular_weight)
+                self.toggle_markers_button = QPushButton("Hide Markers")
+                self.toggle_markers_button.setToolTip("Show or hide the densitometry lane bounding boxes on the image.\n(MW markers and labels are always visible.)")
+                self.toggle_markers_button.clicked.connect(self.toggle_markers_visibility)
+                self._update_toggle_markers_button_style()
                 self.table_export_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.save_analysis_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.load_analysis_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.clear_predict_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.toggle_markers_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 bottom_buttons_layout.addWidget(self.table_export_button)
                 bottom_buttons_layout.addWidget(self.save_analysis_button)
                 bottom_buttons_layout.addWidget(self.load_analysis_button)
+                bottom_buttons_layout.addWidget(self.toggle_markers_button)
                 bottom_buttons_layout.addWidget(self.clear_predict_button)
                 step2_layout.addLayout(bottom_buttons_layout, 5, 0, 1, 3)
                 quant_workflow_layout.addWidget(step2_group)
@@ -10425,7 +13629,7 @@ if __name__ == "__main__":
             
             def start_rectangle(self, event):
                 """Record the start position of the rectangle (Works for 'rectangle' and 'auto_lane_rect' modes)."""
-                if self.live_view_label.mode in ["rectangle", "auto_lane_rect"]:
+                if self.live_view_label.mode in ["rectangle", "auto_lane_rect", "auto_analyze_rect"]:
                     start_point_transformed = self.live_view_label.transform_point(event.position())
                     snapped_start_point = self.snap_point_to_grid(start_point_transformed) # Snap it
                     
@@ -10441,7 +13645,7 @@ if __name__ == "__main__":
                 """Update the rectangle preview as the mouse moves (Works for 'rectangle' and 'auto_lane_rect' modes)."""
                 # --- START OF THE FIX ---
                 # This entire function is replaced to use the new preview data structure.
-                if self.live_view_label.mode in ["rectangle", "auto_lane_rect"] and self.live_view_label.current_preview_points:
+                if self.live_view_label.mode in ["rectangle", "auto_lane_rect", "auto_analyze_rect"] and self.live_view_label.current_preview_points:
                     if event.buttons() & Qt.LeftButton:
                         current_end_point_transformed = self.live_view_label.transform_point(event.position())
                         snapped_end_point = self.snap_point_to_grid(current_end_point_transformed) # Snap it
@@ -10509,13 +13713,14 @@ if __name__ == "__main__":
                 # --- START: New, Robust Logic to Find the Target Region ---
                 target_lane_def = None # This will hold the definition of the one region we will process.
 
-                # Case 1: A specific multi-lane region is already selected.
-                if hasattr(self, 'moving_multi_lane_index') and self.moving_multi_lane_index >= 0:
-                    if self.moving_multi_lane_index < len(self.multi_lane_definitions):
-                        target_lane_def = self.multi_lane_definitions[self.moving_multi_lane_index]
-                        region_type_for_message = f"Selected Multi-Lane {target_lane_def['id']}"
+                # Case 1: A specific multi-lane region is already selected AND the index is valid.
+                if (hasattr(self, 'moving_multi_lane_index')
+                        and self.moving_multi_lane_index >= 0
+                        and self.moving_multi_lane_index < len(getattr(self, 'multi_lane_definitions', []))):
+                    target_lane_def = self.multi_lane_definitions[self.moving_multi_lane_index]
+                    region_type_for_message = f"Selected Multi-Lane {target_lane_def['id']}"
 
-                # Case 2: No selection, check for single defined regions.
+                # Case 2: No valid selection — fall through to check single defined regions.
                 else:
                     is_single_quad = len(self.live_view_label.quad_points) == 4
                     is_single_rect = self.live_view_label.bounding_box_preview is not None
@@ -10650,48 +13855,76 @@ if __name__ == "__main__":
                     return
                 # --- END OF THE FIX ---
 
-                all_lanes_text_results = []
                 if not extracted_regions_info:
                     QMessageBox.warning(self, "Analysis Error", "No regions were successfully extracted for analysis.")
                     return
 
+                all_lanes_text_results = []
                 model_to_use = "Linear"
                 std_qtys = list(self.quantities_peak_area_dict.keys())
                 std_areas = list(self.quantities_peak_area_dict.values())
-                
-                for region_info in extracted_regions_info:
-                    lane_id = region_info['id']
-                    pil_image_for_dialog = region_info['pil'] 
-                    peak_info_for_lane = self.calculate_peak_area(pil_image_for_dialog) 
 
-                    if peak_info_for_lane and len(peak_info_for_lane) > 0:
-                        areas_for_this_lane = [float(round(info['area'], 3)) for info in peak_info_for_lane]
-                        self.latest_multi_lane_peak_areas[lane_id] = areas_for_this_lane
-                        self.latest_multi_lane_peak_details[lane_id] = peak_info_for_lane 
+                # ── Multi-lane: one dialog with lane-selector dropdown ──────────
+                if len(extracted_regions_info) > 1:
+                    all_lanes_info = self.calculate_peak_area(extracted_regions_info)
+                    if all_lanes_info:
+                        for lane_id, peak_info_for_lane in all_lanes_info.items():
+                            if peak_info_for_lane:
+                                areas = [float(round(info['area'], 3)) for info in peak_info_for_lane]
+                                self.latest_multi_lane_peak_areas[lane_id] = areas
+                                self.latest_multi_lane_peak_details[lane_id] = peak_info_for_lane
+                                if len(std_qtys) >= 2:
+                                    quantities, _ = self._perform_quantification(
+                                        model_to_use, std_qtys, std_areas, areas)
+                                    self.latest_multi_lane_calculated_quantities[lane_id] = quantities
+                                    all_lanes_text_results.append(
+                                        f"Lane {lane_id}: Areas=[{', '.join(f'{a:.3f}' for a in areas)}]"
+                                        f", Qty=[{', '.join(f'{q:.2f}' for q in quantities)}]")
+                                else:
+                                    self.latest_multi_lane_calculated_quantities[lane_id] = []
+                                    all_lanes_text_results.append(
+                                        f"Lane {lane_id}: Areas=[{', '.join(f'{a:.3f}' for a in areas)}]"
+                                        " (No std curve for qty)")
+                            else:
+                                all_lanes_text_results.append(f"Lane {lane_id}: No peaks found.")
+                                self.latest_multi_lane_peak_areas[lane_id] = []
+                                self.latest_multi_lane_peak_details[lane_id] = []
+                                self.latest_multi_lane_calculated_quantities[lane_id] = []
 
-                        if len(self.quantities_peak_area_dict) >= 2:
-                            quantities_for_lane, _ = self._perform_quantification(model_to_use, std_qtys, std_areas, areas_for_this_lane)
-                            self.latest_multi_lane_calculated_quantities[lane_id] = quantities_for_lane
-                            formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
-                            formatted_quantities = ', '.join([f"{q:.2f}" for q in quantities_for_lane])
-                            all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}], Qty=[{formatted_quantities}]")
+                # ── Single lane: simple single-lane dialog ──────────────────────
+                else:
+                    lane_id = extracted_regions_info[0]['id']
+                    peak_info_for_lane = self.calculate_peak_area(extracted_regions_info[0]['pil'])
+                    if peak_info_for_lane:
+                        areas = [float(round(info['area'], 3)) for info in peak_info_for_lane]
+                        self.latest_multi_lane_peak_areas[lane_id] = areas
+                        self.latest_multi_lane_peak_details[lane_id] = peak_info_for_lane
+                        if len(std_qtys) >= 2:
+                            quantities, _ = self._perform_quantification(
+                                model_to_use, std_qtys, std_areas, areas)
+                            self.latest_multi_lane_calculated_quantities[lane_id] = quantities
+                            all_lanes_text_results.append(
+                                f"Lane {lane_id}: Areas=[{', '.join(f'{a:.3f}' for a in areas)}]"
+                                f", Qty=[{', '.join(f'{q:.2f}' for q in quantities)}]")
                         else:
                             self.latest_multi_lane_calculated_quantities[lane_id] = []
-                            formatted_areas = ', '.join([f"{a:.3f}" for a in areas_for_this_lane])
-                            all_lanes_text_results.append(f"Lane {lane_id}: Areas=[{formatted_areas}] (No std curve for qty)")
+                            all_lanes_text_results.append(
+                                f"Lane {lane_id}: Areas=[{', '.join(f'{a:.3f}' for a in areas)}]"
+                                " (No std curve for qty)")
                     else:
                         all_lanes_text_results.append(f"Lane {lane_id}: Analysis failed or no peaks.")
                         self.latest_multi_lane_peak_areas[lane_id] = []
-                        self.latest_multi_lane_peak_details[lane_id] = [] 
+                        self.latest_multi_lane_peak_details[lane_id] = []
                         self.latest_multi_lane_calculated_quantities[lane_id] = []
-                
+
+                # Populate single-lane aliases from lane 1 (backward compat)
                 if 1 in self.latest_multi_lane_peak_areas:
-                     self.latest_peak_areas = self.latest_multi_lane_peak_areas[1]
-                if 1 in self.latest_multi_lane_peak_details: 
-                     self.latest_peak_details = self.latest_multi_lane_peak_details[1]
+                    self.latest_peak_areas = self.latest_multi_lane_peak_areas[1]
+                if 1 in self.latest_multi_lane_peak_details:
+                    self.latest_peak_details = self.latest_multi_lane_peak_details[1]
                 if 1 in self.latest_multi_lane_calculated_quantities:
-                     self.latest_calculated_quantities = self.latest_multi_lane_calculated_quantities[1]
-                
+                    self.latest_calculated_quantities = self.latest_multi_lane_calculated_quantities[1]
+
                 if all_lanes_text_results:
                     self.target_protein_areas_text.setText("\n".join(all_lanes_text_results))
                 else:
@@ -12120,7 +15353,9 @@ if __name__ == "__main__":
                 temp_image = source_image.copy()
                 is_inverted = settings_dict.get('is_inverted', False)
                 if is_inverted:
-                    temp_image.invertPixels()
+                    # InvertRgb preserves the alpha channel; invertPixels() (default InvertRgba)
+                    # would flip alpha=0 to alpha=255, turning transparent pixels opaque black.
+                    temp_image.invertPixels(QImage.InvertRgb)
 
                 # ------------------------------------------------------------------ #
                 # 2. Convert to NumPy                                                  #
@@ -12988,7 +16223,14 @@ if __name__ == "__main__":
                 self.draw_crop_rect_button = QPushButton("Draw Crop Area"); self.draw_crop_rect_button.setCheckable(True)
                 self.draw_crop_rect_button.clicked.connect(self.toggle_rectangle_crop_mode)
                 self.apply_crop_button = QPushButton("Apply Crop"); self.apply_crop_button.clicked.connect(self.update_crop)
-                crop_actions_layout.addWidget(self.draw_crop_rect_button, 1); crop_actions_layout.addStretch(); crop_actions_layout.addWidget(self.apply_crop_button)
+                self.polish_image_button = QPushButton("Polish Image")
+                self.polish_image_button.setToolTip(
+                    "Auto-crop: detects the fill/border region (added by rotation or skew)\n"
+                    "and trims to the largest clean inscribed rectangle.")
+                self.polish_image_button.clicked.connect(self.polish_image)
+                crop_actions_layout.addWidget(self.draw_crop_rect_button, 1); crop_actions_layout.addStretch()
+                crop_actions_layout.addWidget(self.polish_image_button)
+                crop_actions_layout.addWidget(self.apply_crop_button)
                 cropping_layout.addLayout(crop_actions_layout)
                 cropping_layout.addWidget(self.create_separator())
                 crop_slider_layout = QGridLayout()
@@ -13501,15 +16743,48 @@ if __name__ == "__main__":
                 _fm_ax = self.top_rotation_axis_combo.fontMetrics()
                 self.top_rotation_axis_combo.setMinimumWidth(_fm_ax.horizontalAdvance("Center") + 45)
 
+                # Left/Right marker symbol (the "dash" drawn next to the value)
+                self.marker_symbol_combo = QComboBox()
+                self.marker_symbol_combo.setToolTip(
+                    "Symbol drawn next to Left/Right markers (e.g. \"250 ⎯\").\n"
+                    "Choose None for value only, or Custom to type your own.")
+                # (label shown in dropdown, value used when drawing)
+                _symbol_presets = [
+                    ("⎯  (line)",   "⎯"),
+                    ("-  (hyphen)",  "-"),
+                    ("→ / ←",        "arrow"),
+                    (":  (colon)",   ":"),
+                    ("•  (dot)",     "•"),
+                    ("None",          ""),
+                    ("Custom…",       "__custom__"),
+                ]
+                for _disp, _val in _symbol_presets:
+                    self.marker_symbol_combo.addItem(_disp, _val)
+                # Select the entry matching the current symbol (default "⎯")
+                _cur_sym = getattr(self, 'marker_symbol', '⎯')
+                _idx = self.marker_symbol_combo.findData(_cur_sym)
+                self.marker_symbol_combo.setCurrentIndex(_idx if _idx >= 0 else 0)
+                self.marker_symbol_combo.currentIndexChanged.connect(self.update_font)
+
+                self.marker_symbol_custom_edit = QLineEdit()
+                self.marker_symbol_custom_edit.setToolTip("Type a custom marker symbol.")
+                self.marker_symbol_custom_edit.setMaximumWidth(60)
+                self.marker_symbol_custom_edit.setVisible(True)
+                self.marker_symbol_custom_edit.setEnabled(False)
+                self.marker_symbol_custom_edit.textChanged.connect(self.update_font)
+
                 font_options_layout.addWidget(QLabel("Font:"))
                 font_options_layout.addWidget(self.font_combo_box, 1)
                 font_options_layout.addWidget(self.font_size_spinner)
                 font_options_layout.addWidget(self.font_color_button)
+                font_options_layout.addWidget(QLabel("Symbol:"))
+                font_options_layout.addWidget(self.marker_symbol_combo)
+                font_options_layout.addWidget(self.marker_symbol_custom_edit)
                 font_options_layout.addWidget(QLabel("Top Rotation:"))
                 font_options_layout.addWidget(self.font_rotation_input)
                 font_options_layout.addWidget(QLabel("Axis:"))
                 font_options_layout.addWidget(self.top_rotation_axis_combo)
-                
+
                 standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 
@@ -14470,7 +17745,8 @@ if __name__ == "__main__":
 
                 if marker_type in ['left_marker', 'right_marker']:
                     y_ls = pos * scale + offset_y
-                    full_text = f"{text} ⎯" if marker_type == 'left_marker' else f"⎯ {text}"
+                    full_text = self.marker_label_text(
+                        text, 'left' if marker_type == 'left_marker' else 'right')
                     text_width_ls = fm.horizontalAdvance(full_text) + (2 * padding)
                     
                     x_ls = (self.left_marker_shift_added if marker_type == 'left_marker' else self.right_marker_shift_added) * scale + offset_x
@@ -15705,24 +18981,44 @@ if __name__ == "__main__":
                                         QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply associated config file '{os.path.basename(config_path)}': {e}")
 
 
-                # --- PRIORITY 2: Check for Raw Image Data (if no valid file was loaded) ---
-                if loaded_image is None and mime_data.hasImage():
-                    loaded_image = clipboard.image()
-                    if not loaded_image.isNull():
-                        source_info = "Clipboard Image Data"
-                    else:
-                        try:
-                            pil_image = ImageGrab.grabclipboard()
-                            if isinstance(pil_image, Image.Image):
-                                loaded_image = ImageQt.ImageQt(pil_image)
-                                if loaded_image.isNull():
-                                     loaded_image = None
+                # --- PRIORITY 2: Raw image data (if no valid file was loaded) ---
+                if loaded_image is None:
+                    # 2a: Prefer a full-resolution PNG payload if present. Many Windows
+                    #     apps put a downscaled CF_DIB *and* a full-res "PNG" format;
+                    #     QClipboard.image() returns the low-res DIB (and drops alpha),
+                    #     so reading the PNG bytes directly preserves resolution + alpha.
+                    for fmt in ("image/png", "PNG"):
+                        if mime_data.hasFormat(fmt):
+                            try:
+                                ba = mime_data.data(fmt)
+                                if ba and not ba.isEmpty():
+                                    img = QImage()
+                                    if img.loadFromData(ba, "PNG") and not img.isNull():
+                                        loaded_image = img
+                                        source_info = f"Clipboard PNG ({fmt})"
+                                        break
+                            except Exception:
+                                pass
+
+                    # 2b: Raw clipboard image (CF_DIB) fallback.
+                    if loaded_image is None and mime_data.hasImage():
+                        loaded_image = clipboard.image()
+                        if not loaded_image.isNull():
+                            source_info = "Clipboard Image Data"
+                        else:
+                            # 2c: Pillow grab fallback.
+                            try:
+                                pil_image = ImageGrab.grabclipboard()
+                                if isinstance(pil_image, Image.Image):
+                                    loaded_image = ImageQt.ImageQt(pil_image)
+                                    if loaded_image.isNull():
+                                         loaded_image = None
+                                    else:
+                                        source_info = "Clipboard Image Data (Pillow Grab)"
                                 else:
-                                    source_info = "Clipboard Image Data (Pillow Grab)"
-                            else:
+                                    loaded_image = None
+                            except Exception: # Keep quiet on Pillow grab errors
                                 loaded_image = None
-                        except Exception: # Keep quiet on Pillow grab errors
-                            loaded_image = None
 
                 # --- Process the successfully loaded image ---
                 if loaded_image and not loaded_image.isNull():
@@ -15820,19 +19116,91 @@ if __name__ == "__main__":
                 """Update the font settings based on UI inputs"""
                 # Update font family from the combo box
                 self.font_family = self.font_combo_box.currentFont().family()
-                
+
                 # Update font size from the spin box
                 self.font_size = self.font_size_spinner.value()
-                
+
                 self.font_rotation = int(self.font_rotation_input.value())
 
                 if hasattr(self, 'top_rotation_axis_combo'):
                     axis_options = ["left", "center", "right"]
                     self.top_rotation_axis = axis_options[self.top_rotation_axis_combo.currentIndex()]
 
+                # Update the Left/Right marker symbol from its combo / custom entry
+                self._sync_marker_symbol_from_ui()
+
                 # Once font settings are updated, update the live view immediately
                 self.update_live_view()
-            
+
+            def _sync_marker_symbol_from_ui(self):
+                """Read the standard-marker symbol from the dropdown / custom field."""
+                if not hasattr(self, 'marker_symbol_combo'):
+                    return
+                data = self.marker_symbol_combo.currentData()
+                if data == "__custom__":
+                    if hasattr(self, 'marker_symbol_custom_edit'):
+                        self.marker_symbol_custom_edit.setEnabled(True)
+                        self.marker_symbol = self.marker_symbol_custom_edit.text()
+                else:
+                    if hasattr(self, 'marker_symbol_custom_edit'):
+                        self.marker_symbol_custom_edit.setEnabled(False)
+                    self.marker_symbol = data if data is not None else ""
+
+            def _sync_marker_symbol_ui_from_value(self):
+                """Reflect self.marker_symbol back into the dropdown / custom field
+                (used when restoring state or applying a config)."""
+                if not hasattr(self, 'marker_symbol_combo'):
+                    return
+                sym = getattr(self, 'marker_symbol', '⎯')
+                self.marker_symbol_combo.blockSignals(True)
+                idx = self.marker_symbol_combo.findData(sym)
+                if idx >= 0:
+                    self.marker_symbol_combo.setCurrentIndex(idx)
+                    if hasattr(self, 'marker_symbol_custom_edit'):
+                        self.marker_symbol_custom_edit.setEnabled(False)
+                else:
+                    cidx = self.marker_symbol_combo.findData("__custom__")
+                    if cidx >= 0:
+                        self.marker_symbol_combo.setCurrentIndex(cidx)
+                    if hasattr(self, 'marker_symbol_custom_edit'):
+                        self.marker_symbol_custom_edit.blockSignals(True)
+                        self.marker_symbol_custom_edit.setText(sym)
+                        self.marker_symbol_custom_edit.setEnabled(True)
+                        self.marker_symbol_custom_edit.blockSignals(False)
+                self.marker_symbol_combo.blockSignals(False)
+
+            def marker_label_text(self, value, side):
+                """Compose a standard (left/right) marker label with the configurable
+                symbol. `side` is 'left' (symbol after the value, pointing right toward
+                the band) or 'right' (symbol before the value). Empty symbol → value only."""
+                sym = getattr(self, 'marker_symbol', '⎯')
+                v = str(value)
+                if sym == 'arrow':
+                    sym = '→' if side == 'left' else '←'
+                if not v:
+                    return sym            # value-less marker → symbol acts as the tick
+                if not sym:
+                    return v
+                return f"{v} {sym}" if side == 'left' else f"{sym} {v}"
+
+            def marker_baseline_offset(self, fm, text):
+                """Baseline offset (px) to add to a band-centre Y so the label `text`
+                is vertically centred on the band. Uses the actual ink bounds so the
+                visible glyphs (number + tick) straddle the band centre — used by every
+                Left/Right marker render path so the live view and exports match."""
+                try:
+                    s = str(text) if str(text) else "0"
+                    br = fm.tightBoundingRect(s)
+                    if br.height() > 0:
+                        return -(br.top() + br.height() / 2.0)
+                except Exception:
+                    pass
+                # Fallback: centre on cap height (digits)
+                try:
+                    return fm.capHeight() / 2.0
+                except Exception:
+                    return fm.height() * 0.3
+
             def select_font_color(self):
                 self.save_state()
                 color = QColorDialog.getColor()
@@ -16090,6 +19458,8 @@ if __name__ == "__main__":
                 self.font_size = int(font_options_data.get("font_size", 12))
                 self.font_rotation = int(font_options_data.get("font_rotation", -45))
                 self.top_rotation_axis = font_options_data.get("top_rotation_axis", "left")
+                self.marker_symbol = font_options_data.get("marker_symbol", getattr(self, 'marker_symbol', '⎯'))
+                self._sync_marker_symbol_ui_from_value()
                 font_color_str = font_options_data.get("font_color", "#000000")
                 self.font_color = QColor(font_color_str)
                 if not self.font_color.isValid(): self.font_color = QColor(0,0,0) # Fallback
@@ -16276,6 +19646,7 @@ if __name__ == "__main__":
                         "font_rotation": self.font_rotation,
                         "font_color": self.font_color.name(),
                         "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
+                        "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
                     },
                     "slider_ranges": {
                          "left": getattr(self, 'left_slider_range', [-100, 1000]),
@@ -17400,6 +20771,51 @@ if __name__ == "__main__":
                     
                 
                     
+            def polish_image(self):
+                """Auto-crop image_master to the largest inscribed rectangle free of fill borders."""
+                if not self.image_master or self.image_master.isNull():
+                    QMessageBox.warning(self, "Polish Image", "No image loaded.")
+                    return
+                try:
+                    qimg = self.image_master.convertToFormat(QImage.Format_ARGB32)
+                    arr = self.qimage_to_numpy(qimg)
+                    if arr is None or arr.ndim < 2:
+                        return
+                    H, W = arr.shape[:2]
+                    # Compute grayscale (ARGB32 in memory: B,G,R,A channels)
+                    gray = arr[:, :, :3].astype(np.float32).mean(axis=2) if arr.ndim == 3 else arr.astype(np.float32)
+                    # Sample corners to detect fill color
+                    fill_val = float(np.median([gray[0, 0], gray[0, -1], gray[-1, 0], gray[-1, -1]]))
+                    is_content = np.abs(gray - fill_val) > 12.0
+                    if not is_content.any():
+                        QMessageBox.information(self, "Polish Image", "No fill borders detected.")
+                        return
+                    rows_with = np.where(is_content.any(axis=1))[0]
+                    if len(rows_with) == 0:
+                        return
+                    left_x  = np.array([int(np.argmax(is_content[r]))          for r in rows_with])
+                    right_x = np.array([int(W - 1 - np.argmax(is_content[r, ::-1])) for r in rows_with])
+                    x1 = int(left_x.max())
+                    x2 = int(right_x.min())
+                    if x2 <= x1:
+                        QMessageBox.information(self, "Polish Image", "No clean rectangle found.")
+                        return
+                    strip = is_content[:, x1:x2 + 1]
+                    cols_with = np.where(strip.any(axis=0))[0]
+                    if len(cols_with) == 0:
+                        return
+                    top_y = np.array([int(np.argmax(strip[:, c]))          for c in cols_with])
+                    bot_y = np.array([int(H - 1 - np.argmax(strip[::-1, c])) for c in cols_with])
+                    y1 = int(top_y.max())
+                    y2 = int(bot_y.min())
+                    if y2 <= y1:
+                        QMessageBox.information(self, "Polish Image", "No clean rectangle found.")
+                        return
+                    self.crop_rectangle_coords = (x1, y1, x2 - x1, y2 - y1)
+                    self.update_crop()
+                except Exception:
+                    import traceback; traceback.print_exc()
+
             def update_crop(self):
                 if not self.image_master or self.image_master.isNull() or not self.crop_rectangle_coords:
                     QMessageBox.warning(self, "Crop Error", "No image loaded or crop area defined.")
@@ -18165,7 +21581,13 @@ if __name__ == "__main__":
                     save_format = suffix.replace(".", "").upper()
                     if save_format == "TIF": save_format = "TIFF"
                     quality = 95 if save_format in ["JPG", "JPEG"] else -1
-                    if not self.image_master.save(original_save_path, format=save_format if save_format else None, quality=quality):
+                    # For a transparent TIFF, write it ourselves first (straight alpha);
+                    # Qt's plugin produces premultiplied alpha that pastes opaque in Word.
+                    if save_format == "TIFF" and self.image_master.hasAlphaChannel():
+                        if not self._save_qimage_as_tiff(self.image_master, original_save_path):
+                            if not self.image_master.save(original_save_path, format="TIFF", quality=quality):
+                                QMessageBox.warning(self, "Error", f"Failed to save original image.")
+                    elif not self.image_master.save(original_save_path, format=save_format if save_format else None, quality=quality):
                         # TIFF plugin missing / can't write this depth: write it ourselves.
                         if not (save_format == "TIFF" and self._save_qimage_as_tiff(self.image_master, original_save_path)):
                             QMessageBox.warning(self, "Error", f"Failed to save original image.")
@@ -18319,10 +21741,12 @@ if __name__ == "__main__":
                 fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
                 for y_img, text in self.left_markers:
                     anchor_x = self.left_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = f"{text} ⎯"; painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + y_offset_baseline), full_text)
+                    full_text = self.marker_label_text(text, 'left')
+                    painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
                 for y_img, text in self.right_markers:
                     anchor_x = self.right_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    painter.drawText(QPointF(anchor_x, anchor_y + y_offset_baseline), f"⎯ {text}")
+                    full_text = self.marker_label_text(text, 'right')
+                    painter.drawText(QPointF(anchor_x, anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
                 for x_img, text in self.top_markers:
                     painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
                     painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
@@ -18361,11 +21785,16 @@ if __name__ == "__main__":
 
                 save_format_mod = suffix.replace(".", "").upper()
                 if save_format_mod == "TIF": save_format_mod = "TIFF"
-                saved_ok = modified_canvas.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=-1)
-                # Qt's TIFF plugin is often missing or can't write 16-bit images;
-                # if the native save failed, write the TIFF from the buffer instead.
-                if not saved_ok and save_format_mod == "TIFF":
+                if save_format_mod == "TIFF":
+                    # Write the TIFF ourselves first so the alpha channel is stored as
+                    # straight (UNASSALPHA). Qt's plugin writes premultiplied/associated
+                    # alpha (or is missing), which Word/PowerPoint render incorrectly —
+                    # the transparency appears lost. Fall back to Qt only if that fails.
                     saved_ok = self._save_qimage_as_tiff(modified_canvas, modified_save_path)
+                    if not saved_ok:
+                        saved_ok = modified_canvas.save(modified_save_path, format="TIFF", quality=-1)
+                else:
+                    saved_ok = modified_canvas.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=-1)
                 if not saved_ok:
                     QMessageBox.warning(self, "Error", f"Failed to save modified image.")
                     return False
@@ -18520,7 +21949,7 @@ if __name__ == "__main__":
                 # --- Add Left Markers ---
                 left_marker_x_pos = self.left_marker_shift_added # Use the absolute offset
                 for y_pos, text in getattr(self, "left_markers", []):
-                    final_text = f"{text}" # Remove the line "⎯" for cleaner SVG text
+                    final_text = self.marker_label_text(text, 'left')
                     dwg.add(
                         dwg.text(
                             final_text,
@@ -18535,7 +21964,7 @@ if __name__ == "__main__":
                 # --- Add Right Markers ---
                 right_marker_x_pos = self.right_marker_shift_added # Use the absolute offset
                 for y_pos, text in getattr(self, "right_markers", []):
-                    final_text = f"{text}" # Remove the line "⎯"
+                    final_text = self.marker_label_text(text, 'right')
                     dwg.add(
                         dwg.text(
                             final_text,
@@ -18712,10 +22141,12 @@ if __name__ == "__main__":
                 fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
                 for y_img, text in self.left_markers:
                     anchor_x = self.left_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = f"{text} ⎯"; painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + y_offset_baseline), full_text)
+                    full_text = self.marker_label_text(text, 'left')
+                    painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
                 for y_img, text in self.right_markers:
                     anchor_x = self.right_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    painter.drawText(QPointF(anchor_x, anchor_y + y_offset_baseline), f"⎯ {text}")
+                    full_text = self.marker_label_text(text, 'right')
+                    painter.drawText(QPointF(anchor_x, anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
                 for x_img, text in self.top_markers:
                     painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
                     painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
@@ -18751,20 +22182,41 @@ if __name__ == "__main__":
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
                 
-                # --- The rest of the method, which saves to a temp file, remains the same ---
+                # --- Publish to clipboard in several formats so every target app can
+                #     pick the best one. The critical part for Windows is the "PNG"
+                #     format: Office (Word/PowerPoint) reads CF_DIB from setImageData(),
+                #     which has NO alpha, so transparency is lost. Registering a real
+                #     "PNG" clipboard format makes Office paste with full transparency
+                #     (and full resolution). ---
                 try:
+                    # Straight (non-premultiplied) alpha so colours stay correct once the
+                    # consuming app composites; premultiplied can darken semi-transparent px.
+                    out_img = render_canvas.convertToFormat(QImage.Format_ARGB32)
+
                     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
                         temp_file_path = temp_file.name
-                    
                     self.temp_clipboard_file_path = temp_file_path
-
-                    if not render_canvas.save(temp_file_path, "PNG"):
+                    if not out_img.save(temp_file_path, "PNG"):
                         raise IOError(f"Failed to save temporary file to {temp_file_path}")
 
+                    # Encode the canvas to PNG bytes in-memory (lossless, keeps alpha).
+                    png_buffer = QBuffer()
+                    png_buffer.open(QBuffer.ReadWrite)
+                    out_img.save(png_buffer, "PNG")
+                    png_bytes = png_buffer.data()
+                    png_buffer.close()
+
                     mime_data = QMimeData()
+                    # "PNG" + "image/png": preferred by Word/PowerPoint/modern apps —
+                    # preserves resolution AND transparency on Windows.
+                    if png_bytes is not None and not png_bytes.isEmpty():
+                        mime_data.setData("PNG", png_bytes)
+                        mime_data.setData("image/png", png_bytes)
+                    # File URL for Explorer / file-oriented targets.
                     mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
-                    mime_data.setImageData(render_canvas) # Fallback for some apps
-                    
+                    # Legacy raw-image fallback (CF_DIB/DIBV5; may drop alpha in old apps).
+                    mime_data.setImageData(out_img)
+
                     QApplication.clipboard().setMimeData(mime_data)
                     QMessageBox.information(self, "Copied", "High-resolution image with transparency copied to clipboard.")
 
@@ -18839,6 +22291,33 @@ if __name__ == "__main__":
                 self._reset_live_view_label_custom_handlers()
                 self.update_live_view()
                 
+            def toggle_markers_visibility(self):
+                """Toggle visibility of all densitometric markers on the live view."""
+                self.markers_visible = not self.markers_visible
+                self._update_toggle_markers_button_style()
+                self.update_live_view()
+
+            def _update_toggle_markers_button_style(self):
+                """Update the Show/Hide Markers button label and colour to reflect current state."""
+                if not hasattr(self, 'toggle_markers_button'):
+                    return
+                is_dark = getattr(self, 'current_theme', 'light') == 'dark'
+                if self.markers_visible:
+                    self.toggle_markers_button.setText("Hide Markers")
+                    # Light red — markers are showing, click to hide
+                    if is_dark:
+                        style = "QPushButton { background-color: #7A2A2A; border: 1px solid #B05050; color: #F1D0D0; }"
+                    else:
+                        style = "QPushButton { background-color: #FADBD8; border: 1px solid #E07070; color: #6B1414; }"
+                else:
+                    self.toggle_markers_button.setText("Show Markers")
+                    # Light green — markers are hidden, click to show (same family as Move/Resize on)
+                    if is_dark:
+                        style = "QPushButton { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }"
+                    else:
+                        style = "QPushButton { background-color: #D4EDDA; border: 1px solid #74B882; color: #194D27; }"
+                self.toggle_markers_button.setStyleSheet(style)
+
             def predict_molecular_weight(self):
                 # --- Step 1: Check for available valid marker sets ---
                 has_left = hasattr(self, 'left_markers') and len(self.left_markers) >= 2
@@ -19258,6 +22737,7 @@ if __name__ == "__main__":
                         self.perspective_ratio_input.setValue(0.0)
                         self.perspective_ratio_input.blockSignals(False)
                     if hasattr(self, 'custom_shapes'): self.custom_shapes.clear()
+                    if hasattr(self, 'multi_lane_definitions'): self.multi_lane_definitions.clear()
                     self.cancel_drawing_mode()
                     self.clear_predict_molecular_weight()
 
