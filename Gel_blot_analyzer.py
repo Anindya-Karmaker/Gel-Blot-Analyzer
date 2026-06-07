@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v6.5\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v6.6\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -1490,20 +1490,45 @@ if __name__ == "__main__":
                     self.run_peak_detection_and_plot()
 
             def _refine_peak_positions_center_of_mass(self, profile, peak_indices, window_radius=3):
-                refined_peaks = []
+                """Refine each peak to the GEOMETRIC (visual) band centre = midpoint of
+                the full-width-at-half-maximum region.
+
+                SDS-PAGE bands are asymmetric (dense leading/lower edge, trailing smear
+                above), so the intensity peak/centroid sits low in the band. The half-max
+                midpoint tracks the visual centre instead, so the placed Left/Right marker
+                lines up with the band. Each peak is bounded by the midpoints to its
+                neighbours so the search can't bleed into adjacent bands."""
+                profile = np.asarray(profile, dtype=np.float64)
                 profile_len = len(profile)
+                if profile_len == 0:
+                    return np.array([])
+                peaks_sorted = np.sort(np.asarray(list(peak_indices), dtype=float))
+                refined_peaks = []
                 for peak_idx in peak_indices:
-                    start = max(0, peak_idx - window_radius)
-                    end = min(profile_len, peak_idx + window_radius + 1)
-                    window_vals = profile[start:end]
-                    window_indices = np.arange(start, end)
-                    local_min = np.min(window_vals)
-                    weights = window_vals - local_min
-                    if np.sum(weights) > 0:
-                        centroid = np.sum(window_indices * weights) / np.sum(weights)
-                        refined_peaks.append(centroid)
-                    else:
-                        refined_peaks.append(float(peak_idx))
+                    pk = int(round(float(peak_idx)))
+                    pk = max(0, min(profile_len - 1, pk))
+                    # Bound the search at the midpoints to neighbouring peaks.
+                    lower_bound, upper_bound = 0, profile_len - 1
+                    for q in peaks_sorted:
+                        if q < pk - 0.5:
+                            lower_bound = max(lower_bound, int((q + pk) // 2))
+                        elif q > pk + 0.5:
+                            upper_bound = min(upper_bound, int((q + pk) // 2))
+                    seg = profile[lower_bound:upper_bound + 1]
+                    base = float(np.min(seg)) if len(seg) else 0.0
+                    peak_val = float(profile[pk]) - base
+                    if peak_val <= 1e-9:
+                        refined_peaks.append(float(pk)); continue
+                    half = base + 0.5 * peak_val
+                    i = pk
+                    while i > lower_bound and profile[i] > half:
+                        i -= 1
+                    top_edge = i
+                    j = pk
+                    while j < upper_bound and profile[j] > half:
+                        j += 1
+                    bot_edge = j
+                    refined_peaks.append((top_edge + bot_edge) / 2.0)
                 return np.array(refined_peaks)
 
             def run_peak_detection_and_plot(self):
@@ -8312,25 +8337,34 @@ if __name__ == "__main__":
                         for i in range(n)]
 
             def _refine_band_center(self, profile_raw, bg, peak_idx, fence_l, fence_r):
-                """Intensity-weighted band centre (sub-pixel) around `peak_idx`.
+                """Geometric (visual) band centre = midpoint of the full-width-at-half-
+                maximum region around the peak.
 
-                A symmetric window (capped so neighbouring bands can't pull the centroid)
-                is taken around the peak and the centre of mass of the background-
-                subtracted signal is returned. Falls back to the integer peak if the
-                window carries no signal. Returns an int (row index) so all downstream
-                marker maths stays integer-friendly while still being band-centred."""
+                SDS-PAGE bands are asymmetric — a dense leading (lower) edge with a
+                trailing smear above — so the intensity peak/centroid sits LOW in the
+                band. The half-maximum midpoint instead tracks the band's visual centre,
+                placing the marker where the eye sees the band. Searches outward from the
+                peak to the half-max crossings (bounded by the fences) and averages them."""
                 try:
                     L = len(profile_raw)
-                    # Window radius: stay inside the fences but don't reach all the way to
-                    # the neighbouring trough (avoid tail bias toward an adjacent band).
-                    rad = max(2, int(min(peak_idx - fence_l, fence_r - peak_idx) * 0.6))
-                    lo = max(0, peak_idx - rad)
-                    hi = min(L, peak_idx + rad + 1)
-                    x = np.arange(lo, hi, dtype=np.float64)
-                    w = np.maximum(profile_raw[lo:hi] - bg[lo:hi], 0.0)
-                    s = float(np.sum(w))
-                    if s > 1e-9:
-                        return int(round(float(np.sum(x * w) / s)))
+                    pk = int(max(0, min(L - 1, peak_idx)))
+                    lo_b = max(0, int(fence_l))
+                    hi_b = min(L - 1, int(fence_r))
+                    sig = profile_raw - bg
+                    base = float(np.min(sig[lo_b:hi_b + 1])) if hi_b >= lo_b else 0.0
+                    peak_val = float(sig[pk]) - base
+                    if peak_val <= 1e-9:
+                        return pk
+                    half = base + 0.5 * peak_val
+                    i = pk
+                    while i > lo_b and (sig[i] - base) > 0 and sig[i] > half:
+                        i -= 1
+                    top_edge = i
+                    j = pk
+                    while j < hi_b and sig[j] > half:
+                        j += 1
+                    bot_edge = j
+                    return int(round((top_edge + bot_edge) / 2.0))
                 except Exception:
                     pass
                 return int(peak_idx)
@@ -9696,7 +9730,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v6.5"
+                self.window_title="GEL BLOT ANALYZER v6.6"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
