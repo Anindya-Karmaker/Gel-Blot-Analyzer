@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v6.6\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v6.7\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -7181,7 +7181,10 @@ if __name__ == "__main__":
                 self._p1_inv_btn = QPushButton("Invert Alignment")
                 self._p1_inv_btn.setCheckable(True)
                 self._p1_inv_btn.toggled.connect(self._toggle_inversion)
-                self._p1_add_btn = QPushButton("Add Lane (click profile)")
+                self._p1_add_btn = QPushButton("Add Lane (click image or plot)")
+                self._p1_add_btn.setToolTip(
+                    "Toggle on, then click anywhere on the gel preview OR the intensity "
+                    "plot to add a lane at that position. Stays on so you can add several.")
                 self._p1_add_btn.setCheckable(True)
                 self._p1_del_btn = QPushButton("Delete Selected Lane")
                 self._p1_del_btn.setEnabled(False)
@@ -7810,14 +7813,25 @@ if __name__ == "__main__":
                     try: self._canvas1.draw_idle()
                     except Exception: pass
 
+            def _redraw_lanes_keep(self):
+                """Redraw the lane figure from the CURRENT lane bounds (no re-detection),
+                so manual edits — added / deleted / dragged lanes — are preserved."""
+                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
+                pr = np.ptp(col_profile)
+                cn = ((col_profile - col_profile.min()) / pr
+                      if pr > 1e-6 else np.zeros_like(col_profile))
+                self._draw_phase1_figure(cn)
+
             def _p1_mpl_press(self, event):
                 if event.inaxes not in (self._ax1_img, self._ax1_prof) or event.button != 1:
                     return
 
+                # Add-lane mode: a click on EITHER the gel preview or the intensity plot
+                # adds a lane at that column. Both axes share the x-axis, so event.xdata
+                # is the column index in both. Stays enabled for multiple adds.
                 if hasattr(self, '_p1_add_btn') and self._p1_add_btn.isChecked():
-                    if event.inaxes == self._ax1_prof and event.xdata is not None:
+                    if event.xdata is not None:
                         self._add_lane_at(int(round(event.xdata)))
-                        self._p1_add_btn.setChecked(False)
                     return
 
                 if event.xdata is None:
@@ -7837,16 +7851,18 @@ if __name__ == "__main__":
                     self._selected_lane_idx = best_lane
                     if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
                     self._canvas1.setCursor(Qt.SizeHorCursor)
+                    self._redraw_lanes_keep()
                     return
 
-                if event.inaxes == self._ax1_img:
-                    col = int(round(xd))
-                    for i, (x0, x1) in enumerate(self._lane_bounds):
-                        if x0 <= col <= x1:
-                            self._selected_lane_idx = i
-                            if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
-                            self._run_lane_detection()
-                            return
+                # Click inside a lane (either axis) selects it. IMPORTANT: only redraw —
+                # never re-run auto detection here, or manual lanes would be wiped out.
+                col = int(round(xd))
+                for i, (x0, x1) in enumerate(self._lane_bounds):
+                    if x0 <= col <= x1:
+                        self._selected_lane_idx = i
+                        if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
+                        self._redraw_lanes_keep()
+                        return
 
             def _p1_mpl_move(self, event):
                 if self._drag_info is None or event.xdata is None:
@@ -7872,17 +7888,19 @@ if __name__ == "__main__":
             def _p1_mpl_release(self, event):
                 if self._drag_info is None:
                     return
+                # Normalise the dragged boundary (keep x0 < x1) and clamp.
+                i = self._drag_info['lane']
+                if 0 <= i < len(self._lane_bounds):
+                    x0, x1 = self._lane_bounds[i]
+                    self._lane_bounds[i] = [int(min(x0, x1)), int(max(x0, x1))]
                 self._drag_info = None
                 self._canvas1.setCursor(Qt.ArrowCursor)
-                # Full redraw to update shading + profile markers
-                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
-                pr = np.ptp(col_profile)
-                cn = ((col_profile - col_profile.min()) / pr
-                      if pr > 1e-6 else np.zeros_like(col_profile))
-                self._draw_phase1_figure(cn)
+                # Full redraw to update shading + profile markers (keep current lanes)
+                self._redraw_lanes_keep()
 
             def _add_lane_at(self, col):
                 W  = self._gel_arr.shape[1]
+                col = int(np.clip(col, 0, W - 1))
                 hw = max(self._lane_dist // 2, 5)
                 new_bound = [max(0, col - hw), min(W - 1, col + hw)]
                 # Insert at position that keeps lane bounds sorted left-to-right
@@ -7892,13 +7910,17 @@ if __name__ == "__main__":
                         insert_idx = j
                         break
                 self._lane_bounds.insert(insert_idx, new_bound)
-                self._lane_peaks = np.insert(self._lane_peaks, insert_idx, col)
+                try:
+                    self._lane_peaks = np.insert(np.asarray(self._lane_peaks, dtype=int),
+                                                 min(insert_idx, len(self._lane_peaks)), col)
+                except Exception:
+                    self._lane_peaks = np.array(
+                        [int((a + b) / 2) for a, b in self._lane_bounds], dtype=int)
+                # Newly added lane becomes the selected one
+                self._selected_lane_idx = insert_idx
+                if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
                 self._p1_count_lbl.setText(f"Lanes: {len(self._lane_bounds)}")
-                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
-                pr = np.ptp(col_profile)
-                cn = ((col_profile - col_profile.min()) / pr
-                      if pr > 1e-6 else np.zeros_like(col_profile))
-                self._draw_phase1_figure(cn)
+                self._redraw_lanes_keep()
 
             def _delete_selected_lane(self):
                 i = self._selected_lane_idx
@@ -7909,11 +7931,7 @@ if __name__ == "__main__":
                     self._selected_lane_idx = -1
                     self._p1_del_btn.setEnabled(False)
                     self._p1_count_lbl.setText(f"Lanes: {len(self._lane_bounds)}")
-                    col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
-                    pr = np.ptp(col_profile)
-                    cn = ((col_profile - col_profile.min()) / pr
-                          if pr > 1e-6 else np.zeros_like(col_profile))
-                    self._draw_phase1_figure(cn)
+                    self._redraw_lanes_keep()
 
             def _auto_set_padding_for_labels(self):
                 """Auto-compute white padding so the rotated top labels always fit.
@@ -9730,7 +9748,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v6.6"
+                self.window_title="GEL BLOT ANALYZER v6.7"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
