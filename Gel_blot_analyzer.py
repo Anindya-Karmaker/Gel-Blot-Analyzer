@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v6.8\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v7.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -1705,6 +1705,7 @@ if __name__ == "__main__":
                 # The data model: two lists for markers to handle scaling correctly, one for shapes.
                 self._original_markers_data = [tuple(m) for m in markers_list] # Pristine backup for scaling
                 self.markers = [list(m) for m in markers_list]                 # Working copy for display
+                self._original_shapes_data = [dict(s) for s in shapes_list]    # Pristine backup for scaling
                 self.shapes = [dict(s) for s in shapes_list]                   # Working copy
         
                 self._block_signals = False
@@ -1816,9 +1817,34 @@ if __name__ == "__main__":
                     
                     # Rebuild the entire marker entry to ensure all properties are preserved
                     self.markers[i] = [final_x, final_y, text, qcolor, font_family, final_font_size, is_bold, is_italic]
-        
+
+                # Rebuild the working `self.shapes` list from the pristine `_original_shapes_data`,
+                # applying the same Shift/Scale, and scaling thickness by the Font Scale slider.
+                for i, original_shape in enumerate(self._original_shapes_data):
+                    new_shape = dict(original_shape)
+                    shape_type = original_shape.get('type')
+
+                    if shape_type == 'line':
+                        sx, sy = original_shape.get('start', (0, 0))
+                        ex, ey = original_shape.get('end', (0, 0))
+                        new_shape['start'] = ((sx * rel_x_scale_factor) + abs_x_shift_pixels,
+                                              (sy * rel_y_scale_factor) + abs_y_shift_pixels)
+                        new_shape['end'] = ((ex * rel_x_scale_factor) + abs_x_shift_pixels,
+                                            (ey * rel_y_scale_factor) + abs_y_shift_pixels)
+                    elif shape_type == 'rectangle':
+                        rx, ry, rw, rh = original_shape.get('rect', (0, 0, 0, 0))
+                        new_shape['rect'] = ((rx * rel_x_scale_factor) + abs_x_shift_pixels,
+                                             (ry * rel_y_scale_factor) + abs_y_shift_pixels,
+                                             rw * rel_x_scale_factor,
+                                             rh * rel_y_scale_factor)
+
+                    orig_thickness = float(original_shape.get('thickness', 1))
+                    new_shape['thickness'] = max(0.5, orig_thickness * font_size_scale_factor)
+                    self.shapes[i] = new_shape
+
                 self.populate_table()
                 self.global_markers_adjusted.emit(list(self.markers))
+                self.shapes_adjusted_preview.emit(list(self.shapes))
         
             def populate_table(self):
                 """Rebuilds the entire table from the current state of the data model."""
@@ -2009,26 +2035,45 @@ if __name__ == "__main__":
                 
                 elif item_type == 'shape':
                     shape_data = self.shapes[original_index]
-                    
+                    orig_shape_data = self._original_shapes_data[original_index]
+
+                    # Current slider state, used to back-calculate the pristine (un-transformed)
+                    # values so that subsequent global Shift/Scale adjustments preserve this edit.
+                    abs_x_shift = (self.abs_x_shift_slider.value() / self.percent_precision_factor / 100.0) * self._current_image_width
+                    abs_y_shift = (self.abs_y_shift_slider.value() / self.percent_precision_factor / 100.0) * self._current_image_height
+                    rel_x_scale = self.rel_x_scale_slider.value() / self.scale_precision_factor / 100.0
+                    rel_y_scale = self.rel_y_scale_slider.value() / self.scale_precision_factor / 100.0
+                    font_scale = self.font_scale_slider.value() / self.scale_precision_factor / 100.0
+
                     if col == 2: # Coordinates
                         shape_type_internal = shape_data.get('type')
                         try:
                             coords = [float(c.strip()) for c in new_value.split(',')]
-                            if shape_type_internal == 'line' and len(coords) == 4: shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
+                            if shape_type_internal == 'line' and len(coords) == 4:
+                                shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
+                                orig_shape_data['start'] = ((coords[0] - abs_x_shift) / rel_x_scale if rel_x_scale else coords[0],
+                                                            (coords[1] - abs_y_shift) / rel_y_scale if rel_y_scale else coords[1])
+                                orig_shape_data['end'] = ((coords[2] - abs_x_shift) / rel_x_scale if rel_x_scale else coords[2],
+                                                          (coords[3] - abs_y_shift) / rel_y_scale if rel_y_scale else coords[3])
                             elif shape_type_internal == 'rectangle' and len(coords) == 4:
                                 if coords[2] < 0 or coords[3] < 0: raise ValueError("Width/Height must be non-negative.")
                                 shape_data['rect'] = (coords[0], coords[1], coords[2], coords[3])
+                                orig_shape_data['rect'] = ((coords[0] - abs_x_shift) / rel_x_scale if rel_x_scale else coords[0],
+                                                           (coords[1] - abs_y_shift) / rel_y_scale if rel_y_scale else coords[1],
+                                                           coords[2] / rel_x_scale if rel_x_scale else coords[2],
+                                                           coords[3] / rel_y_scale if rel_y_scale else coords[3])
                             else: raise ValueError("Incorrect number of coordinates.")
                         except ValueError as e:
                             self._block_signals = True; self.populate_table(); self._block_signals = False
                             QMessageBox.warning(self, "Invalid Input", f"Could not parse shape coordinates.\nError: {e}")
-                    
+
                     # --- FIX: Handle Thickness in Column 4 ---
                     elif col == 4: # Size/Thickness
                         try:
                             new_thickness = int(new_value)
                             if new_thickness < 1: new_thickness = 1
                             shape_data['thickness'] = new_thickness
+                            orig_shape_data['thickness'] = new_thickness / font_scale if font_scale else new_thickness
                         except ValueError:
                             self._block_signals = True
                             current_thickness = shape_data.get('thickness', 1)
@@ -2056,7 +2101,9 @@ if __name__ == "__main__":
                         if item_type == 'marker':
                             self.markers[original_index][3] = new_color
                             temp_list = list(self._original_markers_data[original_index]); temp_list[3] = new_color; self._original_markers_data[original_index] = tuple(temp_list)
-                        else: self.shapes[original_index]['color'] = new_color.name()
+                        else:
+                            self.shapes[original_index]['color'] = new_color.name()
+                            self._original_shapes_data[original_index]['color'] = new_color.name()
                         self.populate_table()
                 
                 self.shapes_adjusted_preview.emit(list(self.shapes))
@@ -2081,6 +2128,8 @@ if __name__ == "__main__":
                             del self._original_markers_data[original_index]
                         elif item_type == 'shape' and 0 <= original_index < len(self.shapes):
                             del self.shapes[original_index]
+                            if 0 <= original_index < len(self._original_shapes_data):
+                                del self._original_shapes_data[original_index]
         
                         # Repopulate the table to reflect the deletion
                         self.populate_table()
@@ -2455,7 +2504,7 @@ if __name__ == "__main__":
             def _create_standard_curve_plot_generic(self, standard_dictionary, model_name):
                 is_std_mode = bool(standard_dictionary)
                 if not is_std_mode or len(standard_dictionary) < 2:
-                    return QLabel("Standard curve requires at least 2 standard points.", alignment=Qt.AlignCenter)
+                    return QLabel(" ", alignment=Qt.AlignCenter)
                 try:
                     quantities = np.array(list(standard_dictionary.keys()), dtype=float)
                     areas = np.array(list(standard_dictionary.values()), dtype=float)
@@ -3296,6 +3345,9 @@ if __name__ == "__main__":
                 self.interactive_artists = []
 
                 self._setup_ui(persist_checked)
+                # Now that all lane profiles exist and the UI is built, set the single
+                # constant (averaged) rolling-ball radius across lanes if Auto is enabled.
+                self._apply_average_rb_radius()
                 self.update_plot()
                 self._update_quality_readout()
 
@@ -3861,22 +3913,66 @@ if __name__ == "__main__":
                             ))
                             self.tau_values.append(tau_i)
 
-            def _calculate_optimal_rb_radius(self):
-                if self.profile is None or len(self.peaks) == 0: return 50
+            def _optimal_rb_radius_for_profile(self, profile):
+                """Optimal rolling-ball radius for a single profile, using the (shared)
+                detection parameters. Returns None if it cannot be estimated."""
+                if profile is None or len(profile) == 0: return None
                 try:
-                    profile_range = np.ptp(self.profile)
+                    profile_range = np.ptp(profile)
                     if profile_range < 1e-6: profile_range = 1.0
-                    min_height_abs = np.min(self.profile) + profile_range * self.peak_height_factor
+                    min_height_abs = np.min(profile) + profile_range * self.peak_height_factor
                     min_prominence_abs = profile_range * self.peak_prominence_factor
                     _peaks_for_width, properties = find_peaks(
-                        self.profile, height=min_height_abs, prominence=min_prominence_abs,
+                        profile, height=min_height_abs, prominence=min_prominence_abs,
                         distance=self.peak_distance, width=1
                     )
                     if 'widths' in properties and len(properties['widths']) > 0:
                         avg_width = np.mean(properties['widths'])
                         return int(np.clip(2.5 * avg_width, 10, 500))
-                    else: return 50
-                except: return 50
+                    return None
+                except: return None
+
+            def _calculate_optimal_rb_radius(self):
+                r = self._optimal_rb_radius_for_profile(self.profile)
+                return r if r is not None else 50
+
+            def _apply_average_rb_radius(self):
+                """Auto rolling-ball mode: use ONE constant radius for every lane — the
+                average of each lane's individually-optimal radius — instead of letting
+                each lane pick its own. Does nothing when Auto is off or the method is
+                not rolling-ball based. Manual mode keeps each lane's individual radius."""
+                if not getattr(self, 'auto_adjust_rb_radius', False):
+                    return
+                if not hasattr(self, 'method_combobox'):
+                    return
+                if self.method_combobox.currentText() not in ["Rolling Ball", "Rolling-valley"]:
+                    return
+
+                radii = []
+                current_id = getattr(self, 'current_lane_id', None)
+                for lane in getattr(self, 'lanes_data', []):
+                    lid = lane['id']
+                    # Use the live profile for the active lane, the stored one for the rest.
+                    prof = self.profile if lid == current_id else self.lanes_state.get(lid, {}).get('profile')
+                    r = self._optimal_rb_radius_for_profile(prof)
+                    if r is not None:
+                        radii.append(r)
+
+                if not radii:
+                    return
+                avg_radius = int(np.clip(round(np.mean(radii)), 10, 500))
+
+                # Apply the same constant radius to the active lane and every stored lane.
+                self.rolling_ball_radius = avg_radius
+                for lane in getattr(self, 'lanes_data', []):
+                    if lane['id'] in self.lanes_state:
+                        self.lanes_state[lane['id']]['rolling_ball_radius'] = avg_radius
+
+                if hasattr(self, 'rolling_ball_slider'):
+                    self.rolling_ball_slider.blockSignals(True)
+                    self.rolling_ball_slider.setValue(avg_radius)
+                    self.rolling_ball_slider.blockSignals(False)
+                    self.rolling_ball_label.setText(f"Rolling Ball Radius ({avg_radius})")
 
             def _recalculate_all_regions(self):
                 if hasattr(self, 'method_combobox'):
@@ -4049,6 +4145,9 @@ if __name__ == "__main__":
                         ))
 
             def detect_peaks(self):
+                # Automatic detection replaces any pasted/hand-edited regions, so the lane
+                # is no longer in "manual" mode (this is reached via the detection settings).
+                self.regions_are_manual = False
                 self.n_peaks_rejected = 0
                 if self.profile is None or len(self.profile) == 0:
                     self.peaks = np.array([])
@@ -4115,13 +4214,9 @@ if __name__ == "__main__":
                     except Exception:
                         self.peaks = np.array([])
 
-                if self.auto_adjust_rb_radius and hasattr(self, 'method_combobox') and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
-                    self.rolling_ball_radius = self._calculate_optimal_rb_radius()
-                    if hasattr(self, 'rolling_ball_slider'):
-                        self.rolling_ball_slider.blockSignals(True)
-                        self.rolling_ball_slider.setValue(self.rolling_ball_radius)
-                        self.rolling_ball_slider.blockSignals(False)
-                        self.rolling_ball_label.setText(f"Rolling Ball Radius ({self.rolling_ball_radius})")
+                # Auto rolling-ball: keep ONE constant radius (the average across all lanes)
+                # rather than a different value per lane. Manual mode leaves each lane's radius alone.
+                self._apply_average_rb_radius()
 
                 if hasattr(self, 'peak_number_input') and not self.peak_number_input.hasFocus():
                     self.peak_number_input.setText(str(len(self.peaks)))
@@ -4199,7 +4294,10 @@ if __name__ == "__main__":
                     'min_band_width': settings.get('min_band_width', 3),
                     'area_subtraction_method': settings.get('area_subtraction_method', "Gaussian Deconvolution"),
                     'auto_adjust_rb_radius': settings.get('auto_adjust_rb_radius', False),
-                    'denoise_sigma': settings.get('denoise_sigma', 0.0)
+                    'denoise_sigma': settings.get('denoise_sigma', 0.0),
+                    # True once the user pastes/hand-edits this lane's integration regions;
+                    # protects them from being overwritten by auto re-detection on lane switch.
+                    'regions_are_manual': False
                 }
                 return state
 
@@ -4238,6 +4336,7 @@ if __name__ == "__main__":
                 state['area_subtraction_method'] = self.area_subtraction_method
                 state['auto_adjust_rb_radius'] = self.auto_adjust_rb_radius
                 state['denoise_sigma'] = self.denoise_sigma
+                state['regions_are_manual'] = getattr(self, 'regions_are_manual', False)
 
             def _load_lane_state(self, lane_id):
                 if lane_id not in self.lanes_state:
@@ -4275,6 +4374,7 @@ if __name__ == "__main__":
                 self.area_subtraction_method = state['area_subtraction_method']
                 self.auto_adjust_rb_radius = state['auto_adjust_rb_radius']
                 self.denoise_sigma = state['denoise_sigma']
+                self.regions_are_manual = state.get('regions_are_manual', False)
 
             def _update_gui_controls_from_loaded_state(self):
                 controls = [
@@ -4318,8 +4418,11 @@ if __name__ == "__main__":
                 self.update_rb_controls_enabled_state()
 
             # ── Detection-setting keys that must stay identical across all lanes ──
+            # NOTE: 'rolling_ball_radius' is intentionally NOT shared. With Auto on, a single
+            # averaged radius is applied to every lane by _apply_average_rb_radius(); with Auto
+            # off, each lane keeps its own individually-set radius.
             _SHARED_SETTINGS = (
-                'area_subtraction_method', 'rolling_ball_radius', 'auto_adjust_rb_radius',
+                'area_subtraction_method', 'auto_adjust_rb_radius',
                 'smoothing_sigma', 'peak_height_factor', 'peak_distance',
                 'peak_prominence_factor', 'min_band_width', 'denoise_sigma', 'is_inverted',
             )
@@ -4339,6 +4442,11 @@ if __name__ == "__main__":
                     for key in self._SHARED_SETTINGS:
                         if key in src:
                             dst[key] = src[key]
+                    # Skip lanes whose regions were pasted/hand-edited: re-running detection
+                    # would rebuild their integration regions and discard the user's work.
+                    # Their per-method areas are already computed from the manual regions.
+                    if dst.get('regions_are_manual'):
+                        continue
                     # Re-run detection for the updated lane state
                     saved_id = self.current_lane_id
                     self._load_lane_state(lid)
@@ -4914,6 +5022,7 @@ if __name__ == "__main__":
                     new_end = max(new_x, current_start + 1 if current_start < profile_len - 1 else profile_len - 1)
                     self.peak_regions[peak_idx] = (current_start, new_end)
                 self.dragging_handle_info = None
+                self.regions_are_manual = True  # preserve dragged boundaries across lane switches
                 self.update_plot()
                 self.canvas.draw_idle()
 
@@ -5005,6 +5114,7 @@ if __name__ == "__main__":
                 self.peaks = np.array(sorted(self.peaks.tolist() + [x_coord]))
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self._recalculate_all_regions()
+                self.regions_are_manual = True  # preserve manual peak edits across lane switches
                 self.update_plot()
 
             def _redefine_all_valley_regions(self):
@@ -5054,6 +5164,7 @@ if __name__ == "__main__":
                 self.selected_peak_index_for_delete = -1; self.delete_selected_peak_button.setEnabled(False)
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
                 self._recalculate_all_regions()
+                self.regions_are_manual = True  # preserve manual peak edits across lane switches
                 self.update_plot()
 
             def copy_peak_regions_to_app(self):
@@ -5082,6 +5193,7 @@ if __name__ == "__main__":
                     if not (len(copied_peaks_indices) > 0 and len(copied_peaks_indices) == len(regions_to_paste)): temp_derived_peaks.append((start_clamped + end_clamped) // 2)
                 if temp_derived_peaks: self.peaks = np.array(sorted(temp_derived_peaks))
                 if hasattr(self, 'peak_number_input'): self.peak_number_input.setText(str(len(self.peaks)))
+                self.regions_are_manual = True  # preserve pasted regions across lane switches
                 self.update_plot(); QMessageBox.information(self, "Regions Pasted", f"{len(self.peak_regions)} regions applied.")
 
             def get_current_settings(self): return self._final_settings
@@ -5363,6 +5475,7 @@ if __name__ == "__main__":
                         new_peaks = np.linspace(0, len(self.profile)-1, num_peaks + 2)[1:-1].astype(int)
                         self.peaks = np.sort(np.unique(np.concatenate((self.peaks, new_peaks))))[:num_peaks]
                     self._recalculate_all_regions()
+                    self.regions_are_manual = True  # preserve manual peak-count edits across lane switches
                     self.update_plot()
                 except ValueError: self.peak_number_input.setText(str(len(self.peaks)))
 
@@ -6778,7 +6891,9 @@ if __name__ == "__main__":
                 # Grid overlay controls (moved here to aid alignment)
                 grid_row = QHBoxLayout()
                 self._prep_grid_x_chk = QCheckBox("Grid X")
+                self._prep_grid_x_chk.setMinimumWidth(70)
                 self._prep_grid_y_chk = QCheckBox("Grid Y")
+                self._prep_grid_y_chk.setMinimumWidth(70)
                 self._prep_grid_x_chk.toggled.connect(self._on_prep_grid_x)
                 self._prep_grid_y_chk.toggled.connect(self._on_prep_grid_y)
                 self._prep_grid_size_spin = QSpinBox()
@@ -9817,7 +9932,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v6.8"
+                self.window_title="GEL BLOT ANALYZER v7.0"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -12188,24 +12303,40 @@ if __name__ == "__main__":
                 if len(self.quantities) < 2:
                     QMessageBox.warning(self, "Error", "At least two standard protein amounts are needed to measure quantity.")
             
-            def calculate_peak_area(self, pil_image_for_dialog):
+            def _persist_peak_dialog_settings(self, dialog, force_manual_rb=False):
+                """Persist the dialog's settings back to the app if the user opted in.
+                When the run forced manual rolling-ball mode (standards), the user's global
+                Auto preference is preserved so it doesn't leak into later sample analyses."""
+                if dialog.should_persist_settings():
+                    new_settings = dialog.get_current_settings()
+                    if force_manual_rb:
+                        new_settings['auto_adjust_rb_radius'] = self.peak_dialog_settings.get('auto_adjust_rb_radius', False)
+                    self.peak_dialog_settings = new_settings
+                    self.persist_peak_settings_enabled = True
+                else:
+                    self.persist_peak_settings_enabled = False
+
+            def calculate_peak_area(self, pil_image_for_dialog, force_manual_rb=False):
                 if pil_image_for_dialog is None:
                     return None
-                
+
+                # Standards are measured with a FIXED rolling-ball radius (Auto off) so the
+                # background subtraction is consistent and not re-estimated from the standard's
+                # own bands.
+                settings_to_use = self.peak_dialog_settings
+                if force_manual_rb:
+                    settings_to_use = {**self.peak_dialog_settings, 'auto_adjust_rb_radius': False}
+
                 if isinstance(pil_image_for_dialog, list):
                     dialog = PeakAreaDialog(
                         cropped_data=pil_image_for_dialog,
-                        current_settings=self.peak_dialog_settings,
+                        current_settings=settings_to_use,
                         persist_checked=self.persist_peak_settings_enabled,
                         parent=self
                     )
                     if dialog.exec() == QDialog.Accepted:
                         all_lanes_info = dialog.get_all_lanes_peak_info()
-                        if dialog.should_persist_settings():
-                            self.peak_dialog_settings = dialog.get_current_settings()
-                            self.persist_peak_settings_enabled = True
-                        else:
-                            self.persist_peak_settings_enabled = False
+                        self._persist_peak_dialog_settings(dialog, force_manual_rb)
                         return all_lanes_info
                     else:
                         return None
@@ -12216,7 +12347,7 @@ if __name__ == "__main__":
 
                     dialog = PeakAreaDialog(
                         cropped_data=pil_image_for_dialog,
-                        current_settings=self.peak_dialog_settings,
+                        current_settings=settings_to_use,
                         persist_checked=self.persist_peak_settings_enabled,
                         parent=self
                     )
@@ -12224,14 +12355,10 @@ if __name__ == "__main__":
                     peak_info_list = None
                     if dialog.exec() == QDialog.Accepted:
                         peak_info_list = dialog.get_final_peak_info()
-                        if dialog.should_persist_settings():
-                            self.peak_dialog_settings = dialog.get_current_settings()
-                            self.persist_peak_settings_enabled = True
-                        else:
-                            self.persist_peak_settings_enabled = False
+                        self._persist_peak_dialog_settings(dialog, force_manual_rb)
                     else:
                         pass
-                    
+
                     return peak_info_list if peak_info_list is not None else []
 
             def analyze_bounding_box(self, pil_image_for_dialog, standard):
@@ -12245,7 +12372,8 @@ if __name__ == "__main__":
                     if ok and quantity:
                         try:
                             quantity_value = float(quantity.split()[0])
-                            peak_info_result = self.calculate_peak_area(pil_image_for_dialog)
+                            # Process standards with a fixed rolling-ball radius (Auto off).
+                            peak_info_result = self.calculate_peak_area(pil_image_for_dialog, force_manual_rb=True)
                             
                             if peak_info_result and len(peak_info_result) > 0:
                                 areas_for_standard = [info['area'] for info in peak_info_result]
@@ -14218,7 +14346,16 @@ if __name__ == "__main__":
                 self.image1_rotation_label = QLabel("0.0°"); self.image1_rotation_label.setFixedWidth(40)
                 self.image1_rotation_slider.valueChanged.connect(lambda val, lbl=self.image1_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
                 image1_layout.addWidget(self.image1_rotation_label, 5, 2)
-                
+
+                image1_layout.addWidget(QLabel("Mixing %:"), 6, 0)
+                self.image1_blend_slider = QSlider(Qt.Horizontal); self.image1_blend_slider.setRange(0, 100); self.image1_blend_slider.setValue(100)
+                self.image1_blend_slider.setToolTip("Individual mixing for Image 1 (Base).\nThe Global Mixing % below is applied on top of this value.")
+                self.image1_blend_slider.valueChanged.connect(lambda: self.update_live_view()); self.image1_blend_slider.valueChanged.connect(lambda: self.image1_blend_slider.setFocus())
+                image1_layout.addWidget(self.image1_blend_slider, 6, 1)
+                self.image1_blend_label = QLabel("100%"); self.image1_blend_label.setFixedWidth(40)
+                self.image1_blend_slider.valueChanged.connect(lambda val, lbl=self.image1_blend_label: lbl.setText(f"{val}%"))
+                image1_layout.addWidget(self.image1_blend_label, 6, 2)
+
                 image1_layout.setColumnStretch(1, 1)
                 top_row_layout.addWidget(image1_group)
 
@@ -14265,6 +14402,15 @@ if __name__ == "__main__":
                 self.image2_rotation_slider.valueChanged.connect(lambda val, lbl=self.image2_rotation_label: lbl.setText(f"{val/10.0:.1f}°"))
                 image2_layout.addWidget(self.image2_rotation_label, 5, 2)
 
+                image2_layout.addWidget(QLabel("Mixing %:"), 6, 0)
+                self.image2_blend_slider = QSlider(Qt.Horizontal); self.image2_blend_slider.setRange(0, 100); self.image2_blend_slider.setValue(100)
+                self.image2_blend_slider.setToolTip("Individual mixing for Image 2 (Overlay).\nThe Global Mixing % below is applied on top of this value.")
+                self.image2_blend_slider.valueChanged.connect(lambda: self.update_live_view()); self.image2_blend_slider.valueChanged.connect(lambda: self.image2_blend_slider.setFocus())
+                image2_layout.addWidget(self.image2_blend_slider, 6, 1)
+                self.image2_blend_label = QLabel("100%"); self.image2_blend_label.setFixedWidth(40)
+                self.image2_blend_slider.valueChanged.connect(lambda val, lbl=self.image2_blend_label: lbl.setText(f"{val}%"))
+                image2_layout.addWidget(self.image2_blend_label, 6, 2)
+
                 image2_layout.setColumnStretch(1, 1)
                 top_row_layout.addWidget(image2_group)
                 main_layout.addLayout(top_row_layout)
@@ -14287,17 +14433,16 @@ if __name__ == "__main__":
                 global_controls_layout.addWidget(self.load_overlay_button, 0, 3, 1, 2)
                 
                 # --- Mixing Controls ---
-                # FIX: Updated Label text to be explicit about mixing
-                global_controls_layout.addWidget(QLabel("Mixing % (Overlay):"), 1, 0)
+                global_controls_layout.addWidget(QLabel("Global Mixing % (Overlay):"), 1, 0)
 
                 self.blend_slider = QSlider(Qt.Horizontal)
                 self.blend_slider.setRange(0, 100)
                 self.blend_slider.setValue(50)
                 self.blend_slider.setToolTip(
-                    "Sets the mixing percentage for Image 2 (Overlay).\n"
-                    "0% = Overlay invisible (100% Base)\n"
-                    "50% = 50% Overlay / 50% Base\n"
-                    "100% = Overlay opaque (0% Base)"
+                    "Global mixing for the combined overlay (Image 1 + Image 2) onto the final image.\n"
+                    "This is stacked on top of each image's individual Mixing %.\n"
+                    "Effective opacity of an image = its individual Mixing % × this Global Mixing %.\n"
+                    "0% = overlays invisible, 100% = overlays at full individual strength."
                 )
 
                 self.blend_value_label = QLabel("50%")
@@ -14328,7 +14473,8 @@ if __name__ == "__main__":
                 self.select_region_button.setCheckable(True)
                 self.select_region_button.setToolTip(
                     "Draw a rectangle on the image to add a blend region.\n"
-                    "Multiple regions can be added. Overlay is only drawn inside them."
+                    "Multiple regions can be added. The targeted layer (see 'Apply Regions To')\n"
+                    "is only drawn inside them."
                 )
                 self.select_region_button.clicked.connect(self.activate_overlay_region_selection)
                 global_controls_layout.addWidget(self.select_region_button, 3, 3, 1, 1)
@@ -14337,6 +14483,22 @@ if __name__ == "__main__":
                 clear_region_button.setToolTip("Remove all region restrictions — blend applies to the full image.")
                 clear_region_button.clicked.connect(self.clear_overlay_region)
                 global_controls_layout.addWidget(clear_region_button, 3, 4, 1, 1)
+
+                # --- Region target selector: which layer(s) the kept regions clip ---
+                global_controls_layout.addWidget(QLabel("Apply Regions To:"), 4, 0)
+                self.overlay_region_target_combo = QComboBox()
+                self.overlay_region_target_combo.addItems(
+                    ["Image 2 (Overlay)", "Image 1 (Base)", "Both Images"]
+                )
+                self.overlay_region_target_combo.setToolTip(
+                    "Choose which layer(s) the 'Select Regions to Keep' rectangles restrict.\n"
+                    "A targeted layer is only drawn inside the regions; untargeted layers fill the whole image."
+                )
+                self.overlay_region_target_combo.setCurrentText(
+                    getattr(self, 'overlay_region_target', "Image 2 (Overlay)")
+                )
+                self.overlay_region_target_combo.currentTextChanged.connect(self._on_region_target_changed)
+                global_controls_layout.addWidget(self.overlay_region_target_combo, 4, 1, 1, 4)
 
                 global_controls_layout.setColumnStretch(1, 1); global_controls_layout.setColumnStretch(3, 1)
                 main_layout.addWidget(global_controls_group)
@@ -14526,7 +14688,42 @@ if __name__ == "__main__":
                 self.live_view_label._custom_mouseReleaseEvent_from_app = None
                 self.live_view_label.setCursor(Qt.ArrowCursor)
                 self.update_live_view()
-            
+
+            def _on_region_target_changed(self, text):
+                """Store the chosen region target layer and refresh the view."""
+                self.overlay_region_target = text
+                self.update_live_view()
+
+            def _region_target_includes(self, layer):
+                """Return True if the kept-region clip should be applied to the given
+                overlay layer (1 = Image 1/Base, 2 = Image 2/Overlay)."""
+                if not getattr(self, 'overlay_blend_regions', []):
+                    return False
+                target = getattr(self, 'overlay_region_target', "Image 2 (Overlay)")
+                if target == "Both Images":
+                    return True
+                if target == "Image 1 (Base)":
+                    return layer == 1
+                return layer == 2   # default: "Image 2 (Overlay)"
+
+            def _build_region_clip_path(self, span_w, span_h, off_x=0.0, off_y=0.0):
+                """Build a single union QPainterPath from all blend regions, expressed in
+                painter coordinates. Normalized region coords (0–1) are scaled by span and
+                offset. Returns None when there are no regions."""
+                regions = getattr(self, 'overlay_blend_regions', [])
+                if not regions:
+                    return None
+                path = QPainterPath()
+                path.setFillRule(Qt.WindingFill)
+                for nr in regions:
+                    path.addRect(QRectF(
+                        off_x + nr.x()     * span_w,
+                        off_y + nr.y()     * span_h,
+                        nr.width()  * span_w,
+                        nr.height() * span_h,
+                    ))
+                return path
+
             def remove_image1(self):
                 """Hides Image 1 and resets its sliders, without triggering a redraw."""
                 if hasattr(self, 'image1_position'):
@@ -14631,6 +14828,20 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.warning(self, "Info", "No image copied or loaded to Image 2 buffer yet.")
 
+            def _overlay_effective_opacities(self):
+                """
+                Returns (op1, op2): the final opacities used to paint Image 1 and Image 2.
+                Each image has its own individual Mixing % (image1/2_blend_slider) and the
+                Global Mixing % (blend_slider) is stacked on top of both, so:
+                    effective opacity = individual % x global %.
+                """
+                g = (self.blend_slider.value() / 100.0) if hasattr(self, 'blend_slider') else 0.5
+                a1 = (self.image1_blend_slider.value() / 100.0) if hasattr(self, 'image1_blend_slider') else 1.0
+                a2 = (self.image2_blend_slider.value() / 100.0) if hasattr(self, 'image2_blend_slider') else 1.0
+                op1 = max(0.0, min(1.0, a1 * g))
+                op2 = max(0.0, min(1.0, a2 * g))
+                return op1, op2
+
             def reset_overlay1_transform(self):
                 """Resets position, size, and rotation for Image 1 overlay."""
                 if hasattr(self, 'image1_left_slider'):
@@ -14641,6 +14852,8 @@ if __name__ == "__main__":
                     self.image1_resize_slider.setValue(100)
                 if hasattr(self, 'image1_rotation_slider'):
                     self.image1_rotation_slider.setValue(0)
+                if hasattr(self, 'image1_blend_slider'):
+                    self.image1_blend_slider.setValue(100)
                 self.update_live_view()
 
             def reset_overlay2_transform(self):
@@ -14653,6 +14866,8 @@ if __name__ == "__main__":
                     self.image2_resize_slider.setValue(100)
                 if hasattr(self, 'image2_rotation_slider'):
                     self.image2_rotation_slider.setValue(0)
+                if hasattr(self, 'image2_blend_slider'):
+                    self.image2_blend_slider.setValue(100)
                 self.update_live_view()
             
             
@@ -14712,7 +14927,8 @@ if __name__ == "__main__":
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False) # Preserves pixel data better
                 painter.setRenderHint(QPainter.Antialiasing, True)
 
-                blend_value = self.blend_slider.value()
+                # Effective opacities = individual Mixing % x Global Mixing % for each image.
+                op1_blend, op2_blend = self._overlay_effective_opacities()
 
                 # --- 2. Draw Base Master Image (Always Background) ---
                 if self.image_master and not self.image_master.isNull():
@@ -14741,26 +14957,31 @@ if __name__ == "__main__":
                 # --- 3. Draw Image 1 (Base/Overlay 1) ---
                 if has_img1 and adjusted_img1:
                      # Image 1 layer
-                    painter.setOpacity(1.0)
-                    
+                    painter.setOpacity(op1_blend)
+
                     rect1_native = QRectF(
-                        QPointF(*self.image1_position), 
-                        QSizeF(adjusted_img1.width() * (self.image1_resize_slider.value()/100.0), 
+                        QPointF(*self.image1_position),
+                        QSizeF(adjusted_img1.width() * (self.image1_resize_slider.value()/100.0),
                                adjusted_img1.height() * (self.image1_resize_slider.value()/100.0))
                     )
                     rotation1 = self.image1_rotation_slider.value() / 10.0
+
+                    # Restrict Image 1 to the kept regions only when it is a chosen target.
+                    clip_path1 = self._build_region_clip_path(canvas_w, canvas_h) if self._region_target_includes(1) else None
+
+                    painter.save()
+                    if clip_path1 is not None:
+                        painter.setClipPath(clip_path1)
                     if abs(rotation1) > 0.01:
                         center_point = rect1_native.center()
-                        painter.save(); painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
-                        painter.drawImage(rect1_native, adjusted_img1)
-                        painter.restore()
-                    else:
-                        painter.drawImage(rect1_native, adjusted_img1)
+                        painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
+                    painter.drawImage(rect1_native, adjusted_img1)
+                    painter.restore()
 
                 
                 # --- 4. Draw Image 2 (Overlay) ---
                 if has_img2 and adjusted_img2:
-                    painter.setOpacity(blend_value / 100.0)
+                    painter.setOpacity(op2_blend)
 
                     rect2_native = QRectF(
                         QPointF(*self.image2_position),
@@ -14769,37 +14990,19 @@ if __name__ == "__main__":
                     )
                     rotation2 = self.image2_rotation_slider.value() / 10.0
 
-                    blend_regions = getattr(self, 'overlay_blend_regions', [])
+                    # Build a single union clip path from all regions so Image 2 is painted
+                    # exactly once — preventing double/triple blending in overlaps. Only applied
+                    # when Image 2 is a chosen region target; otherwise it blends over the full canvas.
+                    clip_path2 = self._build_region_clip_path(canvas_w, canvas_h) if self._region_target_includes(2) else None
 
-                    if blend_regions:
-                        # Build a single union clip path from all regions so Image 2 is
-                        # painted exactly once — preventing double/triple blending in overlaps.
-                        clip_path = QPainterPath()
-                        clip_path.setFillRule(Qt.WindingFill)
-                        for nr in blend_regions:
-                            clip_path.addRect(QRectF(
-                                nr.x()     * canvas_w,
-                                nr.y()     * canvas_h,
-                                nr.width() * canvas_w,
-                                nr.height()* canvas_h,
-                            ))
-                        painter.save()
-                        painter.setClipPath(clip_path)   # union of all rects, drawn through once
-                        if abs(rotation2) > 0.01:
-                            cp = rect2_native.center()
-                            painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
-                        painter.drawImage(rect2_native, adjusted_img2)
-                        painter.restore()
-                    else:
-                        # No regions — blend over full canvas
-                        if abs(rotation2) > 0.01:
-                            cp = rect2_native.center()
-                            painter.save()
-                            painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
-                            painter.drawImage(rect2_native, adjusted_img2)
-                            painter.restore()
-                        else:
-                            painter.drawImage(rect2_native, adjusted_img2)
+                    painter.save()
+                    if clip_path2 is not None:
+                        painter.setClipPath(clip_path2)   # union of all rects, drawn through once
+                    if abs(rotation2) > 0.01:
+                        cp = rect2_native.center()
+                        painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
+                    painter.drawImage(rect2_native, adjusted_img2)
+                    painter.restore()
 
                 painter.end()
                 
@@ -20502,16 +20705,14 @@ if __name__ == "__main__":
                     has_img1 = hasattr(self, 'image1_adjusted_preview') and self.image1_adjusted_preview and hasattr(self, 'image1_position')
                     has_img2 = hasattr(self, 'image2_adjusted_preview') and self.image2_adjusted_preview and hasattr(self, 'image2_position')
                     
-                    # Get mixing value (0.0 to 1.0)
-                    # 0% = Overlay invisible, 100% = Overlay opaque
-                    blend_value = (self.blend_slider.value() / 100.0) if hasattr(self, 'blend_slider') else 0.5
+                    # Effective opacities = individual Mixing % x Global Mixing % for each image.
+                    op1_blend, op2_blend = self._overlay_effective_opacities()
 
                     # --- Draw Image 1 (Base) ---
-                    # Always drawn at 100% opacity to act as the "A" in the mixing equation
                     if has_img1:
                         adjusted_img1 = getattr(self, 'image1_adjusted_preview', None)
                         if adjusted_img1:
-                            painter.setOpacity(1.0) # Base is opaque
+                            painter.setOpacity(op1_blend)
                             
                             rect_in_label_space = self._get_overlay_rect_in_label_space(1)
                             if rect_in_label_space:
@@ -20524,24 +20725,27 @@ if __name__ == "__main__":
                                 )
                                 rotation1 = self.image1_rotation_slider.value() / 10.0 if hasattr(self, 'image1_rotation_slider') else 0.0
 
+                                # Restrict Image 1 to the kept regions only when it is a chosen target.
+                                clip_path1 = (self._build_region_clip_path(
+                                    scaled_image.width(), scaled_image.height(), x_offset, y_offset)
+                                    if self._region_target_includes(1) else None)
+
+                                painter.save()
+                                if clip_path1 is not None:
+                                    painter.setClipPath(clip_path1)
                                 if abs(rotation1) > 0.01:
                                     center_point_canvas = rect_in_canvas_space.center()
-                                    painter.save()
                                     painter.translate(center_point_canvas)
                                     painter.rotate(rotation1)
                                     painter.translate(-center_point_canvas)
-                                    painter.drawImage(rect_in_canvas_space, adjusted_img1)
-                                    painter.restore()
-                                else:
-                                    painter.drawImage(rect_in_canvas_space, adjusted_img1)
+                                painter.drawImage(rect_in_canvas_space, adjusted_img1)
+                                painter.restore()
 
                     # --- Draw Image 2 (Overlay) ---
-                    # Drawn with opacity = blend_value to act as the "B" in the mixing equation
-                    # Result = A * (1-alpha) + B * alpha (Standard painter composition)
                     if has_img2:
                         adjusted_img2 = getattr(self, 'image2_adjusted_preview', None)
                         if adjusted_img2:
-                            painter.setOpacity(blend_value)
+                            painter.setOpacity(op2_blend)
                             rect_in_label_space = self._get_overlay_rect_in_label_space(2)
                             if rect_in_label_space:
                                 rect_in_canvas_space = QRectF(
@@ -20551,40 +20755,22 @@ if __name__ == "__main__":
                                     rect_in_label_space.height() * render_scale
                                 )
                                 rotation2 = self.image2_rotation_slider.value() / 10.0 if hasattr(self, 'image2_rotation_slider') else 0.0
-                                blend_regions = getattr(self, 'overlay_blend_regions', [])
 
-                                if blend_regions:
-                                    # Union clip path — Image 2 is composited exactly once through
-                                    # the combined mask, so overlapping regions don't multiply blend.
-                                    clip_path = QPainterPath()
-                                    clip_path.setFillRule(Qt.WindingFill)
-                                    img_cx = x_offset
-                                    img_cy = y_offset
-                                    img_cw = scaled_image.width()
-                                    img_ch = scaled_image.height()
-                                    for nr in blend_regions:
-                                        clip_path.addRect(QRectF(
-                                            img_cx + nr.x()     * img_cw,
-                                            img_cy + nr.y()     * img_ch,
-                                            nr.width()          * img_cw,
-                                            nr.height()         * img_ch,
-                                        ))
-                                    painter.save()
-                                    painter.setClipPath(clip_path)
-                                    if abs(rotation2) > 0.01:
-                                        cp = rect_in_canvas_space.center()
-                                        painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
-                                    painter.drawImage(rect_in_canvas_space, adjusted_img2)
-                                    painter.restore()
-                                else:
-                                    if abs(rotation2) > 0.01:
-                                        cp = rect_in_canvas_space.center()
-                                        painter.save()
-                                        painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
-                                        painter.drawImage(rect_in_canvas_space, adjusted_img2)
-                                        painter.restore()
-                                    else:
-                                        painter.drawImage(rect_in_canvas_space, adjusted_img2)
+                                # Union clip path — Image 2 is composited exactly once through the
+                                # combined mask, so overlapping regions don't multiply blend. Only
+                                # applied when Image 2 is a chosen region target.
+                                clip_path2 = (self._build_region_clip_path(
+                                    scaled_image.width(), scaled_image.height(), x_offset, y_offset)
+                                    if self._region_target_includes(2) else None)
+
+                                painter.save()
+                                if clip_path2 is not None:
+                                    painter.setClipPath(clip_path2)
+                                if abs(rotation2) > 0.01:
+                                    cp = rect_in_canvas_space.center()
+                                    painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
+                                painter.drawImage(rect_in_canvas_space, adjusted_img2)
+                                painter.restore()
                 
                 # --- 3. Draw Guide Lines ---
                 if draw_guides and hasattr(self, 'show_guides_checkbox') and self.show_guides_checkbox.isChecked():
@@ -21711,9 +21897,14 @@ if __name__ == "__main__":
                     save_format = suffix.replace(".", "").upper()
                     if save_format == "TIF": save_format = "TIFF"
                     quality = 95 if save_format in ["JPG", "JPEG"] else -1
+                    # JPEG has no alpha channel — flatten transparent areas onto white
+                    # (Qt would otherwise composite them to black).
+                    if save_format in ["JPG", "JPEG"] and self.image_master.hasAlphaChannel():
+                        if not self._flatten_qimage_on_white(self.image_master).save(original_save_path, format=save_format, quality=quality):
+                            QMessageBox.warning(self, "Error", f"Failed to save original image.")
                     # For a transparent TIFF, write it ourselves first (straight alpha);
                     # Qt's plugin produces premultiplied alpha that pastes opaque in Word.
-                    if save_format == "TIFF" and self.image_master.hasAlphaChannel():
+                    elif save_format == "TIFF" and self.image_master.hasAlphaChannel():
                         if not self._save_qimage_as_tiff(self.image_master, original_save_path):
                             if not self.image_master.save(original_save_path, format="TIFF", quality=quality):
                                 QMessageBox.warning(self, "Error", f"Failed to save original image.")
@@ -21806,10 +21997,13 @@ if __name__ == "__main__":
                     painter.setOpacity(1.0)
                     painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_bg_img, QRectF(base_bg_img.rect()))
 
+                # Effective opacities = individual Mixing % x Global Mixing % for each image.
+                op1_blend, op2_blend = self._overlay_effective_opacities()
+
                 # 1. Base Layer (Image 1 - Overlay 1)
                 if has_img1 and adjusted_img1:
                     # Draw Image 1
-                    painter.setOpacity(1.0)
+                    painter.setOpacity(op1_blend)
 
                     w_scaled = adjusted_img1.width() * (self.image1_resize_slider.value()/100.0) * render_scale
                     h_scaled = adjusted_img1.height() * (self.image1_resize_slider.value()/100.0) * render_scale
@@ -21831,8 +22025,7 @@ if __name__ == "__main__":
 
                 # 2. Overlay Layer (Image 2)
                 if has_img2 and adjusted_img2:
-                    blend_val = self.blend_slider.value() if hasattr(self, 'blend_slider') else 50
-                    painter.setOpacity(blend_val / 100.0)
+                    painter.setOpacity(op2_blend)
 
                     w_scaled = adjusted_img2.width() * (self.image2_resize_slider.value()/100.0) * render_scale
                     h_scaled = adjusted_img2.height() * (self.image2_resize_slider.value()/100.0) * render_scale
@@ -21924,7 +22117,14 @@ if __name__ == "__main__":
                     if not saved_ok:
                         saved_ok = modified_canvas.save(modified_save_path, format="TIFF", quality=-1)
                 else:
-                    saved_ok = modified_canvas.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=-1)
+                    # Match the _original image's quality for JPEG (Qt's default for -1 is ~75,
+                    # which visibly over-compresses the annotated output). Lossless formats ignore this.
+                    quality_mod = 95 if save_format_mod in ["JPG", "JPEG"] else -1
+                    canvas_to_save = modified_canvas
+                    if save_format_mod in ["JPG", "JPEG"] and modified_canvas.hasAlphaChannel():
+                        # JPEG has no alpha — flatten transparent areas onto white, not black.
+                        canvas_to_save = self._flatten_qimage_on_white(modified_canvas)
+                    saved_ok = canvas_to_save.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=quality_mod)
                 if not saved_ok:
                     QMessageBox.warning(self, "Error", f"Failed to save modified image.")
                     return False
@@ -21947,6 +22147,19 @@ if __name__ == "__main__":
 
                 return True
             
+            def _flatten_qimage_on_white(self, qimg):
+                """Composite a (possibly transparent) image onto an opaque white background.
+                Used for formats with no alpha channel (e.g. JPEG) so transparent padding
+                renders as white instead of Qt's default black."""
+                if qimg is None or qimg.isNull() or not qimg.hasAlphaChannel():
+                    return qimg
+                flat = QImage(qimg.size(), QImage.Format_RGB32)
+                flat.fill(Qt.white)
+                painter = QPainter(flat)
+                painter.drawImage(0, 0, qimg)
+                painter.end()
+                return flat
+
             def _save_qimage_as_tiff(self, qimg, path):
                 """Write a TIFF directly from the pixel buffer, bypassing Qt's
                 (often missing or 16-bit-incapable) TIFF plugin.
@@ -22815,6 +23028,7 @@ if __name__ == "__main__":
                     self.y_offset_s = 0
 
                     self.overlay_blend_regions = []       # List of QRectF in normalized image coords (0.0–1.0)
+                    self.overlay_region_target = "Image 2 (Overlay)"  # which layer(s) the kept regions clip
                     self._region_select_start = None
                     self._region_select_current = None    # live drag point for rubber-band preview
 
@@ -22848,6 +23062,8 @@ if __name__ == "__main__":
                     
                     # Reset UI elements
                     if hasattr(self, 'blend_slider'): self.blend_slider.setValue(50)
+                    if hasattr(self, 'image1_blend_slider'): self.image1_blend_slider.setValue(100)
+                    if hasattr(self, 'image2_blend_slider'): self.image2_blend_slider.setValue(100)
                     self.cancel_interactive_overlay_mode()
                     
                     if hasattr(self, 'show_grid_checkbox_x'): self.show_grid_checkbox_x.setChecked(False)
