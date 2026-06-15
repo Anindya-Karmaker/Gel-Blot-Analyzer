@@ -2,46 +2,168 @@ import sys
 import re
 import os
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
-                             QMessageBox)
+                             QHBoxLayout, QFrame, QProgressBar, QMessageBox)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QScreen, QGuiApplication
+from PySide6.QtGui import QFont, QScreen, QGuiApplication, QPixmap
 import logging
 import traceback
 
+# Application metadata used by the splash screen.
+APP_NAME = "Gel Blot Analyzer"
+APP_VERSION = "7.2"
+APP_DEVELOPER = "Anindya Karmaker"
+
+
 class MinimalLoadingDialog(QDialog):
+    """Professional splash / loading screen.
+
+    Displays the application icon, title, version and developer, plus a live
+    progress bar and status message describing which components are loading.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Loading...")
+        self.setWindowTitle(f"Loading {APP_NAME}...")
         self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
         self.setStyleSheet("""
             QDialog {
-                background-color: white;
-                border: 1px solid #AAAAAA; /* Light gray border */
-                border-radius: 8px;
+                background-color: #FFFFFF;
+                border: 1px solid #D5DBE2;
             }
-            QLabel {
-                color: #333333;
-                padding: 25px;
+            QFrame#Header {
+                background-color: #1F3A5F;
+            }
+            QLabel#Title {
+                color: #FFFFFF;
                 background-color: transparent;
+            }
+            QLabel#Subtitle {
+                color: #AFC6E6;
+                background-color: transparent;
+            }
+            QLabel#Status {
+                color: #44515F;
+                background-color: transparent;
+            }
+            QLabel#Footer {
+                color: #9AA5B1;
+                background-color: transparent;
+            }
+            QProgressBar {
+                background-color: #EAEEF3;
+                border: none;
+                height: 10px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #2D6CDF;
             }
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        self.label = QLabel("Gel Blot Analyzer v7.2\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
-        font = QFont("Arial", 12)
-        font.setBold(True)
-        self.label.setFont(font)
-        self.label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.label)
+        # --- Header band: icon + title block --------------------------------
+        header = QFrame()
+        header.setObjectName("Header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(24, 20, 24, 20)
+        header_layout.setSpacing(18)
 
-        self.setLayout(layout)
+        self.icon_label = QLabel()
+        self.icon_label.setStyleSheet("background-color: transparent;")
+        self.icon_label.setFixedSize(72, 72)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self._load_icon()
+        header_layout.addWidget(self.icon_label, 0, Qt.AlignVCenter)
 
-        self.setFixedSize(320, 120)
+        title_block = QVBoxLayout()
+        title_block.setSpacing(2)
+        title_block.addStretch(1)
+
+        title = QLabel(APP_NAME)
+        title.setObjectName("Title")
+        title_font = QFont("Segoe UI", 20)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title_block.addWidget(title)
+
+        subtitle = QLabel(f"Version {APP_VERSION}    •    Developed by {APP_DEVELOPER}")
+        subtitle.setObjectName("Subtitle")
+        subtitle.setFont(QFont("Segoe UI", 9))
+        title_block.addWidget(subtitle)
+        title_block.addStretch(1)
+
+        header_layout.addLayout(title_block, 1)
+        outer.addWidget(header)
+
+        # --- Body: status + progress ----------------------------------------
+        body = QVBoxLayout()
+        body.setContentsMargins(24, 18, 24, 16)
+        body.setSpacing(10)
+
+        self.label = QLabel("Initializing, please wait...")
+        self.label.setObjectName("Status")
+        self.label.setFont(QFont("Segoe UI", 10))
+        self.label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        body.addWidget(self.label)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        body.addWidget(self.progress)
+
+        footer = QLabel(f"© 2026 {APP_DEVELOPER}.  All rights reserved.")
+        footer.setObjectName("Footer")
+        footer.setFont(QFont("Segoe UI", 8))
+        footer.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        body.addWidget(footer)
+
+        outer.addLayout(body)
+
+        self.setFixedSize(460, 220)
         self.center_on_screen()
+
+    def _load_icon(self):
+        """Load Icon.png next to this script and scale it for the header."""
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(script_dir, "Icon.png")
+            pixmap = QPixmap(icon_path)
+            if not pixmap.isNull():
+                self.icon_label.setPixmap(
+                    pixmap.scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+            else:
+                # Fallback: simple lettermark if the icon file is unavailable.
+                self.icon_label.setText("GBA")
+                self.icon_label.setStyleSheet(
+                    "background-color: transparent; color: white;"
+                )
+                f = QFont("Segoe UI", 16); f.setBold(True)
+                self.icon_label.setFont(f)
+        except Exception:
+            pass
+
+    def update_status(self, message, progress=None):
+        """Update the status text and (optionally) the progress value.
+
+        Calls processEvents so the splash repaints during synchronous startup.
+        """
+        try:
+            if message is not None:
+                self.label.setText(str(message))
+            if progress is not None:
+                self.progress.setValue(max(0, min(100, int(progress))))
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+        except Exception:
+            pass
 
     def center_on_screen(self):
         try:
@@ -146,13 +268,22 @@ if __name__ == "__main__":
             pass # print(f"ERROR: Could not create/show minimal loading dialog: {e_load_dialog}")
             loading_dialog = None
 
+        def _splash(message, progress=None):
+            """Safely push a status update to the loading screen, if present."""
+            if loading_dialog is not None:
+                loading_dialog.update_status(message, progress)
+
+        _splash("Initializing application...", 5)
+
         import sys
         import tempfile
         from tempfile import NamedTemporaryFile
         import base64
+        _splash("Loading imaging libraries (Pillow)...", 20)
         from PIL import ImageDraw, ImageFont, ImageGrab, Image, ImageQt, ImageOps
         from io import BytesIO
         import io
+        _splash("Loading user interface components...", 35)
         from PySide6.QtWidgets import (
             QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle, QRadioButton, QButtonGroup,
             QScrollArea, QInputDialog, QFrame, QApplication, QSizePolicy,
@@ -171,16 +302,21 @@ if __name__ == "__main__":
         )
         import json
         import os
+        _splash("Loading numerical engine (NumPy)...", 50)
         import numpy as np
+        _splash("Loading plotting engine (Matplotlib)...", 60)
         import matplotlib.pyplot as plt
         import matplotlib.lines as mlines
         import matplotlib.patches as patches
         import platform
+        _splash("Loading spreadsheet export (openpyxl)...", 68)
         import openpyxl
         from openpyxl.styles import Font
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
         from matplotlib.gridspec import GridSpec
-        from skimage.restoration import rolling_ball 
+        _splash("Loading image analysis modules (scikit-image)...", 78)
+        from skimage.restoration import rolling_ball
+        _splash("Loading scientific computing modules (SciPy)...", 85)
         from scipy.signal import find_peaks, peak_widths, cwt, ricker
         from scipy.ndimage import gaussian_filter1d
         from scipy.ndimage import median_filter as scipy_median_filter
@@ -191,8 +327,10 @@ if __name__ == "__main__":
         from scipy.ndimage import grey_opening, grey_erosion, grey_dilation
         from scipy.interpolate import interp1d
         SCIPY_AVAILABLE = True
+        _splash("Loading computer vision module (OpenCV)...", 92)
         import cv2
         import datetime
+        _splash("Preparing analysis tools...", 95)
 
         AMINO_ACID_RESIDUE_WEIGHTS = {
             'A': 71.0788, 'R': 156.1875, 'N': 114.1038, 'D': 115.0886,
@@ -3431,24 +3569,54 @@ if __name__ == "__main__":
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
                 global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
 
-                self.rolling_ball_label = QLabel(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})")
-                self.rolling_ball_label.setMinimumWidth(160)
+                # Rolling-ball radius: fractional, 0.01 – 200. The slider works in
+                # 1/100 units so it drags smoothly through sub-integer values, while
+                # the spin box gives precise 0.01-step adjustment with the arrow keys.
+                self._RB_SCALE = 100
+                self._RB_MIN = 0.01
+                self._RB_MAX = 200.0
+
+                self.rolling_ball_label = QLabel("Rolling Ball Radius")
+                self.rolling_ball_label.setMinimumWidth(130)
                 self.rolling_ball_slider = QSlider(Qt.Horizontal)
-                self.rolling_ball_slider.setRange(1, 500)
-                self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
+                self.rolling_ball_slider.setRange(int(self._RB_MIN * self._RB_SCALE),
+                                                  int(self._RB_MAX * self._RB_SCALE))
+                self.rolling_ball_slider.setSingleStep(1)                 # 0.01 per arrow key
+                self.rolling_ball_slider.setPageStep(self._RB_SCALE)      # 1.00 per PageUp/Down
+                self.rolling_ball_slider.setValue(self._rb_to_slider(self.rolling_ball_radius))
                 self.rolling_ball_slider.setToolTip(
                     "Larger = smoother background that ignores narrow features; too large lifts the "
-                    "baseline up into your bands and shrinks areas. Rule of thumb: 2–3× your widest band."
+                    "baseline up into your bands and shrinks areas. Rule of thumb: 2–3× your widest band. "
+                    "Drag for coarse changes; use the spin box (arrow keys) for precise 0.01 steps."
                 )
+
+                self.rolling_ball_spinbox = QDoubleSpinBox()
+                self.rolling_ball_spinbox.setRange(self._RB_MIN, self._RB_MAX)
+                self.rolling_ball_spinbox.setDecimals(2)
+                self.rolling_ball_spinbox.setSingleStep(0.01)            # arrow keys: precise 0.01
+                self.rolling_ball_spinbox.setValue(float(self.rolling_ball_radius))
+                self.rolling_ball_spinbox.setKeyboardTracking(False)
+                self.rolling_ball_spinbox.setFixedWidth(78)
+                self.rolling_ball_spinbox.setToolTip(
+                    "Precise radius. Up/Down arrows step by 0.01; PageUp/PageDown step by 1.00. "
+                    "Range 0.01 – 200."
+                )
+
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
-                self.rolling_ball_slider.valueChanged.connect(lambda val, lbl=self.rolling_ball_label: lbl.setText(f"Rolling Ball Radius ({val})"))
+                self.rolling_ball_spinbox.valueChanged.connect(self._on_rb_spinbox_changed)
+
+                rb_row = QHBoxLayout()
+                rb_row.setContentsMargins(0, 0, 0, 0)
+                rb_row.setSpacing(6)
+                rb_row.addWidget(self.rolling_ball_slider, 1)
+                rb_row.addWidget(self.rolling_ball_spinbox, 0)
 
                 self.auto_adjust_checkbox = QCheckBox("Auto")
                 self.auto_adjust_checkbox.setToolTip("Estimate the rolling-ball radius automatically from detected band widths.")
                 self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
                 self.auto_adjust_checkbox.stateChanged.connect(self.toggle_auto_adjust_rb)
                 global_settings_layout.addWidget(self.rolling_ball_label, 2, 0)
-                global_settings_layout.addWidget(self.rolling_ball_slider, 2, 1)
+                global_settings_layout.addLayout(rb_row, 2, 1)
                 global_settings_layout.addWidget(self.auto_adjust_checkbox, 2, 2)
                 left_controls_vbox.addWidget(global_settings_group)
 
@@ -3689,15 +3857,54 @@ if __name__ == "__main__":
                 self._recalculate_all_regions()
                 self.update_plot()
 
-            def _on_rb_slider_changed(self, value):
+            def _rb_to_slider(self, radius):
+                """Convert a fractional radius into the slider's integer 1/100 units."""
+                scale = getattr(self, '_RB_SCALE', 100)
+                lo = int(getattr(self, '_RB_MIN', 0.01) * scale)
+                hi = int(getattr(self, '_RB_MAX', 200.0) * scale)
+                return int(np.clip(round(float(radius) * scale), lo, hi))
+
+            def _sync_rb_controls(self, radius):
+                """Mirror the current radius onto both the slider and the spin box
+                without re-triggering their valueChanged signals."""
+                if hasattr(self, 'rolling_ball_slider'):
+                    self.rolling_ball_slider.blockSignals(True)
+                    self.rolling_ball_slider.setValue(self._rb_to_slider(radius))
+                    self.rolling_ball_slider.blockSignals(False)
+                if hasattr(self, 'rolling_ball_spinbox'):
+                    self.rolling_ball_spinbox.blockSignals(True)
+                    self.rolling_ball_spinbox.setValue(float(radius))
+                    self.rolling_ball_spinbox.blockSignals(False)
+
+            def _apply_rb_radius(self, radius):
+                """Store the radius and refresh the plot when a rolling-ball method
+                is active and Auto is off."""
                 if not self.auto_adjust_checkbox.isChecked() and self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]:
-                    self.rolling_ball_radius = value
+                    self.rolling_ball_radius = float(radius)
                     self._recalculate_all_regions()
                     self.update_plot()
 
+            def _on_rb_slider_changed(self, value):
+                radius = value / float(getattr(self, '_RB_SCALE', 100))
+                if hasattr(self, 'rolling_ball_spinbox'):
+                    self.rolling_ball_spinbox.blockSignals(True)
+                    self.rolling_ball_spinbox.setValue(radius)
+                    self.rolling_ball_spinbox.blockSignals(False)
+                self._apply_rb_radius(radius)
+
+            def _on_rb_spinbox_changed(self, radius):
+                if hasattr(self, 'rolling_ball_slider'):
+                    self.rolling_ball_slider.blockSignals(True)
+                    self.rolling_ball_slider.setValue(self._rb_to_slider(radius))
+                    self.rolling_ball_slider.blockSignals(False)
+                self._apply_rb_radius(radius)
+
             def update_rb_controls_enabled_state(self):
                 is_rb_dependent_method = self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
-                self.rolling_ball_slider.setEnabled(is_rb_dependent_method and not self.auto_adjust_checkbox.isChecked())
+                manual_rb_enabled = is_rb_dependent_method and not self.auto_adjust_checkbox.isChecked()
+                self.rolling_ball_slider.setEnabled(manual_rb_enabled)
+                if hasattr(self, 'rolling_ball_spinbox'):
+                    self.rolling_ball_spinbox.setEnabled(manual_rb_enabled)
                 self.auto_adjust_checkbox.setEnabled(is_rb_dependent_method)
                 self.rolling_ball_label.setEnabled(is_rb_dependent_method)
 
@@ -3951,7 +4158,7 @@ if __name__ == "__main__":
                     )
                     if 'widths' in properties and len(properties['widths']) > 0:
                         avg_width = np.mean(properties['widths'])
-                        return int(np.clip(2.5 * avg_width, 10, 500))
+                        return int(np.clip(2.5 * avg_width, 10, 200))
                     return None
                 except: return None
 
@@ -3983,7 +4190,7 @@ if __name__ == "__main__":
 
                 if not radii:
                     return
-                avg_radius = int(np.clip(round(np.mean(radii)), 10, 500))
+                avg_radius = float(np.clip(round(np.mean(radii)), 10, 200))
 
                 # Apply the same constant radius to the active lane and every stored lane.
                 self.rolling_ball_radius = avg_radius
@@ -3991,11 +4198,7 @@ if __name__ == "__main__":
                     if lane['id'] in self.lanes_state:
                         self.lanes_state[lane['id']]['rolling_ball_radius'] = avg_radius
 
-                if hasattr(self, 'rolling_ball_slider'):
-                    self.rolling_ball_slider.blockSignals(True)
-                    self.rolling_ball_slider.setValue(avg_radius)
-                    self.rolling_ball_slider.blockSignals(False)
-                    self.rolling_ball_label.setText(f"Rolling Ball Radius ({avg_radius})")
+                self._sync_rb_controls(avg_radius)
 
             def _recalculate_all_regions(self):
                 if hasattr(self, 'method_combobox'):
@@ -4107,7 +4310,7 @@ if __name__ == "__main__":
                 # ================================================================== #
                 elif self.method in ["Rolling Ball", "Rolling-valley"]:
                     try:
-                        safe_radius = max(1, min(self.rolling_ball_radius, profile_len // 2 - 1))
+                        safe_radius = max(0.01, min(self.rolling_ball_radius, profile_len // 2 - 1))
                         rb_bg       = self._custom_rolling_ball(profile_float, safe_radius)
                         snip_bg     = self._snip_background(profile_float)
                         self.background = np.minimum(rb_bg, snip_bg)
@@ -4409,6 +4612,7 @@ if __name__ == "__main__":
                 controls = [
                     self.method_combobox,
                     self.rolling_ball_slider,
+                    self.rolling_ball_spinbox,
                     self.auto_adjust_checkbox,
                     self.peak_prominence_slider,
                     self.peak_distance_slider,
@@ -4424,8 +4628,8 @@ if __name__ == "__main__":
                         c.blockSignals(True)
                 idx = self.method_combobox.findText(self.area_subtraction_method)
                 if idx >= 0: self.method_combobox.setCurrentIndex(idx)
-                self.rolling_ball_slider.setValue(int(self.rolling_ball_radius))
-                self.rolling_ball_label.setText(f"Rolling Ball Radius ({int(self.rolling_ball_radius)})")
+                self.rolling_ball_slider.setValue(self._rb_to_slider(self.rolling_ball_radius))
+                self.rolling_ball_spinbox.setValue(float(self.rolling_ball_radius))
                 self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
                 self.peak_prominence_slider.setValue(int(self.peak_prominence_factor * 1000))
                 self.peak_prominence_slider_label.setText(f"Min Prominence ({self.peak_prominence_factor:.3f})")
@@ -5559,7 +5763,12 @@ if __name__ == "__main__":
                 radius = float(radius)
                 p = profile.astype(np.float64)
                 eroded = np.full(n, np.inf)
-                j_vals = np.arange(-int(radius), int(radius) + 1)
+                # The window spans at least ±1 px so a ball always exists, but the
+                # parabola curvature uses the true (possibly sub-1) radius. This keeps
+                # fractional radii meaningful and continuous: a smaller radius gives a
+                # steeper ball that hugs the profile and subtracts less.
+                half_width = max(1, int(round(radius)))
+                j_vals = np.arange(-half_width, half_width + 1)
                 ball_curves = (j_vals ** 2) / (2.0 * radius)
 
                 for j, bc in zip(j_vals, ball_curves):
@@ -5577,7 +5786,10 @@ if __name__ == "__main__":
                     else: shifted = eroded
                     background = np.maximum(background, shifted + bc)
 
-                smooth_sigma = max(2.0, radius / 8.0)
+                # Continuous in radius: for radius >= 2 this equals the previous
+                # max(2.0, radius/8) behaviour, but it scales down smoothly for the
+                # new sub-integer range instead of being hard-floored at 2.0.
+                smooth_sigma = max(0.5, min(2.0, radius), radius / 8.0)
                 background = gaussian_filter1d(background, sigma=smooth_sigma)
                 background = gaussian_filter1d(background, sigma=smooth_sigma / 2.0)
                 background = np.minimum(background, p)
@@ -10108,7 +10320,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v7.2"
+                self.window_title="GEL BLOT ANALYZER v7.3"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -11103,10 +11315,14 @@ if __name__ == "__main__":
 
                 # --- FIX: Only change the layout if NOT in dedicated editor mode ---
                 if not self.is_in_dedicated_edit_mode:
+                    # Capture densitometry-box anchors before the label is resized so they
+                    # can be reprojected onto the new canvas size.
+                    self._prepare_multilane_for_viewer_resize()
+
                     # Use a "blink" transition to avoid visual artifacts
                     self.live_view_label.hide()
                     self.tab_widget.hide()
-                    
+
                     # Rebuild the main layout
                     self._update_main_layout(position)
                     
@@ -17900,17 +18116,32 @@ if __name__ == "__main__":
                 if hasattr(self, 'ui_scale_combo'):
                     self.ui_scale_preference = self.ui_scale_combo.currentData()
                 
+                old_viewer_w = getattr(self, 'viewer_fixed_width', None)
+                old_viewer_h = getattr(self, 'viewer_fixed_height', None)
                 self.viewer_fixed_width = self.spin_viewer_w.value()
                 self.viewer_fixed_height = self.spin_viewer_h.value()
                 self.safe_content_width = self.spin_content_w.value()
-                
+
                 # Save into full config
                 # print(f"DEBUG: Saving UI Scale Pref: {getattr(self, 'ui_scale_preference', 'Not Set')}")
                 self.save_full_config()
-                
-                QMessageBox.information(self, "Settings Saved", 
+
+                # Apply a new viewer size immediately so the canvas reflows and any
+                # densitometry bounding boxes re-anchor to the image without a restart.
+                viewer_size_changed = (old_viewer_w != self.viewer_fixed_width or
+                                       old_viewer_h != self.viewer_fixed_height)
+                if viewer_size_changed and not getattr(self, 'is_in_dedicated_edit_mode', False):
+                    try:
+                        # Capture box anchors under the current size, then reproject after resize.
+                        self._prepare_multilane_for_viewer_resize()
+                        self._update_main_layout(getattr(self, 'viewer_position', 'Top'))
+                        self.update_live_view()
+                    except Exception:
+                        pass
+
+                QMessageBox.information(self, "Settings Saved",
                                       "Settings have been saved.\n\n"
-                                      "CPU/GPU mode switched immediately.\n"
+                                      "CPU/GPU mode and viewer size switched immediately.\n"
                                       "Specific GPU ID changes require a restart.")
             
             def reset_all_settings(self):
@@ -19600,6 +19831,7 @@ if __name__ == "__main__":
                 loaded_image = None
                 source_info = "Clipboard" # Default source
                 config_loaded_from_paste = False # Flag to track if config was loaded
+                paste_loaded_config_data = None  # Holds the loaded config for final marker re-assert
                 
 
                 # --- PRIORITY 1: Check for File URLs ---
@@ -19639,6 +19871,7 @@ if __name__ == "__main__":
                                             config_data = json.load(config_file)
                                         self.apply_config(config_data,load_analysis=False) # Apply loaded settings
                                         config_loaded_from_paste = True # Set flag
+                                        paste_loaded_config_data = config_data
                                     except Exception as e:
                                         QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply associated config file '{os.path.basename(config_path)}': {e}")
 
@@ -19742,6 +19975,11 @@ if __name__ == "__main__":
                     # --- ADDED: Apply adjustments ---
                     self.apply_all_adjustments()
                     # ------------------------------
+
+                    # Re-assert standard-marker offsets from the loaded config as the final
+                    # step so they cannot be left at a clamped/stale horizontal position.
+                    if paste_loaded_config_data is not None:
+                        self._finalize_loaded_marker_shifts(paste_loaded_config_data)
 
                     enable_pan = self.live_view_label.zoom_level > 1.0
                     if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
@@ -19968,12 +20206,14 @@ if __name__ == "__main__":
 
                     config_path = os.path.join(os.path.dirname(file_path), config_name)
 
+                    loaded_config_data = None
                     if os.path.exists(config_path):
                         try:
                             with open(config_path, "r") as config_file:
                                 config_data = json.load(config_file)
                             # Apply loaded settings (this will overwrite main_image_is_inverted if defined in config)
-                            self.apply_config(config_data, load_analysis=False) 
+                            self.apply_config(config_data, load_analysis=False)
+                            loaded_config_data = config_data
                         except Exception as e:
                             QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
                     # --- End Config File Loading ---
@@ -20006,7 +20246,13 @@ if __name__ == "__main__":
                     except Exception as e:
                         pass
                 # --- End UI Element Update ---
-                
+
+                # Re-assert standard-marker offsets from the loaded config as the final step,
+                # so opening a file over another one cannot leave the right (or left/top)
+                # markers at a clamped/stale horizontal position. (See the helper docstring.)
+                if loaded_config_data is not None:
+                    self._finalize_loaded_marker_shifts(loaded_config_data)
+
                 self._update_status_bar()
                 enable_pan = self.live_view_label.zoom_level > 1.0
                 if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
@@ -20082,6 +20328,15 @@ if __name__ == "__main__":
                         elif d['type'] == 'rectangle':
                             x, y, w, h = d['points_label'][0]
                             restored_def['points_label'] = [QRectF(x, y, w, h)]
+                        # If an image-space anchor was saved, keep it and arm a reprojection so
+                        # the box lands correctly even if the viewer size differs from when it
+                        # was saved. Older configs without an anchor fall back to their saved
+                        # label points and are left exactly as-is (no reprojection).
+                        pi = d.get('points_image')
+                        if pi:
+                            restored_def['points_image'] = tuple(pi) if pi[0] == 'rectangle' else \
+                                ('quad', [tuple(p) for p in pi[1]])
+                            self._multilane_reproject_pending = True
                         self.multi_lane_definitions.append(restored_def)
 
                     serialized_quad = config_data.get("single_quad_points", [])
@@ -20259,7 +20514,50 @@ if __name__ == "__main__":
 
                 if hasattr(self, 'custom_marker_color_button'):
                     self._update_color_button_style(self.custom_marker_color_button, self.custom_marker_color)
-                
+
+            def _finalize_loaded_marker_shifts(self, config_data):
+                """Re-assert the standard L/R/Top marker shift offsets from a just-loaded
+                config as the FINAL step of opening a file.
+
+                The open-image path runs apply_all_adjustments() and
+                _update_marker_slider_ranges() AFTER apply_config(); when opening a file over
+                an already-loaded one, the previous file's slider state can cause the right
+                (and left/top) marker offsets to be clamped/reset before the first render,
+                so the markers draw at the wrong horizontal position until something forces a
+                clean reload (e.g. the Load Analysis button). This guarantees the on-screen
+                offsets match the saved config and that the slider range can hold them,
+                producing the same correct end-state as Load Analysis."""
+                if not config_data:
+                    return
+                try:
+                    added_shift = config_data.get("added_shift", {})
+                    marker_pad = config_data.get("marker_padding", {})
+
+                    def _shift_for(key):
+                        try:
+                            return int(added_shift.get(key, marker_pad.get(key, 0)))
+                        except (ValueError, TypeError):
+                            return 0
+
+                    for name, slider_attr in (("left", "left_padding_slider"),
+                                              ("right", "right_padding_slider"),
+                                              ("top", "top_padding_slider")):
+                        value = _shift_for(name)
+                        slider = getattr(self, slider_attr, None)
+                        if slider is not None:
+                            # Grow the range if needed so setValue cannot clamp the offset.
+                            lo, hi = slider.minimum(), slider.maximum()
+                            if value < lo or value > hi:
+                                slider.setRange(min(lo, value - 100), max(hi, value + 100))
+                            slider.blockSignals(True)
+                            slider.setValue(value)
+                            slider.blockSignals(False)
+                            value = slider.value()
+                        setattr(self, f"{name}_marker_shift_added", value)
+                    self.update_live_view()
+                except Exception:
+                    pass
+
             def get_current_config(self):
                 """Gathers the current application state into a dictionary for saving."""
                 def make_json_serializable(value):
@@ -20336,7 +20634,13 @@ if __name__ == "__main__":
 
                 # --- START OF THE FIX ---
                 # Explicitly add all analysis region definitions (single and multi-lane)
-                
+
+                # Refresh each box's image-space anchor from its current (on-screen, known-good)
+                # label points so the saved anchor is accurate. This makes the saved file
+                # portable: on reload the boxes reproject correctly even if the viewer size
+                # differs from the size they were drawn at.
+                self._capture_multilane_anchors()
+
                 # 1. Multi-lane definitions (already in the save_state function, let's add it here too for consistency)
                 config["multi_lane_definitions"] = [
                     {
@@ -20344,7 +20648,10 @@ if __name__ == "__main__":
                         'points_label': (
                             [(p.x(), p.y()) for p in d['points_label']] if d['type'] == 'quad' else
                             [(d['points_label'][0].x(), d['points_label'][0].y(), d['points_label'][0].width(), d['points_label'][0].height())]
-                        )
+                        ),
+                        # Image-space anchor lets the box be reprojected correctly even if the
+                        # viewer is later resized (label space alone is geometry-dependent).
+                        'points_image': d.get('points_image')
                     } for d in self.multi_lane_definitions
                 ]
 
@@ -20765,13 +21072,146 @@ if __name__ == "__main__":
                          new_custom_shapes.append(shape_data_orig)
                 self.custom_shapes = new_custom_shapes
 
+                # Adjust multi-lane (densitometry) definitions. Their on-screen boxes are
+                # stored in label space, but the underlying content lives in image space.
+                # Capture each box's image-space anchor from the CURRENT (pre-padding,
+                # known-good) geometry, shift it by the padding delta so it tracks the
+                # content, then flag a reprojection. update_live_view reprojects only when
+                # this flag is set, so the boxes stay glued to their lanes through padding
+                # without being disturbed on ordinary renders.
+                self._capture_multilane_anchors()
+                for lane_def in getattr(self, 'multi_lane_definitions', []):
+                    try:
+                        pi = lane_def.get('points_image')
+                        if not pi:
+                            continue
+                        if pi[0] == 'rectangle':
+                            _, x0, y0, x1, y1 = pi
+                            lane_def['points_image'] = ('rectangle', x0 + padding_left, y0 + padding_top,
+                                                        x1 + padding_left, y1 + padding_top)
+                        else:
+                            lane_def['points_image'] = ('quad', [(ix + padding_left, iy + padding_top)
+                                                                 for (ix, iy) in pi[1]])
+                    except Exception:
+                        continue
+                self._multilane_reproject_pending = True
+
                 # Adjust the absolute marker shift variables (these are in native image pixels)
                 self.left_marker_shift_added += padding_left
                 self.right_marker_shift_added += padding_left
-                self.top_marker_shift_added += padding_top      
+                self.top_marker_shift_added += padding_top
                 self._update_overlay_slider_ranges
-                
-            
+
+            # ----- Multi-lane (densitometry) box <-> image-space anchoring helpers -----
+            def _ml_scale_offsets(self, img_w, img_h, lbl_w, lbl_h):
+                """Return (scale, offset_x, offset_y) for the fit-to-label projection that
+                maps image pixels to live-view-label coordinates (matches
+                _map_label_rect_to_image_rect)."""
+                scale = min(lbl_w / img_w, lbl_h / img_h) if (img_w > 0 and img_h > 0) else 1.0
+                off_x = (lbl_w - img_w * scale) / 2.0
+                off_y = (lbl_h - img_h * scale) / 2.0
+                return scale, off_x, off_y
+
+            def _label_xy_to_image_xy(self, x_label, y_label, img_w, img_h, lbl_w, lbl_h):
+                scale, off_x, off_y = self._ml_scale_offsets(img_w, img_h, lbl_w, lbl_h)
+                if scale <= 0:
+                    return x_label, y_label
+                return (x_label - off_x) / scale, (y_label - off_y) / scale
+
+            def _image_xy_to_label_xy(self, x_img, y_img, img_w, img_h, lbl_w, lbl_h):
+                scale, off_x, off_y = self._ml_scale_offsets(img_w, img_h, lbl_w, lbl_h)
+                return x_img * scale + off_x, y_img * scale + off_y
+
+            def _update_lane_def_image_anchor(self, lane_def, img_w, img_h, lbl_w, lbl_h):
+                """Refresh a lane definition's image-space anchor from its (authoritative)
+                label-space points. Called when geometry is unchanged so user drag/resize
+                edits are captured."""
+                if lane_def.get('type') == 'rectangle':
+                    r = lane_def['points_label'][0]
+                    x0, y0 = self._label_xy_to_image_xy(r.left(), r.top(), img_w, img_h, lbl_w, lbl_h)
+                    x1, y1 = self._label_xy_to_image_xy(r.right(), r.bottom(), img_w, img_h, lbl_w, lbl_h)
+                    lane_def['points_image'] = ('rectangle', x0, y0, x1, y1)
+                else:  # quad
+                    pts = []
+                    for p in lane_def['points_label']:
+                        ix, iy = self._label_xy_to_image_xy(p.x(), p.y(), img_w, img_h, lbl_w, lbl_h)
+                        pts.append((ix, iy))
+                    lane_def['points_image'] = ('quad', pts)
+
+            def _reproject_lane_def_to_label(self, lane_def, img_w, img_h, lbl_w, lbl_h):
+                """Rebuild a lane definition's label-space points from its image-space anchor.
+                Called when the image size (padding) or viewer size has changed."""
+                pi = lane_def.get('points_image')
+                if not pi:
+                    return
+                if pi[0] == 'rectangle':
+                    _, x0, y0, x1, y1 = pi
+                    lx0, ly0 = self._image_xy_to_label_xy(x0, y0, img_w, img_h, lbl_w, lbl_h)
+                    lx1, ly1 = self._image_xy_to_label_xy(x1, y1, img_w, img_h, lbl_w, lbl_h)
+                    lane_def['points_label'] = [QRectF(QPointF(lx0, ly0), QPointF(lx1, ly1)).normalized()]
+                else:  # quad
+                    new_pts = []
+                    for (ix, iy) in pi[1]:
+                        lx, ly = self._image_xy_to_label_xy(ix, iy, img_w, img_h, lbl_w, lbl_h)
+                        new_pts.append(QPointF(lx, ly))
+                    lane_def['points_label'] = new_pts
+
+            def _multilane_current_geometry(self):
+                """Return (img_w, img_h, lbl_w, lbl_h) if all are valid, else None."""
+                if not self.image or self.image.isNull():
+                    return None
+                img_w = float(self.image.width()); img_h = float(self.image.height())
+                lbl_w = float(self.live_view_label.width()); lbl_h = float(self.live_view_label.height())
+                if img_w <= 0 or img_h <= 0 or lbl_w <= 0 or lbl_h <= 0:
+                    return None
+                return img_w, img_h, lbl_w, lbl_h
+
+            def _capture_multilane_anchors(self):
+                """Snapshot each densitometry box's image-space anchor from its current
+                label-space points under the CURRENT geometry. Call this only when the
+                geometry is known-good (the label points are correct on screen) and a
+                geometry change is about to happen — e.g. just before applying padding or
+                resizing the viewer."""
+                geom = self._multilane_current_geometry()
+                if geom is None:
+                    return
+                for lane_def in getattr(self, 'multi_lane_definitions', []):
+                    try:
+                        self._update_lane_def_image_anchor(lane_def, *geom)
+                    except Exception:
+                        continue
+
+            def _reproject_multilane_if_pending(self):
+                """If a geometry change flagged a reprojection, rebuild every box's
+                label-space points from its image-space anchor under the new geometry, then
+                clear the flag. This runs from update_live_view but does nothing on ordinary
+                renders, so boxes are never disturbed unless an explicit event requested it.
+                Boxes without an anchor (older configs) are left untouched."""
+                if not getattr(self, '_multilane_reproject_pending', False):
+                    return
+                geom = self._multilane_current_geometry()
+                if geom is None:
+                    return
+                for lane_def in getattr(self, 'multi_lane_definitions', []):
+                    try:
+                        if lane_def.get('points_image'):
+                            self._reproject_lane_def_to_label(lane_def, *geom)
+                    except Exception:
+                        continue
+                self._multilane_reproject_pending = False
+
+            def _prepare_multilane_for_viewer_resize(self):
+                """Capture anchors and arm a reprojection ahead of a viewer/layout resize so
+                the densitometry boxes follow the image content onto the new canvas size."""
+                if not getattr(self, 'multi_lane_definitions', None):
+                    return
+                self._capture_multilane_anchors()
+                # Only arm reprojection if at least one box actually has an anchor; otherwise
+                # leave older label-only boxes exactly as they are.
+                if any(d.get('points_image') for d in self.multi_lane_definitions):
+                    self._multilane_reproject_pending = True
+
+
             def update_left_padding(self):
                 # Update left padding when slider value changes
                 self.left_marker_shift_added = self.left_padding_slider.value()
@@ -20833,6 +21273,17 @@ if __name__ == "__main__":
                     if hasattr(self, 'predict_button'):
                         left_m = getattr(self, 'left_markers', []); right_m = getattr(self, 'right_markers', [])
                         self.predict_button.setEnabled(bool(left_m or right_m))
+
+                # Re-anchor densitometry bounding boxes to the image content, but ONLY when an
+                # explicit event (padding, viewer resize, or loading boxes with a saved
+                # image-space anchor) has armed a reprojection. Ordinary renders never disturb
+                # the boxes — this avoids corrupting label-space boxes during transient
+                # geometry states (e.g. while a file is loading).
+                if not getattr(self, 'is_in_dedicated_edit_mode', False):
+                    try:
+                        self._reproject_multilane_if_pending()
+                    except Exception:
+                        pass
 
                 # ... (The rest of the update_live_view method from here on is UNCHANGED) ...
                 # ... It will now correctly use `image_for_view` for all subsequent rendering steps ...
@@ -23549,7 +24000,9 @@ if __name__ == "__main__":
                 
 
 
+        _splash("Building main window...", 98)
         main_window = CombinedSDSApp()
+        _splash("Ready.", 100)
 
         # --- Close Loading Screen and Show Main Window ---
         if loading_dialog:
