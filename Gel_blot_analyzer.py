@@ -31,7 +31,7 @@ class MinimalLoadingDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.label = QLabel("Gel Blot Analyzer v7.0\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
+        self.label = QLabel("Gel Blot Analyzer v7.2\nDeveloped by Anindya Karmaker\nLoading software, please wait...")
         font = QFont("Arial", 12)
         font.setBold(True)
         self.label.setFont(font)
@@ -3397,7 +3397,8 @@ if __name__ == "__main__":
                 global_settings_layout.addWidget(QLabel("Profile Method:"), 0, 0)
                 profile_method_label = QLabel("Sum of Pixel Intensities")
                 profile_method_label.setToolTip(
-                    "Each column of the lane is summed across its width to build the 1D trace.\n"
+                    "Each row of the lane is summed across its width to build the 1D trace, and the band "
+                    "signal is the integrated optical density (Σ intensity above the baseline).\n"
                     "Wider, well-aligned lanes give cleaner profiles."
                 )
                 font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
@@ -3613,6 +3614,28 @@ if __name__ == "__main__":
                 self.min_band_width_slider.sliderReleased.connect(self.detect_peaks)
                 advanced_layout.addWidget(self.min_band_width_label, 3, 0)
                 advanced_layout.addWidget(self.min_band_width_slider, 3, 1, 1, 2)
+
+                # --- Speck/noise removal (2-D, before the trace is built) ---
+                self.speck_size_label = QLabel(f"Speck Removal ({int(getattr(self, 'speck_min_size', 0))}) px²")
+                self.speck_size_label.setToolTip(
+                    "Removes bright blobs smaller than this area (in pixels²) from the lane image BEFORE the "
+                    "1D trace is built, so dust and specks can no longer be detected as bands. 0 = off. "
+                    "Typical specks are a few pixels; start around 10–40 and raise until specks disappear. "
+                    "Real bands span many pixels and are unaffected."
+                )
+                self.speck_size_slider = QSlider(Qt.Horizontal)
+                self.speck_size_slider.setRange(0, 200)
+                self.speck_size_slider.setValue(int(getattr(self, 'speck_min_size', 0)))
+                self.speck_size_slider.setToolTip(self.speck_size_label.toolTip())
+                self.speck_size_slider.valueChanged.connect(
+                    lambda val, lbl=self.speck_size_label: (
+                        lbl.setText(f"Speck Removal ({val}) px²"),
+                        setattr(self, 'speck_min_size', val)
+                    )
+                )
+                self.speck_size_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
+                advanced_layout.addWidget(self.speck_size_label, 4, 0)
+                advanced_layout.addWidget(self.speck_size_slider, 4, 1, 1, 2)
 
                 self.advanced_container.setVisible(False)
                 self.advanced_group.toggled.connect(self.advanced_container.setVisible)
@@ -4234,6 +4257,7 @@ if __name__ == "__main__":
                     'peak_distance': self.peak_distance,
                     'peak_prominence_factor': self.peak_prominence_factor,
                     'min_band_width': self.min_band_width,
+                    'speck_min_size': getattr(self, 'speck_min_size', 0),
                     'band_estimation_method': "Sum",
                     'area_subtraction_method': self.method_combobox.currentText(),
                     'smoothing_sigma': self.smoothing_sigma,
@@ -4295,6 +4319,9 @@ if __name__ == "__main__":
                     'area_subtraction_method': settings.get('area_subtraction_method', "Gaussian Deconvolution"),
                     'auto_adjust_rb_radius': settings.get('auto_adjust_rb_radius', False),
                     'denoise_sigma': settings.get('denoise_sigma', 0.0),
+                    # Speck/noise rejection: drop bright connected components smaller than this
+                    # area (px^2) BEFORE the 1D trace is built. 0 = off.
+                    'speck_min_size': settings.get('speck_min_size', 0),
                     # True once the user pastes/hand-edits this lane's integration regions;
                     # protects them from being overwritten by auto re-detection on lane switch.
                     'regions_are_manual': False
@@ -4336,6 +4363,7 @@ if __name__ == "__main__":
                 state['area_subtraction_method'] = self.area_subtraction_method
                 state['auto_adjust_rb_radius'] = self.auto_adjust_rb_radius
                 state['denoise_sigma'] = self.denoise_sigma
+                state['speck_min_size'] = getattr(self, 'speck_min_size', 0)
                 state['regions_are_manual'] = getattr(self, 'regions_are_manual', False)
 
             def _load_lane_state(self, lane_id):
@@ -4374,6 +4402,7 @@ if __name__ == "__main__":
                 self.area_subtraction_method = state['area_subtraction_method']
                 self.auto_adjust_rb_radius = state['auto_adjust_rb_radius']
                 self.denoise_sigma = state['denoise_sigma']
+                self.speck_min_size = state.get('speck_min_size', 0)
                 self.regions_are_manual = state.get('regions_are_manual', False)
 
             def _update_gui_controls_from_loaded_state(self):
@@ -4387,6 +4416,7 @@ if __name__ == "__main__":
                     self.smoothing_slider,
                     self.peak_height_slider,
                     self.min_band_width_slider,
+                    self.speck_size_slider,
                     self.invert_display_button
                 ]
                 for c in controls:
@@ -4409,6 +4439,8 @@ if __name__ == "__main__":
                 self.peak_height_slider_label.setText(f"Min Height ({self.peak_height_factor:.2f})")
                 self.min_band_width_slider.setValue(int(self.min_band_width))
                 self.min_band_width_label.setText(f"Min Band Width ({self.min_band_width}) px")
+                self.speck_size_slider.setValue(int(getattr(self, 'speck_min_size', 0)))
+                self.speck_size_label.setText(f"Speck Removal ({int(getattr(self, 'speck_min_size', 0))}) px²")
                 self.invert_display_button.setChecked(self.is_inverted)
                 if hasattr(self, 'peak_number_input'):
                     self.peak_number_input.setText(str(len(self.peaks)))
@@ -4425,6 +4457,7 @@ if __name__ == "__main__":
                 'area_subtraction_method', 'auto_adjust_rb_radius',
                 'smoothing_sigma', 'peak_height_factor', 'peak_distance',
                 'peak_prominence_factor', 'min_band_width', 'denoise_sigma', 'is_inverted',
+                'speck_min_size',
             )
 
             def _propagate_settings_to_all_lanes(self):
@@ -5202,6 +5235,41 @@ if __name__ == "__main__":
 
             def get_final_peak_area(self): return [info['area'] for info in self.get_final_peak_info()]
 
+            def _remove_specks(self, signal_2d):
+                """Neutralize small bright connected components (dust/specks) in a signal-positive
+                2-D lane image so they cannot be detected as bands.
+
+                A pixel is 'bright' when it exceeds a robust, data-driven threshold,
+                med + 3.5·σ̂, where σ̂ = 1.4826·MAD (median absolute deviation). Connected
+                bright components whose area (px²) is below self.speck_min_size are reset to the
+                lane's median (background) level; real bands form large components and are left
+                untouched. When speck_min_size == 0 the signal is returned unchanged, so default
+                behaviour is bit-for-bit identical to before."""
+                arr = np.asarray(signal_2d, dtype=np.float64)
+                min_size = int(getattr(self, 'speck_min_size', 0) or 0)
+                if arr.ndim != 2 or min_size <= 0 or np.ptp(arr) < 1e-9:
+                    return arr
+                try:
+                    med = float(np.median(arr))
+                    mad = float(np.median(np.abs(arr - med)))
+                    sigma = 1.4826 * mad if mad > 1e-9 else float(np.std(arr))
+                    if sigma < 1e-9:
+                        return arr
+                    thr = med + 3.5 * sigma
+                    mask = (arr > thr).astype(np.uint8)
+                    n_lbl, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+                    speck = np.zeros(arr.shape, dtype=bool)
+                    for lbl in range(1, n_lbl):
+                        if stats[lbl, cv2.CC_STAT_AREA] < min_size:
+                            speck |= (labels == lbl)
+                    if speck.any():
+                        arr = arr.copy()
+                        arr[speck] = med
+                    return arr
+                except Exception:
+                    # Any failure (e.g. exotic dtype) falls back to the untouched signal.
+                    return arr
+
             def regenerate_profile_and_detect(self):
                 base_img = self.original_pil_cropped_data.copy()
 
@@ -5232,6 +5300,11 @@ if __name__ == "__main__":
                 else:
                     array_for_summing = self.original_max_value - base_array
 
+                # Build the 1-D trace by summing each row across the lane width. When speck
+                # removal is enabled, small bright specks are neutralized first so they cannot
+                # be picked up as bands; with speck_min_size == 0 this is the original behaviour.
+                if int(getattr(self, 'speck_min_size', 0) or 0) > 0:
+                    array_for_summing = self._remove_specks(array_for_summing)
                 profile_to_process = np.sum(array_for_summing, axis=1)
 
                 # --- Median filtering BEFORE Gaussian smoothing ---
@@ -5871,7 +5944,22 @@ if __name__ == "__main__":
                 super().paintEvent(event)
                 painter = QPainter(self)
                 painter.setRenderHint(QPainter.TextAntialiasing, True)
-                
+                # Resolve the UI scale once so it is always defined for every preview/label
+                # branch below (some branches reference it without a local assignment).
+                current_ui_scale = getattr(self.app_instance, 'ui_scale_factor', 1.0)
+                # Scale markers/labels/fonts together with the viewer size: when the viewer is
+                # enlarged (Settings ▸ Viewer Fixed Width/Height) the image is fit to the larger
+                # label, so the text must grow with it to stay proportional. This factor is 1.0
+                # at the default viewer size, so the standard appearance is unchanged.
+                try:
+                    _ui = float(getattr(self.app_instance, 'ui_scale_factor', 1.0) or 1.0)
+                    _base_w, _base_h = 550.0 * _ui, 350.0 * _ui
+                    if _base_w > 0 and _base_h > 0 and self.width() > 0 and self.height() > 0:
+                        _viewer_scale = min(self.width() / _base_w, self.height() / _base_h)
+                        current_ui_scale *= max(0.5, min(_viewer_scale, 8.0))
+                except Exception:
+                    pass
+
                 painter.save()
                 if self.zoom_level != 1.0:
                     painter.translate(self.pan_offset)
@@ -5923,7 +6011,7 @@ if __name__ == "__main__":
                 # --- Draw standard markers, custom markers, custom shapes (from app instance) ---
                 if _image_to_label_space_valid and self.app_instance:
                     # Apply UI Scale Preference to the Standard Marker Font
-                    current_ui_scale = getattr(self.app_instance, 'ui_scale_factor', 1.0)
+                    # (current_ui_scale already includes the viewer-size factor computed above)
                     scaled_pixel_size = int(self.app_instance.font_size * current_ui_scale)
                     
                     std_marker_font = QFont(self.app_instance.font_family)
@@ -6030,7 +6118,7 @@ if __name__ == "__main__":
                     painter.setOpacity(0.7)
                     
                     # Apply UI Scale Preference to the Preview Font Size
-                    current_ui_scale = getattr(self.app_instance, 'ui_scale_factor', 1.0)
+                    # (current_ui_scale already includes the viewer-size factor computed above)
                     scaled_preview_font_size = self.app_instance.font_size * current_ui_scale
                     
                     std_marker_font = QFont(self.app_instance.font_family); std_marker_font.setPixelSize(int(scaled_preview_font_size))
@@ -6890,9 +6978,9 @@ if __name__ == "__main__":
 
                 # Grid overlay controls (moved here to aid alignment)
                 grid_row = QHBoxLayout()
-                self._prep_grid_x_chk = QCheckBox("Grid X")
+                self._prep_grid_x_chk = QCheckBox("Line X")
                 self._prep_grid_x_chk.setMinimumWidth(70)
-                self._prep_grid_y_chk = QCheckBox("Grid Y")
+                self._prep_grid_y_chk = QCheckBox("Line Y")
                 self._prep_grid_y_chk.setMinimumWidth(70)
                 self._prep_grid_x_chk.toggled.connect(self._on_prep_grid_x)
                 self._prep_grid_y_chk.toggled.connect(self._on_prep_grid_y)
@@ -7443,7 +7531,13 @@ if __name__ == "__main__":
                 mwm_lay = QGridLayout(mwm_grp)
                 mwm_lay.addWidget(QLabel("Marker type:"), 0, 0)
                 self._p3_mwm_combo = QComboBox()
-                self._p3_mwm_combo.addItems(list(self.MWM_PRESETS.keys()))
+                self._p3_mwm_combo.addItems(self._mwm_preset_options())
+                # Default to Precision Plus All Blue when available, else the first real
+                # preset — never 'Custom'.
+                _default_preset = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
+                _di = self._p3_mwm_combo.findText(_default_preset)
+                self._p3_mwm_combo.setCurrentIndex(_di if _di >= 0 else 0)
+                self._mwm_preset_name = self._p3_mwm_combo.currentText()
                 self._p3_mwm_combo.currentTextChanged.connect(self._on_p3_mwm_preset_changed)
                 mwm_lay.addWidget(self._p3_mwm_combo, 0, 1)
 
@@ -7817,23 +7911,47 @@ if __name__ == "__main__":
                     self._inv_arr = self._max_val - self._gel_arr
                 self._run_lane_detection()
 
-            def _run_lane_detection(self):
-                H, W = self._gel_arr.shape[:2]
-                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64) / float(H)
+            def _compute_lane_profile(self):
+                """Column projection for lane detection AND display, made robust to images
+                where a very dark ladder dwarfs faint sample lanes (the common failure mode
+                where several faint lanes get merged into one wide channel):
 
+                  • It averages only the most band-like fraction of each column — the darkest
+                    (most-inverted) ~12% of rows — so a thin faint band is not diluted by the
+                    hundreds of empty rows in its column. Being a mean over many rows (not a
+                    max), it still rejects isolated specks.
+                  • It blends in the full-column mean for stability on clean lanes.
+                  • It log-compresses the result so faint and very strong lanes are brought
+                    onto a comparable scale before peak detection, instead of the faint lanes
+                    being normalised away against the dominant ladder.
+
+                Returns a profile normalised to [0, 1] (or zeros if flat)."""
+                inv = np.asarray(self._inv_arr, dtype=np.float64)
+                if inv.ndim != 2 or inv.size == 0:
+                    return np.zeros(inv.shape[1] if inv.ndim == 2 else 1)
+                H, W = inv.shape
+                k = max(1, int(round(0.12 * H)))
+                col_top  = np.sort(inv, axis=0)[-k:, :].mean(axis=0)   # darkest ~12% rows/col
+                col_mean = inv.mean(axis=0)
+                col_profile = 0.6 * col_top + 0.4 * col_mean
                 if self._lane_smooth > 0.05:
                     col_profile = gaussian_filter1d(col_profile, sigma=self._lane_smooth)
+                col_profile = np.log1p(np.maximum(col_profile - float(np.min(col_profile)), 0.0))
+                pr = float(np.ptp(col_profile))
+                if pr < 1e-9:
+                    return np.zeros(W)
+                return (col_profile - float(np.min(col_profile))) / pr
 
-                p_range = np.ptp(col_profile)
-                if p_range < 1e-9:
-                    col_norm = np.zeros(W)
+            def _run_lane_detection(self):
+                H, W = self._gel_arr.shape[:2]
+                col_norm = self._compute_lane_profile()
+
+                if np.ptp(col_norm) < 1e-9:
                     self._lane_peaks  = np.array([], dtype=int)
                     self._lane_bounds = []
                     self._p1_count_lbl.setText("Lanes: 0")
                     self._draw_phase1_figure(col_norm)
                     return
-
-                col_norm = (col_profile - col_profile.min()) / p_range
 
                 try:
                     peaks, _ = find_peaks(
@@ -7990,11 +8108,28 @@ if __name__ == "__main__":
             def _redraw_lanes_keep(self):
                 """Redraw the lane figure from the CURRENT lane bounds (no re-detection),
                 so manual edits — added / deleted / dragged lanes — are preserved."""
-                col_profile = np.sum(self._inv_arr, axis=0).astype(np.float64)
-                pr = np.ptp(col_profile)
-                cn = ((col_profile - col_profile.min()) / pr
-                      if pr > 1e-6 else np.zeros_like(col_profile))
-                self._draw_phase1_figure(cn)
+                self._draw_phase1_figure(self._compute_lane_profile())
+
+            def keyPressEvent(self, event):
+                """Escape stops the current interactive operation (e.g. Add-Lane mode or a
+                lane selection) instead of closing the wizard. Use the Cancel button to close."""
+                if event.key() == Qt.Key_Escape:
+                    if getattr(self, '_p1_add_btn', None) is not None and self._p1_add_btn.isChecked():
+                        # Stop add-lane mode rather than closing.
+                        self._p1_add_btn.setChecked(False)
+                    elif getattr(self, '_selected_lane_idx', -1) != -1:
+                        # Clear the current lane selection.
+                        self._selected_lane_idx = -1
+                        if getattr(self, '_p1_del_btn', None) is not None:
+                            self._p1_del_btn.setEnabled(False)
+                        try:
+                            self._redraw_lanes_keep()
+                        except Exception:
+                            pass
+                    # Always swallow Escape so it never dismisses the dialog.
+                    event.accept()
+                    return
+                super().keyPressEvent(event)
 
             def _p1_mpl_press(self, event):
                 if event.inaxes not in (self._ax1_img, self._ax1_prof) or event.button != 1:
@@ -8262,11 +8397,46 @@ if __name__ == "__main__":
                     edit_widget.setText(f"L{non_mwm_before + 1}")
                 self._update_mwm_preset_note()
 
+            def _mwm_preset_options(self):
+                """Marker-preset choices for the wizard — exactly the same list the main
+                window's preset selector shows: the sorted preset names from
+                self.parent_app.presets_data followed by a single 'Custom' entry (no
+                duplicates). Falls back to the built-in ladders only if the app has no
+                presets yet."""
+                presets = getattr(self.parent_app, 'presets_data', None) or {}
+                names = [n for n in sorted(presets.keys()) if n != "Custom"]
+                if not names:  # fallback if the app has no presets yet
+                    names = [n for n in self.MWM_PRESETS.keys()
+                             if n not in ("None (labels only)", "Custom")]
+                return names + ["Custom"]
+
+            def _mwm_values_for(self, name):
+                """Resolve a preset name to its molecular-weight list using the MAIN window's
+                preset library (not the wizard's built-in copy)."""
+                app = self.parent_app
+                if not name or name in ("None (labels only)", "Custom"):
+                    return []
+                presets = getattr(app, 'presets_data', None) or {}
+                cfg = presets.get(name)
+                if isinstance(cfg, dict):
+                    return list(cfg.get("marker_values", []) or [])
+                return list(self.MWM_PRESETS.get(name, []) or [])
+
             def _on_p3_mwm_preset_changed(self, text):
+                prev_name = getattr(self, '_mwm_preset_name', '')
                 self._mwm_preset_name = text
                 is_custom = (text == "Custom")
                 self._p3_custom_lbl.setVisible(is_custom)
                 self._p3_custom_edit.setVisible(is_custom)
+                if is_custom:
+                    # Pre-fill the custom field with the markers from the preset selected
+                    # just before switching to Custom (falling back to the main window's
+                    # current marker values) so the user can edit them directly.
+                    prev_vals = self._mwm_values_for(prev_name)
+                    if not prev_vals:
+                        prev_vals = list(getattr(self.parent_app, 'marker_values', []) or [])
+                    if prev_vals:
+                        self._p3_custom_edit.setText(", ".join(str(v) for v in prev_vals))
                 self._update_mwm_preset_note()
 
             def _on_p3_custom_changed(self, text):
@@ -8351,7 +8521,7 @@ if __name__ == "__main__":
                     self._p3_mwm_note.setText(
                         "Enter comma-separated band sizes (kDa / bp) above.")
                 else:
-                    vals = self.MWM_PRESETS.get(preset, [])
+                    vals = self._mwm_values_for(preset)
                     self._p3_mwm_note.setText(
                         f"Preset: {preset}\n"
                         f"Band sizes: {', '.join(str(v) for v in vals)}")
@@ -8981,15 +9151,21 @@ if __name__ == "__main__":
                 preset_name = self._mwm_preset_name
                 if mwm_indices and preset_name not in ("None (labels only)", "Custom", ""):
                     try:
+                        # Pull marker values from the MAIN window's preset library / current
+                        # markers rather than the wizard's built-in copy.
+                        vals = self._mwm_values_for(preset_name)
+                        if vals:
+                            app.marker_values = [str(v) for v in vals]
+                            if hasattr(app, 'marker_values_textbox'):
+                                app.marker_values_textbox.setText(
+                                    ", ".join(str(v) for v in vals))
+                        # Keep the main window's preset selector in sync when the name exists there.
                         if hasattr(app, 'combo_box'):
                             idx = app.combo_box.findText(preset_name)
                             if idx >= 0:
                                 app.combo_box.blockSignals(True)
                                 app.combo_box.setCurrentIndex(idx)
                                 app.combo_box.blockSignals(False)
-                                app.marker_values = [
-                                    str(v) for v in
-                                    self.MWM_PRESETS.get(preset_name, [])]
                     except Exception:
                         pass
                 elif mwm_indices and preset_name == "Custom":
@@ -9932,7 +10108,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v7.0"
+                self.window_title="GEL BLOT ANALYZER v7.2"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0
@@ -10182,19 +10358,19 @@ if __name__ == "__main__":
                 self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
 
                 self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
-                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("←"))
+                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬅"))
                 self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
-                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("→"))
+                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⮕"))
                 self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
-                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↑"))
+                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬆"))
                 self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
-                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("↓"))
+                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬇"))
                 self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
@@ -10218,7 +10394,7 @@ if __name__ == "__main__":
                     if hasattr(self, 'show_grid_checkbox_y') else None
                 )
 
-                self.snap_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+                self.snap_shortcut = QShortcut(QKeySequence("Ctrl+Shift+N"), self)
                 self.snap_shortcut.activated.connect(
                     lambda: self.snap_enabled_checkbox.setChecked(not self.snap_enabled_checkbox.isChecked())
                     if hasattr(self, 'snap_enabled_checkbox') else None
@@ -16923,6 +17099,87 @@ if __name__ == "__main__":
                 self.right_padding_input.setText("0")
                 self.left_padding_input.setText("0")
                 
+            def _label_padding_needed(self):
+                """Padding (left, right, top) in IMAGE pixels needed to fit the current
+                left/right marker labels and the rotated top labels.
+
+                Labels are rendered at the *effective on-image* font size,
+                font_size * ui_scale / view_scale, which is much larger than the raw point
+                size on a big gel (view_scale < 1). Measuring at the raw size under-sizes the
+                padding so long/large labels overflow the image; this measures at the effective
+                size and includes the rotated bounding box of the top labels. A short
+                fixed-point loop converges because the padding itself changes view_scale.
+                Returns (0, 0, 0) on failure."""
+                import math
+                try:
+                    if not self.image or self.image.isNull():
+                        return 0, 0, 0
+                    cl, cr, ct, cb = self._measure_transparent_margins()
+                    content_w = max(1, self.image.width() - cl - cr)
+                    content_h = max(1, self.image.height() - ct - cb)
+
+                    font_size = max(1, int(getattr(self, 'font_size', 16)))
+                    family    = str(getattr(self, 'font_family', 'Arial'))
+                    rotation  = float(getattr(self, 'font_rotation', -45))
+                    axis      = str(getattr(self, 'top_rotation_axis', 'left'))
+                    ui_scale  = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
+                    try:
+                        lbl_w = float(self.live_view_label.width())
+                        lbl_h = float(self.live_view_label.height())
+                    except Exception:
+                        lbl_w = lbl_h = 0.0
+
+                    top_texts = [str(t) for t in (getattr(self, 'top_label', []) or []) if str(t).strip()]
+                    left_texts, right_texts = [], []
+                    for v in (getattr(self, 'marker_values', []) or []):
+                        try:
+                            left_texts.append(self.marker_label_text(v, 'left'))
+                            right_texts.append(self.marker_label_text(v, 'right'))
+                        except Exception:
+                            left_texts.append(str(v)); right_texts.append(str(v))
+
+                    def _extents(eff_px):
+                        eff_px = max(4, int(round(eff_px)))
+                        font = QFont(family); font.setPixelSize(eff_px)
+                        fm = QFontMetrics(font)
+                        top_e = 0.0
+                        if top_texts:
+                            t = QTransform(); t.rotate(rotation)
+                            for s in top_texts:
+                                tr = fm.boundingRect(s).adjusted(-4, -4, 4, 4)
+                                adv = fm.horizontalAdvance(s)
+                                xoff = -adv / 2.0 if axis == 'center' else (-adv if axis == 'right' else 0.0)
+                                corners = [QPointF(tr.left() + xoff, tr.top()),
+                                           QPointF(tr.right() + xoff, tr.top()),
+                                           QPointF(tr.right() + xoff, tr.bottom()),
+                                           QPointF(tr.left() + xoff, tr.bottom())]
+                                ys = [t.map(p).y() for p in corners]
+                                top_e = max(top_e, -min(ys))
+                        lw = max([fm.horizontalAdvance(s) for s in left_texts], default=0)
+                        rw = max([fm.horizontalAdvance(s) for s in right_texts], default=0)
+                        return top_e, float(lw), float(rw), float(eff_px)
+
+                    pad_top = content_h * 0.15
+                    pad_l = pad_r = content_w * 0.15
+                    for _ in range(6):
+                        fw = content_w + pad_l + pad_r
+                        fh = content_h + pad_top
+                        if lbl_w > 0 and lbl_h > 0 and fw > 0 and fh > 0:
+                            view_scale = min(lbl_w / fw, lbl_h / fh)
+                        else:
+                            view_scale = 1.0
+                        view_scale = max(view_scale, 1e-3)
+                        eff_px = font_size * ui_scale / view_scale
+                        eff_px = min(max(eff_px, float(font_size)), font_size * 10.0)
+                        top_e, lw, rw, ep = _extents(eff_px)
+                        margin = max(6.0, ep / 3.0)
+                        pad_top = math.ceil(top_e) + margin + 0.4 * ep
+                        pad_l = lw + margin
+                        pad_r = rw + margin
+                    return int(math.ceil(pad_l)), int(math.ceil(pad_r)), int(math.ceil(pad_top))
+                except Exception:
+                    return 0, 0, 0
+
             def recommended_values(self):
                 if not self.image or self.image.isNull():
                     QMessageBox.warning(self, "Error", "No image loaded to set recommended padding.")
@@ -16933,18 +17190,26 @@ if __name__ == "__main__":
                 # The marker offsets are independent of padding until "Apply Padding" is clicked.
 
                 try:
-                    native_width = self.image.width()
-                    native_height = self.image.height()
+                    # Size padding relative to the actual content (image minus any padding
+                    # already baked in), so repeated "Set Recommended Values" is stable.
+                    cl, cr, ct, cb = self._measure_transparent_margins()
+                    content_w = max(1, self.image.width() - cl - cr)
+                    content_h = max(1, self.image.height() - ct - cb)
 
-                    if native_width <= 0 or native_height <= 0:
-                        QMessageBox.warning(self, "Error", "Current image has invalid dimensions.")
-                        return
+                    # Baseline padding: 15% of the content size.
+                    base_left = base_right = int(content_w * 0.15)
+                    base_top = int(content_h * 0.15)
 
-                    # Set recommended padding values in the QLineEdit fields
-                    self.left_padding_input.setText(str(int(native_width * 0.15)))
-                    self.right_padding_input.setText(str(int(native_width * 0.15)))
-                    self.top_padding_input.setText(str(int(native_height * 0.15)))
-                    self.bottom_padding_input.setText(str(int(0))) # Or another sensible default
+                    # Grow each axis so the actual marker labels fit at the size they are
+                    # really rendered — the effective on-image font size (which is larger than
+                    # the raw point size on big gels) and, for the top labels, their full
+                    # rotated bounding box. This is what fixes long/large labels overflowing.
+                    need_left, need_right, need_top = self._label_padding_needed()
+
+                    self.left_padding_input.setText(str(max(base_left, int(need_left))))
+                    self.right_padding_input.setText(str(max(base_right, int(need_right))))
+                    self.top_padding_input.setText(str(max(base_top, int(need_top))))
+                    self.bottom_padding_input.setText(str(int(0)))
 
                     # DO NOT update slider ranges or _marker_shift_added here.
                     # Slider ranges are updated by _update_marker_slider_ranges when self.image changes.
@@ -17190,7 +17455,7 @@ if __name__ == "__main__":
                 arrow_layout = QHBoxLayout()
                 arrow_layout.setSpacing(2)
                 arrow_font = QFont(); arrow_font.setPointSize(12); arrow_font.setBold(True)
-                for txt, key in [("←","Left"), ("→","Right"), ("↑","Up"), ("↓","Down")]:
+                for txt, key in [("⬅","Left"), ("⮕","Right"), ("⬆","Up"), ("⬇","Down")]:
                     btn = QPushButton(txt)
                     btn.setFixedSize(30, 30)
                     btn.setFont(arrow_font)
@@ -17253,20 +17518,30 @@ if __name__ == "__main__":
                 self.remove_shape_button.setToolTip("Remove Last Shape.")
                 self.remove_shape_button.clicked.connect(self.remove_last_custom_shape)
                 
-                self.show_grid_checkbox_x = QCheckBox("Grid X")
-                self.show_grid_checkbox_x.setToolTip("Show vertical grid lines.\nShortcut: Ctrl+Shift+X")
+                self.show_grid_checkbox_x = QCheckBox("Line X")
+                self.show_grid_checkbox_x.setToolTip("Show vertical lines.\nShortcut: Ctrl+Shift+X")
                 self.show_grid_checkbox_x.setFixedWidth(70)
                 self.show_grid_checkbox_x.stateChanged.connect(self.update_live_view)
 
-                self.show_grid_checkbox_y = QCheckBox("Grid Y")
-                self.show_grid_checkbox_y.setToolTip("Show horizontal grid lines.\nShortcut: Ctrl+Shift+Y")
+                self.show_grid_checkbox_y = QCheckBox("Line Y")
+                self.show_grid_checkbox_y.setToolTip("Show horizontal lines.\nShortcut: Ctrl+Shift+Y")
                 self.show_grid_checkbox_y.setFixedWidth(70)
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
 
                 self.snap_enabled_checkbox = QCheckBox("Snap")
-                self.snap_enabled_checkbox.setToolTip("Enable snapping to grid lines.\nWhen unchecked, grid is shown but snapping is disabled.\nShortcut: Ctrl+Shift+S")
+                self.snap_enabled_checkbox.setToolTip("Enable snapping to grid lines.\nTurning Snap on also shows Line X and Line Y.\nShortcut: CMD/Ctrl+Shift+N")
                 self.snap_enabled_checkbox.setFixedWidth(65)
                 self.snap_enabled_checkbox.stateChanged.connect(self.update_live_view)
+                # When Snap is enabled, make sure there is a grid to snap to: if NEITHER
+                # Grid X nor Grid Y is already shown, turn both on; if one is already on,
+                # respect the user's choice and just enable snapping.
+                self.snap_enabled_checkbox.toggled.connect(
+                    lambda checked: (
+                        self.show_grid_checkbox_x.setChecked(True),
+                        self.show_grid_checkbox_y.setChecked(True)
+                    ) if (checked and not (self.show_grid_checkbox_x.isChecked()
+                                           or self.show_grid_checkbox_y.isChecked())) else None
+                )
                 
                 self.grid_size_input = QSpinBox()
                 self.grid_size_input.setRange(5, 100)
@@ -17556,11 +17831,21 @@ if __name__ == "__main__":
                 apply_btn.setMinimumWidth(200)
                 font = QFont(); font.setBold(True); apply_btn.setFont(font)
                 apply_btn.clicked.connect(self.apply_app_settings)
-                
+
+                reset_btn = QPushButton("Reset All Settings")
+                reset_btn.setMinimumHeight(45)
+                reset_btn.setMinimumWidth(160)
+                reset_btn.setToolTip("Delete the saved application configuration (window/viewer/UI settings, "
+                                     "CPU/GPU preference and saved marker presets) and restore the original "
+                                     "defaults.\nDoes NOT affect per-image saved configuration files.")
+                reset_btn.clicked.connect(self.reset_all_settings)
+
                 btn_layout.addStretch()
                 btn_layout.addWidget(apply_btn)
+                btn_layout.addSpacing(20)
+                btn_layout.addWidget(reset_btn)
                 btn_layout.addStretch()
-                
+
                 layout.addLayout(btn_layout)
                 layout.addStretch() 
                 
@@ -17628,6 +17913,50 @@ if __name__ == "__main__":
                                       "CPU/GPU mode switched immediately.\n"
                                       "Specific GPU ID changes require a restart.")
             
+            def reset_all_settings(self):
+                """Delete the saved application configuration file and restore default settings.
+                Per-image saved configuration files (.txt saved alongside each gel) are NOT touched."""
+                reply = QMessageBox.warning(
+                    self, "Reset All Settings",
+                    "This will delete the saved application configuration — window/viewer/UI settings, "
+                    "CPU/GPU preference, and saved marker presets — and restore the original defaults.\n\n"
+                    "Your per-image saved configuration files are NOT affected.\n\n"
+                    "The application should be restarted afterwards. Continue?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply != QMessageBox.Yes:
+                    return
+                try:
+                    app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
+                    config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
+                    if os.path.exists(config_filepath):
+                        os.remove(config_filepath)
+
+                    # Restore in-memory defaults, then let load_config() repopulate defaults and
+                    # recreate a fresh configuration file (it handles the missing-file case).
+                    self.ui_scale_preference = 1.0
+                    self.viewer_position     = "Top"
+                    self.use_gpu             = True
+                    self.viewer_fixed_width  = 550
+                    self.viewer_fixed_height = 350
+                    self.safe_content_width  = 1000
+                    self.presets_data        = {}
+                    try:
+                        self.load_config()
+                    except Exception:
+                        pass
+                    try:
+                        self.update_settings_ui()
+                    except Exception:
+                        pass
+
+                    QMessageBox.information(
+                        self, "Settings Reset",
+                        "Application settings have been reset to defaults.\n\n"
+                        "Please restart the application for all changes (window size, UI scale) to take "
+                        "full effect.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Reset Error", f"Could not reset settings:\n{e}")
+
             def update_settings_ui(self):
                 """Updates the Settings tab UI elements with current `self` values."""
                 if hasattr(self, 'gpu_radio'):
@@ -20226,6 +20555,58 @@ if __name__ == "__main__":
                 self.live_view_label.standard_marker_preview_mode = "top"
                 
                 
+            def _measure_transparent_margins(self):
+                """Return (left, right, top, bottom) widths of the padding border around the
+                image content in self.image_master, so applying new padding can strip it first
+                and REPLACE the padding instead of stacking it.
+
+                Robust to two cases: (1) genuine transparent padding (a fully-transparent border,
+                alpha == 0), and (2) padding that a later edit has flattened to a solid uniform
+                colour — detected as a border whose every pixel equals the corner pixel. The
+                uniform fallback is capped so it can never strip more than ~45% of a side."""
+                try:
+                    if not self.image_master or self.image_master.isNull():
+                        return 0, 0, 0, 0
+                    np_img = self.qimage_to_numpy(self.image_master)
+                    if np_img is None:
+                        return 0, 0, 0, 0
+                    if np_img.ndim == 2:
+                        np_img = np_img[:, :, np.newaxis]
+                    H, W = np_img.shape[:2]
+                    ch = np_img.shape[2]
+
+                    def _leading(boolarr):
+                        # number of leading True values
+                        return int(len(boolarr)) if boolarr.all() else int(np.argmin(boolarr))
+
+                    # 1) Genuine transparent padding (whole border column/row has alpha == 0).
+                    if ch >= 4:
+                        a = np_img[:, :, 3]
+                        col_pad = ~np.any(a > 0, axis=0)
+                        row_pad = ~np.any(a > 0, axis=1)
+                        if not col_pad.all() and not row_pad.all():
+                            left = _leading(col_pad);  right = _leading(col_pad[::-1])
+                            top = _leading(row_pad);   bottom = _leading(row_pad[::-1])
+                            if left or right or top or bottom:
+                                return left, right, top, bottom
+
+                    # 2) Fallback: uniform solid-colour border equal to the corner pixel
+                    #    (covers padding that has been flattened to opaque white/black by a
+                    #    later contrast/rasterize step, so alpha-based detection would miss it).
+                    rgb = np_img[:, :, :min(3, ch)]
+                    corner = rgb[0, 0]
+                    match = np.all(rgb == corner, axis=2)
+                    col_pad = np.all(match, axis=0)
+                    row_pad = np.all(match, axis=1)
+                    if col_pad.all() or row_pad.all():
+                        return 0, 0, 0, 0  # degenerate (blank/uniform image) — strip nothing
+                    cap_w, cap_h = int(W * 0.45), int(H * 0.45)
+                    left = min(cap_w, _leading(col_pad));  right = min(cap_w, _leading(col_pad[::-1]))
+                    top = min(cap_h, _leading(row_pad));   bottom = min(cap_h, _leading(row_pad[::-1]))
+                    return left, right, top, bottom
+                except Exception:
+                    return 0, 0, 0, 0
+
             def finalize_image(self, *args, **kwargs): # Padding
                 if not self.image or self.image.isNull():
                     QMessageBox.warning(self, "Error", "No image loaded to apply padding.")
@@ -20244,74 +20625,61 @@ if __name__ == "__main__":
                     QMessageBox.warning(self, "Error", "Please enter valid non-negative integers for padding.")
                     return
 
-                if padding_left == 0 and padding_right == 0 and padding_top == 0 and padding_bottom == 0:
-                    QMessageBox.information(self, "Info", "No padding specified. Image remains unchanged.")
+                # Padding values entered here are the FINAL margins we want around the content,
+                # not an amount to ADD. Measure how much padding is already baked into the image
+                # so we can strip it and re-apply — this makes repeated "Apply Padding"
+                # (e.g. after Set Recommended Values) REPLACE rather than stack, and lets the
+                # user revert to 0 by entering 0 in every field. Older saved images are handled
+                # the same way (their padding border is detected and stripped).
+                cl, cr, ct, cb = self._measure_transparent_margins()
+
+                if (padding_left == cl and padding_right == cr and
+                        padding_top == ct and padding_bottom == cb):
+                    # Requested margins already match what's on the image — nothing to do.
+                    QMessageBox.information(self, "Info", "Padding already matches these values. Image unchanged.")
                     return
 
                 self.save_state()
 
                 try:
-                    # 1. Update internal marker coordinates first
-                    self.adjust_elements_for_padding(padding_left, padding_top)
+                    # 1. Update marker / shape coordinates by the NET shift = new padding minus
+                    #    the previously-applied padding that we are about to strip.
+                    self.adjust_elements_for_padding(padding_left - cl, padding_top - ct)
 
-                    # 2. Perform Padding on Image Data
+                    # 2. Convert source to a 4-channel RGBA array (preserving bit depth) so the
+                    #    existing transparent padding can be stripped cleanly.
                     np_img = self.qimage_to_numpy(self.image_master)
                     if np_img is None:
                         raise ValueError("Failed to convert source image to NumPy array for padding.")
 
-                    original_height, original_width = np_img.shape[:2]
-                    new_width = original_width + padding_left + padding_right
-                    new_height = original_height + padding_top + padding_bottom
                     target_dtype = np_img.dtype
+                    opaque = 65535 if target_dtype == np.uint16 else 255
 
-                    # --- FIX START: Handle 16-bit Grayscale Transparency ---
-                    # If 16-bit grayscale (2D uint16), we MUST promote to RGBA64 (4-channel)
-                    # to support transparent padding. Otherwise, padding is black (0) and 
-                    # indistinguishable from valid black image data.
-                    is_16bit_gray = (np_img.ndim == 2 and np_img.dtype == np.uint16)
-                    
-                    if is_16bit_gray:
-                        # Create 4-channel destination initialized to 0 (Transparent Black)
-                        padded_np = np.zeros((new_height, new_width, 4), dtype=np.uint16)
-                        
-                        y_s, y_e = padding_top, padding_top + original_height
-                        x_s, x_e = padding_left, padding_left + original_width
-                        
-                        # Replicate Gray to R, G, B
-                        padded_np[y_s:y_e, x_s:x_e, 0] = np_img
-                        padded_np[y_s:y_e, x_s:x_e, 1] = np_img
-                        padded_np[y_s:y_e, x_s:x_e, 2] = np_img
-                        # Set Alpha to Opaque (65535) for content area only
-                        padded_np[y_s:y_e, x_s:x_e, 3] = 65535
-                        
+                    if np_img.ndim == 2:
+                        g = np_img
+                        a = np.full(g.shape, opaque, dtype=target_dtype)
+                        rgba = cv2.merge([g, g, g, a])
+                    elif np_img.shape[2] == 3:
+                        c1, c2, c3 = cv2.split(np_img)
+                        a = np.full(c1.shape, opaque, dtype=target_dtype)
+                        rgba = cv2.merge([c1, c2, c3, a])
                     else:
-                        # Standard logic for 8-bit or existing Color images
-                        padded_np = np.zeros((new_height, new_width, 4), dtype=target_dtype)
-                    
-                        img_to_insert = np_img
+                        rgba = np_img
 
-                        # Promote 1-channel or 3-channel input to 4-channel
-                        if img_to_insert.ndim == 2:
-                            if target_dtype == np.uint16:
-                                gray = img_to_insert
-                                alpha = np.full(gray.shape, 65535, dtype=np.uint16)
-                                img_to_insert = cv2.merge([gray, gray, gray, alpha])
-                            else:
-                                img_to_insert = cv2.cvtColor(img_to_insert, cv2.COLOR_GRAY2BGRA)
-                        
-                        elif img_to_insert.shape[2] == 3:
-                            if target_dtype == np.uint16:
-                                # 16-bit RGB -> RGBA
-                                c1, c2, c3 = cv2.split(img_to_insert)
-                                alpha = np.full(c1.shape, 65535, dtype=np.uint16)
-                                img_to_insert = cv2.merge([c1, c2, c3, alpha])
-                            else:
-                                img_to_insert = cv2.cvtColor(img_to_insert, cv2.COLOR_BGR2BGRA)
+                    H, W = rgba.shape[:2]
+                    # 3. Strip the existing transparent padding to recover the content region.
+                    cl = max(0, min(cl, W - 1)); cr = max(0, min(cr, W - 1 - cl))
+                    ct = max(0, min(ct, H - 1)); cb = max(0, min(cb, H - 1 - ct))
+                    content = rgba[ct:H - cb, cl:W - cr]
+                    ch, cw = content.shape[:2]
 
-                        # Assignment
-                        padded_np[padding_top:padding_top+original_height, 
-                                  padding_left:padding_left+original_width] = img_to_insert
-                    
+                    # 4. Build the new transparent canvas and drop the content in with the
+                    #    requested padding on each side.
+                    new_width = cw + padding_left + padding_right
+                    new_height = ch + padding_top + padding_bottom
+                    padded_np = np.zeros((new_height, new_width, 4), dtype=target_dtype)
+                    padded_np[padding_top:padding_top + ch, padding_left:padding_left + cw] = content
+
                     padded_image = self.numpy_to_qimage(padded_np)
                     if padded_image.isNull(): raise ValueError("Conversion back to QImage failed.")
 
@@ -20320,7 +20688,7 @@ if __name__ == "__main__":
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
                     self.image_before_padding = None
-                    self.image_padded = True
+                    self.image_padded = bool(padding_left or padding_right or padding_top or padding_bottom)
                     self.is_modified = True
                     
                     # 4. Refresh display and sliders
@@ -21872,10 +22240,32 @@ if __name__ == "__main__":
                 base_name_clean_for_dialog = suggested_name.replace("_original", "").replace("_modified", "")
                 save_dir = os.path.dirname(self.image_path) if self.image_path else ""
 
+                # Remember the loaded image's format: pre-select the matching filter and default
+                # the suggested filename to that extension, so a loaded .tif saves as .tif rather
+                # than always defaulting to PNG.
+                filter_str = ("PNG Files (*.png);;TIFF Files (*.tif *.tiff);;"
+                              "JPEG Files (*.jpg *.jpeg);;BMP Files (*.bmp);;All Files (*)")
+                _filter_for_ext = {
+                    ".png": "PNG Files (*.png)",
+                    ".tif": "TIFF Files (*.tif *.tiff)", ".tiff": "TIFF Files (*.tif *.tiff)",
+                    ".jpg": "JPEG Files (*.jpg *.jpeg)", ".jpeg": "JPEG Files (*.jpg *.jpeg)",
+                    ".bmp": "BMP Files (*.bmp)",
+                }
+                loaded_ext = os.path.splitext(self.image_path)[1].lower() if self.image_path else ""
+                preselect_filter = _filter_for_ext.get(loaded_ext, "PNG Files (*.png)")
+                default_ext = loaded_ext if loaded_ext in _filter_for_ext else ".png"
+                suggested_full = os.path.join(save_dir, base_name_clean_for_dialog + default_ext)
+
                 options = QFileDialog.Options()
+                # We build a bundle of derived names (_original/_modified/_config), so the dialog's
+                # own overwrite prompt (which only checks the typed name) is disabled — we do our
+                # own overwrite confirmation on the actual output files below.
+                _dont_confirm = getattr(QFileDialog, 'DontConfirmOverwrite', None)
+                if _dont_confirm is not None:
+                    options |= _dont_confirm
                 base_save_path, selected_filter = QFileDialog.getSaveFileName(
-                    self, "Save Image Base Name", os.path.join(save_dir, base_name_clean_for_dialog),
-                    "PNG Files (*.png);;TIFF Files (*.tif *.tiff);;JPEG Files (*.jpg *.jpeg);;BMP Files (*.bmp);;All Files (*)",
+                    self, "Save Image Base Name", suggested_full,
+                    filter_str, preselect_filter,
                     options=options
                 )
                 if not base_save_path: return False
@@ -21891,6 +22281,19 @@ if __name__ == "__main__":
                 original_save_path = f"{final_clean_base}_original{suffix}"
                 modified_save_path = f"{final_clean_base}_modified{suffix}"
                 config_save_path = f"{final_clean_base}_config.txt"
+
+                # Ask before overwriting any output file that already exists.
+                _existing = [p for p in (original_save_path, modified_save_path, config_save_path)
+                             if os.path.exists(p)]
+                if _existing:
+                    _names = "\n".join("• " + os.path.basename(p) for p in _existing)
+                    _reply = QMessageBox.question(
+                        self, "Overwrite Existing Files?",
+                        "The following file(s) already exist and will be overwritten:\n\n"
+                        f"{_names}\n\nDo you want to overwrite them?",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if _reply != QMessageBox.Yes:
+                        return False
 
                 # --- Save _original image ---
                 if self.image_master and not self.image_master.isNull():
