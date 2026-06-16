@@ -23418,15 +23418,14 @@ if __name__ == "__main__":
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
                 
-                # --- Publish to clipboard in several formats so every target app can
-                #     pick the best one. The critical part for Windows is the "PNG"
-                #     format: Office (Word/PowerPoint) reads CF_DIB from setImageData(),
-                #     which has NO alpha, so transparency is lost. Registering a real
-                #     "PNG" clipboard format makes Office paste with full transparency
-                #     (and full resolution). ---
+                # --- Publish to clipboard ---
+                # On Windows, Qt's setData("PNG", ...) registers the format through
+                # Qt's own layer. PowerPoint happens to read that, but Microsoft Word
+                # requires PNG bytes to be placed via the native Win32
+                # RegisterClipboardFormat(L"PNG") call. We therefore use ctypes on
+                # Windows to write directly to the Win32 clipboard (no extra package
+                # needed). On macOS the existing Qt path already works for both apps.
                 try:
-                    # Straight (non-premultiplied) alpha so colours stay correct once the
-                    # consuming app composites; premultiplied can darken semi-transparent px.
                     out_img = render_canvas.convertToFormat(QImage.Format_ARGB32)
 
                     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
@@ -23435,29 +23434,72 @@ if __name__ == "__main__":
                     if not out_img.save(temp_file_path, "PNG"):
                         raise IOError(f"Failed to save temporary file to {temp_file_path}")
 
-                    # Encode the canvas to PNG bytes in-memory (lossless, keeps alpha).
+                    # Encode to PNG bytes in-memory (lossless, keeps alpha).
                     png_buffer = QBuffer()
                     png_buffer.open(QBuffer.ReadWrite)
                     out_img.save(png_buffer, "PNG")
                     png_bytes = png_buffer.data()
                     png_buffer.close()
 
-                    mime_data = QMimeData()
-                    # "PNG" + "image/png": preferred by Word/PowerPoint/modern apps —
-                    # preserves resolution AND transparency on Windows.
-                    if png_bytes is not None and not png_bytes.isEmpty():
-                        mime_data.setData("PNG", png_bytes)
-                        mime_data.setData("image/png", png_bytes)
-                    # File URL for Explorer / file-oriented targets.
-                    mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
-                    # Legacy raw-image fallback (CF_DIB/DIBV5; may drop alpha in old apps).
-                    mime_data.setImageData(out_img)
+                    if sys.platform == "win32":
+                        # ---- Windows: write directly via Win32 clipboard API ----
+                        # This ensures both Word and PowerPoint can read the image.
+                        import ctypes
+                        import ctypes.wintypes
 
-                    QApplication.clipboard().setMimeData(mime_data)
+                        png_raw = bytes(png_bytes)  # QByteArray → bytes
+
+                        user32   = ctypes.windll.user32
+                        kernel32 = ctypes.windll.kernel32
+
+                        GMEM_MOVEABLE = 0x0002
+                        CF_PNG = user32.RegisterClipboardFormatW("PNG")
+
+                        user32.OpenClipboard(None)
+                        try:
+                            user32.EmptyClipboard()
+
+                            # --- 1. Native PNG format (Word, PowerPoint, modern apps) ---
+                            h_png = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(png_raw))
+                            if h_png:
+                                ptr = kernel32.GlobalLock(h_png)
+                                if ptr:
+                                    ctypes.memmove(ptr, png_raw, len(png_raw))
+                                    kernel32.GlobalUnlock(h_png)
+                                user32.SetClipboardData(CF_PNG, h_png)
+
+                            # --- 2. CF_DIB legacy fallback via Qt (older apps) ---
+                            #    We set this through a temporary QMimeData so Qt
+                            #    handles the DIB conversion; then we steal the handle
+                            #    that Qt already put on the clipboard and re-open ours.
+                            #    Simpler: just also expose setImageData via Qt after
+                            #    closing our own OpenClipboard block.
+                        finally:
+                            user32.CloseClipboard()
+
+                        # Also push a Qt CF_DIB for legacy targets (does NOT clobber
+                        # the CF_PNG we just set because Qt uses SetClipboardData
+                        # for only the formats it knows about; CF_PNG was registered
+                        # with a custom ID so Qt won't touch it).
+                        mime_legacy = QMimeData()
+                        mime_legacy.setImageData(out_img)
+                        mime_legacy.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                        QApplication.clipboard().setMimeData(mime_legacy)
+
+                    else:
+                        # ---- macOS / Linux: existing Qt path (works as-is) ----
+                        mime_data = QMimeData()
+                        if png_bytes is not None and not png_bytes.isEmpty():
+                            mime_data.setData("PNG", png_bytes)
+                            mime_data.setData("image/png", png_bytes)
+                        mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                        mime_data.setImageData(out_img)
+                        QApplication.clipboard().setMimeData(mime_data)
+
                     QMessageBox.information(self, "Copied", "High-resolution image with transparency copied to clipboard.")
 
                 except Exception as e:
-                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard via temporary file:\n{e}")
+                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard:\n{e}")
                     self.cleanup_temp_clipboard_file()
 
 
