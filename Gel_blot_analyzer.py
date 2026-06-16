@@ -10,8 +10,41 @@ import traceback
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "7.2"
+APP_VERSION = "7.3"
 APP_DEVELOPER = "Anindya Karmaker"
+
+
+def _resource_candidates(filename):
+    """Yield possible on-disk locations for a bundled resource (e.g. Icon.png),
+    covering both running from source and PyInstaller one-dir/one-file builds.
+
+    PyInstaller extracts/bundles data files under sys._MEIPASS, and one-dir builds
+    place collected datas under an "_internal" subfolder next to the executable.
+    Running from source, the file sits next to this script."""
+    candidates = []
+    # 1. PyInstaller temp/bundle root (set when frozen).
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, filename))
+        candidates.append(os.path.join(meipass, "_internal", filename))
+    # 2. Next to the executable / script.
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, filename))
+        candidates.append(os.path.join(exe_dir, "_internal", filename))
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.append(os.path.join(script_dir, filename))
+    except NameError:
+        pass
+    # De-duplicate while preserving order.
+    seen = set()
+    result = []
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
 
 
 class MinimalLoadingDialog(QDialog):
@@ -91,7 +124,7 @@ class MinimalLoadingDialog(QDialog):
         title.setFont(title_font)
         title_block.addWidget(title)
 
-        subtitle = QLabel(f"Version {APP_VERSION}    •    Developed by {APP_DEVELOPER}")
+        subtitle = QLabel(f"Version: {APP_VERSION} | Developed by {APP_DEVELOPER}")
         subtitle.setObjectName("Subtitle")
         subtitle.setFont(QFont("Segoe UI", 9))
         title_block.addWidget(subtitle)
@@ -129,11 +162,17 @@ class MinimalLoadingDialog(QDialog):
         self.center_on_screen()
 
     def _load_icon(self):
-        """Load Icon.png next to this script and scale it for the header."""
+        """Load Icon.png and scale it for the header.
+
+        Resolves the path for both running from source and from a PyInstaller
+        bundle (where bundled data lives under sys._MEIPASS, not next to __file__)."""
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            icon_path = os.path.join(script_dir, "Icon.png")
-            pixmap = QPixmap(icon_path)
+            pixmap = QPixmap()
+            for icon_path in _resource_candidates("Icon.png"):
+                if icon_path and os.path.exists(icon_path):
+                    pixmap = QPixmap(icon_path)
+                    if not pixmap.isNull():
+                        break
             if not pixmap.isNull():
                 self.icon_label.setPixmap(
                     pixmap.scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -10320,7 +10359,7 @@ if __name__ == "__main__":
                 self.show_once_prompt = True
                 
                 self.label_size = self.preview_label_width_setting
-                self.window_title="GEL BLOT ANALYZER v7.3"
+                self.window_title=f"GEL BLOT ANALYZER {APP_VERSION}"
                 self.protein_sequence = ""
                 self.base_protein_mw = 0.0
                 self.avg_glycan_mass = 0.0

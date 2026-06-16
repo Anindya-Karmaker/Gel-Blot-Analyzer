@@ -21,6 +21,9 @@ BUNDLE_ID = "com.anindyakarmaker.gelblotanalyzer"
 # --- Data Files ---
 # Collects necessary data like Qt plugins, SSL certificates, and matplotlib fonts.
 datas = []
+# Bundle the splash-screen / app icon at the bundle root so it can be loaded at
+# runtime via sys._MEIPASS (see _resource_candidates in the script).
+datas.append((os.path.join(SPECPATH, "Icon.png"), "."))
 datas.extend(collect_data_files('PySide6'))
 datas.extend(collect_data_files('matplotlib'))
 

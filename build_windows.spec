@@ -9,17 +9,19 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
 SCRIPT_FILE = "Gel_blot_analyzer.py"
-ICON_FILE = "Icon.ico"
-VERSION_FILE = None # Disabled because version_file.txt is missing
+ICON_FILE = "icon.ico"
+VERSION_FILE = "version_file.txt" # You must create this file for version info
 
-# --- Code Signing Configuration ---
-# Set to True to enable code signing.
+# --- Code Signing Configuration (Optional - Edit for your needs) ---
+# Set to True to enable code signing. If False, the signing step will be skipped.
 ENABLE_SIGNING = False
 # Full path to your .pfx certificate file.
-CERT_PATH = ""
-# The password for your certificate.
-CERT_PASS = ""
-# URL of the timestamp server.
+CERT_PATH = "C:\\path\\to\\your\\certificate.pfx"
+# The password for your certificate. It's safer to load this from an environment variable.
+# In CMD: set CERT_PASS=your_password
+# In PowerShell: $env:CERT_PASS="your_password"
+CERT_PASS = os.environ.get("CERT_PASS")
+# URL of the timestamp server. This is a common, free one.
 TIMESTAMP_URL = "http://timestamp.sectigo.com"
 
 # --- Helper function to find signtool.exe ---
@@ -33,20 +35,29 @@ def find_signtool():
         if os.path.isdir(base):
             versions = sorted([d for d in os.listdir(base) if d.startswith("10.")], reverse=True)
             for v in versions:
-                # Check both x64 and x86
-                for arch in ["x64", "x86"]:
-                    tool_path = os.path.join(base, v, arch, "signtool.exe")
-                    if os.path.exists(tool_path):
-                        print(f"Found signtool.exe at: {tool_path}")
-                        return tool_path
+                tool_path = os.path.join(base, v, "x64", "signtool.exe")
+                if os.path.exists(tool_path):
+                    print(f"Found signtool.exe at: {tool_path}")
+                    return tool_path
     return None
 
 # --- Data File Paths ---
-datas = []
+# Get the directory where PySide6 stores its plugins
+pyside_library = os.path.join(os.path.dirname(QtCore.__file__), "plugins")
+
+datas = [
+    # Manually bundle essential PySide6 Qt platform plugins for Windows
+    (os.path.join(pyside_library, "platforms", "qwindows.dll"), "_internal\\PySide6\\plugins\\platforms"),
+    (os.path.join(pyside_library, "styles", "qwindowsvistastyle.dll"), "_internal\\PySide6\\plugins\\styles"),
+    # Bundle the splash-screen / app icon. Ship it both at the bundle root and in
+    # _internal so it is found at runtime via sys._MEIPASS (see _resource_candidates).
+    (os.path.join(SPECPATH, "Icon.png"), "."),
+]
 # Automatically collect all necessary data files for matplotlib
 datas.extend(collect_data_files('matplotlib'))
 
 # --- Hidden Imports ---
+# This list is crucial for libraries that PyInstaller's static analysis might miss.
 hiddenimports = [
     'PySide6.QtSvg',
     'PySide6.QtPrintSupport',
@@ -103,7 +114,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON_FILE,
-    # version=VERSION_FILE, # Removed version info since file is missing
+    version=VERSION_FILE, # Embed version info from our file
 )
 
 coll = COLLECT(
@@ -122,31 +133,31 @@ if ENABLE_SIGNING:
     print("--- Starting Code Signing ---")
     signtool_path = find_signtool()
     if not signtool_path:
-        print("signtool.exe not found. Is the Windows SDK installed?")
-    elif not os.path.exists(CERT_PATH):
-        print(f"Certificate not found at: {CERT_PATH}")
-    else:
-        exe_path_to_sign = os.path.join(distpath, APP_NAME, f"{APP_NAME}.exe")
-        
-        command = [
-            signtool_path,
-            "sign",
-            "/f", CERT_PATH,
-            "/p", CERT_PASS,
-            "/tr", TIMESTAMP_URL,
-            "/td", "sha256",
-            "/fd", "sha256",
-            "/v", # Verbose output
-            exe_path_to_sign,
-        ]
-        
-        print(f"Signing command: {' '.join(command)}")
-        try:
-            # We use subprocess.run to capture errors without exiting the whole bibld process if unnecessary
-            # But here we want it to be part of the build.
-            subprocess.check_call(command)
-            print("--- Code Signing Successful ---")
-        except subprocess.CalledProcessError as e:
-            print(f"--- Code Signing FAILED: {e} ---")
-            # We don't necessarily want to fail the whole build if signing fails at the very end,
-            # but usually it's better to know.
+        raise FileNotFoundError("signtool.exe not found. Is the Windows SDK installed?")
+    if not os.path.exists(CERT_PATH):
+        raise FileNotFoundError(f"Certificate not found at: {CERT_PATH}")
+    if not CERT_PASS:
+        raise ValueError("Certificate password not set. Use 'set CERT_PASS=your_password'.")
+
+    exe_path_to_sign = os.path.join(distpath, APP_NAME, f"{APP_NAME}.exe")
+    
+    command = [
+        signtool_path,
+        "sign",
+        "/f", CERT_PATH,
+        "/p", CERT_PASS,
+        "/tr", TIMESTAMP_URL,
+        "/td", "sha256",
+        "/fd", "sha256",
+        "/v", # Verbose output
+        exe_path_to_sign,
+    ]
+    
+    print(f"Signing command: {' '.join(command)}")
+    try:
+        subprocess.check_call(command)
+        print("--- Code Signing Successful ---")
+    except subprocess.CalledProcessError as e:
+        print(f"--- Code Signing FAILED: {e} ---")
+        # Fail the build if signing fails
+        sys.exit(1)
