@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://github.com/user-attachments/assets/b7f1dbdb-4325-4208-b749-cae42556b3f3" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
+<img src="https://github.com/user-attachments/assets/ae3a628c-8593-428b-81c0-66f7804f535c" width="1036" height="1127" alt="Gel Blot Analyzer main interface showing an annotated gel image">
 
 <h1>Gel Blot Analyzer</h1>
 
