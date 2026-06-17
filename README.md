@@ -8,9 +8,8 @@
 
 <!-- Badges -->
 ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
-![Visitors](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FAnindya-Karmaker%2FGel-Blot-Analyzer&count_bg=%2379C83D&title_bg=%23555555&title=Visits&edge_flat=true)
+![Page Views](https://komarev.com/ghpvc/?username=Anindya-Karmaker&repo=Gel-Blot-Analyzer&label=Page%20Views&color=brightgreen&style=flat-square)
 ![License](https://img.shields.io/github/license/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&color=orange)
-
 <br>
 
 <!-- Download Button -->
