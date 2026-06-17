@@ -1,7 +1,5 @@
 <h1>Gel Blot Analyzer</h1>
 
-<p>A comprehensive desktop application for annotation, analysis, and presentation of gel electrophoresis images.</p>
-
 **Gel Blot Analyzer** is a comprehensive desktop application designed to streamline the annotation, analysis, and presentation of gel electrophoresis images. Built for researchers, students, and scientists, this tool simplifies the often tedious process of preparing gel images (SDS-PAGE, Western Blots, DNA gels, etc.) for lab notebooks, presentations, and publications.
 
 From precise labeling and molecular weight prediction to powerful densitometric analysis, Gel Blot Analyzer combines essential imaging tools into a single, intuitive workflow.
