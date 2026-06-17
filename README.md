@@ -1,10 +1,7 @@
----
-
 **Gel Blot Analyzer** is a comprehensive desktop application designed to streamline the annotation, analysis, and presentation of gel electrophoresis images. Built for researchers, students, and scientists, this tool simplifies the often tedious process of preparing gel images (SDS-PAGE, Western Blots, DNA gels, etc.) for lab notebooks, presentations, and publications.
 
 From precise labeling and molecular weight prediction to powerful densitometric analysis, Gel Blot Analyzer combines essential imaging tools into a single, intuitive workflow.
 
----
 <!-- Badges -->
 ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
 ![Page Views](https://komarev.com/ghpvc/?username=Anindya-Karmaker&repo=Gel-Blot-Analyzer&label=Page%20Views&color=brightgreen&style=flat-square)
