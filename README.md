@@ -1,5 +1,5 @@
 # Gel Blot Analyzer 
-Total Number of Downloads: ![GitHub Downloads](https:img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
+Total Number of Downloads: ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
 <p align="center">
   <img src="https://github.com/user-attachments/assets/b7f1dbdb-4325-4208-b749-cae42556b3f3" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
 </p>
