@@ -1,10 +1,26 @@
-# Gel Blot Analyzer 
-Total Number of Downloads: ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/b7f1dbdb-4325-4208-b749-cae42556b3f3" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
-</p>
+<div align="center">
 
+<img src="https://github.com/user-attachments/assets/b7f1dbdb-4325-4208-b749-cae42556b3f3" width="800" alt="Gel Blot Analyzer main interface showing an annotated gel image">
 
+<h1>Gel Blot Analyzer</h1>
+
+<p>A comprehensive desktop application for annotation, analysis, and presentation of gel electrophoresis images.</p>
+
+<!-- Badges -->
+[![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total?style=flat-square&logo=github&label=Total%20Downloads&color=2ea44f)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases)
+[![Latest Release](https://img.shields.io/github/v/release/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&logo=github&label=Latest%20Release&color=blue)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases/latest)
+[![Visitors](https://visitor-badge.laobi.icu/badge?page_id=Anindya-Karmaker.Gel-Blot-Analyzer&style=flat-square&label=Page%20Visits)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer)
+[![GitHub Stars](https://img.shields.io/github/stars/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&logo=github&color=yellow)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/stargazers)
+[![License](https://img.shields.io/github/license/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&color=orange)](LICENSE)
+
+<br>
+
+<!-- Download Button -->
+[<img src="https://img.shields.io/badge/⬇%20Download%20Latest%20Release-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release">](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases/latest)
+
+</div>
+
+---
 
 **Gel Blot Analyzer** is a comprehensive desktop application designed to streamline the annotation, analysis, and presentation of gel electrophoresis images. Built for researchers, students, and scientists, this tool simplifies the often tedious process of preparing gel images (SDS-PAGE, Western Blots, DNA gels, etc.) for lab notebooks, presentations, and publications.
 
@@ -28,6 +44,7 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 | **Professional Output**  | Export your final annotated image with a transparent background, perfect for posters and publications.                                    |
 | **Robust & Stable**      | Includes a built-in exception logger to help diagnose any issues and ensure a stable user experience.                                       |
 
+---
 
 ## Gallery
 
@@ -58,7 +75,12 @@ The easiest way to get started is to download the latest pre-built application f
     *   **For Windows:** Download the `.zip` file for the application.
 3.  Unzip the file and run the application. No installation is needed.
 
-**Note**: Since the application for MacOS is not signed it may not run, so copy the .app file to the Applications Folder, open terminal and run this command **xattr -cr "/Applications/Gel Blot Analyzer.app"**. Despite being signed for Windows, since it is not from a popular publisher it may show an error so open the application and click on More Info and click on Run Anyway.
+> **Note for macOS:** Since the application is not signed, it may not run directly. Copy the `.app` file to the Applications Folder, open Terminal, and run:
+> ```bash
+> xattr -cr "/Applications/Gel Blot Analyzer.app"
+> ```
+>
+> **Note for Windows:** Despite being signed, Windows may show a warning since it is not from a widely-known publisher. Click **More Info** → **Run Anyway**.
 
 ### Option 2: Run from Source (For Developers)
 
@@ -73,7 +95,6 @@ If you are a developer and want to run the script directly, you can use Conda fo
     ```
 
 2.  **Create a New Conda Environment:**
-    This command uses the provided file to create a new environment named `gel_analyzer_env` with all the correct library versions.
     ```bash
     conda env create -f environment.yml
     ```
@@ -83,23 +104,21 @@ If you are a developer and want to run the script directly, you can use Conda fo
     conda activate gel_analyzer_env
     ```
 
-5.  **Run the Program:**
+4.  **Run the Program:**
     ```bash
     python Gel_blot_analyzer.py
     ```
 
-    If you get any error or crashes particularly due to missing library or C-code header mismatch (usually happens on Windows- Anaconda library issue). Run this code:
-    ```bash
-    pip install --force-reinstall --no-cache-dir numpy scikit-image
-    ```
+    > If you encounter errors due to missing libraries or C-code header mismatches (common on Windows), run:
+    > ```bash
+    > pip install --force-reinstall --no-cache-dir numpy scikit-image
+    > ```
 
 #### Using `pip`
 
-You can also use `pip` with the provided `requirements.txt` file, although dependency conflicts can be more common.
-
 1.  **Clone the Repository and navigate into it.**
 
-2.  **Create and activate a virtual environment (Recommended):**
+2.  **Create and activate a virtual environment:**
     ```bash
     python -m venv venv
     # On Windows
@@ -124,15 +143,14 @@ You can also use `pip` with the provided `requirements.txt` file, although depen
 
 If you wish to compile the application yourself, you will need `pyinstaller`.
 
-1.  **Activate your Python environment** (either Conda or venv) where you have installed the dependencies.
+1.  **Activate your Python environment** (either Conda or venv).
 
 2.  **Install PyInstaller:**
     ```bash
     pip install pyinstaller
     ```
 
-3.  **Run the Build Command:**
-    This project includes pre-configured `.spec` files for both macOS and Windows. Using these is the most reliable way to build.
+3.  **Run the Build Command** using the pre-configured `.spec` files:
 
     *   **On macOS:**
         ```bash
@@ -167,3 +185,4 @@ Karmaker, Anindya. _Gel Blot Analyzer_, Version 7.3, 2026. GitHub, https://githu
   howpublished = {\url{https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer}},
   note         = {Version 7.3}
 }
+```
