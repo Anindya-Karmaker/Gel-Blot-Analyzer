@@ -8,8 +8,8 @@
 
 <!-- Badges -->
 ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
-![Visitors](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FAnindya-Karmaker%2FGel-Blot-Analyzer&count_bg=%2379C83D&title_bg=%23555555&title=Visits&edge_flat=true)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer)
-![License](https://img.shields.io/github/license/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&color=orange)](LICENSE)
+![Visitors](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FAnindya-Karmaker%2FGel-Blot-Analyzer&count_bg=%2379C83D&title_bg=%23555555&title=Visits&edge_flat=true)
+![License](https://img.shields.io/github/license/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&color=orange)
 
 <br>
 
