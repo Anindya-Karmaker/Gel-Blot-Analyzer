@@ -1,11 +1,3 @@
-<div align="center">
-
-<img src="https://github.com/user-attachments/assets/ae3a628c-8593-428b-81c0-66f7804f535c" width="1036" height="1127" alt="Gel Blot Analyzer main interface showing an annotated gel image">
-
-<h1>Gel Blot Analyzer</h1>
-
-<p>A comprehensive desktop application for annotation, analysis, and presentation of gel electrophoresis images.</p>
-
 <!-- Badges -->
 ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
 ![Page Views](https://komarev.com/ghpvc/?username=Anindya-Karmaker&repo=Gel-Blot-Analyzer&label=Page%20Views&color=brightgreen&style=flat-square)
@@ -16,6 +8,14 @@
 [<img src="https://img.shields.io/badge/⬇%20Download%20Latest%20Release-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release">](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases/latest)
 
 </div>
+
+<div align="center">
+
+<img src="https://github.com/user-attachments/assets/ae3a628c-8593-428b-81c0-66f7804f535c" width="1036" height="1127" alt="Gel Blot Analyzer main interface showing an annotated gel image">
+
+<h1>Gel Blot Analyzer</h1>
+
+<p>A comprehensive desktop application for annotation, analysis, and presentation of gel electrophoresis images.</p>
 
 ---
 
