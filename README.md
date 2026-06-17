@@ -177,4 +177,3 @@ Karmaker, Anindya. _Gel Blot Analyzer_, Version 7.3, 2026. GitHub, https://githu
   howpublished = {\url{https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer}},
   note         = {Version 7.3}
 }
-```
