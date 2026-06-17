@@ -7,10 +7,9 @@
 <p>A comprehensive desktop application for annotation, analysis, and presentation of gel electrophoresis images.</p>
 
 <!-- Badges -->
-[![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total?style=flat-square&logo=github&label=Total%20Downloads&color=2ea44f)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases)
-[![Latest Release](https://img.shields.io/github/v/release/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&logo=github&label=Latest%20Release&color=blue)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases/latest)
-[![Visitors](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FAnindya-Karmaker%2FGel-Blot-Analyzer&count_bg=%2379C83D&title_bg=%23555555&title=Visits&edge_flat=true)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer)
-[![License](https://img.shields.io/github/license/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&color=orange)](LICENSE)
+![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
+![Visitors](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FAnindya-Karmaker%2FGel-Blot-Analyzer&count_bg=%2379C83D&title_bg=%23555555&title=Visits&edge_flat=true)](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer)
+![License](https://img.shields.io/github/license/Anindya-Karmaker/Gel-Blot-Analyzer?style=flat-square&color=orange)](LICENSE)
 
 <br>
 
