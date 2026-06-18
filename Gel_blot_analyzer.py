@@ -10,7 +10,7 @@ import traceback
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "7.3"
+APP_VERSION = "7.5"
 APP_DEVELOPER = "Anindya Karmaker"
 
 
@@ -2388,7 +2388,7 @@ if __name__ == "__main__":
                 self.current_analysis_custom_name = self.source_image_name_current
                 self.analysis_name_input_widget = None
                 self.analysis_history = [] 
-                self.delete_entry_button = None; self.export_previous_button = None; self.previous_sessions_listwidget = None
+                self.delete_entry_button = None; self.export_previous_button = None; self.export_pdf_previous_button = None; self.previous_sessions_listwidget = None
                 self.previous_results_table = None; self.previous_plot_placeholder_label = None
                 self.previous_plot_groupbox_layout = None; self.previous_plot_canvas_widget = None
                 self.previous_lane_image_preview_label = None 
@@ -2479,7 +2479,13 @@ if __name__ == "__main__":
                     self.current_standard_dictionary,
                     is_multi_lane_data=self.is_current_data_multi_lane,
                     lane_pil_images=self.current_lane_pil_images))
-                current_buttons_layout.addWidget(copy_current_button); current_buttons_layout.addStretch(); current_buttons_layout.addWidget(export_current_button)
+                export_pdf_current_button = QPushButton("Export PDF Report")
+                export_pdf_current_button.setToolTip(
+                    "Export a complete, non-editable PDF report (parameters, standard curve, "
+                    "fitting, per-lane band images and the annotated gel image) that lets "
+                    "anyone replicate this analysis.")
+                export_pdf_current_button.clicked.connect(self._export_current_to_pdf)
+                current_buttons_layout.addWidget(copy_current_button); current_buttons_layout.addStretch(); current_buttons_layout.addWidget(export_pdf_current_button); current_buttons_layout.addWidget(export_current_button)
                 current_main_layout.addLayout(current_buttons_layout)
                 self.tab_widget.addTab(current_tab_widget, "Current Analysis")
 
@@ -2522,8 +2528,13 @@ if __name__ == "__main__":
                 right_layout.addWidget(self.history_results_display_container, 1)
                 previous_table_buttons_layout = QHBoxLayout()
                 copy_previous_button = QPushButton("Copy Active History Lane Table"); copy_previous_button.clicked.connect(self._copy_active_history_lane_table_data)
+                self.export_pdf_previous_button = QPushButton("Export PDF Report")
+                self.export_pdf_previous_button.setToolTip(
+                    "Export a complete, non-editable PDF report for the selected history entry "
+                    "(parameters, standard curve, fitting and per-lane band data).")
+                self.export_pdf_previous_button.clicked.connect(self._export_selected_history_to_pdf); self.export_pdf_previous_button.setEnabled(False)
                 self.export_previous_button = QPushButton("Export Selected History to Excel"); self.export_previous_button.clicked.connect(self._export_selected_history_to_excel); self.export_previous_button.setEnabled(False)
-                previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch(); previous_table_buttons_layout.addWidget(self.export_previous_button)
+                previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch(); previous_table_buttons_layout.addWidget(self.export_pdf_previous_button); previous_table_buttons_layout.addWidget(self.export_previous_button)
                 right_layout.addLayout(previous_table_buttons_layout); previous_main_layout.addWidget(right_pane_history_widget, 2)
                 self.tab_widget.addTab(previous_tab_widget, "Analysis History")
                 self._populate_previous_sessions_list()
@@ -2669,6 +2680,7 @@ if __name__ == "__main__":
                 
                 entry = self.analysis_history[selected_row_index]
                 self.delete_entry_button.setEnabled(True); self.export_previous_button.setEnabled(True)
+                if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(True)
 
                 # --- NEW: Set the model combo box from history ---
                 saved_model = entry.get("quantification_model", "Linear") # Default to Linear if not saved
@@ -3107,6 +3119,7 @@ if __name__ == "__main__":
                     self.previous_sessions_listwidget.addItem("No history available.")
                     if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                     if self.export_previous_button: self.export_previous_button.setEnabled(False)
+                    if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(False)
                     return
 
                 for i, entry in enumerate(self.analysis_history):
@@ -3125,6 +3138,7 @@ if __name__ == "__main__":
                 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
+                if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(False)
             def _clear_previous_details_view(self):
                 if hasattr(self, 'history_results_display_layout'):
                     while self.history_results_display_layout.count() > 0:
@@ -3153,6 +3167,7 @@ if __name__ == "__main__":
 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
+                if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(False)
             def _delete_selected_history_entry(self):
                 if not self.previous_sessions_listwidget: return
                 current_row = self.previous_sessions_listwidget.currentRow()
@@ -3446,7 +3461,535 @@ if __name__ == "__main__":
                     for p in temp_image_files:
                         try: os.remove(p)
                         except OSError: pass
-                        
+
+            # =================================================================
+            #  PDF REPORT EXPORT
+            # =================================================================
+            def _export_current_to_pdf(self):
+                """Gather everything needed for the current analysis and build a PDF report."""
+                if not self.current_results_data:
+                    QMessageBox.information(self, "No Data", "There is no current analysis data to export.")
+                    return
+
+                analysis_settings = {}
+                if self.parent_app and hasattr(self.parent_app, 'peak_dialog_settings'):
+                    try: analysis_settings = dict(self.parent_app.peak_dialog_settings)
+                    except Exception: analysis_settings = {}
+
+                model_name = self.current_model_name
+                if getattr(self, 'model_combo_current', None):
+                    model_name = self.model_combo_current.currentText()
+
+                name = self.analysis_name_input_widget.text().strip() if self.analysis_name_input_widget else ""
+                name = name or self.source_image_name_current
+
+                # Render the annotated gel image (clipboard version) WITH densitometry boxes.
+                gel_qimage = None
+                if self.parent_app and hasattr(self.parent_app, '_render_annotated_gel_qimage'):
+                    try:
+                        gel_qimage = self.parent_app._render_annotated_gel_qimage(
+                            render_scale=3, draw_densitometry_boxes=True)
+                    except Exception:
+                        traceback.print_exc()
+                        gel_qimage = None
+
+                self._export_to_pdf_generic(
+                    self.current_results_data, name, self.current_standard_dictionary,
+                    is_multi_lane_data=self.is_current_data_multi_lane,
+                    lane_pil_images=self.current_lane_pil_images,
+                    analysis_settings=analysis_settings, model_name=model_name,
+                    gel_qimage=gel_qimage, source_image_name=self.source_image_name_current,
+                    timestamp=datetime.datetime.now().isoformat())
+
+            def _export_selected_history_to_pdf(self):
+                """Build a PDF report for the currently selected history entry."""
+                if not self.previous_sessions_listwidget:
+                    return
+                row = self.previous_sessions_listwidget.currentRow()
+                if not (0 <= row < len(self.analysis_history)):
+                    QMessageBox.information(self, "No Selection", "Please select a history entry to export.")
+                    return
+
+                entry = self.analysis_history[row]
+                name = entry.get("user_defined_name", "").strip() or entry.get("source_image_name", "UnknownAnalysis")
+                model_name = entry.get("quantification_model", "Linear")
+                if getattr(self, 'model_combo_history', None):
+                    model_name = self.model_combo_history.currentText()
+
+                results_data = entry.get("results_data", {})
+                std_dict = entry.get("standard_dictionary", {})
+
+                # Recompute quantities with the selected model so the PDF matches the on-screen view.
+                if std_dict and self.parent_app and hasattr(self.parent_app, '_perform_quantification'):
+                    std_qtys = list(std_dict.keys()); std_areas = list(std_dict.values())
+                    for lane_id, lane_content in results_data.items():
+                        sample_areas = lane_content.get('areas', [])
+                        if sample_areas:
+                            try:
+                                new_qtys, _ = self.parent_app._perform_quantification(
+                                    model_name, std_qtys, std_areas, sample_areas)
+                                results_data[lane_id]['quantities'] = new_qtys
+                            except Exception:
+                                pass
+
+                self._export_to_pdf_generic(
+                    results_data, name, std_dict,
+                    is_multi_lane_data=entry.get("is_multi_lane", False),
+                    lane_pil_images=None,
+                    analysis_settings=entry.get("analysis_settings", {}),
+                    model_name=model_name, gel_qimage=None,
+                    source_image_name=entry.get("source_image_name", "Unknown"),
+                    timestamp=entry.get("timestamp"))
+
+            def _compute_standard_fit(self, standard_dictionary, model_name):
+                """Fit the standard curve and return a dict describing the fit, or None.
+                Keys: 'x', 'y', 'r_squared', 'equation', 'params'."""
+                if not standard_dictionary or len(standard_dictionary) < 2:
+                    return None
+                try:
+                    quantities = np.array(list(standard_dictionary.keys()), dtype=float)
+                    areas = np.array(list(standard_dictionary.values()), dtype=float)
+                    order = np.argsort(quantities)
+                    quantities, areas = quantities[order], areas[order]
+                    x_line = np.linspace(np.min(quantities), np.max(quantities), 200)
+
+                    if "Linear" in model_name or "Polynomial" in model_name:
+                        degree = 1
+                        if "Deg 2" in model_name: degree = 2
+                        elif "Deg 3" in model_name: degree = 3
+                        if len(quantities) <= degree:
+                            return None
+                        params = np.polyfit(quantities, areas, degree)
+                        y_line = np.polyval(params, x_line)
+                        residuals = areas - np.polyval(params, quantities)
+                        ss_res = float(np.sum(residuals ** 2))
+                        ss_tot = float(np.sum((areas - np.mean(areas)) ** 2))
+                        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+                        if degree == 1:
+                            equation = f"Area = {params[0]:.5g} × Qty + {params[1]:.5g}"
+                        elif degree == 2:
+                            equation = (f"Area = {params[0]:.5g} × Qty² + "
+                                        f"{params[1]:.5g} × Qty + {params[2]:.5g}")
+                        else:
+                            equation = (f"Area = {params[0]:.5g} × Qty³ + {params[1]:.5g} × Qty² + "
+                                        f"{params[2]:.5g} × Qty + {params[3]:.5g}")
+                        return {'x': x_line, 'y': y_line, 'r_squared': r_squared,
+                                'equation': equation, 'params': params}
+
+                    elif SCIPY_AVAILABLE and "4-PL" in model_name and len(quantities) >= 4:
+                        p0 = [min(areas), 1.0, np.median(quantities), max(areas)]
+                        params, _ = curve_fit(four_param_logistic, quantities, areas, p0=p0, maxfev=10000)
+                        y_line = four_param_logistic(x_line, *params)
+                        residuals = areas - four_param_logistic(quantities, *params)
+                        ss_res = float(np.sum(residuals ** 2))
+                        ss_tot = float(np.sum((areas - np.mean(areas)) ** 2))
+                        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+                        a, b, c, d = params
+                        equation = (f"Area = {d:.4g} + ({a:.4g} - {d:.4g}) / "
+                                    f"(1 + (Qty / {c:.4g})^{b:.4g})")
+                        return {'x': x_line, 'y': y_line, 'r_squared': r_squared,
+                                'equation': equation, 'params': params}
+                except Exception:
+                    traceback.print_exc()
+                return None
+
+            def _export_to_pdf_generic(self, results_data_for_export, analysis_name="Analysis_Results",
+                                       standard_dict_for_export=None, is_multi_lane_data=False,
+                                       lane_pil_images=None, analysis_settings=None, model_name="Linear",
+                                       gel_qimage=None, source_image_name="Unknown", timestamp=None):
+                """Generate a complete, non-editable PDF report of an analysis.
+
+                The report bundles every detail needed to replicate the result: acquisition
+                metadata, the full peak-analysis parameter set, the standard-curve data and
+                fit, a per-lane band breakdown with the same lane/band images used in the
+                Excel export, and the annotated gel image (with densitometry bounding boxes)."""
+                import tempfile
+                from matplotlib.backends.backend_pdf import PdfPages
+
+                analysis_settings = analysis_settings or {}
+                standard_dict_for_export = standard_dict_for_export or {}
+
+                # ---- Default filename ----
+                safe_name = str(analysis_name).replace('.', '_').replace(' ', '_').replace(':', '-')
+                ts_file = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                default_filename = f"Report_{ts_file}_{safe_name}"
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Save PDF Report", f"{default_filename}.pdf",
+                    "PDF Files (*.pdf)", options=QFileDialog.Options())
+                if not file_path:
+                    return
+
+                lane_ids = [lid for lid in sorted(results_data_for_export.keys())
+                            if results_data_for_export.get(lid, {}).get('areas')]
+                has_quantities = any(results_data_for_export[lid].get('quantities') for lid in lane_ids)
+                is_std_mode = bool(standard_dict_for_export) or has_quantities
+
+                # Pretty timestamp
+                ts_display = "N/A"
+                if timestamp:
+                    try:
+                        ts_display = datetime.datetime.fromisoformat(
+                            str(timestamp).split('.')[0]).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        ts_display = str(timestamp)
+
+                A4 = (8.27, 11.69)
+                temp_files = []
+
+                def _qimage_to_png(img):
+                    if img is None or img.isNull():
+                        return None
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                    path = tmp.name; tmp.close()
+                    if img.save(path, "PNG"):
+                        temp_files.append(path)
+                        return path
+                    return None
+
+                def _add_table(ax, col_labels, rows, col_widths=None, header_color="#4472C4",
+                               font_size=8):
+                    ax.axis('off')
+                    if not rows:
+                        return
+                    tbl = ax.table(cellText=rows, colLabels=col_labels, cellLoc='center',
+                                   loc='upper center', colWidths=col_widths)
+                    tbl.auto_set_font_size(False)
+                    tbl.set_fontsize(font_size)
+                    tbl.scale(1, 1.4)
+                    for (r, c), cell in tbl.get_celld().items():
+                        cell.set_edgecolor("#BBBBBB")
+                        if r == 0:
+                            cell.set_facecolor(header_color)
+                            cell.set_text_props(color="white", fontweight="bold")
+                        elif r % 2 == 0:
+                            cell.set_facecolor("#F2F5FB")
+
+                try:
+                    with PdfPages(file_path) as pdf:
+                        # =============== PAGE 1: METADATA + PARAMETERS ===============
+                        fig = plt.figure(figsize=A4)
+                        fig.suptitle(f"Gel Blot Analyzer v{APP_VERSION} — Analysis Report",
+                                     fontsize=16, fontweight="bold", y=0.97)
+
+                        meta_lines = [
+                            ("Analysis name", str(analysis_name)),
+                            ("Source image", str(source_image_name)),
+                            ("Report generated", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                            ("Analysis timestamp", ts_display),
+                            ("Layout", "Multi-lane" if is_multi_lane_data else "Single lane"),
+                            ("Lanes analysed", str(len(lane_ids))),
+                            ("Quantification", "Standard-curve mode" if is_std_mode else "Relative (% area) only"),
+                            ("Regression model", str(model_name) if is_std_mode else "N/A"),
+                        ]
+                        ax_meta = fig.add_axes([0.07, 0.70, 0.86, 0.20])
+                        _add_table(ax_meta, ["Field", "Value"],
+                                   [[k, v] for k, v in meta_lines],
+                                   col_widths=[0.35, 0.65], header_color="#2F5597", font_size=9)
+                        fig.text(0.07, 0.925, "Analysis metadata", fontsize=12, fontweight="bold")
+
+                        # --- Peak analysis parameters (complete persisted parameter set) ---
+                        fig.text(0.07, 0.675, "Peak analysis parameters", fontsize=12, fontweight="bold")
+
+                        def _fmt_bool(v):
+                            return "Yes" if bool(v) else "No"
+
+                        def _fmt_off(v, unit=""):
+                            try:
+                                fv = float(v)
+                            except (TypeError, ValueError):
+                                return str(v)
+                            if fv == 0:
+                                return "Off"
+                            txt = f"{fv:g}"
+                            return f"{txt}{unit}"
+
+                        # (key, label, formatter) — covers every key written by the
+                        # densitometry dialog's _final_settings, including speck/denoise.
+                        param_specs = [
+                            ('band_estimation_method', "Lane profile / band-estimation method", str),
+                            ('area_subtraction_method', "Baseline / area-subtraction method", str),
+                            ('rolling_ball_radius', "Rolling-ball radius (px)", str),
+                            ('auto_adjust_rb_radius', "Auto-adjust rolling-ball radius", _fmt_bool),
+                            ('smoothing_sigma', "Profile smoothing sigma (px)", lambda v: _fmt_off(v)),
+                            ('denoise_sigma', "Denoise pre-smoothing sigma (px)", lambda v: _fmt_off(v)),
+                            ('peak_height_factor', "Peak height threshold (fraction of max)", str),
+                            ('peak_distance', "Minimum peak distance (px)", str),
+                            ('peak_prominence_factor', "Peak prominence threshold (fraction)", str),
+                            ('min_band_width', "Minimum band width (px)", str),
+                            ('speck_min_size', "Speck rejection min size (px², 0 = off)", lambda v: _fmt_off(v)),
+                            ('valley_offset_pixels', "Valley offset (px)", str),
+                            ('is_inverted', "Intensity inverted for analysis", _fmt_bool),
+                        ]
+                        param_rows = []
+                        seen_keys = set()
+                        for key, label, fmt in param_specs:
+                            if key in analysis_settings:
+                                seen_keys.add(key)
+                                try:
+                                    param_rows.append([label, fmt(analysis_settings[key])])
+                                except Exception:
+                                    param_rows.append([label, str(analysis_settings[key])])
+                        # Catch-all: surface any extra persisted keys not explicitly mapped,
+                        # so the report never silently drops a parameter.
+                        for key in sorted(analysis_settings.keys()):
+                            if key in seen_keys:
+                                continue
+                            param_rows.append([key.replace('_', ' ').capitalize(),
+                                               str(analysis_settings[key])])
+                        if not param_rows:
+                            param_rows = [["(no parameters recorded)", ""]]
+                        ax_param = fig.add_axes([0.07, 0.08, 0.86, 0.55])
+                        _add_table(ax_param, ["Parameter", "Value"], param_rows,
+                                   col_widths=[0.66, 0.34], font_size=9)
+
+                        fig.text(0.5, 0.03,
+                                 "Generated by Gel/Blot Analyzer — the parameters above fully describe the "
+                                 "analysis and allow replication.",
+                                 fontsize=7, color="#666666", ha="center")
+                        pdf.savefig(fig); plt.close(fig)
+
+                        # =============== PAGE: METHOD SUMMARY (how the area was calculated) ===============
+                        area_method = str(analysis_settings.get('area_subtraction_method', 'Rolling-valley'))
+                        band_method = str(analysis_settings.get('band_estimation_method', 'Mean'))
+                        rb_radius = analysis_settings.get('rolling_ball_radius', 'N/A')
+                        smoothing_sigma = analysis_settings.get('smoothing_sigma', 0)
+                        denoise_sigma = analysis_settings.get('denoise_sigma', 0)
+                        speck_min_size = analysis_settings.get('speck_min_size', 0)
+                        min_band_width = analysis_settings.get('min_band_width', 'N/A')
+                        if "Rolling-valley" in area_method or "valley" in area_method.lower():
+                            area_desc = ("the band area was integrated above a baseline linearly "
+                                         "interpolated between the intensity valleys (troughs) flanking "
+                                         "each detected peak (rolling-valley method).")
+                        elif "Straight" in area_method:
+                            area_desc = ("the band area was integrated above a single straight baseline "
+                                         "drawn across the global valleys of the lane profile.")
+                        elif "Deconv" in area_method or "Gaussian" in area_method:
+                            area_desc = ("overlapping bands were resolved by Gaussian/EMG peak "
+                                         "deconvolution and each band area taken as the integral of its "
+                                         "fitted component.")
+                        elif "Rolling" in area_method or "Ball" in area_method:
+                            area_desc = (f"the lane background was removed with a rolling-ball algorithm "
+                                         f"(radius {rb_radius} px) and the band area integrated above the "
+                                         f"resulting baseline.")
+                        else:
+                            area_desc = ("the band area was integrated above the computed baseline using "
+                                         f"the '{area_method}' method.")
+
+                        denoise_txt = (f"a Gaussian denoising pre-filter (sigma {denoise_sigma} px) was "
+                                       f"applied to the lane image and "
+                                       if denoise_sigma and float(denoise_sigma) > 0 else "")
+                        speck_txt = (f"Bright connected components smaller than {speck_min_size} px² were "
+                                     f"rejected as specks/noise before the trace was built. "
+                                     if speck_min_size and float(speck_min_size) > 0 else "")
+                        smooth_txt = (f" The profile was smoothed with a Gaussian (sigma {smoothing_sigma} px)."
+                                      if smoothing_sigma and float(smoothing_sigma) > 0 else "")
+
+                        narrative = (
+                            f"For each lane, {denoise_txt}a 1-D intensity profile was obtained by "
+                            f"collapsing the lane width using the '{band_method}' statistic.{smooth_txt} "
+                            f"{speck_txt}An Asymmetric Least Squares (AsLS) baseline was estimated and "
+                            f"peaks (bands) were detected using the height, distance and prominence "
+                            f"thresholds listed in the parameter table. Candidate peaks narrower than the "
+                            f"minimum band width ({min_band_width} px) were discarded. For every retained "
+                            f"band, {area_desc}\n\n"
+                            "Band areas are reported as raw integrated optical density and as a percentage "
+                            "of the lane total."
+                        )
+                        if is_std_mode:
+                            narrative += (
+                                f" Absolute quantities were interpolated from the standard curve using the "
+                                f"'{model_name}' regression model (see the Standard Curve page).")
+
+                        fig = plt.figure(figsize=A4)
+                        fig.suptitle("Method summary — how band areas were calculated",
+                                     fontsize=14, fontweight="bold", y=0.97)
+                        fig.text(0.08, 0.88, narrative, fontsize=10, va="top", ha="left", wrap=True)
+                        pdf.savefig(fig); plt.close(fig)
+
+                        # =============== PAGE 2: ANNOTATED GEL IMAGE ===============
+                        gel_png = _qimage_to_png(gel_qimage)
+                        if gel_png:
+                            try:
+                                gel_arr = np.asarray(Image.open(gel_png).convert("RGBA"))
+                                fig = plt.figure(figsize=A4)
+                                fig.suptitle("Gel image with densitometry regions",
+                                             fontsize=14, fontweight="bold", y=0.97)
+                                ax_img = fig.add_axes([0.05, 0.06, 0.90, 0.86])
+                                ax_img.imshow(gel_arr)
+                                ax_img.axis('off')
+                                fig.text(0.5, 0.025,
+                                         "Yellow outlines mark the densitometry lane bounding boxes; "
+                                         "numbered badges identify each lane. MW markers and labels are "
+                                         "rendered as displayed.",
+                                         fontsize=8, color="#444444", ha="center", wrap=True)
+                                pdf.savefig(fig); plt.close(fig)
+                            except Exception:
+                                traceback.print_exc()
+
+                        # =============== PAGE 3: STANDARD CURVE ===============
+                        if is_std_mode and len(standard_dict_for_export) >= 2:
+                            fig = plt.figure(figsize=A4)
+                            fig.suptitle("Standard curve & calibration fit",
+                                         fontsize=14, fontweight="bold", y=0.97)
+                            quantities = np.array(list(standard_dict_for_export.keys()), dtype=float)
+                            areas = np.array(list(standard_dict_for_export.values()), dtype=float)
+
+                            ax_plot = fig.add_axes([0.12, 0.45, 0.78, 0.42])
+                            ax_plot.scatter(quantities, areas, color="red", zorder=5, s=35,
+                                            label="Standard points")
+                            fit = self._compute_standard_fit(standard_dict_for_export, model_name)
+                            if fit is not None:
+                                lbl = f"{model_name}"
+                                if fit.get('r_squared') is not None:
+                                    lbl += f" (R² = {fit['r_squared']:.4f})"
+                                ax_plot.plot(fit['x'], fit['y'], color="blue", linewidth=1.4, label=lbl)
+                            ax_plot.set_xlabel("Known quantity")
+                            ax_plot.set_ylabel("Measured peak area")
+                            ax_plot.grid(True, linestyle=':', alpha=0.6)
+                            ax_plot.legend(fontsize=8, loc="best")
+
+                            # Fit description
+                            if fit is not None:
+                                fit_text = (f"Model: {model_name}\n"
+                                            f"Equation: {fit['equation']}\n"
+                                            f"Goodness of fit (R²): {fit['r_squared']:.5f}")
+                            else:
+                                fit_text = (f"Model: {model_name}\n"
+                                            "Fit could not be computed (insufficient or unsuitable data).")
+                            fig.text(0.12, 0.40, fit_text, fontsize=9, va="top",
+                                     family="monospace")
+
+                            # Standard data table
+                            std_rows = []
+                            for q, a in sorted(standard_dict_for_export.items(), key=lambda kv: float(kv[0])):
+                                std_rows.append([f"{float(q):.4g}", f"{float(a):.4g}"])
+                            ax_std = fig.add_axes([0.20, 0.06, 0.60, 0.26])
+                            _add_table(ax_std, ["Known quantity", "Total peak area"], std_rows,
+                                       col_widths=[0.5, 0.5], font_size=9)
+                            fig.text(0.5, 0.34, "Standard curve data", fontsize=11,
+                                     fontweight="bold", ha="center")
+                            pdf.savefig(fig); plt.close(fig)
+
+                        # =============== SUMMARY TABLE PAGE ===============
+                        if lane_ids:
+                            fig = plt.figure(figsize=A4)
+                            fig.suptitle("Summary — all lanes & bands", fontsize=14,
+                                         fontweight="bold", y=0.97)
+                            col_labels = ["Lane", "Band", "Peak area", "% of lane"]
+                            if is_std_mode:
+                                col_labels.append("Quantity")
+                            summary_rows = []
+                            for lid in lane_ids:
+                                areas = results_data_for_export[lid].get('areas', [])
+                                qtys = results_data_for_export[lid].get('quantities', [])
+                                total = float(sum(areas)) if areas else 0.0
+                                for i, area in enumerate(areas):
+                                    perc = (area / total * 100.0) if total else 0.0
+                                    row = [str(lid), f"{i+1}", f"{area:.3f}", f"{perc:.2f}%"]
+                                    if is_std_mode:
+                                        qv = ""
+                                        if qtys and i < len(qtys):
+                                            try: qv = f"{float(qtys[i]):.3f}"
+                                            except (ValueError, TypeError): qv = str(qtys[i])
+                                        row.append(qv)
+                                    summary_rows.append(row)
+                                tot_row = [f"Lane {lid}", "Total", f"{total:.3f}", ""]
+                                if is_std_mode:
+                                    tot_row.append("")
+                                summary_rows.append(tot_row)
+                            # paginate the summary if very long
+                            max_rows = 34
+                            for start in range(0, len(summary_rows), max_rows):
+                                chunk = summary_rows[start:start + max_rows]
+                                if start > 0:
+                                    fig = plt.figure(figsize=A4)
+                                    fig.suptitle("Summary — all lanes & bands (cont.)",
+                                                 fontsize=14, fontweight="bold", y=0.97)
+                                ncol = len(col_labels)
+                                ax_sum = fig.add_axes([0.07, 0.05, 0.86, 0.86])
+                                _add_table(ax_sum, col_labels, chunk,
+                                           col_widths=[1.0 / ncol] * ncol, font_size=8)
+                                pdf.savefig(fig); plt.close(fig)
+
+                        # =============== PER-LANE PAGES (image + band table) ===============
+                        font_size_for_labels = getattr(self, "current_label_font_size", 30)
+                        for lid in lane_ids:
+                            fig = plt.figure(figsize=A4)
+                            fig.suptitle(f"Lane {lid} — band detail", fontsize=14,
+                                         fontweight="bold", y=0.97)
+
+                            areas = results_data_for_export[lid].get('areas', [])
+                            qtys = results_data_for_export[lid].get('quantities', [])
+                            details = results_data_for_export[lid].get('details', [])
+                            total = float(sum(areas)) if areas else 0.0
+
+                            # Lane image (same renderer as the Excel export)
+                            pil_img = lane_pil_images.get(lid) if lane_pil_images else None
+                            lane_png = None
+                            if pil_img is not None:
+                                try:
+                                    pm = self._render_lane_pixmap(pil_img, details, font_size_for_labels)
+                                    if pm is not None and not pm.isNull():
+                                        lane_png = _qimage_to_png(pm.toImage())
+                                except Exception:
+                                    traceback.print_exc()
+
+                            if lane_png:
+                                try:
+                                    lane_arr = np.asarray(Image.open(lane_png).convert("RGBA"))
+                                    ax_lane = fig.add_axes([0.06, 0.30, 0.34, 0.60])
+                                    ax_lane.imshow(lane_arr)
+                                    ax_lane.axis('off')
+                                    ax_lane.set_title("Lane image", fontsize=9)
+                                    table_left, table_width = 0.44, 0.50
+                                except Exception:
+                                    table_left, table_width = 0.12, 0.76
+                            else:
+                                table_left, table_width = 0.12, 0.76
+                                fig.text(0.5, 0.88,
+                                         "(Lane image not available for this entry)",
+                                         fontsize=9, color="#888888", ha="center")
+
+                            col_labels = ["Band", "Peak area", "% of lane"]
+                            if is_std_mode:
+                                col_labels.append("Quantity")
+                            rows = []
+                            for i, area in enumerate(areas):
+                                perc = (area / total * 100.0) if total else 0.0
+                                row = [f"{i+1}", f"{area:.3f}", f"{perc:.2f}%"]
+                                if is_std_mode:
+                                    qv = ""
+                                    if qtys and i < len(qtys):
+                                        try: qv = f"{float(qtys[i]):.3f}"
+                                        except (ValueError, TypeError): qv = str(qtys[i])
+                                    row.append(qv)
+                                rows.append(row)
+                            tot_row = ["Total", f"{total:.3f}", ""]
+                            if is_std_mode:
+                                tot_row.append("")
+                            rows.append(tot_row)
+                            ncol = len(col_labels)
+                            ax_tbl = fig.add_axes([table_left, 0.30, table_width, 0.60])
+                            _add_table(ax_tbl, col_labels, rows,
+                                       col_widths=[1.0 / ncol] * ncol, font_size=8)
+                            pdf.savefig(fig); plt.close(fig)
+
+                        # PDF document metadata
+                        d = pdf.infodict()
+                        d['Title'] = f"Gel/Blot Analysis Report — {analysis_name}"
+                        d['Subject'] = "Densitometry analysis report"
+                        d['Creator'] = "Gel/Blot Analyzer"
+                        d['CreationDate'] = datetime.datetime.now()
+
+                    QMessageBox.information(self, "Success", f"PDF report exported to\n{file_path}")
+                except Exception as e:
+                    traceback.print_exc()
+                    QMessageBox.critical(self, "Export Error", f"Could not create PDF report:\n{e}")
+                finally:
+                    for p in temp_files:
+                        try: os.remove(p)
+                        except OSError: pass
+
 
         class PeakAreaDialog(QDialog):
             """
@@ -10609,19 +11152,19 @@ if __name__ == "__main__":
                 self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
 
                 self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
-                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡄"))
+                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬅"))
                 self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
-                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡆"))
+                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⮕"))
                 self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
-                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡅"))
+                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬆"))
                 self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
-                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡇"))
+                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬇"))
                 self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
@@ -17710,7 +18253,7 @@ if __name__ == "__main__":
                 arrow_layout = QHBoxLayout()
                 arrow_layout.setSpacing(2)
                 arrow_font = QFont(); arrow_font.setPointSize(12); arrow_font.setBold(True)
-                for txt, key in [("🡄","Left"), ("🡆","Right"), ("🡅","Up"), ("🡇","Down")]:
+                for txt, key in [("⬅","Left"), ("⮕","Right"), ("⬆","Up"), ("⬇","Down")]:
                     btn = QPushButton(txt)
                     btn.setFixedSize(30, 30)
                     btn.setFont(arrow_font)
@@ -23314,19 +23857,78 @@ if __name__ == "__main__":
                     QMessageBox.critical(self, "SVG Save Error", f"Failed to save SVG file:\n{e}")
             
             
-            def copy_to_clipboard(self):
-                if not self.image_master or self.image_master.isNull(): # Check against master image
-                    QMessageBox.warning(self, "Warning", "No image to copy.")
-                    return
+            def _draw_densitometry_boxes_on_canvas(self, painter, render_scale):
+                """Draw the finalized multi-lane densitometry bounding boxes (and their
+                lane-id badges) onto the high-resolution export canvas. The box geometry is
+                stored in label space, so it is mapped to image space and then scaled by
+                render_scale to match the canvas (image_master and self.image share size)."""
+                try:
+                    lane_defs = getattr(self, 'multi_lane_definitions', None)
+                    if not lane_defs:
+                        return
+                    painter.save()
+                    painter.setRenderHint(QPainter.Antialiasing, True)
+                    box_pen = QPen(QColor(204, 153, 0), max(1.5, 2.0 * render_scale / 3.0), Qt.SolidLine)  # darkYellow
+                    badge_font = QFont("Arial")
+                    badge_font.setBold(True)
+                    badge_font.setPixelSize(max(10, int(11 * render_scale)))
+                    fm = QFontMetrics(badge_font)
 
-                # Clean up any previous temp file from this session
-                self.cleanup_temp_clipboard_file()
+                    for lane_def in lane_defs:
+                        pts_label = lane_def.get('points_label') or []
+                        corners_img = None
+                        if lane_def.get('type') == 'quad' and len(pts_label) == 4:
+                            corners_img = self._map_label_points_to_image_points(pts_label)
+                        elif pts_label:
+                            rect_ls = pts_label[0]
+                            corner_pts = [rect_ls.topLeft(), rect_ls.topRight(),
+                                          rect_ls.bottomRight(), rect_ls.bottomLeft()]
+                            corners_img = self._map_label_points_to_image_points(corner_pts)
+                        if not corners_img or len(corners_img) != 4:
+                            continue
+
+                        poly = QPolygonF([QPointF(p.x() * render_scale, p.y() * render_scale)
+                                          for p in corners_img])
+                        painter.setBrush(Qt.NoBrush)
+                        painter.setPen(box_pen)
+                        painter.drawPolygon(poly)
+
+                        # --- Lane-id badge at the box centroid ---
+                        center = QPointF(sum(p.x() for p in poly) / 4.0,
+                                         sum(p.y() for p in poly) / 4.0)
+                        lane_id_str = str(lane_def.get('id', ''))
+                        if not lane_id_str:
+                            continue
+                        painter.setFont(badge_font)
+                        text_rect = fm.boundingRect(lane_id_str)
+                        diameter = max(text_rect.width(), text_rect.height()) + 8
+                        bg_rect = QRectF(0, 0, diameter, diameter)
+                        bg_rect.moveCenter(center)
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(QColor(255, 255, 255, 200))
+                        painter.drawEllipse(bg_rect)
+                        painter.setBrush(Qt.NoBrush)
+                        painter.setPen(QColor(180, 0, 0))
+                        painter.drawText(bg_rect, Qt.AlignCenter, lane_id_str)
+                    painter.restore()
+                except Exception:
+                    traceback.print_exc()
+
+            def _render_annotated_gel_qimage(self, render_scale=3, draw_densitometry_boxes=False):
+                """Render the fully-adjusted gel image plus all annotations (MW markers,
+                custom markers/shapes, oligomer overlay) onto a high-resolution QImage —
+                this is exactly the image produced by copy_to_clipboard. When
+                draw_densitometry_boxes is True, the finalized multi-lane densitometry
+                bounding boxes (with lane-id badges) are drawn on top as well.
+
+                Returns a QImage on success, or None on failure."""
+                if not self.image_master or self.image_master.isNull():
+                    return None
 
                 # --- Render high-resolution canvas ---
-                render_scale = 3
                 native_width = self.image_master.width()
                 native_height = self.image_master.height()
-                if native_width <= 0 or native_height <= 0: return
+                if native_width <= 0 or native_height <= 0: return None
 
                 # --- START FIX: Create a fully adjusted, high-quality base image ---
                 # 1. Gather all current adjustment settings
@@ -23416,16 +24018,36 @@ if __name__ == "__main__":
                     except Exception: pass
 
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
+
+                # --- Optionally overlay the densitometry lane bounding boxes ---
+                if draw_densitometry_boxes:
+                    self._draw_densitometry_boxes_on_canvas(painter, render_scale)
+
                 painter.end()
-                
-                # --- Publish to clipboard ---
-                # On Windows, Qt's setData("PNG", ...) registers the format through
-                # Qt's own layer. PowerPoint happens to read that, but Microsoft Word
-                # requires PNG bytes to be placed via the native Win32
-                # RegisterClipboardFormat(L"PNG") call. We therefore use ctypes on
-                # Windows to write directly to the Win32 clipboard (no extra package
-                # needed). On macOS the existing Qt path already works for both apps.
+                return render_canvas
+
+            def copy_to_clipboard(self):
+                if not self.image_master or self.image_master.isNull(): # Check against master image
+                    QMessageBox.warning(self, "Warning", "No image to copy.")
+                    return
+
+                # Clean up any previous temp file from this session
+                self.cleanup_temp_clipboard_file()
+
+                render_canvas = self._render_annotated_gel_qimage(render_scale=3, draw_densitometry_boxes=False)
+                if render_canvas is None or render_canvas.isNull():
+                    QMessageBox.warning(self, "Warning", "No image to copy.")
+                    return
+
+                # --- Publish to clipboard in several formats so every target app can
+                #     pick the best one. The critical part for Windows is the "PNG"
+                #     format: Office (Word/PowerPoint) reads CF_DIB from setImageData(),
+                #     which has NO alpha, so transparency is lost. Registering a real
+                #     "PNG" clipboard format makes Office paste with full transparency
+                #     (and full resolution). ---
                 try:
+                    # Straight (non-premultiplied) alpha so colours stay correct once the
+                    # consuming app composites; premultiplied can darken semi-transparent px.
                     out_img = render_canvas.convertToFormat(QImage.Format_ARGB32)
 
                     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
@@ -23434,72 +24056,29 @@ if __name__ == "__main__":
                     if not out_img.save(temp_file_path, "PNG"):
                         raise IOError(f"Failed to save temporary file to {temp_file_path}")
 
-                    # Encode to PNG bytes in-memory (lossless, keeps alpha).
+                    # Encode the canvas to PNG bytes in-memory (lossless, keeps alpha).
                     png_buffer = QBuffer()
                     png_buffer.open(QBuffer.ReadWrite)
                     out_img.save(png_buffer, "PNG")
                     png_bytes = png_buffer.data()
                     png_buffer.close()
 
-                    if sys.platform == "win32":
-                        # ---- Windows: write directly via Win32 clipboard API ----
-                        # This ensures both Word and PowerPoint can read the image.
-                        import ctypes
-                        import ctypes.wintypes
+                    mime_data = QMimeData()
+                    # "PNG" + "image/png": preferred by Word/PowerPoint/modern apps —
+                    # preserves resolution AND transparency on Windows.
+                    if png_bytes is not None and not png_bytes.isEmpty():
+                        mime_data.setData("PNG", png_bytes)
+                        mime_data.setData("image/png", png_bytes)
+                    # File URL for Explorer / file-oriented targets.
+                    mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                    # Legacy raw-image fallback (CF_DIB/DIBV5; may drop alpha in old apps).
+                    mime_data.setImageData(out_img)
 
-                        png_raw = bytes(png_bytes)  # QByteArray → bytes
-
-                        user32   = ctypes.windll.user32
-                        kernel32 = ctypes.windll.kernel32
-
-                        GMEM_MOVEABLE = 0x0002
-                        CF_PNG = user32.RegisterClipboardFormatW("PNG")
-
-                        user32.OpenClipboard(None)
-                        try:
-                            user32.EmptyClipboard()
-
-                            # --- 1. Native PNG format (Word, PowerPoint, modern apps) ---
-                            h_png = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(png_raw))
-                            if h_png:
-                                ptr = kernel32.GlobalLock(h_png)
-                                if ptr:
-                                    ctypes.memmove(ptr, png_raw, len(png_raw))
-                                    kernel32.GlobalUnlock(h_png)
-                                user32.SetClipboardData(CF_PNG, h_png)
-
-                            # --- 2. CF_DIB legacy fallback via Qt (older apps) ---
-                            #    We set this through a temporary QMimeData so Qt
-                            #    handles the DIB conversion; then we steal the handle
-                            #    that Qt already put on the clipboard and re-open ours.
-                            #    Simpler: just also expose setImageData via Qt after
-                            #    closing our own OpenClipboard block.
-                        finally:
-                            user32.CloseClipboard()
-
-                        # Also push a Qt CF_DIB for legacy targets (does NOT clobber
-                        # the CF_PNG we just set because Qt uses SetClipboardData
-                        # for only the formats it knows about; CF_PNG was registered
-                        # with a custom ID so Qt won't touch it).
-                        mime_legacy = QMimeData()
-                        mime_legacy.setImageData(out_img)
-                        mime_legacy.setUrls([QUrl.fromLocalFile(temp_file_path)])
-                        QApplication.clipboard().setMimeData(mime_legacy)
-
-                    else:
-                        # ---- macOS / Linux: existing Qt path (works as-is) ----
-                        mime_data = QMimeData()
-                        if png_bytes is not None and not png_bytes.isEmpty():
-                            mime_data.setData("PNG", png_bytes)
-                            mime_data.setData("image/png", png_bytes)
-                        mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
-                        mime_data.setImageData(out_img)
-                        QApplication.clipboard().setMimeData(mime_data)
-
+                    QApplication.clipboard().setMimeData(mime_data)
                     QMessageBox.information(self, "Copied", "High-resolution image with transparency copied to clipboard.")
 
                 except Exception as e:
-                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard:\n{e}")
+                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard via temporary file:\n{e}")
                     self.cleanup_temp_clipboard_file()
 
 
