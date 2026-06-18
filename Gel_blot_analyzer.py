@@ -2388,7 +2388,7 @@ if __name__ == "__main__":
                 self.current_analysis_custom_name = self.source_image_name_current
                 self.analysis_name_input_widget = None
                 self.analysis_history = [] 
-                self.delete_entry_button = None; self.export_previous_button = None; self.export_pdf_previous_button = None; self.previous_sessions_listwidget = None
+                self.delete_entry_button = None; self.export_previous_button = None; self.previous_sessions_listwidget = None
                 self.previous_results_table = None; self.previous_plot_placeholder_label = None
                 self.previous_plot_groupbox_layout = None; self.previous_plot_canvas_widget = None
                 self.previous_lane_image_preview_label = None 
@@ -2528,13 +2528,8 @@ if __name__ == "__main__":
                 right_layout.addWidget(self.history_results_display_container, 1)
                 previous_table_buttons_layout = QHBoxLayout()
                 copy_previous_button = QPushButton("Copy Active History Lane Table"); copy_previous_button.clicked.connect(self._copy_active_history_lane_table_data)
-                self.export_pdf_previous_button = QPushButton("Export PDF Report")
-                self.export_pdf_previous_button.setToolTip(
-                    "Export a complete, non-editable PDF report for the selected history entry "
-                    "(parameters, standard curve, fitting and per-lane band data).")
-                self.export_pdf_previous_button.clicked.connect(self._export_selected_history_to_pdf); self.export_pdf_previous_button.setEnabled(False)
                 self.export_previous_button = QPushButton("Export Selected History to Excel"); self.export_previous_button.clicked.connect(self._export_selected_history_to_excel); self.export_previous_button.setEnabled(False)
-                previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch(); previous_table_buttons_layout.addWidget(self.export_pdf_previous_button); previous_table_buttons_layout.addWidget(self.export_previous_button)
+                previous_table_buttons_layout.addWidget(copy_previous_button); previous_table_buttons_layout.addStretch(); previous_table_buttons_layout.addWidget(self.export_previous_button)
                 right_layout.addLayout(previous_table_buttons_layout); previous_main_layout.addWidget(right_pane_history_widget, 2)
                 self.tab_widget.addTab(previous_tab_widget, "Analysis History")
                 self._populate_previous_sessions_list()
@@ -2680,7 +2675,6 @@ if __name__ == "__main__":
                 
                 entry = self.analysis_history[selected_row_index]
                 self.delete_entry_button.setEnabled(True); self.export_previous_button.setEnabled(True)
-                if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(True)
 
                 # --- NEW: Set the model combo box from history ---
                 saved_model = entry.get("quantification_model", "Linear") # Default to Linear if not saved
@@ -3119,7 +3113,6 @@ if __name__ == "__main__":
                     self.previous_sessions_listwidget.addItem("No history available.")
                     if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                     if self.export_previous_button: self.export_previous_button.setEnabled(False)
-                    if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(False)
                     return
 
                 for i, entry in enumerate(self.analysis_history):
@@ -3138,7 +3131,6 @@ if __name__ == "__main__":
                 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
-                if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(False)
             def _clear_previous_details_view(self):
                 if hasattr(self, 'history_results_display_layout'):
                     while self.history_results_display_layout.count() > 0:
@@ -3167,7 +3159,6 @@ if __name__ == "__main__":
 
                 if self.delete_entry_button: self.delete_entry_button.setEnabled(False)
                 if self.export_previous_button: self.export_previous_button.setEnabled(False)
-                if self.export_pdf_previous_button: self.export_pdf_previous_button.setEnabled(False)
             def _delete_selected_history_entry(self):
                 if not self.previous_sessions_listwidget: return
                 current_row = self.previous_sessions_listwidget.currentRow()
@@ -3500,46 +3491,6 @@ if __name__ == "__main__":
                     analysis_settings=analysis_settings, model_name=model_name,
                     gel_qimage=gel_qimage, source_image_name=self.source_image_name_current,
                     timestamp=datetime.datetime.now().isoformat())
-
-            def _export_selected_history_to_pdf(self):
-                """Build a PDF report for the currently selected history entry."""
-                if not self.previous_sessions_listwidget:
-                    return
-                row = self.previous_sessions_listwidget.currentRow()
-                if not (0 <= row < len(self.analysis_history)):
-                    QMessageBox.information(self, "No Selection", "Please select a history entry to export.")
-                    return
-
-                entry = self.analysis_history[row]
-                name = entry.get("user_defined_name", "").strip() or entry.get("source_image_name", "UnknownAnalysis")
-                model_name = entry.get("quantification_model", "Linear")
-                if getattr(self, 'model_combo_history', None):
-                    model_name = self.model_combo_history.currentText()
-
-                results_data = entry.get("results_data", {})
-                std_dict = entry.get("standard_dictionary", {})
-
-                # Recompute quantities with the selected model so the PDF matches the on-screen view.
-                if std_dict and self.parent_app and hasattr(self.parent_app, '_perform_quantification'):
-                    std_qtys = list(std_dict.keys()); std_areas = list(std_dict.values())
-                    for lane_id, lane_content in results_data.items():
-                        sample_areas = lane_content.get('areas', [])
-                        if sample_areas:
-                            try:
-                                new_qtys, _ = self.parent_app._perform_quantification(
-                                    model_name, std_qtys, std_areas, sample_areas)
-                                results_data[lane_id]['quantities'] = new_qtys
-                            except Exception:
-                                pass
-
-                self._export_to_pdf_generic(
-                    results_data, name, std_dict,
-                    is_multi_lane_data=entry.get("is_multi_lane", False),
-                    lane_pil_images=None,
-                    analysis_settings=entry.get("analysis_settings", {}),
-                    model_name=model_name, gel_qimage=None,
-                    source_image_name=entry.get("source_image_name", "Unknown"),
-                    timestamp=entry.get("timestamp"))
 
             def _compute_standard_fit(self, standard_dictionary, model_name):
                 """Fit the standard curve and return a dict describing the fit, or None.
