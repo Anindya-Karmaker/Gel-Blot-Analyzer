@@ -4,7 +4,7 @@ import os
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
                              QHBoxLayout, QFrame, QProgressBar, QMessageBox)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QScreen, QGuiApplication, QPixmap
+from PySide6.QtGui import QFont, QScreen, QGuiApplication, QPixmap, QIcon
 import logging
 import traceback
 
@@ -298,6 +298,15 @@ if __name__ == "__main__":
 
         
         app.setFont(QFont("Segoe UI", 10))
+
+        # --- Load and set application-wide window icon ---
+        try:
+            for icon_path in _resource_candidates("Icon.png"):
+                if icon_path and os.path.exists(icon_path):
+                    app.setWindowIcon(QIcon(icon_path))
+                    break
+        except Exception as e_app_icon:
+            pass # print(f"Warning: Could not set application icon: {e_app_icon}")
 
         try:
             loading_dialog = MinimalLoadingDialog()
