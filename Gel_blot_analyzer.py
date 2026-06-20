@@ -23985,20 +23985,110 @@ if __name__ == "__main__":
                 # Clean up any previous temp file from this session
                 self.cleanup_temp_clipboard_file()
 
-                render_canvas = self._render_annotated_gel_qimage(render_scale=3, draw_densitometry_boxes=False)
-                if render_canvas is None or render_canvas.isNull():
-                    QMessageBox.warning(self, "Warning", "No image to copy.")
-                    return
+                # --- Render high-resolution canvas ---
+                render_scale = 3
+                native_width = self.image_master.width()
+                native_height = self.image_master.height()
+                if native_width <= 0 or native_height <= 0: return
 
-                # --- Publish to clipboard in several formats so every target app can
-                #     pick the best one. The critical part for Windows is the "PNG"
-                #     format: Office (Word/PowerPoint) reads CF_DIB from setImageData(),
-                #     which has NO alpha, so transparency is lost. Registering a real
-                #     "PNG" clipboard format makes Office paste with full transparency
-                #     (and full resolution). ---
+                # --- START FIX: Create a fully adjusted, high-quality base image ---
+                # 1. Gather all current adjustment settings
+                current_adjustment_settings = {
+                    'is_inverted': self.main_image_is_inverted,
+                    'levels_gamma': {
+                        'black_point': self.black_point_slider.value(),
+                        'white_point': self.white_point_slider.value(),
+                        'gamma': self.gamma_slider.value()
+                    },
+                    'channel_mixer': self.channel_mixer_data.copy(),
+                    'unsharp_mask': self.unsharp_mask_data.copy(),
+                    'clahe': self.clahe_data.copy()
+                }
+
+                # 2. Use the single, reliable helper function to apply all adjustments
+                #    to the master image, just like save_image() does.
+                base_image_for_copy = self._apply_all_adjustments_to_image(self.image_master, current_adjustment_settings)
+                # --- END FIX ---
+
+
+                canvas_width = native_width * render_scale
+                canvas_height = native_height * render_scale
+                # Use a high-quality format for the canvas
+                render_canvas = QImage(canvas_width, canvas_height, QImage.Format_ARGB32_Premultiplied)
+                render_canvas.fill(Qt.transparent)
+                
+                painter = QPainter(render_canvas)
+                if not painter.isActive(): return
+                
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+                # Draw the fully adjusted high-quality image as the base
+                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_image_for_copy, QRectF(base_image_for_copy.rect()))
+                
+                # --- The rest of the drawing logic for annotations is correct and remains unchanged ---
+                label_width = float(self.live_view_label.width()); label_height = float(self.live_view_label.height())
+                scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
+                
+                # Apply UI Scale Preference to the Font Size
+                current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
+                font_scale_factor = (render_scale / scale_native_to_view * current_ui_scale) if scale_native_to_view > 1e-6 else (render_scale * current_ui_scale)
+
+                painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
+                def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
+                std_font = QFont(self.font_family)
+                std_font.setPixelSize(int(self.font_size * font_scale_factor))
+                painter.setFont(std_font); painter.setPen(self.font_color)
+                fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
+                for y_img, text in self.left_markers:
+                    anchor_x = self.left_marker_shift_added * render_scale; anchor_y = y_img * render_scale
+                    full_text = self.marker_label_text(text, 'left')
+                    painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
+                for y_img, text in self.right_markers:
+                    anchor_x = self.right_marker_shift_added * render_scale; anchor_y = y_img * render_scale
+                    full_text = self.marker_label_text(text, 'right')
+                    painter.drawText(QPointF(anchor_x, anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
+                for x_img, text in self.top_markers:
+                    painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
+                    painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
+                    _clip_axis = getattr(self, 'top_rotation_axis', 'left')
+                    if _clip_axis == 'center':
+                        _fm_clip = QFontMetrics(painter.font())
+                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text)) / 2.0
+                    elif _clip_axis == 'right':
+                        _fm_clip = QFontMetrics(painter.font())
+                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text))
+                    else:
+                        _clip_x_off = 0.0
+                    painter.drawText(QPointF(_clip_x_off, 0), str(text)); painter.restore()
+                for marker_data in getattr(self, "custom_markers", []):
+                    try:
+                        x, y, text, color, font, size, is_bold, is_italic = marker_data
+                        custom_font = QFont(font); custom_font.setPixelSize(int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
+                        painter.setFont(custom_font); painter.setPen(QColor(color))
+                        fm = QFontMetrics(custom_font); rect = fm.boundingRect(text)
+                        draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
+                        painter.drawText(draw_pos, text)
+                    except Exception: pass
+                for shape_data in getattr(self, "custom_shapes", []):
+                    try:
+                        shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
+                        pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
+                        if shape_type == 'line': painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
+                        elif shape_type == 'rectangle':
+                            x, y, w, h = shape_data['rect']
+                            painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
+                    except Exception: pass
+
+                self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
+                painter.end()
+                
+                # --- Publish to clipboard ---
+                # On Windows, Qt's setData("PNG", ...) registers the format through
+                # Qt's own layer. PowerPoint happens to read that, but Microsoft Word
+                # requires PNG bytes to be placed via the native Win32
+                # RegisterClipboardFormat(L"PNG") call. We therefore use ctypes on
+                # Windows to write directly to the Win32 clipboard (no extra package
+                # needed). On macOS the existing Qt path already works for both apps.
                 try:
-                    # Straight (non-premultiplied) alpha so colours stay correct once the
-                    # consuming app composites; premultiplied can darken semi-transparent px.
                     out_img = render_canvas.convertToFormat(QImage.Format_ARGB32)
 
                     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
@@ -24007,29 +24097,72 @@ if __name__ == "__main__":
                     if not out_img.save(temp_file_path, "PNG"):
                         raise IOError(f"Failed to save temporary file to {temp_file_path}")
 
-                    # Encode the canvas to PNG bytes in-memory (lossless, keeps alpha).
+                    # Encode to PNG bytes in-memory (lossless, keeps alpha).
                     png_buffer = QBuffer()
                     png_buffer.open(QBuffer.ReadWrite)
                     out_img.save(png_buffer, "PNG")
                     png_bytes = png_buffer.data()
                     png_buffer.close()
 
-                    mime_data = QMimeData()
-                    # "PNG" + "image/png": preferred by Word/PowerPoint/modern apps —
-                    # preserves resolution AND transparency on Windows.
-                    if png_bytes is not None and not png_bytes.isEmpty():
-                        mime_data.setData("PNG", png_bytes)
-                        mime_data.setData("image/png", png_bytes)
-                    # File URL for Explorer / file-oriented targets.
-                    mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
-                    # Legacy raw-image fallback (CF_DIB/DIBV5; may drop alpha in old apps).
-                    mime_data.setImageData(out_img)
+                    if sys.platform == "win32":
+                        # ---- Windows: write directly via Win32 clipboard API ----
+                        # This ensures both Word and PowerPoint can read the image.
+                        import ctypes
+                        import ctypes.wintypes
 
-                    QApplication.clipboard().setMimeData(mime_data)
+                        png_raw = bytes(png_bytes)  # QByteArray → bytes
+
+                        user32   = ctypes.windll.user32
+                        kernel32 = ctypes.windll.kernel32
+
+                        GMEM_MOVEABLE = 0x0002
+                        CF_PNG = user32.RegisterClipboardFormatW("PNG")
+
+                        user32.OpenClipboard(None)
+                        try:
+                            user32.EmptyClipboard()
+
+                            # --- 1. Native PNG format (Word, PowerPoint, modern apps) ---
+                            h_png = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(png_raw))
+                            if h_png:
+                                ptr = kernel32.GlobalLock(h_png)
+                                if ptr:
+                                    ctypes.memmove(ptr, png_raw, len(png_raw))
+                                    kernel32.GlobalUnlock(h_png)
+                                user32.SetClipboardData(CF_PNG, h_png)
+
+                            # --- 2. CF_DIB legacy fallback via Qt (older apps) ---
+                            #    We set this through a temporary QMimeData so Qt
+                            #    handles the DIB conversion; then we steal the handle
+                            #    that Qt already put on the clipboard and re-open ours.
+                            #    Simpler: just also expose setImageData via Qt after
+                            #    closing our own OpenClipboard block.
+                        finally:
+                            user32.CloseClipboard()
+
+                        # Also push a Qt CF_DIB for legacy targets (does NOT clobber
+                        # the CF_PNG we just set because Qt uses SetClipboardData
+                        # for only the formats it knows about; CF_PNG was registered
+                        # with a custom ID so Qt won't touch it).
+                        mime_legacy = QMimeData()
+                        mime_legacy.setImageData(out_img)
+                        mime_legacy.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                        QApplication.clipboard().setMimeData(mime_legacy)
+
+                    else:
+                        # ---- macOS / Linux: existing Qt path (works as-is) ----
+                        mime_data = QMimeData()
+                        if png_bytes is not None and not png_bytes.isEmpty():
+                            mime_data.setData("PNG", png_bytes)
+                            mime_data.setData("image/png", png_bytes)
+                        mime_data.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                        mime_data.setImageData(out_img)
+                        QApplication.clipboard().setMimeData(mime_data)
+
                     QMessageBox.information(self, "Copied", "High-resolution image with transparency copied to clipboard.")
 
                 except Exception as e:
-                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard via temporary file:\n{e}")
+                    QMessageBox.critical(self, "Copy Error", f"Could not copy image to clipboard:\n{e}")
                     self.cleanup_temp_clipboard_file()
 
 
