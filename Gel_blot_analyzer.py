@@ -11103,19 +11103,19 @@ if __name__ == "__main__":
                 self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
 
                 self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
-                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬅"))
+                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡄"))
                 self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
-                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⮕"))
+                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡆"))
                 self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
-                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬆"))
+                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡅"))
                 self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
-                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("⬇"))
+                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡇"))
                 self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
@@ -18204,7 +18204,7 @@ if __name__ == "__main__":
                 arrow_layout = QHBoxLayout()
                 arrow_layout.setSpacing(2)
                 arrow_font = QFont(); arrow_font.setPointSize(12); arrow_font.setBold(True)
-                for txt, key in [("⬅","Left"), ("⮕","Right"), ("⬆","Up"), ("⬇","Down")]:
+                for txt, key in [("🡄","Left"), ("🡆","Right"), ("🡅","Up"), ("🡇","Down")]:
                     btn = QPushButton(txt)
                     btn.setFixedSize(30, 30)
                     btn.setFont(arrow_font)
