@@ -1,0 +1,471 @@
+{
+    "adding_white_space": {
+        "left": "69",
+        "right": "69",
+        "top": "72",
+        "bottom": "0",
+        "transparency": 1
+    },
+    "marker_positions": {
+        "left": [
+            [
+                119.0533447265625,
+                "250"
+            ],
+            [
+                175.1754913330078,
+                "150"
+            ],
+            [
+                225.19158935546875,
+                "100"
+            ],
+            [
+                268.523193359375,
+                "75"
+            ],
+            [
+                323.8792724609375,
+                "50"
+            ],
+            [
+                364.6622314453125,
+                "37"
+            ],
+            [
+                423.4429931640625,
+                "25"
+            ],
+            [
+                445.0398254394531,
+                "20"
+            ],
+            [
+                492.77056884765625,
+                "15"
+            ],
+            [
+                532.011962890625,
+                "10"
+            ]
+        ],
+        "right": [
+            [
+                121.06086956521739,
+                "250"
+            ],
+            [
+                176.1804347826087,
+                "150"
+            ],
+            [
+                225.28695652173914,
+                "100"
+            ],
+            [
+                266.3760869565217,
+                "75"
+            ],
+            [
+                321.4956521739131,
+                "50"
+            ],
+            [
+                363.5869565217392,
+                "37"
+            ],
+            [
+                424.7195652173913,
+                "25"
+            ],
+            [
+                447.7695652173913,
+                "20"
+            ],
+            [
+                496.87608695652176,
+                "15"
+            ],
+            [
+                536.9630434782609,
+                "10"
+            ]
+        ],
+        "top": []
+    },
+    "marker_labels": {
+        "top": [
+            "MWM",
+            "L1",
+            "L2",
+            "L3",
+            "L4",
+            "L5",
+            "L6",
+            "L7",
+            "L8",
+            "L9",
+            "L10",
+            "L11",
+            "L12",
+            "L13",
+            "L14",
+            "L15"
+        ],
+        "left": [
+            "250",
+            "150",
+            "100",
+            "75",
+            "50",
+            "37",
+            "25",
+            "20",
+            "15",
+            "10"
+        ],
+        "right": [
+            "250",
+            "150",
+            "100",
+            "75",
+            "50",
+            "37",
+            "25",
+            "20",
+            "15",
+            "10"
+        ]
+    },
+    "marker_padding": {
+        "top": 72,
+        "left": 68,
+        "right": 762
+    },
+    "font_options": {
+        "font_family": "Arial",
+        "font_size": 12,
+        "font_rotation": -45,
+        "font_color": "#000000",
+        "top_rotation_axis": "left",
+        "marker_symbol": "\u23af"
+    },
+    "slider_ranges": {
+        "left": [
+            -100,
+            930
+        ],
+        "right": [
+            -100,
+            930
+        ],
+        "top": [
+            -100,
+            655
+        ]
+    },
+    "added_shift": {
+        "left": 68,
+        "right": 762,
+        "top": 72
+    },
+    "image_adjustments": {
+        "is_inverted": false,
+        "levels_gamma": {
+            "black_point": 0,
+            "white_point": 255,
+            "gamma": 100
+        },
+        "channel_mixer": {
+            "r": 100,
+            "g": 100,
+            "b": 100,
+            "mono": false
+        },
+        "unsharp_mask": {
+            "amount": 0,
+            "radius": 1.0,
+            "threshold": 0
+        },
+        "clahe": {
+            "clip_limit": 1.0,
+            "tile_size": 2
+        },
+        "perspective_target_ratio": 0.0
+    },
+    "multi_lane_definitions": [
+        {
+            "type": "rectangle",
+            "id": 1,
+            "points_label": [
+                [
+                    108.66015625,
+                    166.6640625,
+                    47.90234375,
+                    56.65234375
+                ]
+            ],
+            "points_image": [
+                "rectangle",
+                151.23253348214283,
+                264.28158482142857,
+                227.19196428571428,
+                354.116015625
+            ]
+        },
+        {
+            "type": "rectangle",
+            "id": 2,
+            "points_label": [
+                [
+                    158.123046875,
+                    166.6640625,
+                    47.90234375,
+                    56.65234375
+                ]
+            ],
+            "points_image": [
+                "rectangle",
+                229.66654575892855,
+                264.28158482142857,
+                305.6259765625,
+                354.116015625
+            ]
+        },
+        {
+            "type": "rectangle",
+            "id": 3,
+            "points_label": [
+                [
+                    212.208984375,
+                    166.6640625,
+                    47.90234375,
+                    56.65234375
+                ]
+            ],
+            "points_image": [
+                "rectangle",
+                315.43138950892853,
+                264.28158482142857,
+                391.3908203125,
+                354.116015625
+            ]
+        },
+        {
+            "type": "rectangle",
+            "id": 4,
+            "points_label": [
+                [
+                    268.708984375,
+                    166.6640625,
+                    47.90234375,
+                    56.65234375
+                ]
+            ],
+            "points_image": [
+                "rectangle",
+                405.0242466517857,
+                264.28158482142857,
+                480.9836774553571,
+                354.116015625
+            ]
+        },
+        {
+            "type": "rectangle",
+            "id": 5,
+            "points_label": [
+                [
+                    322.111328125,
+                    166.6640625,
+                    47.90234375,
+                    56.65234375
+                ]
+            ],
+            "points_image": [
+                "rectangle",
+                489.7051060267857,
+                264.28158482142857,
+                565.6645368303572,
+                354.116015625
+            ]
+        },
+        {
+            "type": "rectangle",
+            "id": 6,
+            "points_label": [
+                [
+                    379.044921875,
+                    166.6640625,
+                    47.90234375,
+                    56.65234375
+                ]
+            ],
+            "points_image": [
+                "rectangle",
+                579.9855189732143,
+                264.28158482142857,
+                655.9449497767857,
+                354.116015625
+            ]
+        }
+    ],
+    "single_quad_points": [],
+    "single_bounding_box": null,
+    "custom_markers": [
+        {
+            "x": 117.43785850860421,
+            "y": 42.62428298279158,
+            "text": "M",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 693.5181644359465,
+            "y": 42.62428298279158,
+            "text": "M",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 42.848948374760994,
+            "y": 42.62428298279158,
+            "text": "TSP (ng)",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 184.09177820267686,
+            "y": 42.62428298279158,
+            "text": "250",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 272.9636711281071,
+            "y": 42.62428298279158,
+            "text": "500",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 353.9005736137667,
+            "y": 42.62428298279158,
+            "text": "1000",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 441.1854684512428,
+            "y": 42.62428298279158,
+            "text": "2000",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 525.2963671128107,
+            "y": 42.62428298279158,
+            "text": "4000",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 614.1682600382409,
+            "y": 42.62428298279158,
+            "text": "8000",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        },
+        {
+            "x": 423.7284894837476,
+            "y": 14.058317399617579,
+            "text": "Standard Concentrations",
+            "color": "#000000",
+            "font": "Arial",
+            "font_size": 12,
+            "bold": false,
+            "italic": false
+        }
+    ],
+    "custom_shapes": [
+        {
+            "color": "#000000",
+            "rect": [
+                69.8,
+                72.8,
+                691.9,
+                479.7
+            ],
+            "thickness": 1,
+            "type": "rectangle"
+        },
+        {
+            "color": "#000000",
+            "end": [
+                655.4302103250478,
+                28.341300191204574
+            ],
+            "start": [
+                165.04780114722752,
+                28.341300191204574
+            ],
+            "thickness": 1,
+            "type": "line"
+        }
+    ],
+    "quantities_peak_area_dict": {
+        "250.0": 2212807.5219405247,
+        "500.0": 5498140.753572486,
+        "1000.0": 11955766.976134507,
+        "2000.0": 28304100.526882797
+    },
+    "protein_analysis_data": {
+        "protein_sequence": "EDPQGDAAQKTDTSHHDQDHPTFNKITPNLAEFAFSLYRQLAHQSNSTNIFFSPVSIATAFAMLSLGTKADTHDEILEGLNFNLTEIPEAQIHEGFQELLRTLNQPDSQLQLTTGNGLFLSEGLKLVDKFLEDVKKLYHSEAFTVNFGDTEEAKKQINDYVEKGTQGKIVDLVKELDRDTVFALVNYIFFKGKWERPFEVKDTEEEDFHVDQVTTVKVPMMKRLGMFNIQHCKKLSSWVLLMKYLGNATAIFFLPDEGKLQHLENELTHDIITKFLENEDRRSASLHLPKLSITGTYDLKSVLGQLGITKVFSNGADLSGVTEEAPLKLSKAVHKAVLTIDEKGTEAAGAVFLEAIPVSIPPEVKFNKPFVFLMIEQNTKSPLFMGKVVNPTQK",
+        "base_protein_mw": 44.26043,
+        "avg_glycan_mass": 3.7,
+        "num_oligomers_to_model": 1,
+        "num_glycans_to_model": 3,
+        "last_predicted_mw": 0.0,
+        "last_mw_prediction_model": null
+    },
+    "peak_dialog_settings": {
+        "rolling_ball_radius": 50,
+        "peak_height_factor": 0.1,
+        "peak_distance": 10,
+        "peak_prominence_factor": 0.0,
+        "valley_offset_pixels": 0,
+        "band_estimation_method": "Sum",
+        "area_subtraction_method": "Rolling-valley",
+        "smoothing_sigma": 0.0,
+        "denoise_sigma": 0.0,
+        "min_band_width": 3,
+        "auto_adjust_rb_radius": false,
+        "is_inverted": false
+    }
+}
