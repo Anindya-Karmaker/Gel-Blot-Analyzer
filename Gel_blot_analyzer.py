@@ -13,6 +13,20 @@ APP_NAME = "Gel Blot Analyzer"
 APP_VERSION = "7.5"
 APP_DEVELOPER = "Anindya Karmaker"
 
+if sys.platform == "darwin":
+    APP_LEFT_MARKER = "⬅"
+    APP_RIGHT_MARKER = "➡"
+    APP_UP_MARKER = "⬆"
+    APP_DOWN_MARKER = "⬇"
+else:
+    APP_LEFT_MARKER = "🡄"
+    APP_RIGHT_MARKER = "🡆"
+    APP_UP_MARKER = "🡅"
+    APP_DOWN_MARKER = "🡇"
+    
+
+
+
 
 def _resource_candidates(filename):
     """Yield possible on-disk locations for a bundled resource (e.g. Icon.png),
@@ -11112,19 +11126,19 @@ if __name__ == "__main__":
                 self.top_marker_shortcut.activated.connect(self.enable_top_marker_mode)
 
                 self.custom_marker_left_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
-                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡄"))
+                self.custom_marker_left_arrow_shortcut.activated.connect(lambda: self.arrow_marker(APP_LEFT_MARKER))
                 self.custom_marker_left_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_right_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
-                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡆"))
+                self.custom_marker_right_arrow_shortcut.activated.connect(lambda: self.arrow_marker(APP_RIGHT_MARKER))
                 self.custom_marker_right_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_top_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Up"), self)
-                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡅"))
+                self.custom_marker_top_arrow_shortcut.activated.connect(lambda: self.arrow_marker(APP_UP_MARKER))
                 self.custom_marker_top_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.custom_marker_bottom_arrow_shortcut = QShortcut(QKeySequence("Ctrl+Down"), self)
-                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker("🡇"))
+                self.custom_marker_bottom_arrow_shortcut.activated.connect(lambda: self.arrow_marker(APP_DOWN_MARKER))
                 self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
@@ -18213,7 +18227,7 @@ if __name__ == "__main__":
                 arrow_layout = QHBoxLayout()
                 arrow_layout.setSpacing(2)
                 arrow_font = QFont(); arrow_font.setPointSize(12); arrow_font.setBold(True)
-                for txt, key in [("🡄","Left"), ("🡆","Right"), ("🡅","Up"), ("🡇","Down")]:
+                for txt, key in [(APP_LEFT_MARKER,"Left"), (APP_RIGHT_MARKER,"Right"), (APP_UP_MARKER,"Up"), (APP_DOWN_MARKER,"Down")]:
                     btn = QPushButton(txt)
                     btn.setFixedSize(30, 30)
                     btn.setFont(arrow_font)
