@@ -23,8 +23,10 @@ dependencies:
   - numpy              # Fundamental package for numerical operations
   - scipy              # For scientific algorithms (signal processing, interpolation)
   - scikit-image       # For advanced image processing algorithms (e.g., rolling ball)
+  - tifffile           # For reading/writing multi-channel TIFF image exports
   - pillow             # For core image file I/O and manipulation
   - openpyxl           # For reading and writing Excel (.xlsx) files
+  - lmfit              # For multi-Gaussian / multi-EMG peak curve fitting
 
   # --- Plotting ---
   - matplotlib         # For generating all scientific plots and graphs

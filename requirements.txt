@@ -1,15 +1,17 @@
 # Core GUI Framework
-PyQt5
+PySide6
 
 # Image Processing & Manipulation
 Pillow
 opencv-python
 scikit-image
+tifffile
 
 # Numerical & Scientific Computing
 numpy
 scipy
 matplotlib
+lmfit
 
 # Excel File Handling
 openpyxl
