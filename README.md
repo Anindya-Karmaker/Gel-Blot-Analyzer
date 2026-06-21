@@ -155,6 +155,11 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 4.  The final, self-contained application will be located in the `dist` folder.
 
 ---
+## Grant Information
+
+The authors gratefully acknowledge financial support from the National Science Foundation (Grant No. 2016563) and McDonald-Nandi lab at UC Davis. This grant funded the Alpha-1 antitrypsin project, which served as a case study for demonstrating the utility of the software.
+
+---
 
 ## Citation
 
