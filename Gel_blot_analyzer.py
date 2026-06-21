@@ -15,7 +15,7 @@ APP_DEVELOPER = "Anindya Karmaker"
 
 if sys.platform == "darwin":
     APP_LEFT_MARKER = "⬅"
-    APP_RIGHT_MARKER = "➡"
+    APP_RIGHT_MARKER = "⮕"
     APP_UP_MARKER = "⬆"
     APP_DOWN_MARKER = "⬇"
 else:
