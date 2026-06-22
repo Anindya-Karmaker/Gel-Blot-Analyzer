@@ -160,7 +160,11 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 The authors gratefully acknowledge financial support from the National Science Foundation (Grant No. 2016563) and McDonald-Nandi lab at UC Davis. This grant funded the Alpha-1 antitrypsin project, which served as a case study for demonstrating the utility of the software.
 
 ---
+## Acknowledgement
 
+I am grateful to the McDonald-Nandi lab for their input and continous support.
+
+---
 ## Citation
 
 If you use Gel Blot Analyzer in your research, presentations, or publications, please cite it. Your citation helps other researchers and students discover this tool.
@@ -181,7 +185,3 @@ Karmaker, Anindya. _Gel Blot Analyzer_, Version 7.5, 2026. GitHub, https://githu
   note         = {Version 7.5}
 }
 
----
-## Acknowledgement
-
-I am grateful to the McDonald-Nandi lab for their input and continous support.
