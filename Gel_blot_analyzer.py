@@ -20703,12 +20703,83 @@ if __name__ == "__main__":
                 if file_path:
                     self.open_image_from_path(file_path)
 
+            def _load_tiff_preserve_depth(self, file_path):
+                """Read a TIFF with tifffile so 16-bit depth survives the round-trip.
+
+                Qt's TIFF reader downsamples (or fails outright with Format_Invalid on
+                16-bit RGBA), and PIL reads 16-bit RGBA as 8-bit. tifffile preserves the
+                native uint16 data. Returns a QImage, or None to let the normal Qt/PIL
+                loaders handle it (e.g. plain 8-bit TIFFs, where Qt has correct channel
+                order and there's nothing to preserve)."""
+                try:
+                    import tifffile
+                    arr = np.asarray(tifffile.imread(file_path))
+                except Exception:
+                    return None
+
+                if arr is None or arr.size == 0:
+                    return None
+
+                # Drop singleton leading dims (e.g. (1, H, W, C) page stacks).
+                while arr.ndim > 3 and arr.shape[0] == 1:
+                    arr = arr[0]
+
+                # Planar (C, H, W) -> interleaved (H, W, C).
+                if arr.ndim == 3 and arr.shape[2] not in (3, 4) and arr.shape[0] in (3, 4):
+                    arr = np.moveaxis(arr, 0, -1)
+
+                # Only intervene for high-bit-depth data. Let Qt read plain 8-bit TIFFs
+                # so its (correct) channel ordering is used.
+                if arr.dtype == np.uint8:
+                    return None
+
+                if arr.dtype != np.uint16:
+                    # Float or higher-precision: normalise into the 16-bit range.
+                    a = arr.astype(np.float64)
+                    mx = float(a.max()) if a.size else 0.0
+                    if mx <= 0.0:
+                        mx = 1.0
+                    arr = np.clip(a / mx, 0.0, 1.0)
+                    arr = (arr * 65535.0).astype(np.uint16)
+
+                # Only shapes numpy_to_qimage understands: 2-D, or H x W x {3,4}.
+                if not (arr.ndim == 2 or (arr.ndim == 3 and arr.shape[2] in (3, 4))):
+                    return None
+
+                try:
+                    qimg = self.numpy_to_qimage(np.ascontiguousarray(arr))
+                except Exception:
+                    return None
+                return qimg if (qimg is not None and not qimg.isNull()) else None
+
             def open_image_from_path(self, file_path):
                 """Loads the image from a specific path (Used by Load Action and Drag & Drop)."""
                 self.reset_image() # Clear previous state
 
                 self.image_path = file_path
-                loaded_image = QImage(self.image_path)                    
+
+                # Let Qt open the file FIRST. On macOS, the first framework to touch a
+                # TCC-protected folder (Downloads/Desktop/Documents) establishes the
+                # access grant; doing a pure-Python read (tifffile) first instead can be
+                # denied (EPERM) and then poison later plain open() calls (e.g. the
+                # config .txt). Qt-first matches the original, working access pattern.
+                loaded_image = QImage(self.image_path)
+
+                # For TIFFs, use tifffile only to UPGRADE depth: Qt's TIFF reader returns
+                # Format_Invalid for 16-bit RGBA (and PIL silently downsamples it to
+                # 8-bit), which would turn a saved 64-bit image back into 32-bit on
+                # reload. tifffile preserves uint16. Runs after Qt, so the folder grant
+                # is already in place.
+                _ext = os.path.splitext(self.image_path)[1].lower()
+                if _ext in ('.tif', '.tiff'):
+                    _8bit_formats = (
+                        QImage.Format_Grayscale8, QImage.Format_ARGB32, QImage.Format_RGB32,
+                        QImage.Format_ARGB32_Premultiplied, QImage.Format_RGB888, QImage.Format_RGBA8888,
+                    )
+                    if loaded_image.isNull() or loaded_image.format() in _8bit_formats:
+                        hi_depth = self._load_tiff_preserve_depth(self.image_path)
+                        if hi_depth is not None and not hi_depth.isNull():
+                            loaded_image = hi_depth
 
                 if loaded_image.isNull():
                     # Try loading with Pillow as fallback
@@ -20765,8 +20836,22 @@ if __name__ == "__main__":
                     loaded_config_data = None
                     if os.path.exists(config_path):
                         try:
-                            with open(config_path, "r") as config_file:
-                                config_data = json.load(config_file)
+                            try:
+                                with open(config_path, "r") as config_file:
+                                    config_text = config_file.read()
+                            except (PermissionError, OSError):
+                                # macOS may deny Python's open() in a protected folder
+                                # (Downloads/Desktop/Documents) even though Qt has access
+                                # to the sibling image we just loaded. Read via Qt instead.
+                                from PySide6.QtCore import QFile, QIODevice
+                                qf = QFile(config_path)
+                                if not qf.open(QIODevice.ReadOnly | QIODevice.Text):
+                                    raise PermissionError(f"[Errno 1] Operation not permitted: '{config_path}'")
+                                try:
+                                    config_text = bytes(qf.readAll()).decode("utf-8")
+                                finally:
+                                    qf.close()
+                            config_data = json.loads(config_text)
                             # Apply loaded settings (this will overwrite main_image_is_inverted if defined in config)
                             self.apply_config(config_data, load_analysis=False)
                             loaded_config_data = config_data
@@ -23616,7 +23701,17 @@ if __name__ == "__main__":
                 try:
                     from PIL import Image
                     if arr.dtype == np.uint16 and has_alpha:
-                        Image.fromarray((arr >> 8).astype(np.uint8), 'RGBA').save(path, format='TIFF')  # Pillow can't do 16-bit RGBA
+                        # Pillow can't write 16-bit RGBA. Rather than silently dropping to
+                        # 8-bit, preserve full depth when the data is grayscale-equivalent
+                        # (R==G==B, the common gel case) by writing a 16-bit grayscale TIFF.
+                        rgb = arr[:, :, :3]
+                        if np.array_equal(rgb[:, :, 0], rgb[:, :, 1]) and np.array_equal(rgb[:, :, 1], rgb[:, :, 2]):
+                            Image.fromarray(rgb[:, :, 0], 'I;16').save(path, format='TIFF')
+                        else:
+                            # True 16-bit colour: Pillow has no 16-bit RGB(A) writer, so this
+                            # path can only fall back to 8-bit. Reached only if tifffile is
+                            # unavailable (it is a project dependency and handled above).
+                            Image.fromarray((arr >> 8).astype(np.uint8), 'RGBA').save(path, format='TIFF')
                     elif arr.dtype == np.uint16:
                         Image.fromarray(arr, 'I;16').save(path, format='TIFF')
                     elif has_alpha:
