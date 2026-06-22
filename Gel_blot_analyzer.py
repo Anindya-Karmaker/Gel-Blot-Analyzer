@@ -16414,6 +16414,8 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.warning(self, "Error", "Conversion failed.")
 
+                self._update_status_bar()
+
             def _get_default_adjustments(self):
                 """Returns a dictionary with default adjustment settings."""
                 return {
