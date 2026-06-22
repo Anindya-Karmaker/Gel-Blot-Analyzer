@@ -165,23 +165,5 @@ The authors gratefully acknowledge financial support from the National Science F
 I am grateful to the McDonald-Nandi and Zhao lab for their input and continous support.
 
 ---
-## Citation
 
-If you use Gel Blot Analyzer in your research, presentations, or publications, please cite it. Your citation helps other researchers and students discover this tool.
-
-#### APA Style (7th Edition)
-Karmaker, A. (2026). _Gel Blot Analyzer_ (Version 7.5) [Computer software]. https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer
-
-#### MLA Style (9th Edition)
-Karmaker, Anindya. _Gel Blot Analyzer_, Version 7.5, 2026. GitHub, https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer.
-
-#### BibTeX Format
-```bibtex
-@misc{Karmaker_GelBlotAnalyzer_2026,
-  author       = {Karmaker, Anindya},
-  title        = {{Gel Blot Analyzer}},
-  year         = {2026},
-  howpublished = {\url{https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer}},
-  note         = {Version 7.5}
-}
 
