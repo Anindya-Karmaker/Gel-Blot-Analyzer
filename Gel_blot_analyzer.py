@@ -10861,6 +10861,7 @@ if __name__ == "__main__":
                 self.gpu_device_id = ":GPU:0" # Default to 0 (usually Integrated)
                 self.use_gpu = True
                 
+                
                 # Locate config file path early
                 app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
                 if not os.path.exists(app_path):
@@ -11290,6 +11291,8 @@ if __name__ == "__main__":
                 self.load_config()
                 self._update_main_layout(self.viewer_position)
 
+                
+
                 # Update the checked state of the correct layout button in the toolbar
                 if self.viewer_position == "Top": self.layout_top_action.setChecked(True)
                 elif self.viewer_position == "Bottom": self.layout_bottom_action.setChecked(True)
@@ -11297,8 +11300,11 @@ if __name__ == "__main__":
                 elif self.viewer_position == "Right": self.layout_right_action.setChecked(True)
                 
                 self._apply_initial_theme(self.current_theme)
+                self.setStyleSheet('light_stylesheet')
                 self._update_toolbar_icons()
                 self._update_levels_histogram()
+                
+                
 
             def resizeEvent(self, event):
                 """Trigger auto-save 1 second after the user stops resizing."""
