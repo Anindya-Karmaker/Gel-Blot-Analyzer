@@ -15,7 +15,7 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 
 </div>
 
-<img src="https://github.com/user-attachments/assets/ae3a628c-8593-428b-81c0-66f7804f535c" width="1036" height="1127" alt="Gel Blot Analyzer main interface showing an annotated gel image">
+<img src="https://github.com/user-attachments/assets/8ecc9e16-5936-4574-ae01-4ce4eec56c80" width="1036" height="1127" alt="Gel Blot Analyzer main interface showing an annotated gel image">
 
 
 ## Key Features
