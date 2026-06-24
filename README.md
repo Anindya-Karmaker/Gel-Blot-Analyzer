@@ -40,16 +40,21 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 
 <p align="center">
   <em>Automatic lane and band detection for densitometry.</em><br>
-  <img src="https://github.com/user-attachments/assets/1f579bce-262b-4790-b39c-db85adfdb633" width="700" alt="Auto Lane Detection">
+  <img src="https://github.com/user-attachments/assets/0f565b93-16b4-4682-abf0-185e4bc631e2" width="700" alt="Auto Lane Detection">
 </p>
 <p align="center">
   <em>Predicting the molecular weight of an unknown band using a standard curve.</em><br>
-  <img src="https://github.com/user-attachments/assets/0f565b93-16b4-4682-abf0-185e4bc631e2" width="700" alt="Molecular Weight Prediction">
+  <img src="https://github.com/user-attachments/assets/16d40371-c6ac-4436-a272-f583e27f7628" width="700" alt="Molecular Weight Prediction">
 </p>
 <p align="center">
   <em>Densitometric analysis plot for quantifying protein bands.</em><br>
   <img src="https://github.com/user-attachments/assets/a2976c98-b447-40e6-9e14-e5d0fbb1ab37" width="700" alt="Densitometry Plot">
 </p>
+<p align="center">
+  <em>Proteoform/Oligoform Analysis.</em><br>
+  <img src="https://github.com/user-attachments/assets/9acf7d94-95fb-4933-a8e8-ff00f9112edc" width="700" alt="Densitometry Plot">
+</p>
+
 
 ---
 
