@@ -487,30 +487,86 @@ if __name__ == "__main__":
             if name == "pan_down":
                 return _p("M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8z")
             if name == "auto_analyze":
-                # Gel/blot grid with a "G" (Gel) badge — open badge + colored letter so it
-                # stays visible in both light and dark themes.
-                _rows = [(6.5, [(5, 4), (10, 2.5), (13.5, 4)]),
-                         (9.5, [(5, 2.8), (8.5, 4), (13.5, 3.2)]),
-                         (12.7, [(5, 3.6), (9.2, 2.6), (12.4, 4.2)])]
-                _bands = "".join('<rect x="%s" y="%s" width="%s" height="1.7" rx="0.5" fill="%s"/>' % (x, y, wd, c)
-                                 for y, cols in _rows for x, wd in cols)
-                _frame = '<rect x="2" y="4" width="20" height="13.5" rx="2.2" fill="none" stroke="%s" stroke-width="1.6"/>' % c
-                _badge = ('<circle cx="18.5" cy="17.5" r="5" fill="none" stroke="%s" stroke-width="1.5"/>'
-                          '<text x="18.5" y="17.5" font-family="sans-serif" font-size="7.5" font-weight="bold"'
-                          ' fill="%s" text-anchor="middle" dominant-baseline="central">G</text>' % (c, c))
-                return ("0 0 24 24", _frame + _bands + _badge)
+                # Gel analysis icon with gel bands + G badge
+                bands = [
+                    (5, 5, 3, 1.5),
+                    (9, 5, 3, 1.5),
+                    (13, 5, 3, 1.5),
+                    (17, 5, 3, 1.5),
+
+                    (5, 8.5, 3, 1.5),
+                    (9, 8.5, 3, 1.5),
+                    (13, 8.5, 3, 1.5),
+                    (17, 8.5, 3, 1.5),
+
+                    (9, 12, 3, 1.5),
+                    (13, 12, 3, 1.5),
+                    (17, 12, 3, 1.5),
+
+                    (9, 15.5, 3, 2.2),
+                    (13, 15.5, 3, 2.2),
+                    (17, 15.5, 3, 2.2),
+
+                    (5, 18.5, 3, 3),
+                    (9, 18.5, 3, 3),
+                    (13, 18.5, 3, 3),
+                ]
+
+                band_svg = "".join(
+                    '<rect x="%s" y="%s" width="%s" height="%s" rx="0.4" fill="%s"/>'
+                    % (x, y, w, h, c)
+                    for x, y, w, h in bands
+                )
+
+                return (
+                    "0 0 24 24",
+                    '<rect x="2.5" y="2.5" width="18.5" height="18.5" rx="2.5" '
+                    'fill="none" stroke="%s" stroke-width="1.7"/>'
+                    % c
+                    +
+                    band_svg
+                    +
+                    '<circle cx="19" cy="19" r="4.2" fill="%s"/>'
+                    % c
+                    +
+                    '<text x="19" y="19.2" '
+                    'font-family="Arial, Helvetica, sans-serif" '
+                    'font-size="6.8" '
+                    'font-weight="700" '
+                    'fill="white" '
+                    'text-anchor="middle" '
+                    'dominant-baseline="central">G</text>'
+                )
             if name == "info":
                 return _p("M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z")
             if name == "bounding_box":
-                return _p("M3 5v4h2V5h4V3H5c-1.1 0-2 .9-2 2zm2 10H3v4c0 1.1.9 2 2 2h4v-2H5v-4zm14 4h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5c0-1.1-.9-2-2-2z")
+                return ("0 0 24 24",
+                    '<rect x="6" y="6" width="12" height="12"'
+                    ' fill="none" stroke="%s" stroke-width="1.7"/>'
+                    % c)
             if name == "github":
                 return ("0 0 16 16", '<path fill="%s" d="%s"/>' % (c, "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"))
             if name == "auto_lane":
-                # A single gel lane (capsule) with detected bands of varying width.
-                _lane = '<rect x="8.5" y="2.5" width="7" height="19" rx="1.2" fill="none" stroke="%s" stroke-width="1.5"/>' % c
-                _b = "".join('<rect x="%.2f" y="%s" width="%s" height="1.8" rx="0.6" fill="%s"/>' % (12 - wd / 2.0, y, wd, c)
-                             for y, wd in [(4.5, 5.0), (9.0, 4.0), (13.0, 4.6), (18.0, 3.4)])
-                return ("0 0 24 24", _lane + _b)
+                return ("0 0 24 24",
+                    '<rect x="4" y="3" width="16" height="18" rx="2" '
+                    'fill="none" stroke="%s" stroke-width="1.6"/>'
+
+                    '<line x1="8" y1="5" x2="8" y2="19" '
+                    'stroke="%s" stroke-width="1.4"/>'
+
+                    '<line x1="12" y1="5" x2="12" y2="19" '
+                    'stroke="%s" stroke-width="1.4"/>'
+
+                    '<line x1="16" y1="5" x2="16" y2="19" '
+                    'stroke="%s" stroke-width="1.4"/>'
+
+                    '<circle cx="18.5" cy="6" r="4" fill="%s"/>'
+
+                    '<text x="18.5" y="6.1" '
+                    'font-family="Arial" font-size="4.5" '
+                    'font-weight="bold" fill="white" '
+                    'text-anchor="middle" dominant-baseline="central">A</text>'
+                    % (c,c,c,c,c))
             if name == "theme":
                 return ("0 0 24 24",
                         '<circle cx="12" cy="12" r="8" fill="none" stroke="%s" stroke-width="%s"/>'
@@ -11848,7 +11904,7 @@ if __name__ == "__main__":
                 self.layout_bottom_action.setToolTip("Place the image viewer below the settings tabs.")
                 self.layout_left_action.setToolTip("Place the image viewer to the left of the settings tabs.")
                 self.layout_right_action.setToolTip("Place the image viewer to the right of the settings tabs.")
-                self.auto_lane_action.setToolTip("Automatically detect and place lane markers based on a defined region.")
+                self.auto_lane_action.setToolTip("Automatically detect and place lane weight markers based on a defined region.")
                 self.auto_analyze_gel_action.setToolTip(
                     "Draw the gel boundary, then auto-detect lanes + bands and run densitometry in one step.")
                 self.theme_action.setToolTip("Switch between light and dark themes (Ctrl+Shift+D or Cmd+Shift+D).")
