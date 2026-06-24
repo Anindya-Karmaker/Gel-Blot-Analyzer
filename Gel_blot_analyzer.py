@@ -2670,7 +2670,9 @@ if __name__ == "__main__":
                 # --- Image preview (right side) ---
                 if pil_lane_image and not is_for_history:
                     image_panel = QWidget()
-                    image_panel.setStyleSheet("background-color: white;")
+                    # No forced white background here — it cascaded onto the "Label size:"
+                    # label/spinbox and made them illegible in dark mode. The image label
+                    # below keeps its own white backdrop; the panel follows the app theme.
                     image_panel_layout = QVBoxLayout(image_panel)
                     image_panel_layout.setContentsMargins(4, 4, 4, 4)
                     image_panel_layout.setSpacing(4)
@@ -7333,6 +7335,13 @@ if __name__ == "__main__":
                 self._lane_dist       = 15
                 self._lane_peaks      = np.array([], dtype=int)
                 self._lane_bounds     = []
+                # Per-lane skew so lanes can be drawn/committed as trapezoids (parallelograms)
+                # that follow tilted lanes. Each entry is [top_off, bot_off] in px: the x-shift
+                # of the lane at the TOP and BOTTOM of the gel relative to its centre-height
+                # position (which is what _lane_bounds[i]=[x0,x1] stores). [0,0] = upright.
+                # Kept the SAME length as _lane_bounds at all times.
+                self._lane_skew       = []
+                self._global_skew     = 0.0   # uniform fine-tune shear added on top (px)
                 self._gel_inverted    = False
                 self._drag_info       = None
                 self._drag_lines      = []
@@ -7401,7 +7410,7 @@ if __name__ == "__main__":
                     "All options are enabled by default. "
                     "Uncheck any step you want to skip.")
                 info_lbl.setWordWrap(True)
-                info_lbl.setStyleSheet("padding:8px; background:#eef4fb; border-radius:4px;")
+                info_lbl.setStyleSheet(self._banner_qss(8))
                 layout.addWidget(info_lbl)
 
                 task_grp = QGroupBox("Analysis Tasks")
@@ -7469,7 +7478,7 @@ if __name__ == "__main__":
                     "<b>corner</b> to resize, drag <b>inside</b> to move it, or drag on the image to "
                     "<b>draw a new box</b> (the spin boxes stay in sync). Toggle a grid to help align lanes.")
                 hint.setWordWrap(True)
-                hint.setStyleSheet("padding:5px; background:#eef4fb; border-radius:4px;")
+                hint.setStyleSheet(self._banner_qss(5))
                 layout.addWidget(hint)
 
                 self._prep_fig = plt.figure(figsize=(11, 5))
@@ -7773,7 +7782,9 @@ if __name__ == "__main__":
                     lo = float(np.percentile(arr, 2))
                     hi = float(np.percentile(arr, 98))
                     dsp = np.clip((arr - lo) / max(hi - lo, 1e-9), 0, 1)
-                    self._prep_ax.imshow(dsp, cmap='gray', aspect='auto',
+                    # aspect='equal' keeps the image's true proportions no matter how the
+                    # GUI/canvas is resized (it letterboxes instead of stretching).
+                    self._prep_ax.imshow(dsp, cmap='gray', aspect='equal',
                                          interpolation='nearest',
                                          extent=[-0.5, w - 0.5, h - 0.5, -0.5])
 
@@ -8074,7 +8085,7 @@ if __name__ == "__main__":
                     "<b>Step 4: Lane Labels &amp; Molecular Weight Marker</b><br>"
                     "Assign labels and define marker lanes for alignment referencing.")
                 info_lbl.setWordWrap(True)
-                info_lbl.setStyleSheet("padding:6px; background:#eef4fb; border-radius:4px;")
+                info_lbl.setStyleSheet(self._banner_qss(6))
                 layout.addWidget(info_lbl)
 
                 lane_grp = QGroupBox("Lane Labels")
@@ -8485,6 +8496,7 @@ if __name__ == "__main__":
                 if np.ptp(col_norm) < 1e-9:
                     self._lane_peaks  = np.array([], dtype=int)
                     self._lane_bounds = []
+                    self._lane_skew   = []
                     self._p1_count_lbl.setText("Lanes: 0")
                     self._draw_phase1_figure(col_norm)
                     return
@@ -8501,6 +8513,7 @@ if __name__ == "__main__":
 
                 self._lane_peaks  = peaks.astype(int)
                 self._lane_bounds = []
+                self._lane_skew   = []
 
                 if len(peaks) == 0:
                     self._p1_count_lbl.setText("Lanes: 0")
@@ -8568,10 +8581,180 @@ if __name__ == "__main__":
                 self._lane_peaks  = peaks[:len(lane_bounds)].astype(int)
                 self._lane_bounds = lane_bounds
 
+                # Lanes are RECTANGULAR by default (auto-skew was unreliable). The user can
+                # fine-tune any lane into a trapezoid afterwards by dragging its corner/edge
+                # handles in the main view.
+                self._lane_skew = [[0.0, 0.0] for _ in self._lane_bounds]
+
                 self._p1_count_lbl.setText(f"Lanes: {len(self._lane_bounds)}")
                 self._selected_lane_idx = -1
                 if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(False)
                 self._draw_phase1_figure(col_norm)
+
+            def _estimate_lane_skews(self):
+                """For every lane, estimate how much it leans by tracking the lane's intensity
+                centroid across vertical bands and fitting a straight line. Fills
+                self._lane_skew with [top_off, bot_off] (x-shift at the top/bottom of the gel
+                relative to the lane's centre-height x). Robust: only commits a skew when the
+                fit is consistent and within the lane's own width, else leaves the lane
+                upright ([0, 0])."""
+                self._lane_skew = [[0.0, 0.0] for _ in self._lane_bounds]
+                try:
+                    inv = np.asarray(self._inv_arr, dtype=np.float64)
+                    if inv.ndim != 2 or inv.size == 0 or not self._lane_bounds:
+                        return
+                    H, W = inv.shape
+                    nb = max(5, min(16, H // 10))          # number of vertical sampling bands
+                    edges = np.linspace(0, H, nb + 1).astype(int)
+                    band_mid_y = 0.5 * (edges[:-1] + edges[1:])
+                    xs_all = np.arange(W)
+
+                    def _band_centroid(b, center, half):
+                        """Weighted x-centroid of band b within ±half of `center`. Returns
+                        (centroid, weight) or (None, 0) if there is no signal there."""
+                        y0, y1 = edges[b], edges[b + 1]
+                        if y1 <= y0:
+                            return None, 0.0
+                        lo = int(max(0, np.floor(center - half)))
+                        hi = int(min(W, np.ceil(center + half) + 1))
+                        if hi - lo < 3:
+                            return None, 0.0
+                        prof = inv[y0:y1, lo:hi].mean(axis=0)
+                        prof = prof - prof.min()
+                        s = float(prof.sum())
+                        if s <= 1e-9:
+                            return None, 0.0
+                        return float((xs_all[lo:hi] * prof).sum() / s), s
+
+                    for i, (x0, x1) in enumerate(self._lane_bounds):
+                        cx = 0.5 * (x0 + x1)
+                        # Local tracking window: small enough to ignore neighbours, but at
+                        # least a lane-width so it can lock onto the lane each step.
+                        half = max(5.0, (x1 - x0) * 0.7)
+                        mid_b = nb // 2
+                        pts_y, pts_x, pts_w = [], [], []
+                        # Seed from the middle band, then walk outwards following the centroid
+                        # so even a strongly-tilted lane is tracked (its ends leave a fixed
+                        # window). Up pass then down pass.
+                        center = cx
+                        for b in range(mid_b, -1, -1):
+                            c_, w_ = _band_centroid(b, center, half)
+                            if c_ is not None:
+                                center = 0.5 * center + 0.5 * c_   # smooth tracking
+                                pts_y.append(band_mid_y[b]); pts_x.append(c_); pts_w.append(w_)
+                        center = cx
+                        for b in range(mid_b + 1, nb):
+                            c_, w_ = _band_centroid(b, center, half)
+                            if c_ is not None:
+                                center = 0.5 * center + 0.5 * c_
+                                pts_y.append(band_mid_y[b]); pts_x.append(c_); pts_w.append(w_)
+                        if len(pts_x) < 3:   # need ≥3 points to trust a slanted fit
+                            continue
+                        by = np.asarray(pts_y); cc = np.asarray(pts_x); ww = np.asarray(pts_w)
+                        try:
+                            m, c = np.polyfit(by, cc, 1, w=ww)
+                        except Exception:
+                            continue
+                        top_off = float((m * 0.0 + c) - cx)
+                        bot_off = float((m * float(H) + c) - cx)
+                        # Clamp so a noisy fit can't fling the box across neighbouring lanes.
+                        lim = max(8.0, (x1 - x0) * 3.0)
+                        top_off = float(np.clip(top_off, -lim, lim))
+                        bot_off = float(np.clip(bot_off, -lim, lim))
+                        # Ignore negligible skew (keeps clean gels perfectly upright).
+                        if abs(top_off) < 1.5 and abs(bot_off) < 1.5:
+                            top_off = bot_off = 0.0
+                        self._lane_skew[i] = [top_off, bot_off]
+                except Exception:
+                    self._lane_skew = [[0.0, 0.0] for _ in self._lane_bounds]
+
+            def _eff_lane_skew(self, i):
+                """Effective (top_off, bot_off) for lane i = its own estimated skew plus the
+                global fine-tune shear from the Skew slider (top and bottom shear oppositely)."""
+                try:
+                    base = self._lane_skew[i] if i < len(self._lane_skew) else [0.0, 0.0]
+                except Exception:
+                    base = [0.0, 0.0]
+                g = float(getattr(self, '_global_skew', 0.0) or 0.0)
+                return base[0] + g, base[1] - g
+
+            def _lane_quad_xy(self, i, height):
+                """Return the 4 corner (x, y) of lane i as a trapezoid in gel-array coords,
+                ordered TL, TR, BR, BL. `height` is the gel-array height to span."""
+                x0, x1 = self._lane_bounds[i]
+                t, b = self._eff_lane_skew(i)
+                return [(x0 + t, 0.0), (x1 + t, 0.0),
+                        (x1 + b, float(height)), (x0 + b, float(height))]
+
+            def _lane_strip(self, x0, x1, t=0.0, b=0.0):
+                """Extract a lane's pixel columns from the gel array as a straight (H x width)
+                strip. For a skewed lane (t/b != 0) each row is shifted by the interpolated
+                x-offset so the slanted lane is 'de-skewed' into an upright strip — this is
+                what makes densitometry follow the tilted lane. Returns None if degenerate."""
+                arr = self._gel_arr
+                H, W = arr.shape[:2]
+                x0i, x1i = int(round(x0)), int(round(x1))
+                if x1i < x0i:
+                    x0i, x1i = x1i, x0i
+                if x1i <= x0i:
+                    return None
+                if abs(t) < 0.5 and abs(b) < 0.5:
+                    lo = max(0, x0i); hi = min(W, x1i + 1)
+                    return arr[:, lo:hi] if hi > lo else None
+                width = x1i - x0i + 1
+                rows = np.arange(H)
+                frac = rows / max(1.0, float(H - 1))
+                off = t + (b - t) * frac                 # per-row x shift
+                cols = np.arange(width)
+                src_x = (x0i + cols)[None, :] + off[:, None]
+                src_x = np.clip(np.rint(src_x).astype(int), 0, W - 1)
+                row_idx = rows[:, None]
+                return arr[row_idx, src_x]               # (H x width), preserves dtype
+
+            def _sync_lane_skew_length(self):
+                """Keep self._lane_skew the same length as self._lane_bounds after manual
+                add/delete edits (new lanes start upright)."""
+                while len(self._lane_skew) < len(self._lane_bounds):
+                    self._lane_skew.append([0.0, 0.0])
+                while len(self._lane_skew) > len(self._lane_bounds):
+                    self._lane_skew.pop()
+
+            def _banner_qss(self, pad=6):
+                """Theme-aware stylesheet for the wizard's info/hint banners. The old
+                hardcoded light-blue background left the text illegible in dark mode."""
+                dark = bool(getattr(self.parent_app, 'current_theme', 'light') == 'dark')
+                if dark:
+                    return f"padding:{pad}px; background:#22425E; color:#DCEAF7; border-radius:4px;"
+                return f"padding:{pad}px; background:#eef4fb; color:#16314e; border-radius:4px;"
+
+            def _mpl_theme(self):
+                """(figure_bg, axes_bg, foreground, spine) colours matching the app's
+                light/dark theme, so the wizard's matplotlib canvases don't glare white in
+                dark mode."""
+                dark = bool(getattr(self.parent_app, 'current_theme', 'light') == 'dark')
+                if dark:
+                    return '#2D2D30', '#252528', '#E6E6E6', '#6A6A70'
+                return 'white', 'white', 'black', '#555555'
+
+            def _apply_fig_theme(self, fig, axes):
+                """Paint a matplotlib figure + its axes for the current theme."""
+                bg, ax_bg, fg, spine = self._mpl_theme()
+                try:
+                    fig.patch.set_facecolor(bg)
+                except Exception:
+                    pass
+                for ax in axes:
+                    try:
+                        ax.set_facecolor(ax_bg)
+                        for s in ax.spines.values():
+                            s.set_color(spine)
+                        ax.tick_params(axis='x', colors=fg)
+                        ax.tick_params(axis='y', colors=fg)
+                        ax.xaxis.label.set_color(fg)
+                        ax.yaxis.label.set_color(fg)
+                        ax.title.set_color(fg)
+                    except Exception:
+                        pass
 
             def _draw_phase1_figure(self, col_norm):
                 self._last_col_norm = col_norm
@@ -8598,23 +8781,28 @@ if __name__ == "__main__":
                     self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=8, pad=3)
 
                     colors = plt.cm.tab10.colors
+                    self._sync_lane_skew_length()
                     for i, (x0, x1) in enumerate(self._lane_bounds):
                         c   = colors[i % len(colors)]
                         sel = (i == self._selected_lane_idx)
                         lw  = 2.5 if sel else 1.5
-                        rect = plt.Rectangle(
-                            (x0, 0), x1 - x0, Hd,
-                            edgecolor=c,
-                            facecolor=(*c[:3], 0.25 if sel else 0.10),
+                        # Trapezoid corners (TL, TR, BR, BL): the lane leans by its per-lane
+                        # skew plus the global Skew slider.
+                        t, b = self._eff_lane_skew(i)
+                        poly_xy = [(x0 + t, 0), (x1 + t, 0), (x1 + b, Hd), (x0 + b, Hd)]
+                        poly = plt.Polygon(
+                            poly_xy, closed=True,
+                            edgecolor=c, facecolor=(*c[:3], 0.25 if sel else 0.10),
                             linewidth=lw, linestyle='-')
-                        self._ax1_img.add_patch(rect)
+                        self._ax1_img.add_patch(poly)
                         self._ax1_img.text(
-                            (x0 + x1) / 2, Hd * 0.06, f"L{i+1}",
+                            (x0 + x1) / 2 + t, Hd * 0.06, f"L{i+1}",
                             color='white', fontsize=7, ha='center', va='top',
                             bbox=dict(boxstyle='round,pad=0.15', fc=c, alpha=0.8, ec='none'))
-                        
-                        ll, = self._ax1_img.plot([x0, x0], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
-                        lr, = self._ax1_img.plot([x1, x1], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
+
+                        # Slanted left/right boundary lines (still pickable for width drags).
+                        ll, = self._ax1_img.plot([x0 + t, x0 + b], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
+                        lr, = self._ax1_img.plot([x1 + t, x1 + b], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
                         self._drag_lines.append(ll)
                         self._drag_lines.append(lr)
 
@@ -8636,6 +8824,8 @@ if __name__ == "__main__":
                 except Exception:
                     pass
                 finally:
+                    try: self._apply_fig_theme(self._fig1, [self._ax1_img, self._ax1_prof])
+                    except Exception: pass
                     try: self._fig1.tight_layout(pad=0.3, h_pad=0.8)
                     except Exception: pass
                     try: self._canvas1.draw_idle()
@@ -8724,10 +8914,14 @@ if __name__ == "__main__":
                 else:
                     nv = max(nv, x0 + 4)
                 self._lane_bounds[i][side] = nv
-                # Fast update: move only the affected line (in display coords)
+                # Fast update: move only the affected boundary line, keeping its slant so the
+                # trapezoid stays consistent while dragging.
                 line_idx = i * 2 + side
                 if line_idx < len(self._drag_lines):
-                    self._drag_lines[line_idx].set_xdata([nv + off_x, nv + off_x])
+                    t, b = self._eff_lane_skew(i)
+                    Hd = self._gel_arr.shape[0]
+                    self._drag_lines[line_idx].set_data(
+                        [nv + t + off_x, nv + b + off_x], [0, Hd])
                 self._canvas1.draw_idle()
 
             def _p1_mpl_release(self, event):
@@ -8763,6 +8957,20 @@ if __name__ == "__main__":
                 new_bound = [int(max(0, left_edge)), int(min(W - 1, right_edge))]
                 new_center = int((new_bound[0] + new_bound[1]) / 2)
                 self._lane_bounds.insert(insert_idx, new_bound)
+                # Give the new lane the average skew of its neighbours so it follows the
+                # local tilt; insert at the SAME index to stay aligned with _lane_bounds.
+                self._sync_lane_skew_length()
+                neigh = []
+                if insert_idx - 1 >= 0 and insert_idx - 1 < len(self._lane_skew):
+                    neigh.append(self._lane_skew[insert_idx - 1])
+                if insert_idx < len(self._lane_skew):
+                    neigh.append(self._lane_skew[insert_idx])
+                if neigh:
+                    new_skew = [float(np.mean([s[0] for s in neigh])),
+                                float(np.mean([s[1] for s in neigh]))]
+                else:
+                    new_skew = [0.0, 0.0]
+                self._lane_skew.insert(insert_idx, new_skew)
                 try:
                     self._lane_peaks = np.insert(np.asarray(self._lane_peaks, dtype=int),
                                                  min(insert_idx, len(self._lane_peaks)), new_center)
@@ -8779,6 +8987,8 @@ if __name__ == "__main__":
                 i = self._selected_lane_idx
                 if 0 <= i < len(self._lane_bounds):
                     self._lane_bounds.pop(i)
+                    if i < len(self._lane_skew):
+                        self._lane_skew.pop(i)
                     if i < len(self._lane_peaks):
                         self._lane_peaks = np.delete(self._lane_peaks, i)
                     self._selected_lane_idx = -1
@@ -9107,9 +9317,11 @@ if __name__ == "__main__":
                 except Exception:
                     return np.zeros(L)
 
-            def _headless_densitometry(self, x0, x1, settings):
+            def _headless_densitometry(self, x0, x1, settings, skew=None):
                 """
                 Run baseline + peak-detection densitometry on lane columns [x0:x1].
+                When `skew=(top_off, bot_off)` is given, the lane is de-skewed first so a
+                tilted lane is profiled along its true axis.
                 Returns list of dicts: {area, y_coord_in_lane_image, original_peak_index}.
                 Uses raw float array for higher precision than normalised 8-bit PIL.
                 """
@@ -9118,7 +9330,13 @@ if __name__ == "__main__":
                 if x1 <= x0:
                     return []
 
-                lane_arr = self._gel_arr[:, x0:x1 + 1].astype(np.float64)
+                if skew is not None:
+                    strip = self._lane_strip(x0, x1, skew[0], skew[1])
+                    if strip is None:
+                        return []
+                    lane_arr = strip.astype(np.float64)
+                else:
+                    lane_arr = self._gel_arr[:, x0:x1 + 1].astype(np.float64)
 
                 # Inverted vertical profile (row-wise sum)
                 if settings.get('is_inverted', False):
@@ -9330,7 +9548,7 @@ if __name__ == "__main__":
                     if idx in self._fence_overrides:
                         info = self._fence_overrides[idx]
                     else:
-                        info = self._headless_densitometry(x0, x1, settings)
+                        info = self._headless_densitometry(x0, x1, settings, skew=self._eff_lane_skew(idx))
                     self._p4_current_info = list(info) if info else []
                     self._draw_phase2_figure(self._p4_current_info, idx)
                 except Exception:
@@ -9353,14 +9571,15 @@ if __name__ == "__main__":
                     for i, (x0, x1) in enumerate(self._lane_bounds):
                         c   = colors[i % len(colors)]
                         sel = (i == lane_idx)
-                        rect = plt.Rectangle(
-                            (x0, 0), x1 - x0, H,
-                            edgecolor=c,
+                        t, b = self._eff_lane_skew(i)
+                        poly = plt.Polygon(
+                            [(x0 + t, 0), (x1 + t, 0), (x1 + b, H), (x0 + b, H)],
+                            closed=True, edgecolor=c,
                             facecolor=(*c[:3], 0.28 if sel else 0.08),
                             linewidth=2.5 if sel else 1.2, linestyle='-')
-                        self._ax2_gel.add_patch(rect)
+                        self._ax2_gel.add_patch(poly)
                         self._ax2_gel.text(
-                            (x0 + x1) / 2, H * 0.06, f"L{i+1}",
+                            (x0 + x1) / 2 + t, H * 0.06, f"L{i+1}",
                             color='white', fontsize=7, ha='center', va='top',
                             bbox=dict(boxstyle='round,pad=0.15',
                                       fc=c, alpha=0.8, ec='none'))
@@ -9376,7 +9595,10 @@ if __name__ == "__main__":
                     x0_ = max(0, x0_)
                     x1_ = min(self._gel_arr.shape[1] - 1, x1_)
                     if x1_ > x0_:
-                        lane_arr = self._gel_arr[:, x0_:x1_ + 1].astype(np.float64)
+                        _t, _b = self._eff_lane_skew(lane_idx)
+                        _strip = self._lane_strip(x0_, x1_, _t, _b)
+                        lane_arr = (_strip.astype(np.float64) if _strip is not None
+                                    else self._gel_arr[:, x0_:x1_ + 1].astype(np.float64))
                         inv      = (lane_arr if self._band_invert
                                     else self._max_val - lane_arr)
                         prof_raw = np.sum(inv, axis=1)
@@ -9440,6 +9662,7 @@ if __name__ == "__main__":
                             fontsize=8, pad=2)
                         self._ax2_prof.tick_params(labelsize=6)
 
+                    self._apply_fig_theme(self._fig2, [self._ax2_gel, self._ax2_prof])
                     self._fig2.tight_layout(pad=0.5)
                     self._canvas2.draw_idle()
                 except Exception:
@@ -9791,7 +10014,8 @@ if __name__ == "__main__":
                             if not mwm_bands:
                                 try:
                                     mwm_bands = self._headless_densitometry(
-                                        lx0_mwm, lx1_mwm, settings) or []
+                                        lx0_mwm, lx1_mwm, settings,
+                                        skew=self._eff_lane_skew(mwm_idx)) or []
                                 except Exception:
                                     mwm_bands = []
                             for band_idx, band in enumerate(mwm_bands):
@@ -9805,7 +10029,10 @@ if __name__ == "__main__":
                     except Exception:
                         import traceback; traceback.print_exc()
 
-                # ── Step 4: Build multi_lane_definitions (always rect) ─
+                # ── Step 4: Build multi_lane_definitions ─
+                # Upright lanes commit as rectangles; skewed lanes (per-lane skew or the
+                # global Skew slider) commit as QUADS so they keep their trapezoid shape and
+                # remain editable corner-by-corner in the main view.
                 app.multi_lane_definitions = []
                 try:
                     new_img_w = float(app.image.width())
@@ -9816,20 +10043,28 @@ if __name__ == "__main__":
                              if new_img_w > 0 and new_img_h > 0 else 1.0)
                     off_x = (lbl_w - new_img_w * scale) / 2.0
                     off_y = (lbl_h - new_img_h * scale) / 2.0
+
+                    def _to_label(ix, iy):
+                        # gel-array coords → committed image coords → label space.
+                        img_x = (gx_eff + ix) - crop_offset_x
+                        img_y = (gy_eff + iy) - crop_offset_y
+                        return QPointF(img_x * scale + off_x, img_y * scale + off_y)
+
                     for i, (x0, x1) in enumerate(self._lane_bounds):
-                        img_x0 = (gx_eff + x0) - crop_offset_x
-                        img_x1 = (gx_eff + x1) - crop_offset_x
-                        img_y0 = gy_eff - crop_offset_y
-                        img_y1 = (gy_eff + gh) - crop_offset_y
-                        rect_ls = QRectF(
-                            QPointF(img_x0 * scale + off_x, img_y0 * scale + off_y),
-                            QPointF(img_x1 * scale + off_x, img_y1 * scale + off_y)
-                        ).normalized()
-                        app.multi_lane_definitions.append({
-                            'type': 'rectangle',
-                            'points_label': [rect_ls],
-                            'id': i + 1
-                        })
+                        t, b = self._eff_lane_skew(i)
+                        if abs(t) < 0.5 and abs(b) < 0.5:
+                            # Upright → rectangle (top at gel row 0, bottom at gel row gh).
+                            tl = _to_label(x0, 0); br = _to_label(x1, gh)
+                            rect_ls = QRectF(tl, br).normalized()
+                            app.multi_lane_definitions.append({
+                                'type': 'rectangle', 'points_label': [rect_ls], 'id': i + 1})
+                        else:
+                            # Trapezoid quad, ordered TL, TR, BR, BL (what the warp expects).
+                            quad_ls = [
+                                _to_label(x0 + t, 0), _to_label(x1 + t, 0),
+                                _to_label(x1 + b, gh), _to_label(x0 + b, gh)]
+                            app.multi_lane_definitions.append({
+                                'type': 'quad', 'points_label': quad_ls, 'id': i + 1})
                 except Exception:
                     pass
 
@@ -9862,7 +10097,11 @@ if __name__ == "__main__":
                             x1c = min(gel_w - 1, int(x1))
                             if x1c <= x0c:
                                 continue
-                            lane_np = self._gel_arr[:, x0c:x1c + 1]
+                            # De-skew the lane so a tilted lane's bands line up horizontally.
+                            _t, _b = self._eff_lane_skew(i)
+                            lane_np = self._lane_strip(x0c, x1c, _t, _b)
+                            if lane_np is None:
+                                lane_np = self._gel_arr[:, x0c:x1c + 1]
                             # Normalise to uint8 for PIL
                             mn = float(lane_np.min())
                             mx = float(lane_np.max())
@@ -9982,7 +10221,10 @@ if __name__ == "__main__":
                             x1c = min(gel_w - 1, int(_x1))
                             if x1c <= x0c:
                                 continue
-                            lane_np = self._gel_arr[:, x0c:x1c + 1]
+                            _t, _b = self._eff_lane_skew(_mi)
+                            lane_np = self._lane_strip(x0c, x1c, _t, _b)
+                            if lane_np is None:
+                                lane_np = self._gel_arr[:, x0c:x1c + 1]
                             mn = float(lane_np.min()); mx = float(lane_np.max())
                             if mx > mn:
                                 lane8 = ((lane_np.astype(np.float32) - mn) /
@@ -10244,7 +10486,7 @@ if __name__ == "__main__":
                 QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZHToPSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjNTU1NTU1IiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABt0lEQVR4nO2WPU7DMBiG38/GydQi6Bk6cgNEDtFYvUGOQZhBYoAjoGaxxJALwMIleocSIehAmuZjSfmRktZ2K3Wgr+Qhf5/9PIp/gEP+e2jL57bhHdXZfToJ0zQV0+n0dD6ff/Z6PS8Ts9kMg8EAk8nkHR0WWgtrrSUACeBRKXVelmXdXFuHiJiIqK7roizLszzP35v+/gxEdBUwxpQAbgEcE9GJlLIvhLBuzNwPw7DPzA95nn8kSaLaLHSq1VpLY8wyjuMnpVRUVdXSwQITETHzq1JqmGVZ0Ua/1sD3CImumo+tGzMvgyAgZr7Psqzoogc2TLOVhdFo9ByG4cVisbD5F5iIwMwFgKExpljdb3t5owEAEEKkzGw1E5i5aujvjDGvSZIcdXUOWCw0jhac6AFLA4CdBVd6wHKptbTgTA84GADWW/ChBxw2mw0WvOgBRwNAuwVfesBxu+2wIHzpAQ8DwF8L29ADHgeO3xaCIIiqqmIAXvSApwEAkFJeMnOtlIIvvXea8wLiOH4Zj8efWutj/GxGTvE2AICEEDd1XV8bY96iKJLYx9kvTdNtILbOXjs/5JCd5AvlTC7DFZrCJgAAAABJRU5ErkJggg==); width: 12px; height: 12px; }
                 QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
                 
                 QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
@@ -10257,7 +10499,7 @@ if __name__ == "__main__":
                 QCheckBox { spacing: 5px; }
                 QCheckBox::indicator { width: 13px; height: 13px; border-radius: 3px; border: 1px solid #C0C5CB; background-color: #FFFFFF; }
                 QCheckBox::indicator:hover { border-color: #5D98D4; }
-                QCheckBox::indicator:checked { background-color: #5D98D4; border-color: #4A78A9; image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTlsNy03Ljg5TDIxIDdsLTEuNDEtMS40MUw5IDE2LjE3eiIvPjwvc3ZnPg==); }
+                QCheckBox::indicator:checked { background-color: #5D98D4; border-color: #4A78A9; image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABmklEQVR4nO2VzU7CUBCF57ZFE0hY+DAuDAvdqcjat9FnYekWiXHN3ldxBwFK+VwwE8ZafooVEtNJbuYmnc4583Nakdpq++8GxEA4FXjk7sclYeDADdA+KgltewTcsbI3G8Wfk3CVN4EJkDkSZ0Ds45OKwYP6WEReRORcRFIRmYlIX0QWVeL9AAcSPUOteqz+WWMqLThPoKF+kAMfAi2gUWr+WlG8O/IbeE9Bpw48tnylwN092hFr4F0gVfAlMHJq2JqjEBxoA9d6L5ydq64LLPSk6jvb3t0Ibq1X2QDc+kpdbKK+kwNeAF1PsAyBWLVq4POihNZWjR9py6dKwmIb27A2EbCkj8DMVZYCPUfSumRys6WzmPLgnoR6m6t1ApVYUEnltT74NbgjYZt9D3wqwEx9H3jS+0T9kPVHqJpvvZv3RUGrMyWUAa+s5Vbtj8aR8POeu5GMgabG7K/1kiRs4xPW6oDV5j/Y4h6af6+WAVEIYQm0RORKRC5F5COE8G7PDiWwtxXNt4q2l1oaJRHpWYYQst8SqK22k9sX0sGndlVHPPIAAAAASUVORK5CYII=); }
                 QCheckBox::indicator:disabled { background-color: #E0E0E0; }
                 
                 QToolBar { background-color: #E4E7EB; border: none; padding: 1px; }
@@ -10308,8 +10550,9 @@ if __name__ == "__main__":
                 QRadioButton::indicator:checked {
                     background-color: #5D98D4;
                     border: 1px solid #5D98D4;
-                    /* Inner dot handled by QStyle or image, usually sufficient with background change */
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgdmlld0JveD0iMCAwIDEwIDEwIj48Y2lyY2xlIGN4PSI1IiBjeT0iNSIgcj0iMyIgZmlsbD0id2hpdGUiLz48L3N2Zz4=);
+                    /* Inner dot rendered as a high-res white PNG so it always shows
+                       (no SVG plugin needed) and stays crisp at any DPI. */
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABFElEQVR4nO2WQU7DMBBF37itWMCG2yCx6KLr9gK9ZK/AAom7dMEGFkWKh82PaoViR6lRiuQvWbGc+f9PJhM70NDQMDNsCsndDQgaABGIZua1EsuZhyn3fsPUCjwAz8CTlt6AVzP7mKI3xtDcfan51t2P/hNHd98qZqnXVC2BoOshMYzu/qURk/VDyqlhvtDYyaAbGKYJdZrvel5JP1umpIwL4B24B5xz9w8RpfkJPAIdQO7rKJUpiLwBVjLIcYJiVsBG3KxHMQFd18CdxEuIil2P8ajTKFeglED/xC/AaUR8r3kSJ9W4iNtuwqSJHNgnCV8S7NdMsc65ia/DrBuRxP5sK/4fh9HA/CaO4/l+SBoaGmrjG09kMtR+9L0MAAAAAElFTkSuQmCC);
                 }
                 QSpinBox, QDoubleSpinBox {
                     background-color: #FFFFFF;
@@ -10347,13 +10590,16 @@ if __name__ == "__main__":
                     background-color: #E6F0F9;
                 }
 
+                /* High-resolution PNG arrows (PNG is always supported — no SVG image
+                   plugin needed, so they render on every packaged build — and the
+                   oversized source downsamples crisply at any DPI). */
                 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgNyBMNSAzIEw4IDcgWiIgZmlsbD0iIzU1NTU1NSIvPjwvc3ZnPg==);
-                    width: 8px; height: 8px;
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABpElEQVR4nO2WvU7CUBiG3+/0BxZihOtwdzDWeAUupwMXwIYxJrpWvIzuTCQO3AE3wcA9EAfC0NP2fC6lommh5xAVE96kY3ue5xmaA5x22j+f+GsARFF0EITVy1JKBwCFYXg3n89HABAEgftrAMVYa/0khHiWUp7NZrMcAP04gJTSmUwmeRiG167rXjqO4zHzAwAeDAbGFawL5Hn+SkQiTVMQ0b2UshvHcQbDCkYAG3spZeD7fpBlWc7MWavV6jLzEBYVrAporUdExABARK5Sim0rNAb4bp+mqQbgACCttXUF4wLb9psdUqERwA77ksG2glGBKvuSwLLCXoAG9iWDTYXGBXbZlwQWFXYCGNiXDKYVGhVoYl8SGFaoBbCwLxlMKuwtwMwvANjkISKnqDDs9/vncRynqKlQCbBlf+v7/k2WZSSEcKn5hNYa7Xa7lyTJIwCqq1BJVVw4HABvnuddKaWa5v/8MBETEWmt35VSF9PpdFWc9/UvWveBKIrEYrHortfrpNPpGF80AGC5XKLX62E8Hq++H3w022dmZV6x47Q/7Sj2AYhaJFjtgGsfAAAAAElFTkSuQmCC);
+                    width: 10px; height: 10px;
                 }
                 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgMyBMNSA3IEw4IDMgWiIgZmlsbD0iIzU1NTU1NSIvPjwvc3ZnPg==);
-                    width: 8px; height: 8px;
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABt0lEQVR4nO2WPU7DMBiG38/GydQi6Bk6cgNEDtFYvUGOQZhBYoAjoGaxxJALwMIleocSIehAmuZjSfmRktZ2K3Wgr+Qhf5/9PIp/gEP+e2jL57bhHdXZfToJ0zQV0+n0dD6ff/Z6PS8Ts9kMg8EAk8nkHR0WWgtrrSUACeBRKXVelmXdXFuHiJiIqK7roizLszzP35v+/gxEdBUwxpQAbgEcE9GJlLIvhLBuzNwPw7DPzA95nn8kSaLaLHSq1VpLY8wyjuMnpVRUVdXSwQITETHzq1JqmGVZ0Ua/1sD3CImumo+tGzMvgyAgZr7Psqzoogc2TLOVhdFo9ByG4cVisbD5F5iIwMwFgKExpljdb3t5owEAEEKkzGw1E5i5aujvjDGvSZIcdXUOWCw0jhac6AFLA4CdBVd6wHKptbTgTA84GADWW/ChBxw2mw0WvOgBRwNAuwVfesBxu+2wIHzpAQ8DwF8L29ADHgeO3xaCIIiqqmIAXvSApwEAkFJeMnOtlIIvvXea8wLiOH4Zj8efWutj/GxGTvE2AICEEDd1XV8bY96iKJLYx9kvTdNtILbOXjs/5JCd5AvlTC7DFZrCJgAAAABJRU5ErkJggg==);
+                    width: 10px; height: 10px;
                 }
             """
             
@@ -10389,7 +10635,7 @@ if __name__ == "__main__":
                 QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cGF0aCBmaWxsPSIjRjFGNEYxIiBkPSJNMyA2bDUgNS4wMDFM MTQgNnoiLz48L3N2Zz4=); width: 12px; height: 12px; }
+                QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACGElEQVR4nO2WsW7aUBSGz7HNUKU4CZGypaqiVgJEWVir5AG6ZPHzuFL3DMlTxEMfoSRDN48spBgwBdpCjEltNU2w/Xdo6YBsY7vQoeVf77XP9/2yri/RJv97OG4RQOx64iHMWMV71pJIQwBCczgs3HQ69/v7RSaaZJtQKNDzvT0nqoVQAE3TxHK5LD7K777d2nr80nGcgJnENHNBhJwk8cyb2d6d+6JUKjkAeBFECntYURRi5odW9+OpIAivBIFJEIQ088n3fezs7PJ4PDorFouurus5Zp4t7gsFYGZf0zTx2dODd03DvJRl+dh1XZ8ocQuQJIkty7LuHPuU+QAAvLCNkVqKohAxU475NUD8kytxfFneZiA4r1ar9i/70G8gEoCZfe3iQjw8fHLlOF+v8vm8AMBfqg5AFCVpOp1OvrvTcyLiWq0Wah8LsNCCGgTJzgRm9mRZZiA4q1QqE13XpbhzIBYgbQtp7ZcCEKVrIa19IoCkLWSxTwRAlKyFLPaJAZa1kNU+MQBRfAtZ7VMBRLXwJ/apA0AkZmq3e8fDkY1Wt++1uv0H6/YbWt2+SkSk63puLcPn0TRNJCJqGublp7ENwxwEhjm0Go1GgYh4VZeYyPxuoTc86n++8Ue2E1y3e3/Hfp55C9dG7705+HJvGMY2gPXbzwNABMAfOoMTwxy8ISKq1+uhv/a1R1XVdDeVf2b4JpusKj8AUsl45DVaq00AAAAASUVORK5CYII=); width: 12px; height: 12px; }
                 QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #3C3C3F; border: 1px solid #505055; selection-background-color: #007ACC; }
                 
                 QSlider::groove:horizontal { border: 1px solid #505055; background: #3C3C3F; height: 4px; border-radius: 2px; }
@@ -10413,7 +10659,7 @@ if __name__ == "__main__":
                 QCheckBox::indicator:checked {
                     background-color: #007ACC;
                     border-color: #009AFF;
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTkgMTYuMTdMNC44MyAxMmwtMS40MiAxLjQxTDkgMTlsNy03Ljg5TDIxIDdsLTEuNDEtMS40MUw5IDE2LjE3eiIvPjwvc3ZnPg==);
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABmklEQVR4nO2VzU7CUBCF57ZFE0hY+DAuDAvdqcjat9FnYekWiXHN3ldxBwFK+VwwE8ZafooVEtNJbuYmnc4583Nakdpq++8GxEA4FXjk7sclYeDADdA+KgltewTcsbI3G8Wfk3CVN4EJkDkSZ0Ds45OKwYP6WEReRORcRFIRmYlIX0QWVeL9AAcSPUOteqz+WWMqLThPoKF+kAMfAi2gUWr+WlG8O/IbeE9Bpw48tnylwN092hFr4F0gVfAlMHJq2JqjEBxoA9d6L5ydq64LLPSk6jvb3t0Ibq1X2QDc+kpdbKK+kwNeAF1PsAyBWLVq4POihNZWjR9py6dKwmIb27A2EbCkj8DMVZYCPUfSumRys6WzmPLgnoR6m6t1ApVYUEnltT74NbgjYZt9D3wqwEx9H3jS+0T9kPVHqJpvvZv3RUGrMyWUAa+s5Vbtj8aR8POeu5GMgabG7K/1kiRs4xPW6oDV5j/Y4h6af6+WAVEIYQm0RORKRC5F5COE8G7PDiWwtxXNt4q2l1oaJRHpWYYQst8SqK22k9sX0sGndlVHPPIAAAAASUVORK5CYII=);
                 }
                 QCheckBox::indicator:disabled {
                     background-color: #3A3A3D;
@@ -10538,7 +10784,7 @@ if __name__ == "__main__":
                 QRadioButton::indicator:checked {
                     background-color: #007ACC;
                     border: 1px solid #009AFF;
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgdmlld0JveD0iMCAwIDEwIDEwIj48Y2lyY2xlIGN4PSI1IiBjeT0iNSIgcj0iMyIgZmlsbD0id2hpdGUiLz48L3N2Zz4=);
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABFElEQVR4nO2WQU7DMBBF37itWMCG2yCx6KLr9gK9ZK/AAom7dMEGFkWKh82PaoViR6lRiuQvWbGc+f9PJhM70NDQMDNsCsndDQgaABGIZua1EsuZhyn3fsPUCjwAz8CTlt6AVzP7mKI3xtDcfan51t2P/hNHd98qZqnXVC2BoOshMYzu/qURk/VDyqlhvtDYyaAbGKYJdZrvel5JP1umpIwL4B24B5xz9w8RpfkJPAIdQO7rKJUpiLwBVjLIcYJiVsBG3KxHMQFd18CdxEuIil2P8ajTKFeglED/xC/AaUR8r3kSJ9W4iNtuwqSJHNgnCV8S7NdMsc65ia/DrBuRxP5sK/4fh9HA/CaO4/l+SBoaGmrjG09kMtR+9L0MAAAAAElFTkSuQmCC);
                 }
                 QSpinBox, QDoubleSpinBox {
                     background-color: #3C3C3F;
@@ -10576,14 +10822,15 @@ if __name__ == "__main__":
                     background-color: #5A5A60;
                 }
 
-                /* Standard Triangle Icons (White) */
+                /* High-resolution PNG arrows (always render — no SVG image plugin
+                   required — and downsample crisply at any DPI). */
                 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgNyBMNSAzIEw4IDcgWiIgZmlsbD0iI0ZGRkZGRiIvPjwvc3ZnPg==);
-                    width: 8px; height: 8px;
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAB6UlEQVR4nO3WS27TUBgF4PPbjgTqA+yU7gCJRGLmIaKIFbCRdsACCBW7cSS2ECbM4knkSQtOSCDh1RLhS4Qq5/owQBFplIevRWmQchbge87nKyfAJpv8z6nVatZ1d7ieEiRtkvKm038Sd/svAKDRaDj/rEAQBDYAnMa9193+54s4jm+RFJJy5YeTtCGCdm/w8MOnM/1lqLLTdq8GAM1ms3TlBSbrT+Luq49fh4y7/SzuDs6jKPIAGCsYvTeStliWbrd7Bze2dw5Go5EGkLmu65HZIYDjMAxLANK8zzS6wfV6HSCRkseWJSQJkk6SJBSxjqIo8nzfH5so5BaYXa+U0iJiA4DW49R1vUIKuQVm18+UK6yQS2DZegAQESmqkEtg2fqpkoUUVgqsWj9JUYWVAnnWT5U1VlgqkHf9JEUUlgqYrJ8qbaSwUMB0/SSmCgsFptY/FwF/d8odO0m+U8Q6bLVaru/76SKFuQIkbRHRb9+9f7y7e/uRUgkcxzH53RCtNff27pSzTD8l+SwMQ2eewtxWQRDY1WrVvrnjvtza2n6glMpEsJL/0giAJceRdJwOxz9/3K9UKoqkiFy+SwsvB0nrZDDwzjqdi/39ewJ8Mzn/TzwPd8tlNXvw2mTpR+Jv/cVa2/WbrEV+ARtFxeXO3muYAAAAAElFTkSuQmCC);
+                    width: 10px; height: 10px;
                 }
                 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHBhdGggZD0iTTIgMyBMNSA3IEw4IDMgWiIgZmlsbD0iI0ZGRkZGRiIvPjwvc3ZnPg==);
-                    width: 8px; height: 8px;
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACGElEQVR4nO2WsW7aUBSGz7HNUKU4CZGypaqiVgJEWVir5AG6ZPHzuFL3DMlTxEMfoSRDN48spBgwBdpCjEltNU2w/Xdo6YBsY7vQoeVf77XP9/2yri/RJv97OG4RQOx64iHMWMV71pJIQwBCczgs3HQ69/v7RSaaZJtQKNDzvT0nqoVQAE3TxHK5LD7K777d2nr80nGcgJnENHNBhJwk8cyb2d6d+6JUKjkAeBFECntYURRi5odW9+OpIAivBIFJEIQ088n3fezs7PJ4PDorFouurus5Zp4t7gsFYGZf0zTx2dODd03DvJRl+dh1XZ8ocQuQJIkty7LuHPuU+QAAvLCNkVqKohAxU475NUD8kytxfFneZiA4r1ar9i/70G8gEoCZfe3iQjw8fHLlOF+v8vm8AMBfqg5AFCVpOp1OvrvTcyLiWq0Wah8LsNCCGgTJzgRm9mRZZiA4q1QqE13XpbhzIBYgbQtp7ZcCEKVrIa19IoCkLWSxTwRAlKyFLPaJAZa1kNU+MQBRfAtZ7VMBRLXwJ/apA0AkZmq3e8fDkY1Wt++1uv0H6/YbWt2+SkSk63puLcPn0TRNJCJqGublp7ENwxwEhjm0Go1GgYh4VZeYyPxuoTc86n++8Ue2E1y3e3/Hfp55C9dG7705+HJvGMY2gPXbzwNABMAfOoMTwxy8ISKq1+uhv/a1R1XVdDeVf2b4JpusKj8AUsl45DVaq00AAAAASUVORK5CYII=);
+                    width: 10px; height: 10px;
                 }
             """
 
@@ -10711,6 +10958,11 @@ if __name__ == "__main__":
                 self.depth_label = QLabel("Bit Depth: N/A")
                 self.location_label = QLabel("Source: N/A")
                 self.mouse_coord_label = QLabel("X: --, Y: --")
+                # Prominent label that explains the active interactive action (draw / mark /
+                # label / highlight) and how to cancel it. Lives in the status bar.
+                self.mode_status_label = QLabel("")
+                self.mode_status_label.setObjectName("ModeStatusLabel")
+                self._notified_keys = set()  # keys of one-shot info popups already shown
                 self.shape_points_at_drag_start_label = []
                 self.initial_mouse_pos_for_shape_drag_label = QPointF()
                 self.multi_lane_mode_active = False
@@ -10743,6 +10995,9 @@ if __name__ == "__main__":
                 statusbar.addWidget(self.depth_label)
                 statusbar.addWidget(self.mouse_coord_label) # Add new label here
                 statusbar.addWidget(self.location_label, 1) # location_label remains stretched
+                # The mode/help message sits on the right of the status bar and is given
+                # the bulk of the stretch so long instructions remain readable.
+                statusbar.addPermanentWidget(self.mode_status_label, 4)
                 self.setWindowTitle(self.window_title)
                 self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
                 self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
@@ -10886,15 +11141,17 @@ if __name__ == "__main__":
                     "QTabWidget::tab-bar { alignment: center; }"
                 )
                 
-                # Tabs are added directly (no per-tab scroll wrapper): the whole tab
-                # widget lives inside a single resizable QScrollArea built in
-                # _update_main_layout, exactly like the reference CombinedSDSApp.
-                self.tab_widget.addTab(self.font_and_image_tab(), "Image and Contrast")
-                self.tab_widget.addTab(self.create_cropping_tab(), "Transform")
-                self.tab_widget.addTab(self.create_markers_tab(), "Markers")
-                self.tab_widget.addTab(self.combine_image_tab(), "Overlap Images")
-                self.tab_widget.addTab(self.analysis_tab(), "Analysis")
-                self.tab_widget.addTab(self.create_settings_tab(), "Settings")
+                # Each tab's CONTENT is wrapped in its own QScrollArea, while the tab BAR
+                # itself stays outside any scroll area (added directly to the window in
+                # _update_main_layout). This keeps the tabs always visible and clickable —
+                # only the content within a tab scrolls — so navigation is never lost behind
+                # a horizontal/vertical scrollbar.
+                self.tab_widget.addTab(self._scroll_wrap_tab(self.font_and_image_tab()), "Image and Contrast")
+                self.tab_widget.addTab(self._scroll_wrap_tab(self.create_cropping_tab()), "Transform")
+                self.tab_widget.addTab(self._scroll_wrap_tab(self.create_markers_tab()), "Markers")
+                self.tab_widget.addTab(self._scroll_wrap_tab(self.combine_image_tab()), "Overlap Images")
+                self.tab_widget.addTab(self._scroll_wrap_tab(self.analysis_tab()), "Analysis")
+                self.tab_widget.addTab(self._scroll_wrap_tab(self.create_settings_tab()), "Settings")
 
                 
                 #self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
@@ -11042,10 +11299,106 @@ if __name__ == "__main__":
                     pass
                 super().resizeEvent(event)
             
+            def _render_indicator_png(self, kind, color_hex):
+                """Vector-draw a small UI indicator (spin/combo arrow, checkbox tick, radio
+                dot) with QPainter and save it to a PNG file, returning the file path.
+
+                This is the SAME philosophy as the toolbar icons (create_vector_icon): draw
+                crisply with QPainter so it looks identical on every machine and stays sharp
+                at any DPI. Qt Style Sheets, however, can only load an `image:` from a FILE
+                path (a QIcon or a `data:` URI does NOT work in QSS `url()`), so we render to
+                a high-resolution PNG on disk and reference that path from the stylesheet."""
+                try:
+                    cache = self.__dict__.setdefault('_indicator_icon_cache', {})
+                    key = (kind, color_hex)
+                    if key in cache and os.path.exists(cache[key]):
+                        return cache[key]
+
+                    import tempfile
+                    cache_dir = os.path.join(tempfile.gettempdir(), "gba_ui_icons")
+                    os.makedirs(cache_dir, exist_ok=True)
+
+                    S = 64  # high-res source; QSS scales it down to ~10-12px → crisp at any DPI
+                    pm = QPixmap(S, S)
+                    pm.fill(Qt.transparent)
+                    p = QPainter(pm)
+                    p.setRenderHint(QPainter.Antialiasing, True)
+                    col = QColor(color_hex)
+                    if kind in ("up", "down"):
+                        p.setPen(Qt.NoPen)
+                        p.setBrush(QBrush(col))
+                        m = S * 0.26
+                        if kind == "up":
+                            pts = [QPointF(m, S - m), QPointF(S - m, S - m), QPointF(S / 2.0, m)]
+                        else:
+                            pts = [QPointF(m, m), QPointF(S - m, m), QPointF(S / 2.0, S - m)]
+                        p.drawPolygon(QPolygonF(pts))
+                    elif kind == "check":
+                        pen = QPen(col)
+                        pen.setWidthF(S * 0.13)
+                        pen.setCapStyle(Qt.RoundCap)
+                        pen.setJoinStyle(Qt.RoundJoin)
+                        p.setPen(pen)
+                        p.drawPolyline(QPolygonF([
+                            QPointF(S * 0.22, S * 0.52),
+                            QPointF(S * 0.42, S * 0.72),
+                            QPointF(S * 0.78, S * 0.30)]))
+                    elif kind == "dot":
+                        p.setPen(Qt.NoPen)
+                        p.setBrush(QBrush(col))
+                        r = S * 0.22
+                        p.drawEllipse(QPointF(S / 2.0, S / 2.0), r, r)
+                    p.end()
+
+                    safe = color_hex.lstrip('#')
+                    path = os.path.join(cache_dir, f"{kind}_{safe}.png")
+                    pm.save(path, "PNG")
+                    cache[key] = path
+                    return path
+                except Exception:
+                    return ""
+
+            def _skin_stylesheet_indicators(self, qss, arrow_hex):
+                """Rewrite a theme stylesheet so its spinbox/combo arrows and checkbox/radio
+                indicators point at freshly vector-rendered PNG files (see
+                _render_indicator_png). `arrow_hex` is the arrow colour for this theme; the
+                check tick and radio dot are white (their checked background is the accent)."""
+                try:
+                    import re
+                    up   = self._render_indicator_png("up",   arrow_hex)
+                    down = self._render_indicator_png("down", arrow_hex)
+                    chk  = self._render_indicator_png("check", "#FFFFFF")
+                    dot  = self._render_indicator_png("dot",   "#FFFFFF")
+
+                    def swap(text, anchor, path):
+                        if not path:
+                            return text
+                        url = 'url("%s")' % path.replace(os.sep, '/')
+                        # Replace the first url(...) that follows the given subcontrol anchor.
+                        return re.sub(re.escape(anchor) + r'(.*?image:\s*)url\([^)]*\)',
+                                      lambda m: anchor + m.group(1) + url,
+                                      text, count=1, flags=re.DOTALL)
+
+                    qss = swap(qss, "QSpinBox::up-arrow", up)
+                    qss = swap(qss, "QSpinBox::down-arrow", down)
+                    qss = swap(qss, "QComboBox::down-arrow", down)
+                    qss = swap(qss, "QCheckBox::indicator:checked", chk)
+                    qss = swap(qss, "QRadioButton::indicator:checked", dot)
+                    return qss
+                except Exception:
+                    return qss
+
             def _apply_initial_theme(self, current_theme):
                 """Applies the theme stylesheet based on the loaded preference."""
                 app = QApplication.instance()
                 if not app: return
+
+                # Bridge the QSS indicator icons to real PNG files (QSS url() can't use
+                # data: URIs). Done once, lazily, before the stylesheet is first applied.
+                if not getattr(self, '_indicators_skinned', False):
+                    self.light_stylesheet = self._skin_stylesheet_indicators(self.light_stylesheet, "#555555")
+                    self.dark_stylesheet = self._skin_stylesheet_indicators(self.dark_stylesheet, "#DCE0E4")
+                    self._indicators_skinned = True
 
                 if current_theme == "dark":
                     app.setStyleSheet(self.dark_stylesheet)
@@ -11080,8 +11433,15 @@ if __name__ == "__main__":
                 
                 # --- FIX: Call the helper method to regenerate icons with the new theme color ---
                 self._update_toolbar_icons()
-                
+
                 self._update_levels_histogram()
+                # Keep the green interactive-tool buttons + active status message in sync
+                # with the new theme.
+                self._refresh_action_button_styles()
+                if hasattr(self, '_update_toggle_markers_button_style'):
+                    self._update_toggle_markers_button_style()
+                if getattr(self, 'mode_status_label', None) is not None and self.mode_status_label.text():
+                    self.show_mode_status(self.mode_status_label.text())
                 self.save_app_settings()
 
             # --- ADD THIS NEW METHOD ---
@@ -11543,6 +11903,18 @@ if __name__ == "__main__":
                 self.pan_up_action.setEnabled(False)
                 self.pan_down_action.setEnabled(False)
 
+            def _scroll_wrap_tab(self, content):
+                """Wrap a tab page in its own QScrollArea so only the page content scrolls
+                while the tab bar stays fixed and always reachable. Horizontal scrollbar
+                appears only if truly needed."""
+                sa = QScrollArea()
+                sa.setWidgetResizable(True)
+                sa.setFrameShape(QFrame.NoFrame)
+                sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                sa.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                sa.setWidget(content)
+                return sa
+
             def _update_main_layout(self, position: str):
                 """
                 Rebuilds the main window's layout (ported from the reference CombinedSDSApp).
@@ -11567,47 +11939,79 @@ if __name__ == "__main__":
                 # Get available screen geometry
                 screen_geo = QGuiApplication.primaryScreen().availableGeometry()
                 screen_h = screen_geo.height()
+                screen_w = screen_geo.width()
+
+                # ----------------------------------------------------------------
+                # DPI / small-screen robustness.
+                #
+                # The viewer is a FIXED-size widget that sits OUTSIDE the scroll
+                # area. If (viewer + window chrome + a usable controls area) is
+                # taller than the desktop, the window's minimum size exceeds the
+                # screen and the bottom controls get pushed off-screen (the classic
+                # "can't click the bottom buttons at 100% DPI" bug on Windows).
+                #
+                # Fix: cap the viewer to whatever the current desktop can actually
+                # show (keeping its aspect ratio), and keep the scroll area's
+                # MINIMUM height small so the window can always shrink to fit and
+                # simply scroll its controls. All coordinate maths read the live
+                # viewer size, so shrinking the viewer is safe.
+                # ----------------------------------------------------------------
+                CHROME_H = 140          # menu bar + status bar + separators + margins
+                MIN_CONTROLS_H = 200    # smallest usable height for the scrollable controls
+                if position in ("Left", "Right"):
+                    # Controls sit beside the viewer, so the viewer may use the full
+                    # height; only reserve window chrome.
+                    max_viewer_h = screen_h - CHROME_H
+                else:
+                    max_viewer_h = screen_h - CHROME_H - MIN_CONTROLS_H
+
+                if max_viewer_h > 120 and VIEWER_FIXED_HEIGHT > max_viewer_h:
+                    _ratio = max_viewer_h / float(VIEWER_FIXED_HEIGHT)
+                    VIEWER_FIXED_HEIGHT = int(max_viewer_h)
+                    VIEWER_FIXED_WIDTH = max(160, int(VIEWER_FIXED_WIDTH * _ratio))
+
+                # Never let the viewer be wider than the desktop.
+                _max_viewer_w = screen_w - 40
+                if _max_viewer_w > 160 and VIEWER_FIXED_WIDTH > _max_viewer_w:
+                    _ratio = _max_viewer_w / float(VIEWER_FIXED_WIDTH)
+                    VIEWER_FIXED_WIDTH = int(_max_viewer_w)
+                    VIEWER_FIXED_HEIGHT = max(120, int(VIEWER_FIXED_HEIGHT * _ratio))
+
+                # Keep the controls column within the screen so the window never
+                # needs to be wider than the desktop (no horizontal overflow).
+                SAFE_CONTENT_WIDTH = min(SAFE_CONTENT_WIDTH, max(640, screen_w - 60))
 
                 new_main_widget = QWidget()
                 new_layout = None
 
-                # Create or configure ScrollArea
-                if not hasattr(self, 'controls_scroll_area'):
-                    self.controls_scroll_area = QScrollArea()
-
-                self.controls_scroll_area.setWidget(self.tab_widget)
-
-                # --- SCROLLBAR SETTINGS ---
-                # 1. Resize widget to fit the area (expands to fill available space)
-                self.controls_scroll_area.setWidgetResizable(True)
-                # 2. Remove frame
-                self.controls_scroll_area.setFrameShape(QFrame.NoFrame)
-                # 3. Policy: AsNeeded. (Won't appear because we set a MinWidth below)
-                self.controls_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-                self.controls_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-                # 4. Allow expansion
-                self.controls_scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                # --------------------------
+                # The tab BAR is added straight to the window so it's always visible; each
+                # tab's CONTENT scrolls inside its own QScrollArea (wired in __init__ via
+                # _scroll_wrap_tab). No outer scroll area wraps the whole tab widget anymore,
+                # so the tabs never scroll out of reach.
 
                 # Enforce Fixed Viewer Size
                 self.live_view_label.setFixedSize(VIEWER_FIXED_WIDTH, VIEWER_FIXED_HEIGHT)
                 self.live_view_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-                # Unconstrain Tab Widget
-                self.tab_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+                # Tab widget fills the remaining space; minimum height stays small so the
+                # window can always shrink to the desktop (the per-tab scroll areas handle
+                # overflow).
+                self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.tab_widget.setMinimumSize(0, 0)
                 self.tab_widget.setMaximumSize(16777215, 16777215)
 
                 if position in ["Top", "Bottom"]:
                     new_layout = QVBoxLayout(new_main_widget)
 
-                    # HEIGHT: Screen - Viewer - Margins
-                    available_height = max(330, screen_h - VIEWER_FIXED_HEIGHT - 250)
+                    # Preferred (not minimum) controls height for sizing the window.
+                    available_height = max(MIN_CONTROLS_H, screen_h - VIEWER_FIXED_HEIGHT - CHROME_H)
 
                     # WIDTH: SAFE_CONTENT_WIDTH ensures no horizontal scrollbar without
-                    # forcing full-screen width.
-                    self.controls_scroll_area.setMinimumWidth(SAFE_CONTENT_WIDTH)
-                    self.controls_scroll_area.setMinimumHeight(available_height)
+                    # forcing full-screen width. The MINIMUM height is kept small so the
+                    # window can always shrink to fit the desktop and scroll instead of
+                    # pushing the bottom controls off-screen.
+                    self.tab_widget.setMinimumWidth(SAFE_CONTENT_WIDTH)
+                    self.tab_widget.setMinimumHeight(MIN_CONTROLS_H)
 
                     APP_GLOBAL_WINDOW_HEIGHT = available_height
                     APP_GLOBAL_WINDOW_WIDTH = SAFE_CONTENT_WIDTH
@@ -11616,9 +12020,9 @@ if __name__ == "__main__":
                     if position == "Top":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(self.create_separator())
-                        new_layout.addWidget(self.controls_scroll_area, 1)
+                        new_layout.addWidget(self.tab_widget, 1)
                     else:  # Bottom
-                        new_layout.addWidget(self.controls_scroll_area, 1)
+                        new_layout.addWidget(self.tab_widget, 1)
                         new_layout.addWidget(self.create_separator())
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
 
@@ -11628,11 +12032,12 @@ if __name__ == "__main__":
                     separator.setFrameShadow(QFrame.Sunken)
                     new_layout = QHBoxLayout(new_main_widget)
 
-                    # HEIGHT: Full screen height minus taskbars
-                    available_height = max(600, screen_h - 150)
+                    # Preferred height for sizing; minimum kept small so the window can
+                    # always shrink to the desktop and scroll its controls.
+                    available_height = max(MIN_CONTROLS_H, screen_h - CHROME_H)
 
-                    self.controls_scroll_area.setMinimumWidth(SAFE_CONTENT_WIDTH)
-                    self.controls_scroll_area.setMinimumHeight(available_height)
+                    self.tab_widget.setMinimumWidth(SAFE_CONTENT_WIDTH)
+                    self.tab_widget.setMinimumHeight(MIN_CONTROLS_H)
 
                     APP_GLOBAL_WINDOW_HEIGHT = available_height
                     APP_GLOBAL_WINDOW_WIDTH = SAFE_CONTENT_WIDTH
@@ -11641,9 +12046,9 @@ if __name__ == "__main__":
                     if position == "Left":
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
                         new_layout.addWidget(separator)
-                        new_layout.addWidget(self.controls_scroll_area, 1)
+                        new_layout.addWidget(self.tab_widget, 1)
                     else:  # Right
-                        new_layout.addWidget(self.controls_scroll_area, 1)
+                        new_layout.addWidget(self.tab_widget, 1)
                         new_layout.addWidget(separator)
                         new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
 
@@ -11655,12 +12060,22 @@ if __name__ == "__main__":
                         old_central_widget.deleteLater()
 
                     # Restore the user's last saved window size if we have one (persisted
-                    # via resizeEvent -> resize_timer -> save_app_settings). Otherwise let
-                    # the window size to its content. _fit_window_to_screen() below then
-                    # clamps it to the visible desktop.
+                    # via resizeEvent -> resize_timer -> save_app_settings). Otherwise pick
+                    # a sensible default that fits the current desktop. _fit_window_to_screen()
+                    # below then clamps it to the visible desktop.
                     if (self.saved_window_width and self.saved_window_height
                             and self.saved_window_width > 0 and self.saved_window_height > 0):
-                        self.resize(self.saved_window_width, self.saved_window_height)
+                        # Clamp a (possibly stale / different-DPI) saved size to the current
+                        # desktop so it can never restore larger than the screen.
+                        self.resize(min(self.saved_window_width, screen_w - 20),
+                                    min(self.saved_window_height, screen_h - 20))
+                    else:
+                        # Default: wide enough for the controls, tall enough for viewer +
+                        # controls, but never larger than the available desktop.
+                        default_w = min(SAFE_CONTENT_WIDTH + 60, screen_w - 20)
+                        default_h = min(VIEWER_FIXED_HEIGHT + available_height + CHROME_H,
+                                        screen_h - 20)
+                        self.resize(max(640, default_w), max(480, default_h))
                     # Safety net: keep the window within the visible desktop so the menu
                     # bar and controls can't be clipped or pushed off-screen.
                     self._fit_window_to_screen()
@@ -11673,20 +12088,72 @@ if __name__ == "__main__":
             def _fit_window_to_screen(self):
                 """Clamp the main window to the available screen area and move it fully
                 on-screen. Safety net for HighDPI / large-layout cases that would
-                otherwise push the menu bar or controls outside the visible desktop."""
+                otherwise push the menu bar or controls outside the visible desktop.
+
+                The window *frame* (title bar + borders) is included in the budget so the
+                client area plus its decorations never spill past the desktop edges — this
+                is what guarantees the bottom controls stay clickable at any DPI."""
                 try:
                     screen = self.screen() or QGuiApplication.primaryScreen()
                     if screen is None:
                         return
                     avail = screen.availableGeometry()
-                    w = min(self.width(), avail.width())
-                    h = min(self.height(), avail.height())
+                    # Decoration overhead = frame size - client size (title bar + borders).
+                    frame = self.frameGeometry()
+                    geo = self.geometry()
+                    deco_w = max(0, frame.width() - geo.width())
+                    deco_h = max(0, frame.height() - geo.height())
+                    max_w = max(320, avail.width() - deco_w)
+                    max_h = max(320, avail.height() - deco_h)
+                    w = min(self.width(), max_w)
+                    h = min(self.height(), max_h)
                     if w != self.width() or h != self.height():
                         self.resize(w, h)
+                    # Re-read the frame after any resize, then move fully on-screen.
                     frame = self.frameGeometry()
                     x = min(max(frame.x(), avail.x()), max(avail.x(), avail.right() - frame.width() + 1))
                     y = min(max(frame.y(), avail.y()), max(avail.y(), avail.bottom() - frame.height() + 1))
                     self.move(x, y)
+                except Exception:
+                    pass
+
+            def _auto_fit_ui_to_screen(self):
+                """On smaller desktops (low resolution, or a high DPI setting that shrinks the
+                logical work area) automatically pick a smaller UI Scale and narrow the
+                Program UI Width so the whole window fits without clipping.
+
+                Only ever shrinks (caps) — never enlarges past the user's setting — and is
+                idempotent: re-running on the same screen produces the same result. Runs at
+                startup (from load_config); manual changes in the Settings tab are left alone."""
+                try:
+                    geo = QGuiApplication.primaryScreen().availableGeometry()
+                    sw, sh = geo.width(), geo.height()
+
+                    # 1) UI Scale — 1280x720 (the supported minimum) is the reference for
+                    #    100%, because the layout already fits there at full scale. Only
+                    #    desktops SMALLER than that get a proportionally smaller scale,
+                    #    snapped DOWN to a value the Settings combo actually offers.
+                    rec = min(sw / 1280.0, sh / 720.0)
+                    options = sorted({v for (_t, v) in getattr(self, 'scale_options',
+                                      [("", 0.5), ("", 0.75), ("", 1.0)]) if v and v >= 0.5})
+                    if not options:
+                        options = [0.5, 0.75, 1.0]
+                    snapped = options[0]
+                    for v in options:
+                        if v <= rec + 1e-6 and v <= 1.0:
+                            snapped = v
+                    snapped = min(1.0, snapped)
+                    cur_scale = float(getattr(self, 'ui_scale_preference', 1.0) or 1.0)
+                    # Cap only: respect a user who already chose an even smaller scale.
+                    self.ui_scale_preference = min(cur_scale, snapped)
+
+                    # 2) Program UI Width — on-screen controls width is
+                    #    safe_content_width * ui_scale_factor; keep it within the desktop.
+                    scale = max(0.1, float(self.ui_scale_preference))
+                    max_content_w = int((sw - 40) / scale)
+                    cur_w = int(getattr(self, 'safe_content_width', 1000) or 1000)
+                    if cur_w > max_content_w:
+                        self.safe_content_width = max(560, max_content_w)
                 except Exception:
                     pass
 
@@ -11922,7 +12389,138 @@ if __name__ == "__main__":
                     self.size_label.setText("Image Size: N/A")
                     self.depth_label.setText("Bit Depth: N/A")
                     self.location_label.setText("Source: N/A")
-                
+
+            # ------------------------------------------------------------------
+            # Interactive-action UX helpers (status messaging, green buttons,
+            # one-shot popups and "image required" guards).
+            # ------------------------------------------------------------------
+            def show_mode_status(self, message, active_button=None):
+                """Show a discreet, professional instruction in the status bar describing the
+                active interactive action and how to leave it. No coloured box — just a
+                subtly accented italic line so it reads as guidance, not an alert.
+
+                If `active_button` is given, that tool button is highlighted green (and any
+                previously-active tool button reverts to its normal look) to show which tool
+                is currently armed."""
+                try:
+                    if hasattr(self, 'mode_status_label'):
+                        is_dark = getattr(self, 'current_theme', 'light') == 'dark'
+                        fg = '#8AB4E0' if is_dark else '#2C5F92'  # muted, professional blue
+                        self.mode_status_label.setStyleSheet(
+                            f"#ModeStatusLabel {{ color: {fg}; font-style: italic; "
+                            f"padding-right: 8px; }}")
+                        self.mode_status_label.setText(message)
+                    if active_button is not None:
+                        self._activate_tool_button(active_button)
+                except Exception:
+                    pass
+
+            def clear_mode_status(self):
+                """Clear the interactive-action message and revert any armed tool button to
+                its normal appearance."""
+                try:
+                    if hasattr(self, 'mode_status_label'):
+                        self.mode_status_label.setStyleSheet("")
+                        self.mode_status_label.setText("")
+                    self._deactivate_tool_buttons()
+                except Exception:
+                    pass
+
+            def _active_tool_button_qss(self, is_dark=None):
+                """Green 'active tool' button style — same family as the Show Markers
+                button — applied ONLY while a draw/mark/label/highlight tool is armed."""
+                if is_dark is None:
+                    is_dark = getattr(self, 'current_theme', 'light') == 'dark'
+                if is_dark:
+                    return ("QPushButton { background-color: #3D984E; border: 1px solid #5DBB6F; "
+                            "color: white; } QPushButton:hover { background-color: #46AC59; }")
+                return ("QPushButton { background-color: #D4EDDA; border: 1px solid #74B882; "
+                        "color: #194D27; } QPushButton:hover { background-color: #C6E6CE; }")
+
+            def _register_action_button(self, button):
+                """Tag a button as an interactive-tool trigger. It keeps its NORMAL look by
+                default and only turns green while its tool is actively armed."""
+                try:
+                    if not hasattr(self, '_action_buttons'):
+                        self._action_buttons = []
+                    if button not in self._action_buttons:
+                        self._action_buttons.append(button)
+                except Exception:
+                    pass
+                return button
+
+            def _activate_tool_button(self, button):
+                """Highlight `button` green to show its tool is armed; revert every other
+                registered tool button to its normal appearance."""
+                try:
+                    self._active_tool_button = button
+                    qss = self._active_tool_button_qss()
+                    for b in getattr(self, '_action_buttons', []):
+                        b.setStyleSheet(qss if b is button else "")
+                except Exception:
+                    pass
+
+            def _deactivate_tool_buttons(self):
+                """Revert all tool buttons to their normal (theme default) appearance."""
+                try:
+                    self._active_tool_button = None
+                    for b in getattr(self, '_action_buttons', []):
+                        b.setStyleSheet("")
+                except Exception:
+                    pass
+
+            def _refresh_action_button_styles(self):
+                """Re-apply styling after a theme switch: only the currently-armed tool
+                button stays green, everything else uses the theme default."""
+                try:
+                    active = getattr(self, '_active_tool_button', None)
+                    qss = self._active_tool_button_qss()
+                    for btn in getattr(self, '_action_buttons', []):
+                        try:
+                            btn.setStyleSheet(qss if (active is not None and btn is active) else "")
+                        except Exception:
+                            pass
+                    # Re-accent the active status message text for the new theme.
+                    if getattr(self, 'mode_status_label', None) is not None and self.mode_status_label.text():
+                        self.show_mode_status(self.mode_status_label.text())
+                except Exception:
+                    pass
+
+            def _notify_once(self, key, title, message, status_message=None):
+                """Show an informational popup the FIRST time an action is used, then fall
+                back to a quiet status-bar message on subsequent uses (until the image is
+                reset/reloaded, which clears the remembered keys). Keeps the UI from
+                nagging the user with the same dialog over and over."""
+                try:
+                    if not hasattr(self, '_notified_keys'):
+                        self._notified_keys = set()
+                    if key not in self._notified_keys:
+                        self._notified_keys.add(key)
+                        QMessageBox.information(self, title, message)
+                    elif status_message is not None:
+                        self.show_mode_status(status_message)
+                except Exception:
+                    pass
+
+            def _has_image(self):
+                """True when a usable image is loaded."""
+                try:
+                    return self.image is not None and not self.image.isNull()
+                except Exception:
+                    return False
+
+            def _require_image(self, action_label="this action"):
+                """Quiet guard for tools that need an image. Instead of popping a warning
+                dialog, it shows a one-line status-bar hint and returns False so the caller
+                can simply abort. Returns True when an image is present."""
+                if self._has_image():
+                    return True
+                try:
+                    self.show_mode_status(f"Load an image first to use {action_label}.")
+                except Exception:
+                    pass
+                return False
+
             def prompt_save_if_needed(self):
                 if not self.is_modified:
                     return True # No changes, proceed
@@ -11948,18 +12546,25 @@ if __name__ == "__main__":
                     event.ignore() # Abort closing
                     
             def enable_line_drawing_mode(self):
+                if not self._require_image("Draw Line"):
+                    return
                 self.save_state()
                 self.drawing_mode = 'line'
-                self.live_view_label.mode = 'draw_shape' 
+                self.live_view_label.mode = 'draw_shape'
                 self.current_drawing_shape_preview = None
                 self.live_view_label.setCursor(Qt.CrossCursor)
-                
+
                 # Use custom hooks instead of direct overwrite
                 self.live_view_label._custom_left_click_handler_from_app = self.start_shape_draw
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.update_shape_draw
                 self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_shape_draw
+                self.show_mode_status("Drawing a LINE — click and drag on the image. Hold Shift to "
+                                      "constrain to 0/45/90°. Press Esc to cancel.",
+                                      active_button=getattr(self, 'draw_line_button', None))
 
             def enable_rectangle_drawing_mode(self):
+                if not self._require_image("Draw Rectangle"):
+                    return
                 self.save_state()
                 self.drawing_mode = 'rectangle'
                 self.live_view_label.mode = 'draw_shape'
@@ -11969,6 +12574,9 @@ if __name__ == "__main__":
                 self.live_view_label._custom_left_click_handler_from_app = self.start_shape_draw
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.update_shape_draw
                 self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_shape_draw
+                self.show_mode_status("Drawing a RECTANGLE — click and drag on the image. Hold "
+                                      "Shift for a perfect square. Press Esc to cancel.",
+                                      active_button=getattr(self, 'draw_rect_button', None))
 
             def cancel_drawing_mode(self):
                 """Resets drawing mode and cursor."""
@@ -11976,6 +12584,7 @@ if __name__ == "__main__":
                 self.live_view_label.mode = None # App-level mode for LiveViewLabel's paintEvent logic
                 self.current_drawing_shape_preview = None
                 self._reset_live_view_label_custom_handlers() # Use helper
+                self.clear_mode_status()
                 self.update_live_view()
                 
             def start_shape_draw(self, event):
@@ -12437,8 +13046,7 @@ if __name__ == "__main__":
                 → bands auto-detected → densitometry run → results window opened.
                 """
                 self._reset_live_view_label_custom_handlers()
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "Please load a gel image first.")
+                if not self._require_image("Auto Analyze Gel"):
                     return
 
                 # Ask region type (rect or quad)
@@ -12481,11 +13089,15 @@ if __name__ == "__main__":
                     self.live_view_label.mode = 'auto_analyze_quad'
                     self.live_view_label._custom_left_click_handler_from_app = \
                         self._aag_quad_click
+                    self.show_mode_status("AUTO ANALYZE — click the 4 corners of the gel boundary. "
+                                          "Press Esc to cancel.")
                 else:
                     self.live_view_label.mode = 'auto_analyze_rect'
                     self.live_view_label._custom_left_click_handler_from_app  = self.start_rectangle
                     self.live_view_label._custom_mouseMoveEvent_from_app      = self.update_rectangle_preview
                     self.live_view_label._custom_mouseReleaseEvent_from_app   = self._aag_rect_finalize
+                    self.show_mode_status("AUTO ANALYZE — click and drag a rectangle around the gel "
+                                          "boundary. Press Esc to cancel.")
 
                 self.update_live_view()
 
@@ -12534,6 +13146,7 @@ if __name__ == "__main__":
                         self.live_view_label.bounding_box_preview    = None
                         self.live_view_label.current_preview_points  = []
                         self.live_view_label.setCursor(Qt.ArrowCursor)
+                        self.clear_mode_status()
                         self.update_live_view()
 
             def _aag_launch_from_quad(self, quad_pts_label):
@@ -12563,6 +13176,7 @@ if __name__ == "__main__":
                     self.live_view_label.mode                   = None
                     self.live_view_label.current_preview_points = []
                     self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.clear_mode_status()
                     self.update_live_view()
 
             def _aag_open_wizard(self, gel_pil, region_def, is_quad, color_np=None):
@@ -12581,8 +13195,7 @@ if __name__ == "__main__":
             def start_auto_lane_marker(self):
                 self._reset_live_view_label_custom_handlers()
                 """Initiates the automatic lane marker placement process using a single, dynamically created dialog."""
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "Please load an image first.")
+                if not self._require_image("Auto Lane markers"):
                     return
 
                 # --- START: Create a simple dialog on-the-fly without a new class ---
@@ -12642,9 +13255,13 @@ if __name__ == "__main__":
                     self.live_view_label._custom_left_click_handler_from_app = self.start_rectangle
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.update_rectangle_preview
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_rectangle_for_auto_lane
+                    self.show_mode_status("AUTO LANE — click and drag a rectangle over one lane. "
+                                          "Press Esc to cancel.")
                 elif region_type == "quadrilateral":
                     self.live_view_label.mode = 'auto_lane_quad'
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_auto_lane_quad_click
+                    self.show_mode_status("AUTO LANE — click the 4 corners of one lane. "
+                                          "Press Esc to cancel.")
 
                 self.update_live_view()
 
@@ -13421,6 +14038,7 @@ if __name__ == "__main__":
                 self.predict_button.setToolTip("Click a point on a lane to predict its molecular weight/size based on the active standard markers.\nShortcut: Ctrl+P")
                 self.predict_button.setEnabled(False)
                 self.predict_button.clicked.connect(self.predict_molecular_weight)
+                self._register_action_button(self.predict_button)
                 mw_layout.addWidget(self.predict_button, 0, 2)
 
                 # --- Row 2: Protein Analysis & Measurement Button ---
@@ -13454,15 +14072,18 @@ if __name__ == "__main__":
                 self.btn_auto_lane_click.setToolTip("Click on the center of a lane to automatically mark its rectangular region.\nPress ESC to finish the session.")
                 self.btn_auto_lane_click.clicked.connect(lambda: self.start_region_definition_session('auto_lane_click'))
                 self.btn_auto_lane_click.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                
+                self._register_action_button(self.btn_auto_lane_click)
+
                 self.btn_define_quad = QPushButton("Quadrilateral Region")
                 self.btn_define_quad.setToolTip("Start a session to define one or more skewed lane regions by clicking 4 corner points for each.\nPress ESC to finish the session.")
                 self.btn_define_quad.clicked.connect(lambda: self.start_region_definition_session('quad'))
                 self.btn_define_quad.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self._register_action_button(self.btn_define_quad)
                 self.btn_define_rec = QPushButton("Rectangular Region")
                 self.btn_define_rec.setToolTip("Start a session to define one or more straight lane regions by clicking and dragging for each.\nPress ESC to finish the session.")
                 self.btn_define_rec.clicked.connect(lambda: self.start_region_definition_session('rectangle'))
                 self.btn_define_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self._register_action_button(self.btn_define_rec)
                 self.btn_sel_rec = QPushButton("Move/Resize/Delete Area")
                 self.btn_sel_rec.setToolTip(
                     "Click a lane to select it. Then:\n"
@@ -13477,6 +14098,7 @@ if __name__ == "__main__":
                 )
                 self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
                 self.btn_sel_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self._register_action_button(self.btn_sel_rec)
                 step1_layout.addWidget(self.btn_auto_lane_click, 0, 0)
                 step1_layout.addWidget(self.btn_define_quad, 0, 1)
                 step1_layout.addWidget(self.btn_define_rec, 1, 0)
@@ -13564,8 +14186,7 @@ if __name__ == "__main__":
                     self._exit_current_tool_mode()
                     return
 
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "Please load an image first.")
+                if not self._require_image("the measurement tools"):
                     if self.measurement_tool_window:
                         self.measurement_tool_window.uncheck_all_tools()
                     return
@@ -13577,13 +14198,23 @@ if __name__ == "__main__":
                 self.last_measurement_result_text = ""
 
                 self.measurement_mode = mode
-                
+
                 # Setup mouse handlers and show instructions
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = self.handle_measurement_mouse_press
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_measurement_mouse_move
-                
+                _meas_hints = {
+                    'set_scale': "SET SCALE — click two points a known distance apart on the image, "
+                                 "then enter the real length. Press Esc to cancel.",
+                    'measure_distance': "MEASURE DISTANCE — click two points on the image. "
+                                        "Press Esc to cancel.",
+                    'measure_area': "MEASURE AREA — click points around the area, then close the "
+                                    "shape. Press Esc to cancel.",
+                }
+                self.show_mode_status(_meas_hints.get(mode, "Measurement tool active — click on the "
+                                                            "image. Press Esc to cancel."))
+
             def _exit_current_tool_mode(self):
                 """Helper to reset the UI interaction state of any measurement tool."""
                 self.measurement_mode = None
@@ -13592,6 +14223,7 @@ if __name__ == "__main__":
                 # If the tool window is open, tell it to uncheck its buttons
                 if hasattr(self, 'measurement_tool_window') and self.measurement_tool_window:
                     self.measurement_tool_window.uncheck_all_tools()
+                self.clear_mode_status()
                 self.update_live_view()
 
             def clear_measurement_mode(self, clear_scale=True):
@@ -14007,8 +14639,7 @@ if __name__ == "__main__":
                 If a session is already active, it just switches the tool for the next shape.
                 """
                 self._reset_live_view_label_custom_handlers()
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "Please load an image first.")
+                if not self._require_image("lane definition"):
                     return
 
                 # If a multi-lane session is NOT already active, start a new one.
@@ -14033,25 +14664,34 @@ if __name__ == "__main__":
                 if region_type == 'quad':
                     self.live_view_label.mode = 'define_quad'
                     self.live_view_label.current_preview_points = []
-                    if self.showonce == False: 
+                    if self.showonce == False:
                         QMessageBox.information(self, "Define Lane", f"Click 4 corners for Lane {next_lane_id}.\nPress ESC to finish the session.")
                         self.showonce = True
+                    self.show_mode_status(f"DEFINE LANE {next_lane_id} (quad) — click 4 corners on "
+                                          "the image. Press Esc to finish the session.",
+                                          active_button=getattr(self, 'btn_define_quad', None))
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_click
                 elif region_type == 'rectangle':
                     self.live_view_label.mode = 'define_rect'
                     self.live_view_label.current_preview_points = []
-                    if self.showonce == False: 
+                    if self.showonce == False:
                         QMessageBox.information(self, "Define Lane", f"Draw Lane {next_lane_id}.\nPress ESC to finish the session.")
                         self.showonce = True
+                    self.show_mode_status(f"DEFINE LANE {next_lane_id} (rectangle) — click and drag "
+                                          "to draw the lane. Press Esc to finish the session.",
+                                          active_button=getattr(self, 'btn_define_rec', None))
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_start
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_region_definition_move
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_current_multi_lane_definition
                 elif region_type == 'auto_lane_click':
                     self.live_view_label.mode = 'auto_lane_click'
                     self.live_view_label.current_preview_points = []
-                    if self.showonce == False: 
+                    if self.showonce == False:
                         QMessageBox.information(self, "Define Lane", f"Click the center of Lane {next_lane_id} to automatically mark it.\nPress ESC to finish the session.")
                         self.showonce = True
+                    self.show_mode_status(f"AUTO LANE {next_lane_id} — click the centre of the lane "
+                                          "to mark it automatically. Press Esc to finish.",
+                                          active_button=getattr(self, 'btn_auto_lane_click', None))
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_click
 
                 
@@ -14248,8 +14888,8 @@ if __name__ == "__main__":
                 self.live_view_label.current_preview_points = []
                 self._reset_live_view_label_custom_handlers()
                 self.update_live_view()
-                QMessageBox.information(self, "Finished Defining Lanes", 
-                                        f"{len(self.multi_lane_definitions)} lane(s) defined. You can now process them as standards or samples.")
+                n = len(self.multi_lane_definitions)
+                self.show_mode_status(f"{n} lane(s) defined — process them as standards or samples.")
 
             
             def enable_move_selection_mode(self):
@@ -14258,18 +14898,25 @@ if __name__ == "__main__":
                 # The single source of truth for all defined regions is now self.multi_lane_definitions.
                 # The check is simplified to see if this list is empty.
                 if not self.multi_lane_definitions:
-                    QMessageBox.information(self, "Move/Resize Area", "No area is currently defined to select.")
+                    self.show_mode_status("No lane/area is defined yet — define one before using "
+                                          "Move/Resize.")
                     self.cancel_selection_or_move_mode()
                     return
                 # --- END OF THE FIX ---
 
                 self.current_selection_mode = "select_for_move"
-                self.live_view_label.mode = "select_for_move" 
+                self.live_view_label.mode = "select_for_move"
                 self._reset_live_view_label_custom_handlers()
                 self.live_view_label._custom_left_click_handler_from_app = self.handle_area_selection_click
-                
-                QMessageBox.information(self, "Select Area to Move/Resize", "Click on a defined lane to select it. Click near a corner to resize, or inside to move the whole shape.")
-                self.moving_multi_lane_index = -1 
+
+                self._notify_once(
+                    "move_resize_area", "Select Area to Move/Resize",
+                    "Click on a defined lane to select it. Click near a corner to resize, "
+                    "or inside to move the whole shape. Press Esc when done.")
+                self.show_mode_status("MOVE/RESIZE — click a lane to select; drag a corner to "
+                                      "resize or the inside to move. Press Esc when done.",
+                                      active_button=getattr(self, 'btn_sel_rec', None))
+                self.moving_multi_lane_index = -1
                 self.resizing_corner_index = -1
                 self.update_live_view()
                 
@@ -14442,13 +15089,14 @@ if __name__ == "__main__":
             
             def cancel_selection_or_move_mode(self):
                 self.current_selection_mode = None
-                self.live_view_label.mode = None 
+                self.live_view_label.mode = None
                 self.moving_multi_lane_index = -1
                 self.resizing_corner_index = -1
                 self._reset_live_view_label_custom_handlers() # Use helper
                 self.shape_points_at_drag_start_label = []
                 self.initial_mouse_pos_for_shape_drag_label = QPointF()
                 self.live_view_label.draw_edges = True
+                self.clear_mode_status()
                 self.update_live_view()
                 
                 
@@ -15072,7 +15720,7 @@ if __name__ == "__main__":
                 global_controls_layout.addWidget(self.blend_slider, 1, 1, 1, 3)   # 3 cols for slider
                 global_controls_layout.addWidget(self.blend_value_label, 1, 4)     # fixed label in last col
 
-                self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode)
+                self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode); self._register_action_button(self.interactive_overlay_button)
                 finalize_button = QPushButton("Rasterize Image"); finalize_button.clicked.connect(self.finalize_combined_image)
                 global_controls_layout.addWidget(self.interactive_overlay_button, 2, 1, 1, 2)
                 global_controls_layout.addWidget(finalize_button, 2, 3, 1, 2)
@@ -15093,6 +15741,7 @@ if __name__ == "__main__":
                     "is only drawn inside them."
                 )
                 self.select_region_button.clicked.connect(self.activate_overlay_region_selection)
+                self._register_action_button(self.select_region_button)
                 global_controls_layout.addWidget(self.select_region_button, 3, 3, 1, 1)
 
                 clear_region_button = QPushButton("✖ Clear All")
@@ -15214,9 +15863,18 @@ if __name__ == "__main__":
                     self.live_view_label._custom_mouseMoveEvent_from_app = None
                     self.live_view_label._custom_mouseReleaseEvent_from_app = None
                     self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.clear_mode_status()
                     self.update_live_view()
                     return
 
+                if not self._require_image("Select Regions to Keep"):
+                    if hasattr(self, 'select_region_button'):
+                        self.select_region_button.setChecked(False)
+                    return
+
+                self.show_mode_status("SELECT REGIONS — drag rectangles on the image to mark the "
+                                      "areas to keep. Un-check the button when done.",
+                                      active_button=getattr(self, 'select_region_button', None))
                 self.live_view_label.setCursor(Qt.CrossCursor)
                 self._region_select_start = None
                 self._region_select_current = None
@@ -15669,14 +16327,18 @@ if __name__ == "__main__":
                     self.overlay_mode_active = True
                     self.selected_overlay_index = 0 # No overlay selected initially
                     self.live_view_label.setCursor(Qt.PointingHandCursor)
-                    QMessageBox.information(self, "Interactive Overlay Mode",
-                                            "Mode Activated:\n\n"
-                                            " - Click an overlay to select it.\n"
-                                            " - Drag the selected overlay to move it.\n"
-                                            " - Use Mouse Wheel over it to resize.\n"
-                                            " - Use Arrow Keys to nudge it.\n\n"
-                                            "Uncheck the button or press ESC to exit.")
-                    
+                    self._notify_once(
+                        "interactive_overlay", "Interactive Overlay Mode",
+                        "Mode Activated:\n\n"
+                        " - Click an overlay to select it.\n"
+                        " - Drag the selected overlay to move it.\n"
+                        " - Use Mouse Wheel over it to resize.\n"
+                        " - Use Arrow Keys to nudge it.\n\n"
+                        "Uncheck the button or press ESC to exit.")
+                    self.show_mode_status("INTERACTIVE OVERLAY — click to select, drag to move, "
+                                          "wheel to resize, arrows to nudge. Press Esc to exit.",
+                                          active_button=getattr(self, 'interactive_overlay_button', None))
+
                     self._reset_live_view_label_custom_handlers()
                     self.live_view_label._custom_left_click_handler_from_app = self._handle_overlay_mouse_press
                     self.live_view_label._custom_mouseMoveEvent_from_app = self._handle_overlay_mouse_move
@@ -15692,6 +16354,7 @@ if __name__ == "__main__":
                 self._reset_live_view_label_custom_handlers()
                 if hasattr(self, 'interactive_overlay_button') and self.interactive_overlay_button.isChecked():
                     self.interactive_overlay_button.setChecked(False)
+                self.clear_mode_status()
                 self.update_live_view() # Redraw to remove selection highlight
 
             def _get_overlay_rect_in_label_space(self, overlay_index):
@@ -16024,10 +16687,9 @@ if __name__ == "__main__":
                 - 64-bit RGBA -> 32-bit RGBA
                 - 32-bit RGBA -> No Change (Already 8-bit/channel)
                 """
-                self.save_state()
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "No image loaded.")
+                if not self._require_image("8-bit conversion"):
                     return
+                self.save_state()
 
                 fmt = self.image.format()
                 new_image = None
@@ -17135,6 +17797,7 @@ if __name__ == "__main__":
                 self.perspective_edit_button.setCheckable(True)
                 self.perspective_edit_button.setToolTip("Toggle 4-point perspective correction mode. Drag corners to adjust.")
                 self.perspective_edit_button.clicked.connect(self.toggle_perspective_mode)
+                self._register_action_button(self.perspective_edit_button)
                 self.perspective_apply_button = QPushButton("Apply")
                 self.perspective_apply_button.setToolTip("Permanently apply the current perspective correction to the image.")
                 self.perspective_apply_button.clicked.connect(self.apply_perspective_correction)
@@ -17166,14 +17829,9 @@ if __name__ == "__main__":
                 crop_actions_layout = QHBoxLayout()
                 self.draw_crop_rect_button = QPushButton("Draw Crop Area"); self.draw_crop_rect_button.setCheckable(True)
                 self.draw_crop_rect_button.clicked.connect(self.toggle_rectangle_crop_mode)
+                self._register_action_button(self.draw_crop_rect_button)
                 self.apply_crop_button = QPushButton("Apply Crop"); self.apply_crop_button.clicked.connect(self.update_crop)
-                self.polish_image_button = QPushButton("Polish Image")
-                self.polish_image_button.setToolTip(
-                    "Auto-crop: detects the fill/border region (added by rotation or skew)\n"
-                    "and trims to the largest clean inscribed rectangle.")
-                self.polish_image_button.clicked.connect(self.polish_image)
                 crop_actions_layout.addWidget(self.draw_crop_rect_button, 1); crop_actions_layout.addStretch()
-                crop_actions_layout.addWidget(self.polish_image_button)
                 crop_actions_layout.addWidget(self.apply_crop_button)
                 cropping_layout.addLayout(crop_actions_layout)
                 cropping_layout.addWidget(self.create_separator())
@@ -17363,6 +18021,11 @@ if __name__ == "__main__":
             
             def toggle_rectangle_crop_mode(self, checked):
                 if checked:
+                    if not self._require_image("Draw Crop Area"):
+                        # Quietly pop the button back out — no warning dialog.
+                        if hasattr(self, 'draw_crop_rect_button'):
+                            self.draw_crop_rect_button.setChecked(False)
+                        return
                     self.enable_rectangle_crop_mode()
                 else:
                     self.cancel_rectangle_crop_mode()
@@ -17379,6 +18042,9 @@ if __name__ == "__main__":
                 self.live_view_label._custom_left_click_handler_from_app = self.start_crop_rectangle
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.update_crop_rectangle_preview
                 self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_crop_rectangle
+                self.show_mode_status("Drawing CROP AREA — click and drag a rectangle on the "
+                                      "image, then press Apply Crop. Press Esc to cancel.",
+                                      active_button=getattr(self, 'draw_crop_rect_button', None))
 
             def cancel_rectangle_crop_mode(self):
                 """Deactivates the rectangle drawing mode."""
@@ -17389,6 +18055,7 @@ if __name__ == "__main__":
                 if hasattr(self, 'draw_crop_rect_button'):
                      self.draw_crop_rect_button.setChecked(False)
                 self._reset_live_view_label_custom_handlers() # Use helper
+                self.clear_mode_status()
                 self.update_live_view()
 
             def start_crop_rectangle(self, event):
@@ -17616,8 +18283,7 @@ if __name__ == "__main__":
                     return 0, 0, 0
 
             def recommended_values(self):
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "No image loaded to set recommended padding.")
+                if not self._require_image("recommended padding"):
                     return
 
                 # This function should ONLY set the text in the QLineEdit fields for padding.
@@ -17827,6 +18493,8 @@ if __name__ == "__main__":
                     btn_place = QPushButton(f"Place {label}")
                     btn_place.setToolTip(f"Click to place {label} markers on the image.\nShortcut: Ctrl+Shift+{shortcut_key}")
                     btn_place.clicked.connect(getattr(self, f"enable_{mode}_marker_mode"))
+                    self._register_action_button(btn_place)
+                    setattr(self, f"place_{mode}_button", btn_place)
                     
                     btn_rem = QPushButton("Remove Last")
                     btn_rem.setToolTip(f"Remove the most recently added {label} marker.")
@@ -17882,6 +18550,7 @@ if __name__ == "__main__":
                 self.custom_marker_button = QPushButton("Place Custom")
                 self.custom_marker_button.setToolTip("Activate tool to place text on image.\nText from the box on the right will be used.")
                 self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
+                self._register_action_button(self.custom_marker_button)
                 
                 self.custom_marker_text_entry = QLineEdit()
                 self.custom_marker_text_entry.setPlaceholderText("Custom text...")
@@ -17942,11 +18611,13 @@ if __name__ == "__main__":
                 self.draw_line_button.setFixedSize(shape_size, shape_size)
                 self.draw_line_button.setToolTip("Draw Line.\nHold Shift to constrain angle (0, 45, 90).")
                 self.draw_line_button.clicked.connect(self.enable_line_drawing_mode)
-                
+                self._register_action_button(self.draw_line_button)
+
                 self.draw_rect_button = QPushButton("R")
                 self.draw_rect_button.setFixedSize(shape_size, shape_size)
                 self.draw_rect_button.setToolTip("Draw Rectangle.\nHold Shift for perfect square.")
                 self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
+                self._register_action_button(self.draw_rect_button)
                 
                 self.remove_shape_button = QPushButton("X")
                 self.remove_shape_button.setFixedSize(shape_size, shape_size)
@@ -17992,6 +18663,7 @@ if __name__ == "__main__":
                 self.move_resize_button.setCheckable(True)
                 self.move_resize_button.setToolTip("Select and Move/Resize items.\n- Drag body to move.\n- Drag corners to resize (Shapes).\n- Hold Shift to constrain axis.\n- Arrow keys to nudge selected item (1 px).\n- Shift+Arrow to nudge by 10 px.")
                 self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
+                self._register_action_button(self.move_resize_button)
                 
                 self.modify_custom_marker_button = QPushButton("Marker Options")
                 self.modify_custom_marker_button.setToolTip("Open dialog to edit precise coordinates/colors of all items.")
@@ -18335,9 +19007,10 @@ if __name__ == "__main__":
                 if not self.gpu_device_id: self.gpu_device_id = ":GPU:0"
                 
                 # Save UI Scale Preference
+                old_ui_scale = getattr(self, 'ui_scale_preference', 1.0)
                 if hasattr(self, 'ui_scale_combo'):
                     self.ui_scale_preference = self.ui_scale_combo.currentData()
-                
+
                 old_viewer_w = getattr(self, 'viewer_fixed_width', None)
                 old_viewer_h = getattr(self, 'viewer_fixed_height', None)
                 self.viewer_fixed_width = self.spin_viewer_w.value()
@@ -18350,8 +19023,12 @@ if __name__ == "__main__":
 
                 # Apply a new viewer size immediately so the canvas reflows and any
                 # densitometry bounding boxes re-anchor to the image without a restart.
+                # UI-scale changes also alter the EFFECTIVE viewer size, so treat them the
+                # same as a viewer-dimension change (otherwise the boxes get stranded in
+                # stale viewer coordinates while the image rescales).
                 viewer_size_changed = (old_viewer_w != self.viewer_fixed_width or
-                                       old_viewer_h != self.viewer_fixed_height)
+                                       old_viewer_h != self.viewer_fixed_height or
+                                       old_ui_scale != self.ui_scale_preference)
                 if viewer_size_changed and not getattr(self, 'is_in_dedicated_edit_mode', False):
                     try:
                         # Capture box anchors under the current size, then reproject after resize.
@@ -18516,10 +19193,9 @@ if __name__ == "__main__":
                 - If RGBA, outputs Grayscale + Alpha (preserving bit depth).
                 - If RGB, outputs standard Grayscale.
                 """
-                self.save_state()
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "No image loaded.")
+                if not self._require_image("grayscale conversion"):
                     return
+                self.save_state()
 
                 original_format = self.image.format()
                 
@@ -18703,6 +19379,7 @@ if __name__ == "__main__":
                         self.live_view_label.setMouseTracking(False); a_mode_was_cancelled_or_view_reset = True
 
                     self._reset_live_view_label_custom_handlers()
+                    self.clear_mode_status()
 
                     if self.live_view_label.zoom_level != 1.0 or a_mode_was_cancelled_or_view_reset:
                         self.live_view_label.zoom_level = 1.0; self.live_view_label.pan_offset = QPointF(0, 0); a_mode_was_cancelled_or_view_reset = True
@@ -18773,6 +19450,10 @@ if __name__ == "__main__":
                 
             def toggle_custom_item_interaction_mode(self, checked):
                 if checked:
+                    if not self._require_image("Move/Resize"):
+                        if hasattr(self, 'move_resize_button'):
+                            self.move_resize_button.setChecked(False)
+                        return
                     # Cancel any other conflicting modes
                     self.cancel_drawing_mode()
                     self.cancel_rectangle_crop_mode()
@@ -18787,10 +19468,14 @@ if __name__ == "__main__":
                     self._reset_live_view_label_custom_handlers()
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_custom_item_selection_click
 
-                    QMessageBox.information(self, "Move/Resize Custom Items",
-                                            "Click on a marker or shape to select it.\n"
-                                            "Drag its body to move, or a corner handle to resize (shapes only).\n"
-                                            "Press ESC or un-check the button to exit this mode.")
+                    self._notify_once(
+                        "move_custom_items", "Move/Resize Custom Items",
+                        "Click on a marker or shape to select it.\n"
+                        "Drag its body to move, or a corner handle to resize (shapes only).\n"
+                        "Press ESC or un-check the button to exit this mode.")
+                    self.show_mode_status("MOVE/RESIZE items — click a marker/shape, drag to move or "
+                                          "use a corner to resize. Press Esc to exit.",
+                                          active_button=getattr(self, 'move_resize_button', None))
                     self.update_live_view()
                 else:
                     self.cancel_custom_item_interaction_mode()
@@ -18810,8 +19495,9 @@ if __name__ == "__main__":
                 if hasattr(self, 'move_resize_button') and self.move_resize_button.isChecked():
                     self.move_resize_button.setChecked(False)
 
+                self.clear_mode_status()
                 self.update_live_view()
-            
+
             def _get_standard_marker_bounding_box_in_label_space(self, marker_type, marker_index):
                 """
                 Calculates the bounding shape (QRectF or QPolygonF) of a standard marker 
@@ -19210,6 +19896,8 @@ if __name__ == "__main__":
             
             def enable_custom_marker_mode(self):
                 """Enable the custom marker mode and set the mouse event."""
+                if not self._require_image("Place Custom markers"):
+                    return
                 self.live_view_label.setCursor(Qt.ArrowCursor) # Often Arrow for text placement
                 custom_text = self.custom_marker_text_entry.text().strip()
                 self._reset_live_view_label_custom_handlers()
@@ -19225,6 +19913,9 @@ if __name__ == "__main__":
                 
                 self.marker_mode = "custom"  # Indicate custom marker mode
                 self.live_view_label._custom_left_click_handler_from_app = lambda event: self.place_custom_marker(event, custom_text)
+                self.show_mode_status("Placing CUSTOM text — click on the image to drop the text "
+                                      "from the entry box. Press Esc when finished (or to cancel).",
+                                      active_button=getattr(self, 'custom_marker_button', None))
                 # self.live_view_label.mousePressEvent = lambda event: self.place_custom_marker(event, custom_text)
                 
             def remove_custom_marker_mode(self):
@@ -19869,7 +20560,10 @@ if __name__ == "__main__":
                 except Exception as e_ui:
                     traceback.print_exc()
                     QMessageBox.warning(self, "UI Error", f"Error populating preset combobox: {e_ui}")
-                
+
+                # Auto-shrink UI Scale / Program UI Width for small screens or high DPI so
+                # everything fits, then reflect the adjusted values in the Settings tab.
+                self._auto_fit_ui_to_screen()
                 self.update_settings_ui()
             
             def paste_image(self):
@@ -20387,8 +21081,16 @@ if __name__ == "__main__":
                     self.marker_values = []
 
                 if load_analysis:
+                    # Densitometry boxes are anchored in IMAGE space (viewer-independent),
+                    # exactly like the markers. On load we PREFER the saved image-space anchor
+                    # (`points_image`) and reproject it onto the CURRENT viewer, so the box
+                    # lands on the same gel region no matter what the UI scale / viewer size
+                    # was at save time vs load time (fixes "change UI scale, then load → boxes
+                    # in the wrong place"). Only when a file has no anchor do we fall back to
+                    # the saved label coords and derive an anchor from them.
                     serialized_defs = config_data.get("multi_lane_definitions", [])
                     self.multi_lane_definitions = []
+                    geom = self._multilane_current_geometry()
                     for d in serialized_defs:
                         restored_def = {'type': d['type'], 'id': d['id']}
                         if d['type'] == 'quad':
@@ -20396,16 +21098,30 @@ if __name__ == "__main__":
                         elif d['type'] == 'rectangle':
                             x, y, w, h = d['points_label'][0]
                             restored_def['points_label'] = [QRectF(x, y, w, h)]
-                        # If an image-space anchor was saved, keep it and arm a reprojection so
-                        # the box lands correctly even if the viewer size differs from when it
-                        # was saved. Older configs without an anchor fall back to their saved
-                        # label points and are left exactly as-is (no reprojection).
                         pi = d.get('points_image')
                         if pi:
-                            restored_def['points_image'] = tuple(pi) if pi[0] == 'rectangle' else \
-                                ('quad', [tuple(p) for p in pi[1]])
-                            self._multilane_reproject_pending = True
+                            try:
+                                restored_def['points_image'] = tuple(pi) if pi[0] == 'rectangle' else \
+                                    ('quad', [tuple(p) for p in pi[1]])
+                            except Exception:
+                                restored_def.pop('points_image', None)
+                        if geom:
+                            try:
+                                if restored_def.get('points_image'):
+                                    # Authoritative: rebuild label coords from the image anchor
+                                    # for the current viewer.
+                                    self._reproject_lane_def_to_label(restored_def, *geom)
+                                else:
+                                    # No anchor in this file → derive one from the saved label
+                                    # coords so future viewer changes still track.
+                                    self._update_lane_def_image_anchor(restored_def, *geom)
+                            except Exception:
+                                pass
                         self.multi_lane_definitions.append(restored_def)
+                    # Re-reproject once more after the load fully settles (handles any later
+                    # geometry change during apply_config, e.g. padding).
+                    self._multilane_reproject_pending = bool(
+                        any(dd.get('points_image') for dd in self.multi_lane_definitions))
 
                     serialized_quad = config_data.get("single_quad_points", [])
                     self.live_view_label.quad_points = [QPointF(x, y) for x, y in serialized_quad]
@@ -20885,6 +21601,8 @@ if __name__ == "__main__":
                     self.live_view_label.mw_predict_preview_position = None
                 
             def enable_left_marker_mode(self):
+                if not self._require_image("Place Left markers"):
+                    return
                 self._deactivate_all_previews()
                 self.marker_mode = "left"
                 self.current_left_marker_index = len(self.left_markers) # Start from the next available
@@ -20898,8 +21616,13 @@ if __name__ == "__main__":
                 next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
                 self.live_view_label.standard_marker_preview_text = next_label
                 self.live_view_label.standard_marker_preview_mode = "left"
+                self.show_mode_status("Placing LEFT markers — click on the image to drop each "
+                                      "marker. Press Esc when finished (or to cancel).",
+                                      active_button=getattr(self, 'place_left_button', None))
 
             def enable_right_marker_mode(self):
+                if not self._require_image("Place Right markers"):
+                    return
                 self._deactivate_all_previews()
                 self.marker_mode = "right"
                 self.current_right_marker_index = len(self.right_markers)
@@ -20913,8 +21636,13 @@ if __name__ == "__main__":
                 next_label = str(self.marker_values[next_index]) if next_index < len(self.marker_values) else ""
                 self.live_view_label.standard_marker_preview_text = next_label
                 self.live_view_label.standard_marker_preview_mode = "right"
-            
+                self.show_mode_status("Placing RIGHT markers — click on the image to drop each "
+                                      "marker. Press Esc when finished (or to cancel).",
+                                      active_button=getattr(self, 'place_right_button', None))
+
             def enable_top_marker_mode(self):
+                if not self._require_image("Place Top markers"):
+                    return
                 self._deactivate_all_previews()
                 self.marker_mode = "top"
                 self.current_top_label_index = len(self.top_markers)
@@ -20928,8 +21656,10 @@ if __name__ == "__main__":
                 next_label = str(self.top_label[next_index]) if next_index < len(self.top_label) else ""
                 self.live_view_label.standard_marker_preview_text = next_label
                 self.live_view_label.standard_marker_preview_mode = "top"
-                
-                
+                self.show_mode_status("Placing TOP labels — click on the image to drop each "
+                                      "label. Press Esc when finished (or to cancel).",
+                                      active_button=getattr(self, 'place_top_button', None))
+
             def _measure_transparent_margins(self):
                 """Return (left, right, top, bottom) widths of the padding border around the
                 image content in self.image_master, so applying new padding can strip it first
@@ -20983,8 +21713,7 @@ if __name__ == "__main__":
                     return 0, 0, 0, 0
 
             def finalize_image(self, *args, **kwargs): # Padding
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "Error", "No image loaded to apply padding.")
+                if not self._require_image("padding"):
                     return
                 try:
                     padding_left = max(0, int(self.left_padding_input.text()))
@@ -21934,54 +22663,10 @@ if __name__ == "__main__":
                     
                 
                     
-            def polish_image(self):
-                """Auto-crop image_master to the largest inscribed rectangle free of fill borders."""
-                if not self.image_master or self.image_master.isNull():
-                    QMessageBox.warning(self, "Polish Image", "No image loaded.")
-                    return
-                try:
-                    qimg = self.image_master.convertToFormat(QImage.Format_ARGB32)
-                    arr = self.qimage_to_numpy(qimg)
-                    if arr is None or arr.ndim < 2:
-                        return
-                    H, W = arr.shape[:2]
-                    # Compute grayscale (ARGB32 in memory: B,G,R,A channels)
-                    gray = arr[:, :, :3].astype(np.float32).mean(axis=2) if arr.ndim == 3 else arr.astype(np.float32)
-                    # Sample corners to detect fill color
-                    fill_val = float(np.median([gray[0, 0], gray[0, -1], gray[-1, 0], gray[-1, -1]]))
-                    is_content = np.abs(gray - fill_val) > 12.0
-                    if not is_content.any():
-                        QMessageBox.information(self, "Polish Image", "No fill borders detected.")
-                        return
-                    rows_with = np.where(is_content.any(axis=1))[0]
-                    if len(rows_with) == 0:
-                        return
-                    left_x  = np.array([int(np.argmax(is_content[r]))          for r in rows_with])
-                    right_x = np.array([int(W - 1 - np.argmax(is_content[r, ::-1])) for r in rows_with])
-                    x1 = int(left_x.max())
-                    x2 = int(right_x.min())
-                    if x2 <= x1:
-                        QMessageBox.information(self, "Polish Image", "No clean rectangle found.")
-                        return
-                    strip = is_content[:, x1:x2 + 1]
-                    cols_with = np.where(strip.any(axis=0))[0]
-                    if len(cols_with) == 0:
-                        return
-                    top_y = np.array([int(np.argmax(strip[:, c]))          for c in cols_with])
-                    bot_y = np.array([int(H - 1 - np.argmax(strip[::-1, c])) for c in cols_with])
-                    y1 = int(top_y.max())
-                    y2 = int(bot_y.min())
-                    if y2 <= y1:
-                        QMessageBox.information(self, "Polish Image", "No clean rectangle found.")
-                        return
-                    self.crop_rectangle_coords = (x1, y1, x2 - x1, y2 - y1)
-                    self.update_crop()
-                except Exception:
-                    import traceback; traceback.print_exc()
-
             def update_crop(self):
                 if not self.image_master or self.image_master.isNull() or not self.crop_rectangle_coords:
-                    QMessageBox.warning(self, "Crop Error", "No image loaded or crop area defined.")
+                    self.show_mode_status("Draw a crop area first (Draw Crop Area), then press "
+                                          "Apply Crop.")
                     return
 
                 try:
@@ -22255,8 +22940,7 @@ if __name__ == "__main__":
 
             def _activate_perspective_mode(self):
                 """Activate perspective corner editing mode."""
-                if not self.image or self.image.isNull():
-                    QMessageBox.warning(self, "No Image", "Please load an image first.")
+                if not self._require_image("Edit Corners"):
                     if hasattr(self, 'perspective_edit_button'):
                         self.perspective_edit_button.setChecked(False)
                     return
@@ -22283,6 +22967,9 @@ if __name__ == "__main__":
                 if hasattr(self, 'perspective_edit_button'):
                     self.perspective_edit_button.setChecked(True)
 
+                self.show_mode_status("EDIT CORNERS — drag the 4 corner handles to correct "
+                                      "perspective, then press Apply. Press Esc to cancel.",
+                                      active_button=getattr(self, 'perspective_edit_button', None))
                 self.update_live_view()
 
             def _deactivate_perspective_mode(self):
@@ -22302,6 +22989,7 @@ if __name__ == "__main__":
                 if hasattr(self, 'perspective_edit_button'):
                     self.perspective_edit_button.setChecked(False)
 
+                self.clear_mode_status()
                 self.update_live_view()
 
             def _init_perspective_corners(self):
@@ -22710,8 +23398,7 @@ if __name__ == "__main__":
                 self.draw_guides = False
                 if hasattr(self, 'show_guides_checkbox'): self.show_guides_checkbox.setChecked(False)
 
-                if not self.image or self.image.isNull():
-                     QMessageBox.warning(self, "Error", "No image data to save.")
+                if not self._require_image("Save"):
                      return False
 
                 # --- 1. Generate name and Open Dialog (Unchanged) ---
@@ -23301,7 +23988,7 @@ if __name__ == "__main__":
 
             def copy_to_clipboard(self):
                 if not self.image_master or self.image_master.isNull(): # Check against master image
-                    QMessageBox.warning(self, "Warning", "No image to copy.")
+                    self.show_mode_status("Load an image first before copying to the clipboard.")
                     return
 
                 # Clean up any previous temp file from this session
@@ -23730,6 +24417,9 @@ if __name__ == "__main__":
                     event, sorted_marker_positions, sorted_marker_values
                 )
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.update_mw_predict_preview
+                self.show_mode_status(f"PREDICT MW ({source}) — click the target band on the image "
+                                      "to estimate its molecular weight. Press Esc to cancel.",
+                                      active_button=getattr(self, 'predict_button', None))
 
             def _update_main_model_from_dialog(self, model_name: str):
                 """Slot to update the main window's regression combo box from the dialog."""
@@ -23941,8 +24631,9 @@ if __name__ == "__main__":
                 self.live_view_label.setMouseTracking(False)
                 # Reset the custom handlers after the action is complete
                 self._reset_live_view_label_custom_handlers()
+                self.clear_mode_status()
                 self.live_view_label.update()
-                
+
             def update_mw_predict_preview(self, event):
                 if self.live_view_label.mw_predict_preview_enabled:
                     untransformed_label_pos = self.live_view_label.transform_point(event.position())
@@ -23955,11 +24646,16 @@ if __name__ == "__main__":
                 
             def reset_image(self):
                 # 1. Save state exactly ONCE at the start
-                self.save_state() 
+                self.save_state()
                 self.showonce = False
                 # 2. LOCK: Prevent sub-functions from saving state or clearing redo stack
-                self._is_restoring_state = True 
+                self._is_restoring_state = True
                 self.show_once_prompt = True
+                # Re-arm one-shot informational popups and clear any active mode hint so the
+                # user gets fresh guidance on the reset image.
+                if hasattr(self, '_notified_keys'):
+                    self._notified_keys.clear()
+                self.clear_mode_status()
 
                 try:
                     self.crop_offset_x = 0
@@ -24500,8 +25196,7 @@ if __name__ == "__main__":
             # --- restored: save_image_svg ---
             def save_image_svg(self):
                 """Save the processed image along with markers, labels, and custom shapes in SVG format."""
-                if not self.image or self.image.isNull(): # Check current image validity
-                    QMessageBox.warning(self, "Warning", "No image to save.")
+                if not self._require_image("SVG export"): # Check current image validity
                     return
 
                 options = QFileDialog.Options()
@@ -24830,9 +25525,20 @@ if __name__ == "__main__":
             loading_dialog.deleteLater() # YOU ALREADY HAVE THIS, WHICH IS GOOD!
             loading_dialog = None      # <<--- ADD THIS LINE HERE
         
-        screen_geo = QGuiApplication.primaryScreen().availableGeometry()   
-        main_window.move(screen_geo.x(), screen_geo.y())        
+        screen_geo = QGuiApplication.primaryScreen().availableGeometry()
+        main_window.move(screen_geo.x(), screen_geo.y())
         main_window.show()
+
+        # Now that the window is shown, the frame (title bar) geometry is accurate, so
+        # clamp it to the desktop once more. This guarantees the bottom controls stay
+        # on-screen at any DPI / resolution (>= 1280x720). Do it now and again once the
+        # event loop has realised the final layout.
+        try:
+            main_window._fit_window_to_screen()
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, main_window._fit_window_to_screen)
+        except Exception:
+            pass
 
         # Connect cleanup
         if main_window and app: # Check both exist
