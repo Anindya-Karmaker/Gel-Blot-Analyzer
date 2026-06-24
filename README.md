@@ -44,11 +44,11 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 </p>
 <p align="center">
   <em>Predicting the molecular weight of an unknown band using a standard curve.</em><br>
-  <img src="https://github.com/user-attachments/assets/21752f41-c3ef-436d-89ea-2470e03d44cd" width="700" alt="Molecular Weight Prediction">
+  <img src="https://github.com/user-attachments/assets/0f565b93-16b4-4682-abf0-185e4bc631e2" width="700" alt="Molecular Weight Prediction">
 </p>
 <p align="center">
   <em>Densitometric analysis plot for quantifying protein bands.</em><br>
-  <img src="https://github.com/user-attachments/assets/dc3a4d5c-3ec3-4373-9167-cc2223a5f167" width="700" alt="Densitometry Plot">
+  <img src="https://github.com/user-attachments/assets/a2976c98-b447-40e6-9e14-e5d0fbb1ab37" width="700" alt="Densitometry Plot">
 </p>
 
 ---
