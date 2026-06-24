@@ -6242,6 +6242,20 @@ if __name__ == "__main__":
                 self.crop_rect_final_view = None
                 self.update() # Trigger repaint
 
+            def keyPressEvent(self, event):
+                """The image label takes ClickFocus, so after the user clicks the image it
+                holds the keyboard focus. Forward Escape to the main window so active tools
+                (and their green buttons) are always cancelled by Esc, regardless of focus."""
+                app = getattr(self, 'app_instance', None)
+                if app is not None and event.key() == Qt.Key_Escape:
+                    try:
+                        app.keyPressEvent(event)
+                        if event.isAccepted():
+                            return
+                    except Exception:
+                        pass
+                super().keyPressEvent(event)
+
             def start_crop_preview(self, start_point_view):
                 """Initiates drawing the crop rectangle preview."""
                 self.drawing_crop_rect = True
@@ -12437,16 +12451,21 @@ if __name__ == "__main__":
                 return ("QPushButton { background-color: #D4EDDA; border: 1px solid #74B882; "
                         "color: #194D27; } QPushButton:hover { background-color: #C6E6CE; }")
 
-            def _register_action_button(self, button):
-                """Tag a button as an interactive-tool trigger. It keeps its NORMAL look by
-                default and only turns green while its tool is actively armed."""
+            def _register_action_button(self, button, colorize=False):
+                """Tag a button as an interactive-tool trigger. Per user request, only the
+                Move/Resize tools actually change colour while active (`colorize=True`); all
+                other tool buttons keep their normal appearance at all times, so this is a
+                no-op for them."""
                 try:
+                    if not colorize:
+                        return button
                     if not hasattr(self, '_action_buttons'):
                         self._action_buttons = []
                     if button not in self._action_buttons:
                         self._action_buttons.append(button)
                 except Exception:
                     pass
+                return button
                 return button
 
             def _activate_tool_button(self, button):
@@ -12466,6 +12485,64 @@ if __name__ == "__main__":
                     self._active_tool_button = None
                     for b in getattr(self, '_action_buttons', []):
                         b.setStyleSheet("")
+                except Exception:
+                    pass
+
+            def _cancel_all_interaction_modes(self, exclude=None):
+                """Turn OFF every interactive tool/mode so only ONE can ever be active at a
+                time. Called when starting a new tool (so e.g. switching from Move/Resize to
+                Predict MW ends Move/Resize) and on Escape. Also clears the status hint and
+                reverts all green tool buttons to normal. `exclude` names a tool to leave
+                alone (e.g. 'region' while that very tool is being armed)."""
+                try:
+                    if getattr(self, 'measurement_mode', None):
+                        try: self._exit_current_tool_mode()
+                        except Exception: pass
+                    if getattr(self, 'drawing_mode', None) in ('line', 'rectangle'):
+                        try: self.cancel_drawing_mode()
+                        except Exception: pass
+                    if getattr(self, 'crop_rectangle_mode', False):
+                        try: self.cancel_rectangle_crop_mode()
+                        except Exception: pass
+                    if getattr(self, 'current_selection_mode', None) in (
+                            'select_custom_item', 'dragging_custom_item', 'resizing_custom_item'):
+                        try: self.cancel_custom_item_interaction_mode()
+                        except Exception: pass
+                    if getattr(self, 'overlay_mode_active', False):
+                        try: self.cancel_interactive_overlay_mode()
+                        except Exception: pass
+                    if getattr(self, 'current_selection_mode', None) in (
+                            'select_for_move', 'dragging_shape', 'resizing_corner', 'skewing_edge'):
+                        try: self.cancel_selection_or_move_mode()
+                        except Exception: pass
+                    if getattr(self, 'multi_lane_mode_active', False):
+                        try: self.cancel_multi_lane_mode()
+                        except Exception: pass
+                    if getattr(self, 'perspective_correction_active', False):
+                        try: self._deactivate_perspective_mode()
+                        except Exception: pass
+                    if (exclude != 'region'
+                            and getattr(self, 'select_region_button', None) is not None
+                            and self.select_region_button.isChecked()):
+                        try:
+                            self.select_region_button.setChecked(False)
+                            self.activate_overlay_region_selection(False)
+                        except Exception: pass
+                    # Standard / custom marker placement + MW-predict previews
+                    self.marker_mode = None
+                    try:
+                        self.live_view_label.preview_marker_enabled = False
+                        self.live_view_label.preview_marker_position = None
+                        self.live_view_label.mw_predict_preview_enabled = False
+                        self.live_view_label.mw_predict_preview_position = None
+                        self.live_view_label.setMouseTracking(False)
+                    except Exception: pass
+                    try: self._deactivate_all_previews()
+                    except Exception: pass
+                    try: self._reset_live_view_label_custom_handlers()
+                    except Exception: pass
+                    # Clears the status hint AND reverts every green tool button to normal.
+                    self.clear_mode_status()
                 except Exception:
                     pass
 
@@ -12548,6 +12625,7 @@ if __name__ == "__main__":
             def enable_line_drawing_mode(self):
                 if not self._require_image("Draw Line"):
                     return
+                self._cancel_all_interaction_modes()
                 self.save_state()
                 self.drawing_mode = 'line'
                 self.live_view_label.mode = 'draw_shape'
@@ -12565,6 +12643,7 @@ if __name__ == "__main__":
             def enable_rectangle_drawing_mode(self):
                 if not self._require_image("Draw Rectangle"):
                     return
+                self._cancel_all_interaction_modes()
                 self.save_state()
                 self.drawing_mode = 'rectangle'
                 self.live_view_label.mode = 'draw_shape'
@@ -13048,6 +13127,7 @@ if __name__ == "__main__":
                 self._reset_live_view_label_custom_handlers()
                 if not self._require_image("Auto Analyze Gel"):
                     return
+                self._cancel_all_interaction_modes()
 
                 # Ask region type (rect or quad)
                 dlg = QDialog(self)
@@ -13197,6 +13277,7 @@ if __name__ == "__main__":
                 """Initiates the automatic lane marker placement process using a single, dynamically created dialog."""
                 if not self._require_image("Auto Lane markers"):
                     return
+                self._cancel_all_interaction_modes()
 
                 # --- START: Create a simple dialog on-the-fly without a new class ---
                 dialog = QDialog(self)
@@ -14098,7 +14179,7 @@ if __name__ == "__main__":
                 )
                 self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
                 self.btn_sel_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                self._register_action_button(self.btn_sel_rec)
+                self._register_action_button(self.btn_sel_rec, colorize=True)
                 step1_layout.addWidget(self.btn_auto_lane_click, 0, 0)
                 step1_layout.addWidget(self.btn_define_quad, 0, 1)
                 step1_layout.addWidget(self.btn_define_rec, 1, 0)
@@ -14644,6 +14725,8 @@ if __name__ == "__main__":
 
                 # If a multi-lane session is NOT already active, start a new one.
                 if not self.multi_lane_mode_active:
+                    # Starting a new lane-definition session turns off any other active tool.
+                    self._cancel_all_interaction_modes()
                     self.save_state()
                     self.multi_lane_definitions = [] # Start a new session, clear old definitions
                     self.latest_multi_lane_peak_areas.clear()
@@ -14904,6 +14987,7 @@ if __name__ == "__main__":
                     return
                 # --- END OF THE FIX ---
 
+                self._cancel_all_interaction_modes()
                 self.current_selection_mode = "select_for_move"
                 self.live_view_label.mode = "select_for_move"
                 self._reset_live_view_label_custom_handlers()
@@ -15872,6 +15956,8 @@ if __name__ == "__main__":
                         self.select_region_button.setChecked(False)
                     return
 
+                # Turn off other tools, but not this one (its button is already checked).
+                self._cancel_all_interaction_modes(exclude='region')
                 self.show_mode_status("SELECT REGIONS — drag rectangles on the image to mark the "
                                       "areas to keep. Un-check the button when done.",
                                       active_button=getattr(self, 'select_region_button', None))
@@ -16318,11 +16404,8 @@ if __name__ == "__main__":
             def toggle_interactive_overlay_mode(self, checked):
                 """Toggles the interactive overlay manipulation mode on and off."""
                 if checked:
-                    # Cancel any other active modes
-                    self.cancel_drawing_mode()
-                    self.cancel_rectangle_crop_mode()
-                    self.cancel_selection_or_move_mode()
-                    self.cancel_custom_item_interaction_mode()
+                    # Turn off every other active tool/mode (mutual exclusion).
+                    self._cancel_all_interaction_modes()
 
                     self.overlay_mode_active = True
                     self.selected_overlay_index = 0 # No overlay selected initially
@@ -18032,6 +18115,7 @@ if __name__ == "__main__":
 
             def enable_rectangle_crop_mode(self):
                 if self.crop_rectangle_mode: return
+                self._cancel_all_interaction_modes()
                 self.marker_mode = None # Deactivate other modes
                 self.crop_rectangle_mode = True
                 self.crop_rectangle_coords = None
@@ -18663,7 +18747,7 @@ if __name__ == "__main__":
                 self.move_resize_button.setCheckable(True)
                 self.move_resize_button.setToolTip("Select and Move/Resize items.\n- Drag body to move.\n- Drag corners to resize (Shapes).\n- Hold Shift to constrain axis.\n- Arrow keys to nudge selected item (1 px).\n- Shift+Arrow to nudge by 10 px.")
                 self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
-                self._register_action_button(self.move_resize_button)
+                self._register_action_button(self.move_resize_button, colorize=True)
                 
                 self.modify_custom_marker_button = QPushButton("Marker Options")
                 self.modify_custom_marker_button.setToolTip("Open dialog to edit precise coordinates/colors of all items.")
@@ -19379,7 +19463,10 @@ if __name__ == "__main__":
                         self.live_view_label.setMouseTracking(False); a_mode_was_cancelled_or_view_reset = True
 
                     self._reset_live_view_label_custom_handlers()
-                    self.clear_mode_status()
+                    # Catch-all: make sure EVERY tool/mode is off and all green tool buttons
+                    # revert to normal (also covers modes not in the elif chain above, e.g.
+                    # perspective / region-select). Idempotent with the cancels above.
+                    self._cancel_all_interaction_modes()
 
                     if self.live_view_label.zoom_level != 1.0 or a_mode_was_cancelled_or_view_reset:
                         self.live_view_label.zoom_level = 1.0; self.live_view_label.pan_offset = QPointF(0, 0); a_mode_was_cancelled_or_view_reset = True
@@ -19454,11 +19541,8 @@ if __name__ == "__main__":
                         if hasattr(self, 'move_resize_button'):
                             self.move_resize_button.setChecked(False)
                         return
-                    # Cancel any other conflicting modes
-                    self.cancel_drawing_mode()
-                    self.cancel_rectangle_crop_mode()
-                    self.cancel_selection_or_move_mode() # Cancel analysis area selection
-                    if hasattr(self, 'marker_mode'): self.marker_mode = None
+                    # Turn off every other active tool/mode (mutual exclusion).
+                    self._cancel_all_interaction_modes()
 
                     self.current_selection_mode = "select_custom_item"
                     self.live_view_label.mode = "select_custom_item"
@@ -19898,6 +19982,7 @@ if __name__ == "__main__":
                 """Enable the custom marker mode and set the mouse event."""
                 if not self._require_image("Place Custom markers"):
                     return
+                self._cancel_all_interaction_modes()
                 self.live_view_label.setCursor(Qt.ArrowCursor) # Often Arrow for text placement
                 custom_text = self.custom_marker_text_entry.text().strip()
                 self._reset_live_view_label_custom_handlers()
@@ -21603,6 +21688,7 @@ if __name__ == "__main__":
             def enable_left_marker_mode(self):
                 if not self._require_image("Place Left markers"):
                     return
+                self._cancel_all_interaction_modes()
                 self._deactivate_all_previews()
                 self.marker_mode = "left"
                 self.current_left_marker_index = len(self.left_markers) # Start from the next available
@@ -21623,6 +21709,7 @@ if __name__ == "__main__":
             def enable_right_marker_mode(self):
                 if not self._require_image("Place Right markers"):
                     return
+                self._cancel_all_interaction_modes()
                 self._deactivate_all_previews()
                 self.marker_mode = "right"
                 self.current_right_marker_index = len(self.right_markers)
@@ -21643,6 +21730,7 @@ if __name__ == "__main__":
             def enable_top_marker_mode(self):
                 if not self._require_image("Place Top markers"):
                     return
+                self._cancel_all_interaction_modes()
                 self._deactivate_all_previews()
                 self.marker_mode = "top"
                 self.current_top_label_index = len(self.top_markers)
@@ -22945,9 +23033,10 @@ if __name__ == "__main__":
                         self.perspective_edit_button.setChecked(False)
                     return
 
+                self._cancel_all_interaction_modes()
                 self.marker_mode = None  # Deactivate other modes
                 self.cancel_rectangle_crop_mode() if self.crop_rectangle_mode else None
-                
+
                 self.perspective_correction_active = True
                 self._init_perspective_corners()
                 self.live_view_label.perspective_mode_active = True
@@ -24268,25 +24357,14 @@ if __name__ == "__main__":
                 self.update_live_view()
 
             def _update_toggle_markers_button_style(self):
-                """Update the Show/Hide Markers button label and colour to reflect current state."""
+                """Update the Show/Hide Markers button LABEL to reflect the current state.
+                Per user request the button no longer changes colour — only its text toggles
+                between 'Hide Markers' and 'Show Markers'."""
                 if not hasattr(self, 'toggle_markers_button'):
                     return
-                is_dark = getattr(self, 'current_theme', 'light') == 'dark'
-                if self.markers_visible:
-                    self.toggle_markers_button.setText("Hide Markers")
-                    # Light red — markers are showing, click to hide
-                    if is_dark:
-                        style = "QPushButton { background-color: #7A2A2A; border: 1px solid #B05050; color: #F1D0D0; }"
-                    else:
-                        style = "QPushButton { background-color: #FADBD8; border: 1px solid #E07070; color: #6B1414; }"
-                else:
-                    self.toggle_markers_button.setText("Show Markers")
-                    # Light green — markers are hidden, click to show (same family as Move/Resize on)
-                    if is_dark:
-                        style = "QPushButton { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }"
-                    else:
-                        style = "QPushButton { background-color: #D4EDDA; border: 1px solid #74B882; color: #194D27; }"
-                self.toggle_markers_button.setStyleSheet(style)
+                self.toggle_markers_button.setText(
+                    "Hide Markers" if self.markers_visible else "Show Markers")
+                self.toggle_markers_button.setStyleSheet("")
 
             def predict_molecular_weight(self):
                 # --- Step 1: Check for available valid marker sets ---
@@ -24375,6 +24453,8 @@ if __name__ == "__main__":
                     # --- End of self-contained logic ---
 
                 # --- Step 4: Process the selected markers (validation, sorting) ---
+                # Switching into Predict-MW turns off any other active tool/mode.
+                self._cancel_all_interaction_modes()
                 self.live_view_label.preview_marker_enabled = False
                 self.live_view_label.mw_predict_preview_enabled = True
                 self.live_view_label.mw_predict_preview_position = None
