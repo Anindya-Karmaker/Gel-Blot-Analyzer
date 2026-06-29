@@ -55,6 +55,40 @@ From precise labeling and molecular weight prediction to powerful densitometric 
   <img src="https://github.com/user-attachments/assets/9acf7d94-95fb-4933-a8e8-ff00f9112edc" width="700" alt="Densitometry Plot">
 </p>
 
+---
+
+## Video Tutorials
+
+New to Gel Blot Analyzer? The video tutorials below cover everything from installation to advanced features.
+
+### Getting Started
+
+| # | Topic | Link |
+|---|-------|-------|
+| 1 | **Run on macOS** — Install and launch the app on macOS | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/k2s7uDWGY8o) |
+| 2 | **Run on Windows 11** — Install and launch the app on Windows 11 | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/ooaNn7ndObU) |
+
+### Core Features
+
+| # | Topic | Link |
+|---|-------|-------|
+| 3 | **Annotating a Gel** — Add labels, markers, and shapes to your gel image | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/W1V9drcDOu8) |
+| 4 | **Densitometry Analysis** — Quantify protein bands with lane and peak analysis tools | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/oMR0K-8osZc) |
+| 5 | **Auto Gel Analysis** — Automatically detect lanes and bands for rapid quantification | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/BrTXRfM6gfU) |
+
+### Advanced Features
+
+| # | Topic | Link |
+|---|-------|-------|
+| 6 | **Advanced Image Settings & Custom Markers** — Fine-tune levels, gamma, and custom marker presets | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/BSH9DhLPttU) |
+| 7 | **Advanced Perspective Correction** — Fix skewed or distorted gel images with quadrilateral correction | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/zDlFqZa_uRg) |
+
+### Developer / Advanced Installation
+
+| # | Topic | Link |
+|---|-------|-------|
+| 8 | **Advanced Installation using Anaconda (Windows)** — Set up a Conda environment and run from source on Windows | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/7ICkNIOJ7yw) |
+| 9 | **Compiling on Windows** — Build a standalone `.exe` using PyInstaller | [![YouTube](https://img.shields.io/badge/Watch-YouTube-red?logo=youtube)](https://youtu.be/jH_2iS8lTHE) |
 
 ---
 
@@ -74,14 +108,18 @@ The easiest way to get started is to download the latest pre-built application f
 > ```bash
 > xattr -cr "/Applications/Gel Blot Analyzer.app"
 > ```
->
+> 📹 See the [Run on macOS video](https://youtu.be/k2s7uDWGY8o) for a step-by-step walkthrough.
+
 > **Note for Windows:** Despite being signed, Windows may show a warning since it is not from a widely-known publisher. Click **More Info** → **Run Anyway**.
+> 📹 See the [Run on Windows 11 video](https://youtu.be/ooaNn7ndObU) for a step-by-step walkthrough.
 
 ### Option 2: Run from Source (For Developers)
 
 If you are a developer and want to run the script directly, you can use Conda for a stable environment.
 
 #### Using Anaconda (Recommended for Stability)
+
+📹 See the [Advanced Installation using Anaconda video](https://youtu.be/7ICkNIOJ7yw) for a full walkthrough on Windows.
 
 1.  **Clone the Repository:**
     ```bash
@@ -136,6 +174,8 @@ If you are a developer and want to run the script directly, you can use Conda fo
 
 ## Building the Application from Source
 
+📹 See the [Compiling on Windows video](https://youtu.be/jH_2iS8lTHE) for a full walkthrough.
+
 If you wish to compile the application yourself, you will need `pyinstaller`.
 
 1.  **Activate your Python environment** (either Conda or venv).
@@ -160,15 +200,15 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 4.  The final, self-contained application will be located in the `dist` folder.
 
 ---
+
 ## Grant Information
 
 The authors gratefully acknowledge financial support from the National Science Foundation (Grant No. 2016563) and McDonald-Nandi lab at UC Davis. This grant funded the Alpha-1 antitrypsin project, which served as a case study for demonstrating the utility of the software.
 
 ---
+
 ## Acknowledgement
 
-I am grateful to the McDonald-Nandi and Zhao lab for their input and continous support.
+I am grateful to the McDonald-Nandi and Zhao lab for their input and continuous support.
 
 ---
-
-
