@@ -25,7 +25,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.0"
+APP_VERSION = "8.1"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -366,7 +366,7 @@ if __name__ == "__main__":
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget,
-            QStackedWidget, QProgressDialog,
+            QStackedWidget, QProgressDialog, QSplitter,
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
@@ -462,6 +462,18 @@ if __name__ == "__main__":
                         % (c, sw))
             if name == "save":
                 return _p("M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z")
+            if name == "pptx":
+                # Document with a folded corner and a down arrow — "Save to PPTX".
+                return ("0 0 24 24",
+                        '<path d="M13 3H6.5A1.5 1.5 0 005 4.5v15A1.5 1.5 0 006.5 21h11'
+                        'a1.5 1.5 0 001.5-1.5V9l-6-6z" fill="none" stroke="%s" '
+                        'stroke-width="%s" stroke-linejoin="round"/>'
+                        '<path d="M13 3v6h6" fill="none" stroke="%s" stroke-width="%s" '
+                        'stroke-linejoin="round"/>'
+                        '<path d="M12 11.5v5.5M9.5 14.5 12 17l2.5-2.5" fill="none" '
+                        'stroke="%s" stroke-width="%s" stroke-linecap="round" '
+                        'stroke-linejoin="round"/>'
+                        % (c, sw, c, sw, c, sw))
             if name == "reset":
                 return _p("M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z")
             if name == "exit":
@@ -6312,6 +6324,18 @@ if __name__ == "__main__":
                         pass
                 super().keyPressEvent(event)
 
+            def resizeEvent(self, event):
+                """The viewer is now user-resizable (it lives in a QSplitter). Tell the app so
+                it can re-render the image at the new size, re-anchor densitometry boxes, and
+                sync the new dimensions back into the Settings tab."""
+                super().resizeEvent(event)
+                app = getattr(self, 'app_instance', None)
+                if app is not None:
+                    try:
+                        app._on_viewer_label_resized(event.oldSize(), event.size())
+                    except Exception:
+                        pass
+
             def start_crop_preview(self, start_point_view):
                 """Initiates drawing the crop rectangle preview."""
                 self.drawing_crop_rect = True
@@ -10913,6 +10937,13 @@ if __name__ == "__main__":
                 self.resize_timer.timeout.connect(self.save_app_settings)
                 self.saved_window_width = None
                 self.saved_window_height = None
+                # Debounced re-render of the (now user-resizable) viewer: coalesces the flood
+                # of resize events from a splitter drag into one repaint so dragging stays smooth.
+                self._viewer_render_timer = QTimer()
+                self._viewer_render_timer.setSingleShot(True)
+                self._viewer_render_timer.setInterval(30)
+                self._viewer_render_timer.timeout.connect(self.update_live_view)
+                self._suppress_viewer_resize_sync = False
                 # --- 1. GPU/CPU Initialization (CRITICAL: Must run first) ---
                 self.gpu_device_id = ":GPU:0" # Default to 0 (usually Integrated)
                 self.use_gpu = True
@@ -11253,8 +11284,6 @@ if __name__ == "__main__":
 
 
                 # === KEEP QShortcut definitions for NON-STANDARD actions ===
-                # self.save_svg_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
-                # self.save_svg_shortcut.activated.connect(self.save_svg_action.trigger)
 
                 #self.reset_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
                 #self.reset_shortcut.activated.connect(self.reset_action.trigger)
@@ -11544,6 +11573,9 @@ if __name__ == "__main__":
                 config_data["window_height"] = self.height()
                 config_data["theme"] = self.current_theme
                 config_data["viewer_position"] = self.viewer_position
+                # Persist the (now drag-adjustable) viewer size so it restores next launch.
+                config_data["viewer_fixed_width"] = int(getattr(self, "viewer_fixed_width", 550))
+                config_data["viewer_fixed_height"] = int(getattr(self, "viewer_fixed_height", 350))
                 
                 if hasattr(self, 'gpu_id_input'):
                     self.gpu_device_id = self.gpu_id_input.text().strip()
@@ -11852,6 +11884,7 @@ if __name__ == "__main__":
                 # --- File Actions ---
                 self.load_action = QAction("&Load Image...", self)
                 self.save_action = QAction("&Save with Config", self)
+                self.save_pptx_action = QAction("Save to &PPTX...", self)
                 self.reset_action = QAction("&Reset Image", self)
                 self.exit_action = QAction("E&xit", self)
 
@@ -11911,6 +11944,7 @@ if __name__ == "__main__":
                 self.info_action.setToolTip("Open Project GitHub Page")
                 self.load_action.setToolTip("Load an image file (Ctrl+O)")
                 self.save_action.setToolTip("Save image and configuration (Ctrl+S)")
+                self.save_pptx_action.setToolTip("Save to PowerPoint (.pptx) with editable text boxes for each marker/label")
                 self.reset_action.setToolTip("Reset image and all annotations (Ctrl+R)")
                 self.exit_action.setToolTip("Exit the application")
                 self.undo_action.setToolTip("Undo last action (Default Shortcut: OS dependent")
@@ -11940,6 +11974,7 @@ if __name__ == "__main__":
 
                 self.load_action.triggered.connect(self.load_image)
                 self.save_action.triggered.connect(self.save_image)
+                self.save_pptx_action.triggered.connect(self.save_image_pptx)
                 self.reset_action.triggered.connect(self.reset_image)
                 self.exit_action.triggered.connect(self.close)
                 self.undo_action.triggered.connect(self.undo_action_m)
@@ -11991,9 +12026,15 @@ if __name__ == "__main__":
                 sa.setWidget(content)
                 return sa
 
-            def _update_main_layout(self, position: str):
+            def _update_main_layout(self, position: str, force_fit_split: bool = False):
                 """
                 Rebuilds the main window's layout (ported from the reference CombinedSDSApp).
+
+                force_fit_split=True (used when the user explicitly re-places the viewer via
+                the View menu, or on a settings reset) opens the window at a fitted 50:50
+                split and mirrors the resulting controls width into the Program UI Width
+                setting. Left False for startup/settings-apply so a saved window size and a
+                saved Program UI Width preference are preserved.
                 - Viewer is FIXED size (logical 550x350 by default).
                 - The whole controls/tab area lives in ONE resizable QScrollArea so it
                   never overflows the screen. Qt handles all HighDPI scaling; sizes here
@@ -12065,68 +12106,120 @@ if __name__ == "__main__":
                 # _scroll_wrap_tab). No outer scroll area wraps the whole tab widget anymore,
                 # so the tabs never scroll out of reach.
 
-                # Enforce Fixed Viewer Size
-                self.live_view_label.setFixedSize(VIEWER_FIXED_WIDTH, VIEWER_FIXED_HEIGHT)
-                self.live_view_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                # The viewer is now USER-RESIZABLE: it lives in a QSplitter so the divider
+                # between it and the controls can be dragged. Give it a sensible minimum and an
+                # expanding policy; the splitter (not setFixedSize) controls its actual size.
+                # Suppress the resize->settings sync while we build/size the layout so the
+                # programmatic sizing doesn't clobber the saved viewer dimensions.
+                self._suppress_viewer_resize_sync = True
+                self.live_view_label.setMaximumSize(16777215, 16777215)
+                self.live_view_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-                # Tab widget fills the remaining space; minimum height stays small so the
-                # window can always shrink to the desktop (the per-tab scroll areas handle
-                # overflow).
                 self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                self.tab_widget.setMinimumSize(0, 0)
                 self.tab_widget.setMaximumSize(16777215, 16777215)
 
-                if position in ["Top", "Bottom"]:
-                    new_layout = QVBoxLayout(new_main_widget)
+                is_vertical = position in ["Top", "Bottom"]
+                HANDLE = 8
 
-                    # Preferred (not minimum) controls height for sizing the window.
-                    available_height = max(MIN_CONTROLS_H, screen_h - VIEWER_FIXED_HEIGHT - CHROME_H)
+                # ---- Constraint floors -------------------------------------------------
+                # Neither pane may be squished below these, so placing the viewer to a
+                # side/top/bottom can never collapse the controls into the truncated
+                # "Image a…  T…  M…" state seen when the divider starves the tab area.
+                usable_w = max(400, screen_w - 40)
+                usable_h = max(300, screen_h - CHROME_H)
+                MIN_VIEWER_W = max(200, int(200 * ui_scale_factor))
+                MIN_VIEWER_H = max(160, int(160 * ui_scale_factor))
+                # Smallest controls width that still shows every tab in full — never larger
+                # than the user's Program UI Width preference.
+                MIN_UI_W = min(SAFE_CONTENT_WIDTH, max(600, int(600 * ui_scale_factor)))
+                MIN_UI_H = MIN_CONTROLS_H
+                # Never let the two floors together exceed the desktop, or the window's
+                # enforced minimum size would spill off-screen on very small displays.
+                MIN_UI_W = min(MIN_UI_W, max(400, usable_w - MIN_VIEWER_W - HANDLE))
+                MIN_UI_H = min(MIN_UI_H, max(140, usable_h - MIN_VIEWER_H - HANDLE))
 
-                    # WIDTH: SAFE_CONTENT_WIDTH ensures no horizontal scrollbar without
-                    # forcing full-screen width. The MINIMUM height is kept small so the
-                    # window can always shrink to fit the desktop and scroll instead of
-                    # pushing the bottom controls off-screen.
-                    self.tab_widget.setMinimumWidth(SAFE_CONTENT_WIDTH)
-                    self.tab_widget.setMinimumHeight(MIN_CONTROLS_H)
+                # Apply the floors to the widgets so dragging the divider (or shrinking the
+                # window) can't push either pane past them along the split axis.
+                self.live_view_label.setMinimumSize(
+                    MIN_VIEWER_W if not is_vertical else 140,
+                    MIN_VIEWER_H if is_vertical else 110)
+                self.tab_widget.setMinimumWidth(MIN_UI_W if not is_vertical else 340)
+                self.tab_widget.setMinimumHeight(MIN_UI_H if is_vertical else 160)
 
-                    APP_GLOBAL_WINDOW_HEIGHT = available_height
-                    APP_GLOBAL_WINDOW_WIDTH = SAFE_CONTENT_WIDTH
+                new_layout = QVBoxLayout(new_main_widget) if is_vertical \
+                    else QHBoxLayout(new_main_widget)
+                new_layout.setContentsMargins(0, 0, 0, 0)
 
+                splitter = QSplitter(Qt.Vertical if is_vertical else Qt.Horizontal)
+                splitter.setObjectName("ViewerSplitter")
+                splitter.setChildrenCollapsible(False)   # neither pane can be dragged to zero
+                splitter.setHandleWidth(HANDLE)
+                # Order the two panes; the viewer keeps its set size on window resize
+                # (stretch 0) while the controls take the extra space (stretch 1).
+                if position in ["Top", "Left"]:
+                    splitter.addWidget(self.live_view_label)
+                    splitter.addWidget(self.tab_widget)
+                    viewer_idx, controls_idx = 0, 1
+                else:  # Bottom / Right
+                    splitter.addWidget(self.tab_widget)
+                    splitter.addWidget(self.live_view_label)
+                    viewer_idx, controls_idx = 1, 0
+                splitter.setStretchFactor(viewer_idx, 0)
+                splitter.setStretchFactor(controls_idx, 1)
+                new_layout.addWidget(splitter)
+                self.viewer_splitter = splitter
 
-                    if position == "Top":
-                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
-                        new_layout.addWidget(self.create_separator())
-                        new_layout.addWidget(self.tab_widget, 1)
-                    else:  # Bottom
-                        new_layout.addWidget(self.tab_widget, 1)
-                        new_layout.addWidget(self.create_separator())
-                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
+                # ---- 50:50 default split (clamped to the floors) -----------------------
+                # The divider opens centred; if an even split would starve the controls
+                # below MIN_UI_W the controls keep their minimum and the viewer yields.
+                if is_vertical:
+                    span = min(usable_h,
+                               max(VIEWER_FIXED_HEIGHT + MIN_UI_H, 2 * VIEWER_FIXED_HEIGHT,
+                                   MIN_VIEWER_H + MIN_UI_H))
+                    half = (span - HANDLE) // 2
+                    viewer_sz = max(MIN_VIEWER_H, min(half, span - HANDLE - MIN_UI_H))
+                    ui_sz = max(MIN_UI_H, (span - HANDLE) - viewer_sz)
+                    content_w = min(SAFE_CONTENT_WIDTH, usable_w)
+                    content_h = viewer_sz + ui_sz + HANDLE
+                    min_needed_w = min(SAFE_CONTENT_WIDTH, usable_w)
+                    min_needed_h = MIN_VIEWER_H + MIN_UI_H + HANDLE
+                else:
+                    base = max(VIEWER_FIXED_WIDTH, MIN_UI_W)
+                    span = min(usable_w, max(2 * base + HANDLE, MIN_VIEWER_W + MIN_UI_W + HANDLE))
+                    half = (span - HANDLE) // 2
+                    if half >= MIN_UI_W:
+                        ui_sz = viewer_sz = half            # true 50:50
+                    else:
+                        ui_sz = MIN_UI_W                    # keep controls usable
+                        viewer_sz = max(MIN_VIEWER_W, (span - HANDLE) - ui_sz)
+                    content_w = viewer_sz + ui_sz + HANDLE
+                    content_h = min(usable_h, max(VIEWER_FIXED_HEIGHT, 600) + CHROME_H)
+                    min_needed_w = MIN_VIEWER_W + MIN_UI_W + HANDLE
+                    min_needed_h = MIN_VIEWER_H + CHROME_H
 
-                elif position in ["Left", "Right"]:
-                    separator = QFrame()
-                    separator.setFrameShape(QFrame.VLine)
-                    separator.setFrameShadow(QFrame.Sunken)
-                    new_layout = QHBoxLayout(new_main_widget)
+                if viewer_idx == 0:
+                    splitter.setSizes([viewer_sz, ui_sz])
+                else:
+                    splitter.setSizes([ui_sz, viewer_sz])
 
-                    # Preferred height for sizing; minimum kept small so the window can
-                    # always shrink to the desktop and scroll its controls.
-                    available_height = max(MIN_CONTROLS_H, screen_h - CHROME_H)
+                # Mirror the controls-pane width into the Program UI Width setting so the
+                # Settings tab reflects the actual split. Only for an explicit side-layout
+                # placement (force_fit_split) so startup/settings-apply don't clobber a
+                # saved preference. Top/Bottom leave the width unchanged (both panes are
+                # full-width, so Program UI Width still drives it directly).
+                if force_fit_split and not is_vertical:
+                    try:
+                        self.safe_content_width = max(200, int(round(ui_sz / ui_scale_factor)))
+                        if hasattr(self, 'spin_content_w'):
+                            self.spin_content_w.blockSignals(True)
+                            self.spin_content_w.setValue(self.safe_content_width)
+                            self.spin_content_w.blockSignals(False)
+                    except Exception:
+                        pass
 
-                    self.tab_widget.setMinimumWidth(SAFE_CONTENT_WIDTH)
-                    self.tab_widget.setMinimumHeight(MIN_CONTROLS_H)
-
-                    APP_GLOBAL_WINDOW_HEIGHT = available_height
-                    APP_GLOBAL_WINDOW_WIDTH = SAFE_CONTENT_WIDTH
-
-
-                    if position == "Left":
-                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
-                        new_layout.addWidget(separator)
-                        new_layout.addWidget(self.tab_widget, 1)
-                    else:  # Right
-                        new_layout.addWidget(self.tab_widget, 1)
-                        new_layout.addWidget(separator)
-                        new_layout.addWidget(self.live_view_label, 0, Qt.AlignCenter)
+                # Sizing/build is done — allow viewer-resize syncing again on the next event loop
+                # pass (after the transient build-time resizes have flushed).
+                QTimer.singleShot(0, lambda: setattr(self, '_suppress_viewer_resize_sync', False))
 
                 if new_layout:
                     old_central_widget = self.centralWidget()
@@ -12135,23 +12228,27 @@ if __name__ == "__main__":
                     if old_central_widget:
                         old_central_widget.deleteLater()
 
-                    # Restore the user's last saved window size if we have one (persisted
-                    # via resizeEvent -> resize_timer -> save_app_settings). Otherwise pick
-                    # a sensible default that fits the current desktop. _fit_window_to_screen()
-                    # below then clamps it to the visible desktop.
-                    if (self.saved_window_width and self.saved_window_height
+                    # Window size. `default_*` fits the fresh 50:50 split; `min_needed_*`
+                    # is the smallest size at which BOTH panes still meet their floors.
+                    default_w = min(content_w + 40, screen_w - 20)
+                    default_h = min(content_h + 20, screen_h - 20)
+                    min_needed_w = min(min_needed_w + 40, screen_w - 20)
+                    min_needed_h = min(min_needed_h + 20, screen_h - 20)
+
+                    if force_fit_split:
+                        # Explicit placement change → open at the fitted 50:50 size.
+                        target_w, target_h = default_w, default_h
+                    elif (self.saved_window_width and self.saved_window_height
                             and self.saved_window_width > 0 and self.saved_window_height > 0):
-                        # Clamp a (possibly stale / different-DPI) saved size to the current
-                        # desktop so it can never restore larger than the screen.
-                        self.resize(min(self.saved_window_width, screen_w - 20),
-                                    min(self.saved_window_height, screen_h - 20))
+                        # Restore the user's last saved window size (persisted via
+                        # resizeEvent -> resize_timer -> save_app_settings), clamped to the
+                        # current desktop and never smaller than the split needs so the
+                        # controls can't be squished into the truncated state.
+                        target_w = max(min(self.saved_window_width, screen_w - 20), min_needed_w)
+                        target_h = max(min(self.saved_window_height, screen_h - 20), min_needed_h)
                     else:
-                        # Default: wide enough for the controls, tall enough for viewer +
-                        # controls, but never larger than the available desktop.
-                        default_w = min(SAFE_CONTENT_WIDTH + 60, screen_w - 20)
-                        default_h = min(VIEWER_FIXED_HEIGHT + available_height + CHROME_H,
-                                        screen_h - 20)
-                        self.resize(max(640, default_w), max(480, default_h))
+                        target_w, target_h = default_w, default_h
+                    self.resize(max(640, target_w), max(480, target_h))
                     # Safety net: keep the window within the visible desktop so the menu
                     # bar and controls can't be clipped or pushed off-screen.
                     self._fit_window_to_screen()
@@ -12287,15 +12384,17 @@ if __name__ == "__main__":
                     self.live_view_label.hide()
                     self.tab_widget.hide()
 
-                    # Rebuild the main layout
-                    self._update_main_layout(position)
-                    
+                    # Rebuild the main layout at a fitted 50:50 split (force_fit_split)
+                    # so re-placing the viewer never opens in the squished state.
+                    self._update_main_layout(position, force_fit_split=True)
+
                     # Process events to apply the layout change
                     QApplication.processEvents()
-                    
-                    # Adjust window size to fit the new layout
-                    self.adjustSize()
-                    
+
+                    # NOTE: do NOT adjustSize() here — _update_main_layout already sized the
+                    # window to fit the 50:50 split; adjustSize() would collapse it to the
+                    # bare size hint and re-starve the controls.
+
                     # Show the widgets again in their new positions
                     self.live_view_label.show()
                     self.tab_widget.show()
@@ -13103,6 +13202,7 @@ if __name__ == "__main__":
                 # which fonts are installed, and stay crisp at any display scaling.
                 self.load_action.setIcon(create_vector_icon("load", icon_size, text_color))
                 self.save_action.setIcon(create_vector_icon("save", icon_size, text_color))
+                self.save_pptx_action.setIcon(create_vector_icon("pptx", icon_size, text_color))
                 self.reset_action.setIcon(create_vector_icon("reset", icon_size, text_color))
                 self.exit_action.setIcon(create_vector_icon("exit", icon_size, text_color))
                 self.undo_action.setIcon(create_vector_icon("undo", icon_size, text_color))
@@ -13173,6 +13273,9 @@ if __name__ == "__main__":
                 self.tool_bar.addAction(self.theme_action)
                 # --- END ADD ---
                 self.tool_bar.addAction(self.info_action)
+                # Save to PPTX — placed right after the GitHub icon.
+                self.tool_bar.addSeparator()
+                self.tool_bar.addAction(self.save_pptx_action)
 
                 self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
                 self.tool_bar.setContextMenuPolicy(Qt.PreventContextMenu)
@@ -16675,8 +16778,12 @@ if __name__ == "__main__":
                 self.hist_ax.patch.set_facecolor('none')
                 
                 self.hist_canvas = FigureCanvas(self.hist_fig)
-                self.hist_canvas.setFixedHeight(120) 
-                self._update_levels_histogram() 
+                self.hist_canvas.setFixedHeight(120)
+                # Ignore the canvas's ~500px width hint so it doesn't inflate this column's
+                # preferred width (it stretches to whatever width the column gets instead).
+                self.hist_canvas.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+                self.hist_canvas.setMinimumWidth(160)
+                self._update_levels_histogram()
                 levels_layout.addWidget(self.hist_canvas, 0, 0, 1, 3) 
                 
                 def add_level_slider(row, text, slider_obj, label_obj, min_v, max_v, def_v):
@@ -16713,7 +16820,7 @@ if __name__ == "__main__":
                 self.convert_8bit_button.clicked.connect(self.convert_to_8bit_depth)
                 invert_button = QPushButton("Invert")
                 invert_button.clicked.connect(self.invert_image)
-                reset_button = QPushButton("Reset Current Adjustments")
+                reset_button = QPushButton("Reset Image")
                 reset_button.clicked.connect(self.reset_all_adjustments)
                 
                 actions_layout.addWidget(self.bw_button)
@@ -16724,9 +16831,14 @@ if __name__ == "__main__":
 
                 left_column_layout.addWidget(actions_group)
                 left_column_layout.addStretch(1)
-                
-                # Add Left Column with Stretch 1
-                main_layout.addLayout(left_column_layout, 1)
+
+                # Wrap the left column in a widget whose WIDTH hint is Ignored, so it and the
+                # right column (both stretch 1) always take EQUAL width and resize in proportion.
+                # Without this the wide histogram/button row make the left column dominate.
+                left_col_widget = QWidget()
+                left_col_widget.setLayout(left_column_layout)
+                left_col_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                main_layout.addWidget(left_col_widget, 1)
 
                 # --- RIGHT COLUMN ---
                 right_column_layout = QVBoxLayout()
@@ -16783,9 +16895,13 @@ if __name__ == "__main__":
                 
                 right_column_layout.addWidget(clahe_group)
                 right_column_layout.addStretch()
-                
-                # Add Right Column with Stretch 1 (Equal to Left)
-                main_layout.addLayout(right_column_layout, 1)
+
+                # Add Right Column with Stretch 1 (Equal to Left) — same Ignored-width wrapper
+                # so the two columns stay balanced and resize proportionally.
+                right_col_widget = QWidget()
+                right_col_widget.setLayout(right_column_layout)
+                right_col_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                main_layout.addWidget(right_col_widget, 1)
 
                 # --- CONNECTIONS (Same as before, abridged for length but included in logic) ---
                 # Levels
@@ -17232,7 +17348,12 @@ if __name__ == "__main__":
                 clahe_settings = settings_dict.get('clahe', self._get_default_adjustments()['clahe'])
                 clip_limit = clahe_settings.get('clip_limit', 1.0)
 
-                if clip_limit > 0.1:
+                # clip_limit == 1.0 is the neutral (slider-minimum) state and must be a true
+                # no-op, otherwise CLAHE silently alters contrast/sharpness whenever an image is
+                # set as an overlay base or rasterized (the main view never routes through this
+                # pipeline at rest, so the mismatch showed up as a sudden contrast jump). This
+                # matches the threshold used in _get_fully_adjusted_image_for_analysis.
+                if clip_limit > 1.0:
                     tile_size = clahe_settings.get('tile_size', 2)
                     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
 
@@ -18348,8 +18469,9 @@ if __name__ == "__main__":
                 self.left_padding_input.setText("0")
                 
             def _label_padding_needed(self):
-                """Padding (left, right, top) in IMAGE pixels needed to fit the current
-                left/right marker labels and the rotated top labels.
+                """Padding (left, right, top, bottom) in IMAGE pixels needed to fit the
+                current left/right marker labels, the rotated top labels, AND any custom
+                markers / custom shapes (lines, rectangles) that stick out past the canvas.
 
                 Labels are rendered at the *effective on-image* font size,
                 font_size * ui_scale / view_scale, which is much larger than the raw point
@@ -18357,11 +18479,20 @@ if __name__ == "__main__":
                 padding so long/large labels overflow the image; this measures at the effective
                 size and includes the rotated bounding box of the top labels. A short
                 fixed-point loop converges because the padding itself changes view_scale.
-                Returns (0, 0, 0) on failure."""
+
+                Custom markers/shapes are stored in IMAGE-pixel coordinates and are shifted by
+                (padding_left, padding_top) when padding is applied (see
+                adjust_elements_for_padding). So an item whose ink extends to x<0 needs that
+                much LEFT padding to be pulled back onto the canvas, one past the right edge
+                needs RIGHT padding, and likewise for top/bottom. Their effective on-image font
+                size scales with view_scale exactly like the standard labels, so they are folded
+                into the same fixed-point loop.
+
+                Returns (0, 0, 0, 0) on failure."""
                 import math
                 try:
                     if not self.image or self.image.isNull():
-                        return 0, 0, 0
+                        return 0, 0, 0, 0
                     cl, cr, ct, cb = self._measure_transparent_margins()
                     content_w = max(1, self.image.width() - cl - cr)
                     content_h = max(1, self.image.height() - ct - cb)
@@ -18371,11 +18502,13 @@ if __name__ == "__main__":
                     rotation  = float(getattr(self, 'font_rotation', -45))
                     axis      = str(getattr(self, 'top_rotation_axis', 'left'))
                     ui_scale  = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
-                    try:
-                        lbl_w = float(self.live_view_label.width())
-                        lbl_h = float(self.live_view_label.height())
-                    except Exception:
-                        lbl_w = lbl_h = 0.0
+                    # Reference viewer size for the effective font scale. Use the FIXED 550x350
+                    # export reference (same constants as save_image), NOT the live viewer size —
+                    # the viewer is now user-resizable, and tying the recommendation to it would
+                    # make the padding change every time the window/divider is dragged. A fixed
+                    # reference keeps Set-Recommended deterministic AND matches the exported figure
+                    # (which is what the padding must actually fit).
+                    lbl_w, lbl_h = 550.0, 350.0
 
                     top_texts = [str(t) for t in (getattr(self, 'top_label', []) or []) if str(t).strip()]
                     left_texts, right_texts = [], []
@@ -18407,11 +18540,121 @@ if __name__ == "__main__":
                         rw = max([fm.horizontalAdvance(s) for s in right_texts], default=0)
                         return top_e, float(lw), float(rw), float(eff_px)
 
+                    def _custom_overflow(view_scale, std_eff_px):
+                        """Extra padding (left, right, top, bottom) in image px needed so custom
+                        markers/shapes and the vertical extent of the standard L/R labels are not
+                        clipped past the CONTENT edge. Everything uses a single SMALL containment
+                        margin (`max(6, std_eff_px/3)`), NOT the 15% frame — the frame is applied
+                        as the base in recommended_values. Using the frame here made padding
+                        balloon when a marker sat inside an existing margin (e.g. an arrow ~120 px
+                        into the left margin demanded frame + 120).
+
+                        Idempotency: all positions are content-relative (minus cl/ct) and compared
+                        to content_w/content_h. Apply Padding shifts items by (pad_l, pad_t) and
+                        grows the margins by the same amount, so (pos - margin) is invariant →
+                        Set-Recommended is stable across cycles. A side only grows when an item
+                        would otherwise clip (near/past that content edge)."""
+                        # Custom-item bounds (content-relative).
+                        cmin_x = cmin_y = float('inf')
+                        cmax_x = cmax_y = float('-inf')
+                        c_found = False
+                        # Standard L/R label vertical bounds (small margin).
+                        lmin_y = float('inf'); lmax_y = float('-inf')
+                        l_found = False
+                        small_margin = max(6.0, std_eff_px / 3.0)
+
+                        # All positions are converted to CONTENT-relative coordinates
+                        # (subtract the current padding cl/ct) and compared against the CONTENT
+                        # box [0..content_w] x [0..content_h]. This makes the recommendation
+                        # invariant to padding already applied: Apply Padding shifts every item
+                        # by (pad_left, pad_top) and grows the margins by the same amount, so
+                        # (pos - margin) is unchanged → Set-Recommended is idempotent (no cycling).
+
+                        # Standard left/right marker labels — vertical extent only (their
+                        # horizontal reach is already covered by lw/rw above).
+                        std_font = QFont(family)
+                        std_font.setPixelSize(max(4, int(round(std_eff_px))))
+                        fm_lr = QFontMetrics(std_font)
+                        for _side, _lst in (('left', getattr(self, 'left_markers', [])),
+                                            ('right', getattr(self, 'right_markers', []))):
+                            for _entry in _lst:
+                                try:
+                                    y_rel = float(_entry[0]) - ct
+                                    full = self.marker_label_text(_entry[1], _side)
+                                    if not full:
+                                        continue
+                                    br = fm_lr.tightBoundingRect(str(full))
+                                    hh = br.height() / 2.0
+                                    lmin_y = min(lmin_y, y_rel - hh)
+                                    lmax_y = max(lmax_y, y_rel + hh)
+                                    l_found = True
+                                except Exception:
+                                    continue
+
+                        for md in getattr(self, 'custom_markers', []):
+                            try:
+                                mxr = float(md[0]) - cl; myr = float(md[1]) - ct; text = str(md[2])
+                                if text == '':
+                                    continue
+                                fam = str(md[4]); size = float(md[5])
+                                bold = bool(md[6]) if len(md) > 6 else False
+                                italic = bool(md[7]) if len(md) > 7 else False
+                                eff_c = size * ui_scale / max(view_scale, 1e-3)
+                                eff_c = min(max(eff_c, size), size * 10.0)
+                                f = QFont(fam); f.setPixelSize(max(4, int(round(eff_c))))
+                                f.setBold(bold); f.setItalic(italic)
+                                br = QFontMetrics(f).boundingRect(text)
+                                hw = br.width() / 2.0; hh = br.height() / 2.0
+                                cmin_x = min(cmin_x, mxr - hw); cmax_x = max(cmax_x, mxr + hw)
+                                cmin_y = min(cmin_y, myr - hh); cmax_y = max(cmax_y, myr + hh)
+                                c_found = True
+                            except Exception:
+                                continue
+
+                        for sd in getattr(self, 'custom_shapes', []):
+                            try:
+                                th = max(1.0, float(sd.get('thickness', 1))) / 2.0
+                                if sd.get('type') == 'line':
+                                    sx = sd['start'][0] - cl; sy = sd['start'][1] - ct
+                                    ex = sd['end'][0] - cl; ey = sd['end'][1] - ct
+                                    cmin_x = min(cmin_x, sx - th, ex - th)
+                                    cmax_x = max(cmax_x, sx + th, ex + th)
+                                    cmin_y = min(cmin_y, sy - th, ey - th)
+                                    cmax_y = max(cmax_y, sy + th, ey + th)
+                                    c_found = True
+                                elif sd.get('type') == 'rectangle':
+                                    x = sd['rect'][0] - cl; y = sd['rect'][1] - ct
+                                    w = sd['rect'][2]; h = sd['rect'][3]
+                                    cmin_x = min(cmin_x, x - th); cmax_x = max(cmax_x, x + w + th)
+                                    cmin_y = min(cmin_y, y - th); cmax_y = max(cmax_y, y + h + th)
+                                    c_found = True
+                            except Exception:
+                                continue
+
+                        ol = orr = ot = ob = 0.0
+                        if c_found:
+                            # Custom items only need a SMALL containment margin so they are not
+                            # clipped past the content edge — NOT the full 15% frame. Using the
+                            # frame ballooned the padding when a marker/arrow was placed inside
+                            # the existing left/top margin (it demanded frame + its offset). The
+                            # 15% framing already comes from the base in recommended_values; a
+                            # custom item only enlarges a side when it would otherwise clip.
+                            ol = max(ol, small_margin - cmin_x)
+                            orr = max(orr, cmax_x - content_w + small_margin)
+                            ot = max(ot, small_margin - cmin_y)
+                            ob = max(ob, cmax_y - content_h + small_margin)
+                        if l_found:
+                            # L/R labels only need a small margin so they aren't clipped.
+                            ot = max(ot, small_margin - lmin_y)
+                            ob = max(ob, lmax_y - content_h + small_margin)
+                        return max(0.0, ol), max(0.0, orr), max(0.0, ot), max(0.0, ob)
+
                     pad_top = content_h * 0.15
                     pad_l = pad_r = content_w * 0.15
+                    pad_bottom = 0.0
                     for _ in range(6):
                         fw = content_w + pad_l + pad_r
-                        fh = content_h + pad_top
+                        fh = content_h + pad_top + pad_bottom
                         if lbl_w > 0 and lbl_h > 0 and fw > 0 and fh > 0:
                             view_scale = min(lbl_w / fw, lbl_h / fh)
                         else:
@@ -18424,9 +18667,17 @@ if __name__ == "__main__":
                         pad_top = math.ceil(top_e) + margin + 0.4 * ep
                         pad_l = lw + margin
                         pad_r = rw + margin
-                    return int(math.ceil(pad_l)), int(math.ceil(pad_r)), int(math.ceil(pad_top))
+                        # Fold in custom markers/shapes (and the vertical extent of the
+                        # standard L/R marker labels) that spill past the canvas edges.
+                        cust_l, cust_r, cust_t, cust_b = _custom_overflow(view_scale, ep)
+                        pad_l = max(pad_l, cust_l)
+                        pad_r = max(pad_r, cust_r)
+                        pad_top = max(pad_top, cust_t)
+                        pad_bottom = cust_b
+                    return (int(math.ceil(pad_l)), int(math.ceil(pad_r)),
+                            int(math.ceil(pad_top)), int(math.ceil(pad_bottom)))
                 except Exception:
-                    return 0, 0, 0
+                    return 0, 0, 0, 0
 
             def recommended_values(self):
                 if not self._require_image("recommended padding"):
@@ -18443,20 +18694,26 @@ if __name__ == "__main__":
                     content_w = max(1, self.image.width() - cl - cr)
                     content_h = max(1, self.image.height() - ct - cb)
 
-                    # Baseline padding: 15% of the content size.
-                    base_left = base_right = int(content_w * 0.15)
+                    # Baseline framing for the TOP only (15% of content height). Left/right no
+                    # longer use a 15% baseline — see below.
                     base_top = int(content_h * 0.15)
 
                     # Grow each axis so the actual marker labels fit at the size they are
                     # really rendered — the effective on-image font size (which is larger than
                     # the raw point size on big gels) and, for the top labels, their full
                     # rotated bounding box. This is what fixes long/large labels overflowing.
-                    need_left, need_right, need_top = self._label_padding_needed()
+                    # need_* also accounts for custom markers and custom shapes (lines/rects)
+                    # that spill past the canvas edges, including below it (need_bottom).
+                    need_left, need_right, need_top, need_bottom = self._label_padding_needed()
 
-                    self.left_padding_input.setText(str(max(base_left, int(need_left))))
-                    self.right_padding_input.setText(str(max(base_right, int(need_right))))
+                    # LEFT/RIGHT: size to the marker LABEL TEXT (need_left/right already = the
+                    # widest L/R label width + a small margin, and also contains any custom-item
+                    # overflow) instead of a flat 15% of content — the 15% baseline left large
+                    # empty margins beside short MW numbers ("250" only needs ~105px, not 174).
+                    self.left_padding_input.setText(str(max(6, int(need_left))))
+                    self.right_padding_input.setText(str(max(6, int(need_right))))
                     self.top_padding_input.setText(str(max(base_top, int(need_top))))
-                    self.bottom_padding_input.setText(str(int(0)))
+                    self.bottom_padding_input.setText(str(max(0, int(need_bottom))))
 
                     # DO NOT update slider ranges or _marker_shift_added here.
                     # Slider ranges are updated by _update_marker_slider_ranges when self.image changes.
@@ -19197,7 +19454,8 @@ if __name__ == "__main__":
                     "This will delete the saved application configuration — window/viewer/UI settings, "
                     "CPU/GPU preference, and saved marker presets — and restore the original defaults.\n\n"
                     "Your per-image saved configuration files are NOT affected.\n\n"
-                    "The application should be restarted afterwards. Continue?",
+                    "The viewer size, UI width, layout and window size reset immediately (a specific "
+                    "GPU-ID change would still need a restart). Continue?",
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply != QMessageBox.Yes:
                     return
@@ -19207,8 +19465,8 @@ if __name__ == "__main__":
                     if os.path.exists(config_filepath):
                         os.remove(config_filepath)
 
-                    # Restore in-memory defaults, then let load_config() repopulate defaults and
-                    # recreate a fresh configuration file (it handles the missing-file case).
+                    # Restore ALL in-memory defaults, including the persisted window size so the
+                    # layout rebuild below opens at the default size instead of the last one.
                     self.ui_scale_preference = 1.0
                     self.viewer_position     = "Top"
                     self.use_gpu             = True
@@ -19216,20 +19474,45 @@ if __name__ == "__main__":
                     self.viewer_fixed_height = 350
                     self.safe_content_width  = 1000
                     self.presets_data        = {}
-                    try:
-                        self.load_config()
-                    except Exception:
-                        pass
+                    self.saved_window_width  = None
+                    self.saved_window_height = None
+
+                    # Reflect the defaults in the Settings tab controls (spin boxes, combos).
                     try:
                         self.update_settings_ui()
                     except Exception:
                         pass
 
+                    # Reflect the default viewer arrangement in the View menu checkmarks.
+                    try:
+                        if hasattr(self, 'layout_top_action'):
+                            self.layout_top_action.setChecked(True)
+                    except Exception:
+                        pass
+
+                    # Apply LIVE: rebuild the layout with the default arrangement + viewer size.
+                    # With saved_window_* now None, _update_main_layout resizes the window to its
+                    # default too, so the viewer/UI width, layout and window size all reset without
+                    # a restart.
+                    try:
+                        self._prepare_multilane_for_viewer_resize()
+                        self._update_main_layout("Top")
+                        self.update_live_view()
+                    except Exception:
+                        pass
+
+                    # Persist the fresh defaults (with the now-default window size) so nothing
+                    # stale is written back by a later resize.
+                    try:
+                        self.save_full_config()
+                    except Exception:
+                        pass
+
                     QMessageBox.information(
                         self, "Settings Reset",
-                        "Application settings have been reset to defaults.\n\n"
-                        "Please restart the application for all changes (window size, UI scale) to take "
-                        "full effect.")
+                        "Application settings have been reset to defaults — viewer size, UI width, "
+                        "layout arrangement and window size.\n\n"
+                        "Your per-image saved configuration files are not affected.")
                 except Exception as e:
                     QMessageBox.critical(self, "Reset Error", f"Could not reset settings:\n{e}")
 
@@ -19493,15 +19776,15 @@ if __name__ == "__main__":
                     if self.measurement_mode:
                         self.clear_measurement_mode()
                         a_mode_was_cancelled_or_view_reset = True
-                    elif self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"] and self.moving_multi_lane_index != -1:
-                        self.moving_multi_lane_index = -1; self._reset_to_selection_mode(); self.setFocus(); event.accept(); return 
                     elif self.current_selection_mode in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                         self.cancel_custom_item_interaction_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.overlay_mode_active:
                         self.cancel_interactive_overlay_mode(); a_mode_was_cancelled_or_view_reset = True
-                    elif self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner"]:
-                        if self.current_selection_mode in ["dragging_shape", "resizing_corner"] and self.shape_points_at_drag_start_label:
-                            pass # Revert logic can be added here if needed
+                    elif self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner", "skewing_edge"]:
+                        # Esc fully EXITS the Move/Resize/Delete Area tool (clears its green
+                        # armed state) rather than only deselecting the current lane and
+                        # staying armed — the latter left the button green after Esc, which
+                        # is exactly what the user reported.
                         self.cancel_selection_or_move_mode(); a_mode_was_cancelled_or_view_reset = True
                     
                     # --- START OF THE FIX ---
@@ -19627,7 +19910,18 @@ if __name__ == "__main__":
                     self.cancel_custom_item_interaction_mode()
 
             def cancel_custom_item_interaction_mode(self):
+                # Always drop the button's checked state first — the global
+                # `QPushButton:checked` stylesheet renders it green, so if it were left
+                # checked (e.g. this is reached after the mode was already cleared by another
+                # path) the button would stay green after Esc/cancel. setChecked doesn't emit
+                # `clicked`, so this won't re-trigger the toggle handler.
+                if hasattr(self, 'move_resize_button') and self.move_resize_button.isChecked():
+                    self.move_resize_button.blockSignals(True)
+                    self.move_resize_button.setChecked(False)
+                    self.move_resize_button.blockSignals(False)
+
                 if self.current_selection_mode not in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
+                    self.clear_mode_status()   # ensure the green highlight is cleared too
                     return
 
                 self.current_selection_mode = None
@@ -19637,10 +19931,6 @@ if __name__ == "__main__":
                 self.shape_points_at_drag_start_label = []
 
                 self._reset_live_view_label_custom_handlers()
-
-                if hasattr(self, 'move_resize_button') and self.move_resize_button.isChecked():
-                    self.move_resize_button.setChecked(False)
-
                 self.clear_mode_status()
                 self.update_live_view()
 
@@ -21056,12 +21346,54 @@ if __name__ == "__main__":
                 if file_path:
                     self.open_image_from_path(file_path)
 
+            def _load_tiff_preserve_depth(self, file_path):
+                """Read a .tif/.tiff with tifffile so its TRUE bit depth and channel count
+                are preserved, returning a matching QImage — or None to let Qt's loader stand.
+
+                Why: Qt's TIFF plugin frequently loads a 16-bit grayscale gel as a promoted
+                64-bit RGBA (or 8-bit-downsampled) image. That silent promotion is what made a
+                plain open→save emit a ~4x-larger (A)RGB TIFF instead of the original 16-bit
+                grayscale. We only override for 16-bit (uint16) data; 8-bit TIFFs return None
+                so Qt keeps handling them (its channel order is already correct). Never raises."""
+                try:
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext not in ('.tif', '.tiff'):
+                        return None
+                    import tifffile
+                    arr = tifffile.imread(file_path)
+                    if arr is None or not isinstance(arr, np.ndarray):
+                        return None
+                    # Only take over for HIGH-DEPTH data; Qt handles 8-bit TIFFs correctly.
+                    if arr.dtype != np.uint16:
+                        return None
+                    # Normalise to a plain grayscale/RGB/RGBA frame; bail on anything unusual
+                    # (e.g. a multi-page stack) so Qt/Pillow handle it instead.
+                    if arr.ndim == 3 and arr.shape[2] == 1:
+                        arr = arr[:, :, 0]
+                    if arr.ndim == 3 and arr.shape[2] not in (3, 4):
+                        return None
+                    if arr.ndim not in (2, 3):
+                        return None
+                    qimg = self.numpy_to_qimage(np.ascontiguousarray(arr))
+                    return qimg if (qimg is not None and not qimg.isNull()) else None
+                except Exception:
+                    return None
+
             def open_image_from_path(self, file_path):
                 """Loads the image from a specific path (Used by Load Action and Drag & Drop)."""
                 self.reset_image() # Clear previous state
 
                 self.image_path = file_path
-                loaded_image = QImage(self.image_path)                    
+                loaded_image = QImage(self.image_path)
+
+                # For 16-bit TIFFs, re-read the pixels with tifffile so the TRUE bit depth and
+                # channel count survive. Qt's plugin otherwise promotes a 16-bit grayscale gel
+                # to 64-bit RGBA (or downsamples it), which is why opening then saving produced
+                # a ~4x-larger (A)RGB file. tifffile runs AFTER the QImage() call so that first
+                # file access still establishes the macOS folder-access grant.
+                _depth_preserved = self._load_tiff_preserve_depth(self.image_path)
+                if _depth_preserved is not None and not _depth_preserved.isNull():
+                    loaded_image = _depth_preserved
 
                 if loaded_image.isNull():
                     # Try loading with Pillow as fallback
@@ -22157,6 +22489,87 @@ if __name__ == "__main__":
                 # leave older label-only boxes exactly as they are.
                 if any(d.get('points_image') for d in self.multi_lane_definitions):
                     self._multilane_reproject_pending = True
+
+            def _capture_multilane_anchors_with_label_size(self, lbl_w, lbl_h):
+                """Like _capture_multilane_anchors but uses an EXPLICIT label size (the pre-resize
+                size) instead of the live one — used from the viewer's resizeEvent, where the
+                widget has already taken its new size but the boxes are still correct for the OLD
+                one."""
+                if not self.image or self.image.isNull():
+                    return
+                img_w = float(self.image.width()); img_h = float(self.image.height())
+                if img_w <= 0 or img_h <= 0 or lbl_w <= 0 or lbl_h <= 0:
+                    return
+                for lane_def in getattr(self, 'multi_lane_definitions', []):
+                    try:
+                        self._update_lane_def_image_anchor(lane_def, img_w, img_h, float(lbl_w), float(lbl_h))
+                    except Exception:
+                        continue
+
+            def _on_viewer_label_resized(self, old_size, new_size):
+                """Called from LiveViewLabel.resizeEvent whenever the user-resizable viewer
+                changes size (splitter drag, or window resize shrinking it). Re-anchors
+                densitometry boxes to the content, re-renders (debounced), and mirrors the new
+                logical viewer dimensions into the Settings tab / saved config."""
+                if getattr(self, '_suppress_viewer_resize_sync', False):
+                    return
+                nw = int(new_size.width()); nh = int(new_size.height())
+                if nw <= 0 or nh <= 0:
+                    return
+
+                # 1) Keep densitometry boxes glued to the image: snapshot their anchors under the
+                #    OLD size (boxes are still correct there), then arm a reprojection.
+                try:
+                    ow, oh = int(old_size.width()), int(old_size.height())
+                    if ow > 0 and oh > 0 and getattr(self, 'multi_lane_definitions', None):
+                        self._capture_multilane_anchors_with_label_size(ow, oh)
+                        if any(d.get('points_image') for d in self.multi_lane_definitions):
+                            self._multilane_reproject_pending = True
+                except Exception:
+                    pass
+
+                # 2) Mirror the CURRENT viewer size (both dimensions) into the Settings tab
+                #    (logical px = actual / ui_scale) and remember it so it persists/restores.
+                #    Both are synced because either can change: dragging the divider changes the
+                #    split axis, and resizing the window changes the cross axis (which is the real
+                #    viewer size the user sees), so the Settings fields always reflect reality.
+                try:
+                    ui = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
+                    self.viewer_fixed_width = max(50, int(round(nw / ui)))
+                    self.viewer_fixed_height = max(50, int(round(nh / ui)))
+                    if hasattr(self, 'spin_viewer_w'):
+                        self.spin_viewer_w.blockSignals(True)
+                        self.spin_viewer_w.setValue(self.viewer_fixed_width)
+                        self.spin_viewer_w.blockSignals(False)
+                    if hasattr(self, 'spin_viewer_h'):
+                        self.spin_viewer_h.blockSignals(True)
+                        self.spin_viewer_h.setValue(self.viewer_fixed_height)
+                        self.spin_viewer_h.blockSignals(False)
+                except Exception:
+                    pass
+
+                # 2b) In a side (Left/Right) layout the divider also sets the controls width,
+                #     so mirror the live controls-pane width into the Program UI Width setting.
+                #     (Top/Bottom split heights, not the UI width, so leave it untouched.)
+                try:
+                    if getattr(self, 'viewer_position', 'Top') in ("Left", "Right") \
+                            and hasattr(self, 'tab_widget'):
+                        cw = int(self.tab_widget.width())
+                        if cw > 0:
+                            self.safe_content_width = max(200, int(round(cw / ui)))
+                            if hasattr(self, 'spin_content_w'):
+                                self.spin_content_w.blockSignals(True)
+                                self.spin_content_w.setValue(self.safe_content_width)
+                                self.spin_content_w.blockSignals(False)
+                except Exception:
+                    pass
+
+                # 3) Debounced repaint + save.
+                try:
+                    self._viewer_render_timer.start()
+                    self.resize_timer.start()
+                except Exception:
+                    pass
 
 
 
@@ -25038,7 +25451,7 @@ if __name__ == "__main__":
                 file_menu = menubar.addMenu("&File")
                 file_menu.addAction(self.load_action)
                 file_menu.addAction(self.save_action)
-                # file_menu.addAction(self.save_svg_action)
+                file_menu.addAction(self.save_pptx_action)
                 file_menu.addSeparator()
                 file_menu.addAction(self.reset_action)
                 file_menu.addSeparator()
@@ -25335,208 +25748,359 @@ if __name__ == "__main__":
                 return cropped_image
 
 
-            # --- restored: save_image_svg ---
-            def save_image_svg(self):
-                """Save the processed image along with markers, labels, and custom shapes in SVG format."""
-                if not self._require_image("SVG export"): # Check current image validity
+            def _composite_base_for_export(self, render_scale=3):
+                """Return a QImage of the fully-adjusted master + placed overlays with NO
+                annotations, scaled up by render_scale for crispness. Mirrors save_image's
+                base compositing so every editable export (SVG, PPTX) shares an identical
+                background. Returns None on failure."""
+                if not self.image_master or self.image_master.isNull():
+                    return None
+                nw = self.image_master.width(); nh = self.image_master.height()
+                if nw <= 0 or nh <= 0:
+                    return None
+                cw = nw * render_scale; ch = nh * render_scale
+
+                default_adj = self._get_default_adjustments()
+                main_settings = {
+                    'levels_gamma': getattr(self, 'main_levels_gamma', {
+                        'black_point': self.black_point_slider.value(),
+                        'white_point': self.white_point_slider.value(),
+                        'gamma': self.gamma_slider.value()
+                    }),
+                    'is_inverted': self.main_image_is_inverted,
+                    'channel_mixer': getattr(self, 'channel_mixer_data', default_adj['channel_mixer']).copy(),
+                    'unsharp_mask': getattr(self, 'unsharp_mask_data', default_adj['unsharp_mask']).copy(),
+                    'clahe': getattr(self, 'clahe_data', default_adj['clahe']).copy(),
+                }
+                base_bg_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
+
+                has_img1 = (hasattr(self, 'image1_original') and self.image1_original
+                            and not self.image1_original.isNull() and hasattr(self, 'image1_position'))
+                has_img2 = (hasattr(self, 'image2_original') and self.image2_original
+                            and not self.image2_original.isNull() and hasattr(self, 'image2_position'))
+                adjusted_img1 = getattr(self, 'image1_adjusted_preview', None) if has_img1 else None
+                adjusted_img2 = getattr(self, 'image2_adjusted_preview', None) if has_img2 else None
+
+                base_canvas = QImage(cw, ch, QImage.Format_ARGB32_Premultiplied)
+                base_canvas.fill(Qt.transparent)
+                bp = QPainter(base_canvas)
+                bp.setRenderHint(QPainter.SmoothPixmapTransform, False)
+                bp.setOpacity(1.0)
+                bp.drawImage(QRectF(0.0, 0.0, float(cw), float(ch)), base_bg_img, QRectF(base_bg_img.rect()))
+
+                op1_blend, op2_blend = self._overlay_effective_opacities()
+                if has_img1 and adjusted_img1:
+                    bp.setOpacity(op1_blend)
+                    w_s = adjusted_img1.width() * (self.image1_resize_slider.value() / 100.0) * render_scale
+                    h_s = adjusted_img1.height() * (self.image1_resize_slider.value() / 100.0) * render_scale
+                    rect1 = QRectF(self.image1_position[0] * render_scale, self.image1_position[1] * render_scale, w_s, h_s)
+                    rot1 = self.image1_rotation_slider.value() / 10.0
+                    if abs(rot1) > 0.01:
+                        c = rect1.center(); bp.save(); bp.translate(c); bp.rotate(rot1); bp.translate(-c)
+                        bp.drawImage(rect1, adjusted_img1); bp.restore()
+                    else:
+                        bp.drawImage(rect1, adjusted_img1)
+                if has_img2 and adjusted_img2:
+                    bp.setOpacity(op2_blend)
+                    w_s = adjusted_img2.width() * (self.image2_resize_slider.value() / 100.0) * render_scale
+                    h_s = adjusted_img2.height() * (self.image2_resize_slider.value() / 100.0) * render_scale
+                    rect2 = QRectF(self.image2_position[0] * render_scale, self.image2_position[1] * render_scale, w_s, h_s)
+                    rot2 = self.image2_rotation_slider.value() / 10.0
+                    if abs(rot2) > 0.01:
+                        c = rect2.center(); bp.save(); bp.translate(c); bp.rotate(rot2); bp.translate(-c)
+                        bp.drawImage(rect2, adjusted_img2); bp.restore()
+                    else:
+                        bp.drawImage(rect2, adjusted_img2)
+                bp.end()
+                return base_canvas
+
+            def save_image_pptx(self):
+                """Export the figure as an editable PowerPoint (.pptx).
+
+                The gel/blot pixels go in as a single high-resolution background picture, and
+                every annotation (Left/Right/Top markers, custom markers, and custom
+                lines/rectangles) is added as a NATIVE PowerPoint text box / shape. Each label
+                can therefore be clicked and its text, font, size and colour edited directly in
+                PowerPoint (or copied from there into Word). Positions, fonts and sizes mirror
+                the WYSIWYG PNG export (see save_image) so it opens looking like the raster
+                figure.
+                """
+                if not self._require_image("PowerPoint export"):
+                    return
+                if not self.image_master or self.image_master.isNull():
+                    QMessageBox.warning(self, "Warning", "No image loaded to export.")
+                    return
+
+                # python-pptx is imported lazily so the app still starts if it is missing.
+                try:
+                    from pptx import Presentation
+                    from pptx.util import Emu, Pt
+                    from pptx.dml.color import RGBColor
+                    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+                    from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+                except Exception:
+                    QMessageBox.critical(
+                        self, "PowerPoint Export",
+                        "The 'python-pptx' package is required for PowerPoint export.\n\n"
+                        "Install it with:\n    pip install python-pptx")
                     return
 
                 options = QFileDialog.Options()
                 file_path, _ = QFileDialog.getSaveFileName(
-                    self, "Save Image as SVG for MS Word/Vector Editing", "", "SVG Files (*.svg)", options=options
+                    self, "Save Editable PowerPoint (.pptx)", "", "PowerPoint Files (*.pptx)", options=options
                 )
-
                 if not file_path:
                     return
+                if not file_path.lower().endswith(".pptx"):
+                    file_path += ".pptx"
 
-                if not file_path.lower().endswith(".svg"): # Ensure .svg extension
-                    file_path += ".svg"
+                img_w = self.image_master.width()
+                img_h = self.image_master.height()
+                if img_w <= 0 or img_h <= 0:
+                    QMessageBox.warning(self, "Warning", "Invalid image dimensions.")
+                    return
 
-                # --- Determine Render/Canvas Dimensions ---
-                # Use the current image dimensions directly as the base SVG size
-                # This avoids scaling issues if the view label size is different.
-                # Markers and shapes will be positioned relative to this size.
-                svg_width = self.image.width()
-                svg_height = self.image.height()
-
-                if svg_width <= 0 or svg_height <= 0:
-                     QMessageBox.warning(self, "Warning", "Invalid image dimensions for SVG.")
-                     return
-
-                # --- Create SVG Drawing Object ---
-                dwg = svgwrite.Drawing(file_path, profile='tiny', size=(f"{svg_width}px", f"{svg_height}px"))
-                # Set viewbox to match image dimensions for correct coordinate system
-                dwg.viewbox(0, 0, svg_width, svg_height)
-
-                # --- Embed the Base Image ---
+                # --- Base picture: master + overlays, no annotations (shared helper) ---
                 try:
-                    # Convert the QImage to a base64-encoded PNG for embedding
+                    base_canvas = self._composite_base_for_export(render_scale=3)
+                    if base_canvas is None or base_canvas.isNull():
+                        raise IOError("base composite failed")
                     buffer = QBuffer()
                     buffer.open(QBuffer.ReadWrite)
-                    # Save the *current* self.image (which might be cropped/transformed)
-                    if not self.image.save(buffer, "PNG"):
-                        raise IOError("Failed to save image to PNG buffer for SVG.")
-                    image_data = base64.b64encode(buffer.data()).decode('utf-8')
+                    if not base_canvas.save(buffer, "PNG"):
+                        raise IOError("PNG encode failed")
+                    png_bytes = bytes(buffer.data())
                     buffer.close()
-
-                    # Embed the image at position (0, 0) with original dimensions
-                    dwg.add(dwg.image(href=f"data:image/png;base64,{image_data}",
-                                      insert=(0, 0),
-                                      size=(f"{svg_width}px", f"{svg_height}px")))
                 except Exception as e:
-                    QMessageBox.critical(self, "SVG Error", f"Failed to embed base image: {e}")
-                    return # Stop if base image fails
+                    QMessageBox.critical(self, "PowerPoint Export", f"Failed to build base image: {e}")
+                    return
 
-                # --- Define marker/label font style for SVG ---
-                # Use the standard marker font settings
-                svg_font_family = self.font_family
-                svg_font_size_px = f"{self.font_size}px" # Use pixels for SVG consistency
-                svg_font_color = self.font_color.name() if self.font_color else "#000000"
+                import io
+                import math
 
-                # Calculate horizontal offset for left/right markers based on font size
-                # Use QFontMetrics for accurate width calculation
-                try:
-                     qfont_for_metrics = QFont(svg_font_family, self.font_size)
-                     font_metrics = QFontMetrics(qfont_for_metrics)
-                     # Use a representative character like 'm' or average width if needed
-                     avg_char_width = font_metrics.averageCharWidth()
-                     horizontal_offset = avg_char_width * 0.5 # Small offset from edge
-                     vertical_offset_adjust = font_metrics.ascent() * 0.75 # Adjustment for vertical alignment
-                except Exception:
-                     horizontal_offset = 5 # Fallback offset
-                     vertical_offset_adjust = self.font_size * 0.75 # Fallback adjustment
+                # --- Geometry: map image pixels -> EMU so the figure is ~10" on its long edge ---
+                EMU_PER_INCH = 914400
+                EMU_PER_PT = 12700
+                S = (10.0 * EMU_PER_INCH) / float(max(img_w, img_h))   # EMU per image pixel
 
+                def E(px):
+                    return Emu(int(round(px * S)))
 
-                # --- Add Left Markers ---
-                left_marker_x_pos = self.left_marker_shift_added # Use the absolute offset
-                for y_pos, text in getattr(self, "left_markers", []):
-                    final_text = self.marker_label_text(text, 'left')
-                    dwg.add(
-                        dwg.text(
-                            final_text,
-                            insert=(left_marker_x_pos - horizontal_offset, y_pos + vertical_offset_adjust),
-                            fill=svg_font_color,
-                            font_family=svg_font_family,
-                            font_size=svg_font_size_px,
-                            text_anchor="end" # Align text right, ending at the x position
-                        )
-                    )
+                # WYSIWYG on-image font pixel size = point_size / scale_native_to_view, the same
+                # convention save_image uses; converted to real points for PowerPoint.
+                label_width = 550.0; label_height = 350.0
+                scale_native_to_view = (min(label_width / img_w, label_height / img_h)
+                                        if img_w > 0 and img_h > 0 else 1.0)
+                native_font_scale = (1.0 / scale_native_to_view) if scale_native_to_view > 1e-6 else 1.0
 
-                # --- Add Right Markers ---
-                right_marker_x_pos = self.right_marker_shift_added # Use the absolute offset
-                for y_pos, text in getattr(self, "right_markers", []):
-                    final_text = self.marker_label_text(text, 'right')
-                    dwg.add(
-                        dwg.text(
-                            final_text,
-                            insert=(right_marker_x_pos + horizontal_offset, y_pos + vertical_offset_adjust),
-                            fill=svg_font_color,
-                            font_family=svg_font_family,
-                            font_size=svg_font_size_px,
-                            text_anchor="start" # Align text left, starting at the x position
-                        )
-                    )
+                def on_img_px(pt_size):
+                    return max(4, int(round(float(pt_size) * native_font_scale)))
 
-                # --- Add Top Markers ---
-                top_marker_y_pos = self.top_marker_shift_added # Use the absolute offset
-                _svg_axis = getattr(self, 'top_rotation_axis', 'left')
-                _svg_text_anchor = {"left": "start", "center": "middle", "right": "end"}.get(_svg_axis, "start")
-                for x_pos, text in getattr(self, "top_markers", []):
-                    dwg.add(
-                        dwg.text(
-                            text,
-                            insert=(x_pos, top_marker_y_pos + vertical_offset_adjust), # Apply vertical adjust
-                            fill=svg_font_color,
-                            font_family=svg_font_family,
-                            font_size=svg_font_size_px,
-                            text_anchor=_svg_text_anchor,
-                            # Apply rotation around the insertion point
-                            transform=f"rotate({self.font_rotation}, {x_pos}, {top_marker_y_pos + vertical_offset_adjust})"
-                        )
-                    )
+                def font_pt(pt_size):
+                    return max(1.0, on_img_px(pt_size) * S / EMU_PER_PT)
 
-                # --- Add Custom Markers ---
-                for marker_tuple in getattr(self, "custom_markers", []):
+                def _rgb(c):
                     try:
-                        # Default values for optional elements
-                        is_bold = False
-                        is_italic = False
+                        name = QColor(c).name() if not isinstance(c, QColor) else c.name()
+                    except Exception:
+                        name = "#000000"
+                    hexs = name.lstrip('#').upper()
+                    return RGBColor.from_string(hexs[:6] if len(hexs) >= 6 else "000000")
 
-                        # Unpack based on length for backward compatibility
-                        if len(marker_tuple) == 8:
-                            x_pos, y_pos, marker_text, color, font_family, font_size, is_bold, is_italic = marker_tuple
-                        elif len(marker_tuple) == 6:
-                            x_pos, y_pos, marker_text, color, font_family, font_size = marker_tuple
-                        else:
-                            continue # Skip invalid marker data
+                def _rot(dx, dy, deg):
+                    """Rotate offset (dx,dy) by deg clockwise in screen (y-down) space —
+                    matches Qt painter.rotate and PowerPoint's positive rotation."""
+                    r = math.radians(deg)
+                    ca, sa = math.cos(r), math.sin(r)
+                    return (dx * ca - dy * sa, dx * sa + dy * ca)
 
-                        # Prepare SVG attributes
-                        text_content = str(marker_text)
-                        fill_color = QColor(color).name() if isinstance(color, QColor) else str(color) # Ensure hex/name
-                        font_family_svg = str(font_family)
-                        font_size_svg = f"{int(font_size)}px" if isinstance(font_size, (int, float)) else "12px"
-                        font_weight_svg = "bold" if bool(is_bold) else "normal"
-                        font_style_svg = "italic" if bool(is_italic) else "normal"
-
-                        # Adjust vertical position slightly for better alignment if needed
-                        # This might require font metrics specific to the marker's font
-                        # For simplicity, using the standard marker offset for now
-                        y_pos_adjusted = y_pos + vertical_offset_adjust
-
-                        # Add SVG text element, centered at the marker's coordinates
-                        dwg.add(
-                            dwg.text(
-                                text_content,
-                                insert=(x_pos, y_pos_adjusted), # Position text anchor at the coordinate
-                                fill=fill_color,
-                                font_family=font_family_svg,
-                                font_size=font_size_svg,
-                                font_weight=font_weight_svg,
-                                font_style=font_style_svg,
-                                text_anchor="middle", # Center horizontally
-                                dominant_baseline="central" # Attempt vertical centering (support varies)
-                            )
-                        )
-                    except Exception as e:
-                         pass # print(f"Warning: Skipping invalid custom marker during SVG export: {e}")
-                         # import traceback; traceback.print_exc() # Uncomment for detailed debug
-
-                # --- START: Add Custom Shapes (Lines and Rectangles) ---
-                for shape_data in getattr(self, "custom_shapes", []):
-                     try:
-                         shape_type = shape_data.get('type')
-                         color_str = shape_data.get('color', '#000000') # Default black
-                         thickness = int(shape_data.get('thickness', 1))
-                         if thickness < 1: thickness = 1
-
-                         if shape_type == 'line':
-                             start_coords = shape_data.get('start')
-                             end_coords = shape_data.get('end')
-                             if start_coords and end_coords:
-                                 dwg.add(dwg.line(start=start_coords,
-                                                  end=end_coords,
-                                                  stroke=color_str,
-                                                  stroke_width=thickness))
-                         elif shape_type == 'rectangle':
-                             rect_coords = shape_data.get('rect') # (x, y, w, h)
-                             if rect_coords:
-                                 x, y, w, h = rect_coords
-                                 dwg.add(dwg.rect(insert=(x, y),
-                                                  size=(f"{w}px", f"{h}px"),
-                                                  stroke=color_str,
-                                                  stroke_width=thickness,
-                                                  fill="none")) # No fill for outline rectangle
-                     except Exception as e:
-                         pass # print(f"Warning: Skipping invalid custom shape during SVG export: {e}")
-                # --- END: Add Custom Shapes ---
-
-                # --- Save the SVG file ---
                 try:
-                    dwg.save()
-                    QMessageBox.information(self, "Success", f"Image and annotations saved as SVG at\n{file_path}")
-                    self.is_modified = False # Mark as saved if successful
+                    prs = Presentation()
+                    prs.slide_width = E(img_w)
+                    prs.slide_height = E(img_h)
+                    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank layout
+
+                    slide.shapes.add_picture(io.BytesIO(png_bytes), Emu(0), Emu(0),
+                                             width=E(img_w), height=E(img_h))
+
+                    def _add_text(text, center_x, center_y, box_w, box_h, pt_size, family,
+                                  color, align, bold=False, italic=False, rotation=0.0):
+                        """Add a text box (in image px) centred at (center_x, center_y)."""
+                        tb = slide.shapes.add_textbox(E(center_x - box_w / 2.0),
+                                                      E(center_y - box_h / 2.0),
+                                                      E(box_w), E(box_h))
+                        tf = tb.text_frame
+                        tf.word_wrap = False
+                        tf.margin_left = 0; tf.margin_right = 0
+                        tf.margin_top = 0; tf.margin_bottom = 0
+                        try:
+                            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                        except Exception:
+                            pass
+                        p = tf.paragraphs[0]
+                        p.alignment = align
+                        run = p.add_run(); run.text = str(text)
+                        f = run.font
+                        f.name = str(family); f.size = Pt(font_pt(pt_size))
+                        f.bold = bool(bold); f.italic = bool(italic)
+                        f.color.rgb = _rgb(color)
+                        if abs(rotation) > 0.01:
+                            tb.rotation = float(rotation)
+                        return tb
+
+                    # --- Native arrow export (PPTX only) -----------------------------
+                    # A custom marker whose text is a STANDALONE arrow glyph (placed via
+                    # the arrow buttons/shortcuts) is exported as a real PowerPoint block
+                    # arrow instead of a text box, so it renders identically on every
+                    # machine rather than depending on a platform-specific arrow font.
+                    # This mapping is intentionally local to the PPTX exporter — the arrow
+                    # implementation everywhere else (glyph markers) is unchanged.
+                    _ARROW_DIRS = {
+                        "left":  {"⬅", "🡄", "←", "⟵", "⇐", "◀", "⭠"},
+                        "right": {"⮕", "🡆", "→", "⟶", "⇒", "▶", "➡", "⭢"},
+                        "up":    {"⬆", "🡅", "↑", "⇑", "▲", "⭡"},
+                        "down":  {"⬇", "🡇", "↓", "⇓", "▼", "⭣"},
+                    }
+                    _ARROW_SHAPE = {
+                        "left":  MSO_SHAPE.LEFT_ARROW,  "right": MSO_SHAPE.RIGHT_ARROW,
+                        "up":    MSO_SHAPE.UP_ARROW,    "down":  MSO_SHAPE.DOWN_ARROW,
+                    }
+
+                    def _arrow_direction(text):
+                        s = str(text).strip()
+                        if len(s) != 1:
+                            return None
+                        for d, glyphs in _ARROW_DIRS.items():
+                            if s in glyphs:
+                                return d
+                        return None
+
+                    def _add_arrow(direction, cx, cy, box_w, box_h, color):
+                        """Native PowerPoint block arrow centred on (cx, cy) (image px),
+                        filling the glyph's box so it lands where the character would."""
+                        w = max(1.0, float(box_w)); h = max(1.0, float(box_h))
+                        shp = slide.shapes.add_shape(
+                            _ARROW_SHAPE[direction],
+                            E(cx - w / 2.0), E(cy - h / 2.0), E(w), E(h))
+                        try:
+                            shp.fill.solid(); shp.fill.fore_color.rgb = _rgb(color)
+                            shp.line.fill.background()   # solid arrow, no outline
+                            shp.shadow.inherit = False
+                        except Exception:
+                            pass
+                        return shp
+
+                    # Standard marker font metrics at on-image size.
+                    std_px = on_img_px(self.font_size)
+                    std_qfont = QFont(self.font_family); std_qfont.setPixelSize(std_px)
+                    fm_std = QFontMetrics(std_qfont)
+                    std_h = fm_std.height()
+                    main_color = self.font_color if getattr(self, 'font_color', None) else QColor("#000000")
+
+                    # --- Left markers: text ends at left_marker_shift_added, centred on band y ---
+                    for y_img, text in getattr(self, "left_markers", []):
+                        full = self.marker_label_text(text, 'left')
+                        if not full:
+                            continue
+                        adv = fm_std.horizontalAdvance(full)
+                        _add_text(full, self.left_marker_shift_added - adv / 2.0, y_img,
+                                  adv, std_h, self.font_size, self.font_family, main_color,
+                                  PP_ALIGN.RIGHT)
+
+                    # --- Right markers: text starts at right_marker_shift_added ---
+                    for y_img, text in getattr(self, "right_markers", []):
+                        full = self.marker_label_text(text, 'right')
+                        if not full:
+                            continue
+                        adv = fm_std.horizontalAdvance(full)
+                        _add_text(full, self.right_marker_shift_added + adv / 2.0, y_img,
+                                  adv, std_h, self.font_size, self.font_family, main_color,
+                                  PP_ALIGN.LEFT)
+
+                    # --- Top markers: rotated about their anchor (baked into the box centre) ---
+                    top_axis = getattr(self, 'top_rotation_axis', 'left')
+                    theta = float(getattr(self, 'font_rotation', 0.0))
+                    anchor_y = self.top_marker_shift_added + std_h * 0.3   # baseline, per save_image
+                    for x_img, text in getattr(self, "top_markers", []):
+                        if str(text) == "":
+                            continue
+                        adv = fm_std.horizontalAdvance(str(text))
+                        x_off = -adv / 2.0 if top_axis == 'center' else (-adv if top_axis == 'right' else 0.0)
+                        # Unrotated box centre (C0) around the baseline-left anchor A=(x_img, anchor_y).
+                        c0x = x_img + x_off + adv / 2.0
+                        c0y = anchor_y - fm_std.ascent() + std_h / 2.0
+                        # PowerPoint rotates about the box centre; place that centre so the result
+                        # matches Qt rotating the text about the anchor A.
+                        rdx, rdy = _rot(c0x - x_img, c0y - anchor_y, theta)
+                        cbx, cby = x_img + rdx, anchor_y + rdy
+                        _add_text(str(text), cbx, cby, adv, std_h, self.font_size,
+                                  self.font_family, main_color, PP_ALIGN.CENTER, rotation=theta)
+
+                    # --- Custom markers (own font/size/weight/style/colour), centred on (x,y) ---
+                    for marker_tuple in getattr(self, "custom_markers", []):
+                        try:
+                            is_bold = False; is_italic = False
+                            if len(marker_tuple) == 8:
+                                x_pos, y_pos, mtext, color, fam, fsize, is_bold, is_italic = marker_tuple
+                            elif len(marker_tuple) == 6:
+                                x_pos, y_pos, mtext, color, fam, fsize = marker_tuple
+                            else:
+                                continue
+                            if str(mtext) == "":
+                                continue
+                            cpx = on_img_px(fsize)
+                            cqf = QFont(str(fam)); cqf.setPixelSize(cpx)
+                            cqf.setBold(bool(is_bold)); cqf.setItalic(bool(is_italic))
+                            fm_c = QFontMetrics(cqf)
+                            adv = fm_c.horizontalAdvance(str(mtext))
+                            arrow_dir = _arrow_direction(mtext)
+                            if arrow_dir is not None:
+                                # Standalone arrow glyph → native PowerPoint block arrow.
+                                _add_arrow(arrow_dir, x_pos, y_pos, adv, fm_c.height(), color)
+                            else:
+                                _add_text(str(mtext), x_pos, y_pos, adv, fm_c.height(), fsize,
+                                          fam, color, PP_ALIGN.CENTER, bold=is_bold, italic=is_italic)
+                        except Exception:
+                            continue
+
+                    # --- Custom shapes: lines and rectangles ---
+                    for shape_data in getattr(self, "custom_shapes", []):
+                        try:
+                            stype = shape_data.get('type')
+                            color = shape_data.get('color', '#000000')
+                            thickness = max(1.0, float(shape_data.get('thickness', 1)))
+                            if stype == 'line':
+                                start = shape_data.get('start'); end = shape_data.get('end')
+                                if start and end:
+                                    conn = slide.shapes.add_connector(
+                                        MSO_CONNECTOR.STRAIGHT,
+                                        E(start[0]), E(start[1]), E(end[0]), E(end[1]))
+                                    conn.line.color.rgb = _rgb(color)
+                                    conn.line.width = E(thickness)
+                            elif stype == 'rectangle':
+                                rect = shape_data.get('rect')
+                                if rect:
+                                    x, y, w, h = rect
+                                    shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+                                                                 E(x), E(y), E(w), E(h))
+                                    shp.fill.background()      # no fill (outline only)
+                                    shp.shadow.inherit = False
+                                    shp.line.color.rgb = _rgb(color)
+                                    shp.line.width = E(thickness)
+                        except Exception:
+                            continue
+
+                    prs.save(file_path)
                 except Exception as e:
-                    QMessageBox.critical(self, "SVG Save Error", f"Failed to save SVG file:\n{e}")
+                    QMessageBox.critical(self, "PowerPoint Export", f"Failed to save PPTX file:\n{e}")
+                    return
+
+                self.is_modified = False
+                QMessageBox.information(
+                    self, "Success",
+                    f"Editable PowerPoint saved at\n{file_path}\n\n"
+                    "Open it in PowerPoint — every label is a real text box you can click and "
+                    "edit (text, font, size, colour). Copy from PowerPoint into Word if needed.")
 
 
             # --- restored: get_image_format ---
