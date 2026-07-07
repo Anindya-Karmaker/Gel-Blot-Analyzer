@@ -1,6 +1,7 @@
 import sys
 import re
 import os
+import math
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
                              QHBoxLayout, QFrame, QProgressBar, QMessageBox)
 from PySide6.QtCore import Qt
@@ -373,7 +374,7 @@ if __name__ == "__main__":
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
-            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop
+            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop, QEvent
         )
         import json
         import os
@@ -1770,7 +1771,7 @@ if __name__ == "__main__":
                     new_shape = dict(original_shape)
                     shape_type = original_shape.get('type')
 
-                    if shape_type == 'line':
+                    if shape_type in ('line', 'arrow'):
                         sx, sy = original_shape.get('start', (0, 0))
                         ex, ey = original_shape.get('end', (0, 0))
                         new_shape['start'] = ((sx * rel_x_scale_factor) + abs_x_shift_pixels,
@@ -1854,7 +1855,7 @@ if __name__ == "__main__":
                     
                     # Coordinates
                     details_str, tooltip_str = "", ""
-                    if shape_type == 'Line':
+                    if shape_type in ('Line', 'Arrow'):
                         start, end = shape_data.get('start', (0,0)), shape_data.get('end', (0,0))
                         details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"; tooltip_str = "Edit format: X1,Y1,X2,Y2"
                     elif shape_type == 'Rectangle':
@@ -1995,7 +1996,7 @@ if __name__ == "__main__":
                         shape_type_internal = shape_data.get('type')
                         try:
                             coords = [float(c.strip()) for c in new_value.split(',')]
-                            if shape_type_internal == 'line' and len(coords) == 4:
+                            if shape_type_internal in ('line', 'arrow') and len(coords) == 4:
                                 shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
                                 orig_shape_data['start'] = ((coords[0] - abs_x_shift) / rel_x_scale if rel_x_scale else coords[0],
                                                             (coords[1] - abs_y_shift) / rel_y_scale if rel_y_scale else coords[1])
@@ -6746,10 +6747,20 @@ if __name__ == "__main__":
                     for shape_data in self.app_instance.custom_shapes:
                         try:
                             shape_type = shape_data.get('type'); color = QColor(shape_data.get('color', '#000000')); base_thickness = float(shape_data.get('thickness', 0.5)); thickness_on_label = base_thickness * _scale_factor_img_to_label
-                            effective_pen_width = max(0.5, thickness_on_label / self.zoom_level if self.zoom_level > 0 else thickness_on_label); pen = QPen(color); pen.setWidthF(effective_pen_width); painter.setPen(pen)
+                            # Pen width is locked to the IMAGE (label space), NOT divided by
+                            # zoom_level. The painter is already scaled by zoom_level, so the
+                            # shaft/rectangle grows and shrinks in lockstep with the gel image,
+                            # its markers, and the exported figure — identical proportions at
+                            # every zoom. (Dividing by zoom made shapes hold a constant on-screen
+                            # thickness while everything else scaled, so a shape edited while
+                            # zoomed looked wrong once you zoomed back out.)
+                            effective_pen_width = max(0.5, thickness_on_label); pen = QPen(color); pen.setWidthF(effective_pen_width); painter.setPen(pen)
                             if shape_type == 'line':
                                 start_img = shape_data.get('start'); end_img = shape_data.get('end')
                                 if start_img and end_img: start_label_space = _app_image_coords_to_unzoomed_label_space(start_img); end_label_space = _app_image_coords_to_unzoomed_label_space(end_img); painter.drawLine(start_label_space, end_label_space)
+                            elif shape_type == 'arrow':
+                                start_img = shape_data.get('start'); end_img = shape_data.get('end')
+                                if start_img and end_img: self.app_instance._draw_arrow_on_painter(painter, _app_image_coords_to_unzoomed_label_space(start_img), _app_image_coords_to_unzoomed_label_space(end_img), effective_pen_width)
                             elif shape_type == 'rectangle':
                                 rect_img = shape_data.get('rect')
                                 if rect_img: x_img, y_img, w_img, h_img = rect_img; top_left_label_space = _app_image_coords_to_unzoomed_label_space((x_img, y_img)); w_label_space = w_img * _scale_factor_img_to_label; h_label_space = h_img * _scale_factor_img_to_label; painter.drawRect(QRectF(top_left_label_space, QSizeF(w_label_space, h_label_space)))
@@ -6871,14 +6882,18 @@ if __name__ == "__main__":
                 elif self.crop_rect_final_view:
                     # (This block remains unchanged)
                     preview_pen_crop.setStyle(Qt.SolidLine); painter.setPen(preview_pen_crop); painter.drawRect(self.crop_rect_final_view)
-                if self.app_instance and self.app_instance.drawing_mode in ['line', 'rectangle'] and self.app_instance.current_drawing_shape_preview:
+                if self.app_instance and self.app_instance.drawing_mode in ['line', 'rectangle', 'arrow'] and self.app_instance.current_drawing_shape_preview:
                     # (This block remains unchanged)
                     try:
                         start_pt_ls = self.app_instance.current_drawing_shape_preview['start']; end_pt_ls = self.app_instance.current_drawing_shape_preview['end']; preview_color = self.app_instance.custom_marker_color
-                        base_preview_thickness = float(self.app_instance.custom_font_size_spinbox.value()); effective_preview_thickness = min(1.0, base_preview_thickness / self.zoom_level if self.zoom_level > 0 else base_preview_thickness)
+                        # Match the finalized-shape rendering: thickness locked to the image
+                        # (label space), NOT divided by zoom, so the dotted preview previews the
+                        # true thickness you'll get at the current zoom.
+                        base_preview_thickness = float(self.app_instance.custom_font_size_spinbox.value()); effective_preview_thickness = max(0.5, base_preview_thickness * _scale_factor_img_to_label)
                         preview_pen_shape = QPen(preview_color); preview_pen_shape.setWidthF(effective_preview_thickness); preview_pen_shape.setStyle(Qt.DotLine); painter.setPen(preview_pen_shape)
                         if self.app_instance.drawing_mode == 'line': painter.drawLine(start_pt_ls, end_pt_ls)
                         elif self.app_instance.drawing_mode == 'rectangle': painter.drawRect(QRectF(start_pt_ls, end_pt_ls).normalized())
+                        elif self.app_instance.drawing_mode == 'arrow': self.app_instance._draw_arrow_on_painter(painter, start_pt_ls, end_pt_ls, effective_preview_thickness)
                     except Exception as e: pass # print(f"Error drawing live shape preview in paintEvent: {e}")
 
                 # --- Perspective Correction Overlay ---
@@ -10930,6 +10945,19 @@ if __name__ == "__main__":
 
             def __init__(self):
                 super().__init__()
+                # Guarantee that Esc always exits an armed tool (and reverts its green
+                # button) no matter which child widget holds keyboard focus. The
+                # LiveViewLabel forwards Esc, but a focused line-edit / spin-box / combo
+                # (or platform-specific focus routing) can otherwise swallow it before it
+                # reaches keyPressEvent — leaving Move/Resize etc. stuck green. This
+                # app-level filter catches Esc first, but ONLY while this window is active
+                # and a mode is actually armed, so normal Esc behaviour is untouched.
+                try:
+                    _qapp = QApplication.instance()
+                    if _qapp is not None:
+                        _qapp.installEventFilter(self)
+                except Exception:
+                    pass
                 self.showonce = False
                 self.resize_timer = QTimer()
                 self.resize_timer.setSingleShot(True)
@@ -12688,7 +12716,7 @@ if __name__ == "__main__":
                     if getattr(self, 'measurement_mode', None):
                         try: self._exit_current_tool_mode()
                         except Exception: pass
-                    if getattr(self, 'drawing_mode', None) in ('line', 'rectangle'):
+                    if getattr(self, 'drawing_mode', None) in ('line', 'rectangle', 'arrow'):
                         try: self.cancel_drawing_mode()
                         except Exception: pass
                     if getattr(self, 'crop_rectangle_mode', False):
@@ -12847,6 +12875,24 @@ if __name__ == "__main__":
                                       "Shift for a perfect square. Press Esc to cancel.",
                                       active_button=getattr(self, 'draw_rect_button', None))
 
+            def enable_arrow_drawing_mode(self):
+                if not self._require_image("Draw Arrow"):
+                    return
+                self._cancel_all_interaction_modes()
+                self.save_state()
+                self.drawing_mode = 'arrow'
+                self.live_view_label.mode = 'draw_shape'
+                self.current_drawing_shape_preview = None
+                self.live_view_label.setCursor(Qt.CrossCursor)
+
+                self.live_view_label._custom_left_click_handler_from_app = self.start_shape_draw
+                self.live_view_label._custom_mouseMoveEvent_from_app = self.update_shape_draw
+                self.live_view_label._custom_mouseReleaseEvent_from_app = self.finalize_shape_draw
+                self.show_mode_status("Drawing an ARROW — click and drag in any direction; the head "
+                                      "points where you release. Hold Shift to constrain to 0/45/90°. "
+                                      "Press Esc to cancel.",
+                                      active_button=getattr(self, 'draw_arrow_button', None))
+
             def cancel_drawing_mode(self):
                 """Resets drawing mode and cursor."""
                 self.drawing_mode = None
@@ -12857,7 +12903,7 @@ if __name__ == "__main__":
                 self.update_live_view()
                 
             def start_shape_draw(self, event):
-                if self.drawing_mode in ['line', 'rectangle']:
+                if self.drawing_mode in ['line', 'rectangle', 'arrow']:
                     start_point_transformed = self.live_view_label.transform_point(event.position())
                     snapped_start_point = self.snap_point_to_grid(start_point_transformed) # Snap it
                     
@@ -12865,14 +12911,14 @@ if __name__ == "__main__":
                     self.update_live_view()
 
             def update_shape_draw(self, event):
-                if self.drawing_mode in ['line', 'rectangle'] and self.current_drawing_shape_preview:
+                if self.drawing_mode in ['line', 'rectangle', 'arrow'] and self.current_drawing_shape_preview:
                     end_point_transformed = self.live_view_label.transform_point(event.position())
                     snapped_end_point = self.snap_point_to_grid(end_point_transformed) # Snap it
                     start_point = self.current_drawing_shape_preview['start']
 
                     # --- MODIFIED: Constrain movement if Shift is pressed ---
                     if QApplication.keyboardModifiers() == Qt.ShiftModifier:
-                        if self.drawing_mode == 'line':
+                        if self.drawing_mode in ('line', 'arrow'):
                             # --- Angle snapping logic for lines (0, 45, 90 degrees) ---
                             delta = snapped_end_point - start_point
                             angle_rad = np.arctan2(delta.y(), delta.x())
@@ -12903,7 +12949,7 @@ if __name__ == "__main__":
 
             def finalize_shape_draw(self, event):
                 """Finalizes the shape and adds it to the custom_shapes list."""
-                if self.drawing_mode in ['line', 'rectangle'] and self.current_drawing_shape_preview:
+                if self.drawing_mode in ['line', 'rectangle', 'arrow'] and self.current_drawing_shape_preview:
                     # start_point_label_space is already snapped from start_shape_draw
                     start_point_label_space = self.current_drawing_shape_preview['start']
                     
@@ -12948,7 +12994,7 @@ if __name__ == "__main__":
                         'thickness': thickness
                     }
                     valid_shape = False
-                    if self.drawing_mode == 'line':
+                    if self.drawing_mode in ('line', 'arrow'):
                         if abs(start_img_coords[0] - end_img_coords[0]) > 0.5 or abs(start_img_coords[1] - end_img_coords[1]) > 0.5:
                             shape_data['start'] = start_img_coords
                             shape_data['end'] = end_img_coords
@@ -18643,7 +18689,7 @@ if __name__ == "__main__":
                         for sd in getattr(self, 'custom_shapes', []):
                             try:
                                 th = max(1.0, float(sd.get('thickness', 1))) / 2.0
-                                if sd.get('type') == 'line':
+                                if sd.get('type') in ('line', 'arrow'):
                                     sx = sd['start'][0] - cl; sy = sd['start'][1] - ct
                                     ex = sd['end'][0] - cl; ey = sd['end'][1] - ct
                                     cmin_x = min(cmin_x, sx - th, ex - th)
@@ -19050,7 +19096,16 @@ if __name__ == "__main__":
                 self.draw_rect_button.setToolTip("Draw Rectangle.\nHold Shift for perfect square.")
                 self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
                 self._register_action_button(self.draw_rect_button)
-                
+
+                self.draw_arrow_button = QPushButton("A")
+                self.draw_arrow_button.setFixedSize(shape_size, shape_size)
+                self.draw_arrow_button.setToolTip(
+                    "Draw Arrow.\nClick and drag in any direction — the head points where you release.\n"
+                    "Hold Shift to constrain the angle (0, 45, 90).\n"
+                    "Use Move/Resize: drag the end handles to re-aim, drag the side handles to make it thick/thin.")
+                self.draw_arrow_button.clicked.connect(self.enable_arrow_drawing_mode)
+                self._register_action_button(self.draw_arrow_button)
+
                 self.remove_shape_button = QPushButton("X")
                 self.remove_shape_button.setFixedSize(shape_size, shape_size)
                 self.remove_shape_button.setToolTip("Remove Last Shape.")
@@ -19107,6 +19162,7 @@ if __name__ == "__main__":
                 row2_layout.addWidget(QLabel("Shapes:"))
                 row2_layout.addWidget(self.draw_line_button)
                 row2_layout.addWidget(self.draw_rect_button)
+                row2_layout.addWidget(self.draw_arrow_button)
                 row2_layout.addWidget(self.remove_shape_button)
                 row2_layout.addSpacing(10)
                 row2_layout.addWidget(self.show_grid_checkbox_x)
@@ -19758,6 +19814,46 @@ if __name__ == "__main__":
                 self.apply_all_adjustments()
                 self._update_levels_histogram()
 
+            def _is_interaction_mode_armed(self):
+                """True when some interactive tool/mode is currently active (and therefore a
+                green 'armed' tool button is showing). Used by the app-level Esc filter so it
+                only steals Esc when there is actually a mode to exit."""
+                try:
+                    if getattr(self, '_active_tool_button', None) is not None: return True
+                    if getattr(self, 'measurement_mode', None): return True
+                    if getattr(self, 'drawing_mode', None): return True
+                    if getattr(self, 'crop_rectangle_mode', False): return True
+                    if getattr(self, 'overlay_mode_active', False): return True
+                    if getattr(self, 'multi_lane_mode_active', False): return True
+                    if getattr(self, 'perspective_correction_active', False): return True
+                    if getattr(self, 'current_selection_mode', None): return True
+                    if getattr(self, 'marker_mode', None): return True
+                    lv = getattr(self, 'live_view_label', None)
+                    if lv is not None:
+                        if getattr(lv, 'preview_marker_enabled', False): return True
+                        if getattr(lv, 'mw_predict_preview_enabled', False): return True
+                    sr = getattr(self, 'select_region_button', None)
+                    if sr is not None and sr.isChecked(): return True
+                except Exception:
+                    pass
+                return False
+
+            def eventFilter(self, obj, event):
+                """App-level safety net: when this window is active and a tool is armed, make
+                Esc reliably run the cancel logic (which reverts the green tool button),
+                regardless of which child widget currently has keyboard focus."""
+                try:
+                    if (event.type() == QEvent.KeyPress
+                            and event.key() == Qt.Key_Escape
+                            and QApplication.activeWindow() is self
+                            and self._is_interaction_mode_armed()):
+                        self.keyPressEvent(event)
+                        if event.isAccepted():
+                            return True
+                except Exception:
+                    pass
+                return super().eventFilter(obj, event)
+
             def keyPressEvent(self, event):
                 key = event.key()
 
@@ -19836,7 +19932,7 @@ if __name__ == "__main__":
 
                     elif self.crop_rectangle_mode:
                         self.cancel_rectangle_crop_mode(); self.live_view_label.clear_crop_preview(); a_mode_was_cancelled_or_view_reset = True
-                    elif self.drawing_mode in ['line', 'rectangle']:
+                    elif self.drawing_mode in ['line', 'rectangle', 'arrow']:
                         self.cancel_drawing_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.live_view_label.preview_marker_enabled:
                         self.live_view_label.preview_marker_enabled = False; self.live_view_label.preview_marker_position = None; a_mode_was_cancelled_or_view_reset = True
@@ -19889,7 +19985,7 @@ if __name__ == "__main__":
                             if shape_data['type'] == 'rectangle':
                                 x, y, w, h = shape_data['rect']
                                 shape_data['rect'] = (x + dx, y + dy, w, h)
-                            elif shape_data['type'] == 'line':
+                            elif shape_data['type'] in ('line', 'arrow'):
                                 sx, sy = shape_data['start']
                                 ex, ey = shape_data['end']
                                 shape_data['start'] = (sx + dx, sy + dy)
@@ -20051,21 +20147,60 @@ if __name__ == "__main__":
                     
                 return None
 
+            def _point_segment_distance_ls(self, p, a, b):
+                """Shortest distance from point `p` to the segment a→b (all QPointF)."""
+                ax, ay = a.x(), a.y(); bx, by = b.x(), b.y(); px, py = p.x(), p.y()
+                dx, dy = bx - ax, by - ay
+                seg2 = dx * dx + dy * dy
+                if seg2 <= 1e-9:
+                    return math.hypot(px - ax, py - ay)
+                t = ((px - ax) * dx + (py - ay) * dy) / seg2
+                t = max(0.0, min(1.0, t))
+                cx, cy = ax + t * dx, ay + t * dy
+                return math.hypot(px - cx, py - cy)
+
+            def _shape_body_hit_ls(self, shape_index, body_ls, handles_ls, point_ls):
+                """True when `point_ls` should count as clicking a shape's BODY (to move it).
+                For lines/arrows this is a thin band hugging the actual segment — NOT the whole
+                diagonal bounding box — so the shaft is easy to grab and doesn't hijack clicks
+                meant for other items. Rectangles keep the filled-box behaviour."""
+                try:
+                    stype = self.custom_shapes[shape_index].get('type')
+                    if stype in ('line', 'arrow') and handles_ls and len(handles_ls) >= 2:
+                        # Band width = the drawn half-thickness (in label space) + a small margin.
+                        label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                        img_w = float(self.image.width()) if self.image else 0.0
+                        img_h = float(self.image.height()) if self.image else 0.0
+                        scale = (min(label_w / img_w, label_h / img_h)
+                                 if (img_w > 0 and img_h > 0 and label_w > 0 and label_h > 0) else 1.0)
+                        half_th_ls = float(self.custom_shapes[shape_index].get('thickness', 1)) * scale / 2.0
+                        tol = max(6.0, half_th_ls + 3.0)
+                        return self._point_segment_distance_ls(point_ls, handles_ls[0], handles_ls[1]) <= tol
+                    return bool(body_ls and body_ls.contains(point_ls))
+                except Exception:
+                    return bool(body_ls and body_ls.contains(point_ls))
+
             def handle_custom_item_selection_click(self, event):
                 if self.current_selection_mode != "select_custom_item" or event.button() != Qt.LeftButton:
                     return
 
                 clicked_point_ls = self.live_view_label.transform_point(event.position())
-                click_radius_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 1.5
                 item_selected = False
 
                 # Iterate in reverse to select topmost items first
                 # Check shape handles first (higher priority than body)
                 for i in range(len(self.custom_shapes) - 1, -1, -1):
+                    stype_i = self.custom_shapes[i].get('type')
                     _body, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                    # Tighter grab radius for line/arrow handles: their endpoint + thickness
+                    # handles sit right on the shaft, so a large radius turned every on-line
+                    # click into a resize and made the shape hard to MOVE. Rectangles keep the
+                    # roomier radius for easy corner grabbing.
+                    handle_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * (
+                        1.0 if stype_i in ('line', 'arrow') else 1.5)
                     if handles_ls:
                         for corner_idx, handle_pt in enumerate(handles_ls):
-                            if (clicked_point_ls - handle_pt).manhattanLength() < click_radius_threshold:
+                            if (clicked_point_ls - handle_pt).manhattanLength() < handle_threshold:
                                 self.moving_custom_item_info = {'type': 'shape', 'index': i}
                                 self.resizing_corner_index = corner_idx
                                 self.shape_points_at_drag_start_label = handles_ls
@@ -20077,7 +20212,7 @@ if __name__ == "__main__":
                 if not item_selected:
                     for i in range(len(self.custom_shapes) - 1, -1, -1):
                         body_ls, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
-                        if body_ls and body_ls.contains(clicked_point_ls):
+                        if self._shape_body_hit_ls(i, body_ls, handles_ls, clicked_point_ls):
                             self.moving_custom_item_info = {'type': 'shape', 'index': i}
                             self.resizing_corner_index = -1 # Body move
                             self.shape_points_at_drag_start_label = handles_ls # Store corners for move calculation
@@ -20230,7 +20365,7 @@ if __name__ == "__main__":
                         if shape_data['type'] == 'rectangle':
                             xs = [p.x() for p in new_points_img]; ys = [p.y() for p in new_points_img]
                             shape_data['rect'] = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-                        elif shape_data['type'] == 'line':
+                        elif shape_data['type'] in ('line', 'arrow'):
                             shape_data['start'] = (new_points_img[0].x(), new_points_img[0].y())
                             shape_data['end'] = (new_points_img[1].x(), new_points_img[1].y())
 
@@ -20281,7 +20416,42 @@ if __name__ == "__main__":
                             shape_data['start'], shape_data['end'] = (p2_img.x(), p2_img.y()), (p1_img.x(), p1_img.y())
                         else:
                             shape_data['start'], shape_data['end'] = (p1_img.x(), p1_img.y()), (p2_img.x(), p2_img.y())
-                
+                    elif shape_data['type'] == 'arrow':
+                        # Handles 0 & 1 re-aim the arrow (drag an endpoint, exactly like a line).
+                        # Handles 2 & 3 change the THICKNESS (distance from the shaft midpoint).
+                        if self.resizing_corner_index in (0, 1):
+                            fixed_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
+
+                            if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                                delta = snapped_mouse_ls - fixed_endpoint_ls
+                                angle_rad = np.arctan2(delta.y(), delta.x())
+                                angle_deg = np.degrees(angle_rad)
+                                snapped_angle_deg = round(angle_deg / 45.0) * 45.0
+                                snapped_angle_rad = np.radians(snapped_angle_deg)
+                                length = np.sqrt(delta.x()**2 + delta.y()**2)
+                                snapped_mouse_ls = QPointF(
+                                    fixed_endpoint_ls.x() + length * np.cos(snapped_angle_rad),
+                                    fixed_endpoint_ls.y() + length * np.sin(snapped_angle_rad)
+                                )
+
+                            p1_img = label_to_image(fixed_endpoint_ls)
+                            p2_img = label_to_image(snapped_mouse_ls)
+                            if self.resizing_corner_index == 0:
+                                shape_data['start'], shape_data['end'] = (p2_img.x(), p2_img.y()), (p1_img.x(), p1_img.y())
+                            else:
+                                shape_data['start'], shape_data['end'] = (p1_img.x(), p1_img.y()), (p2_img.x(), p2_img.y())
+                        else:
+                            # Thickness handle: use the fixed endpoints captured at drag start to
+                            # find the shaft midpoint, then set thickness from the mouse distance.
+                            p_start_ls = self.shape_points_at_drag_start_label[0]
+                            p_end_ls = self.shape_points_at_drag_start_label[1]
+                            mid_x = (p_start_ls.x() + p_end_ls.x()) / 2.0
+                            mid_y = (p_start_ls.y() + p_end_ls.y()) / 2.0
+                            dist_ls = math.hypot(current_mouse_pos_ls.x() - mid_x,
+                                                 current_mouse_pos_ls.y() - mid_y)
+                            new_thickness_img = max(0.5, (dist_ls * 2.0) / scale) if scale else 0.5
+                            shape_data['thickness'] = new_thickness_img
+
                 self.update_live_view()
 
             def handle_custom_item_drag_release(self, event):
@@ -20346,8 +20516,26 @@ if __name__ == "__main__":
                     elif shape_type == 'line':
                         p1 = img_to_label(shape_data['start']); p2 = img_to_label(shape_data['end'])
                         # The "body" for clicking a line needs tolerance
-                        body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5) 
+                        body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5)
                         handles = [p1, p2]
+                    elif shape_type == 'arrow':
+                        p1 = img_to_label(shape_data['start']); p2 = img_to_label(shape_data['end'])
+                        body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5)
+                        # Handles 0,1 are the endpoints (re-aim / re-length the arrow).
+                        # Handles 2,3 sit perpendicular to the shaft at its midpoint and
+                        # control the arrow THICKNESS (drag out = thicker, in = thinner).
+                        mid_x = (p1.x() + p2.x()) / 2.0; mid_y = (p1.y() + p2.y()) / 2.0
+                        dx = p2.x() - p1.x(); dy = p2.y() - p1.y()
+                        seg_len = math.hypot(dx, dy)
+                        if seg_len < 1e-6:
+                            ux, uy = 1.0, 0.0
+                        else:
+                            ux, uy = dx / seg_len, dy / seg_len
+                        perp_x, perp_y = -uy, ux
+                        half_w_ls = max(8.0, float(shape_data.get('thickness', 1)) * scale / 2.0)
+                        h_a = QPointF(mid_x + perp_x * half_w_ls, mid_y + perp_y * half_w_ls)
+                        h_b = QPointF(mid_x - perp_x * half_w_ls, mid_y - perp_y * half_w_ls)
+                        handles = [p1, p2, h_a, h_b]
                     return body, handles
                 except (IndexError, KeyError, Exception):
                     return None, None
@@ -22375,7 +22563,7 @@ if __name__ == "__main__":
                     shape_data = dict(shape_data_orig) # Work on a copy
                     try:
                         shape_type = shape_data.get('type')
-                        if shape_type == 'line':
+                        if shape_type in ('line', 'arrow'):
                             sx, sy = shape_data['start']
                             ex, ey = shape_data['end']
                             shape_data['start'] = (float(sx) + padding_left, float(sy) + padding_top)
@@ -22857,6 +23045,38 @@ if __name__ == "__main__":
                         slider.setValue(clamped_val)
                         slider.blockSignals(False)
             
+            def _draw_arrow_on_painter(self, painter, start_pt, end_pt, line_width):
+                """Draws an arrow (shaft + filled triangular head at `end_pt`) between two
+                QPointF in the painter's current coordinate space. The current pen colour is
+                used for both the shaft and the head; `line_width` is the shaft width in
+                painter units. The arrowhead scales with the thickness but stays visible for
+                thin shafts. Used by every render path (live view, saved figure, clipboard)."""
+                dx = end_pt.x() - start_pt.x(); dy = end_pt.y() - start_pt.y()
+                length = math.hypot(dx, dy)
+                base_color = QColor(painter.pen().color())
+                pen = QPen(painter.pen())
+                pen.setWidthF(max(0.5, float(line_width)))
+                pen.setCapStyle(Qt.RoundCap); pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(pen)
+                if length < 1e-6:
+                    painter.drawPoint(end_pt)
+                    return
+                ux, uy = dx / length, dy / length
+                # Head length grows with thickness but is clamped to the shaft length.
+                head_len = max(float(line_width) * 3.5, 7.0)
+                head_len = min(head_len, length)
+                head_half_w = head_len * 0.5
+                base_x = end_pt.x() - ux * head_len; base_y = end_pt.y() - uy * head_len
+                perp_x, perp_y = -uy, ux
+                left = QPointF(base_x + perp_x * head_half_w, base_y + perp_y * head_half_w)
+                right = QPointF(base_x - perp_x * head_half_w, base_y - perp_y * head_half_w)
+                # Draw the shaft only up to the base of the head so it doesn't poke through.
+                painter.drawLine(start_pt, QPointF(base_x, base_y))
+                old_brush = painter.brush()
+                painter.setBrush(QBrush(base_color))
+                painter.drawPolygon(QPolygonF([QPointF(end_pt), left, right]))
+                painter.setBrush(old_brush)
+
             def render_image_on_canvas(self, canvas, scaled_image, x_start, y_start, render_scale, draw_guides=True, additional_rotation=0.0):
                 painter = QPainter(canvas)
                 painter.setRenderHint(QPainter.Antialiasing, True)
@@ -23077,7 +23297,7 @@ if __name__ == "__main__":
                     for shape_data_orig in getattr(self, "custom_shapes", []):
                         shape_data = dict(shape_data_orig)
                         shape_type = shape_data.get('type')
-                        if shape_type == 'line':
+                        if shape_type in ('line', 'arrow'):
                             sx, sy = shape_data['start']; ex, ey = shape_data['end']
                             p_s = transform_marker.map(QPointF(sx, sy)); p_e = transform_marker.map(QPointF(ex, ey))
                             shape_data['start'] = (p_s.x(), p_s.y()); shape_data['end'] = (p_e.x(), p_e.y())
@@ -23315,7 +23535,7 @@ if __name__ == "__main__":
                             shape_data = dict(shape_data_orig); adjusted_shape_data = None
                             try:
                                 stype = shape_data.get('type')
-                                if stype == 'line':
+                                if stype in ('line', 'arrow'):
                                     sx_old, sy_old = map(float, shape_data['start']); ex_old, ey_old = map(float, shape_data['end'])
                                     adjusted_shape_data = shape_data.copy()
                                     adjusted_shape_data['start'] = (sx_old - crop_x_start, sy_old - crop_y_start)
@@ -23809,7 +24029,7 @@ if __name__ == "__main__":
                         for shape_data in self.custom_shapes:
                             shape_copy = dict(shape_data)
                             shape_type = shape_copy.get('type')
-                            if shape_type == 'line':
+                            if shape_type in ('line', 'arrow'):
                                 points = np.array(
                                     [[shape_copy['start'], shape_copy['end']]], dtype=np.float32
                                 )
@@ -24274,6 +24494,8 @@ if __name__ == "__main__":
                         pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
                         if shape_type == 'line':
                             painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
+                        elif shape_type == 'arrow':
+                            self._draw_arrow_on_painter(painter, map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']), max(1.0, thickness * render_scale))
                         elif shape_type == 'rectangle':
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
@@ -24575,6 +24797,7 @@ if __name__ == "__main__":
                         shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
                         pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
                         if shape_type == 'line': painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
+                        elif shape_type == 'arrow': self._draw_arrow_on_painter(painter, map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']), max(1.0, thickness * render_scale))
                         elif shape_type == 'rectangle':
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
@@ -24589,9 +24812,63 @@ if __name__ == "__main__":
                 painter.end()
                 return render_canvas
 
+            def _clone_selected_custom_item_if_any(self):
+                """If a custom MARKER or SHAPE is currently selected in Move/Resize mode,
+                duplicate it (offset slightly so it's visible) and leave the clone selected.
+                Returns True if a clone was made (so Ctrl/Cmd+C should NOT also copy the image)."""
+                try:
+                    if self.current_selection_mode not in (
+                            "select_custom_item", "dragging_custom_item", "resizing_custom_item"):
+                        return False
+                    info = getattr(self, 'moving_custom_item_info', None)
+                    if not info:
+                        return False
+                    itype = info.get('type'); idx = info.get('index', -1)
+                    offset = 15.0  # image-space nudge so the clone sits next to the original
+                    def _snapshot():
+                        # Undo checkpoint — never let a serialization hiccup abort the clone.
+                        try: self.save_state()
+                        except Exception: pass
+                    if itype == 'marker' and 0 <= idx < len(self.custom_markers):
+                        _snapshot()
+                        clone = list(self.custom_markers[idx])
+                        clone[0] = float(clone[0]) + offset; clone[1] = float(clone[1]) + offset
+                        self.custom_markers.append(clone)
+                        self.moving_custom_item_info = {'type': 'marker', 'index': len(self.custom_markers) - 1}
+                    elif itype == 'shape' and 0 <= idx < len(self.custom_shapes):
+                        clone = dict(self.custom_shapes[idx])
+                        stype = clone.get('type')
+                        if stype in ('line', 'arrow'):
+                            sx, sy = clone['start']; ex, ey = clone['end']
+                            clone['start'] = (sx + offset, sy + offset); clone['end'] = (ex + offset, ey + offset)
+                        elif stype == 'rectangle':
+                            x, y, w, h = clone['rect']
+                            clone['rect'] = (x + offset, y + offset, w, h)
+                        else:
+                            return False
+                        _snapshot()
+                        self.custom_shapes.append(clone)
+                        self.moving_custom_item_info = {'type': 'shape', 'index': len(self.custom_shapes) - 1}
+                    else:
+                        return False
+                    self.resizing_corner_index = -1
+                    self.shape_points_at_drag_start_label = []
+                    self.is_modified = True
+                    self.show_mode_status("Cloned the selected item — the copy is offset and now "
+                                          "selected. Drag it to reposition, or press Esc to exit.")
+                    self.update_live_view()
+                    return True
+                except Exception:
+                    return False
+
             def copy_to_clipboard(self):
                 if not self.image_master or self.image_master.isNull(): # Check against master image
                     self.show_mode_status("Load an image first before copying to the clipboard.")
+                    return
+
+                # Ctrl/Cmd+C while a custom marker/shape is selected (Move/Resize mode) CLONES
+                # that item instead of copying the rendered image to the clipboard.
+                if self._clone_selected_custom_item_if_any():
                     return
 
                 # Clean up any previous temp file from this session
@@ -24689,6 +24966,7 @@ if __name__ == "__main__":
                         shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
                         pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
                         if shape_type == 'line': painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
+                        elif shape_type == 'arrow': self._draw_arrow_on_painter(painter, map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']), max(1.0, thickness * render_scale))
                         elif shape_type == 'rectangle':
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
@@ -26116,6 +26394,24 @@ if __name__ == "__main__":
                                         E(start[0]), E(start[1]), E(end[0]), E(end[1]))
                                     conn.line.color.rgb = _rgb(color)
                                     conn.line.width = E(thickness)
+                            elif stype == 'arrow':
+                                start = shape_data.get('start'); end = shape_data.get('end')
+                                if start and end:
+                                    conn = slide.shapes.add_connector(
+                                        MSO_CONNECTOR.STRAIGHT,
+                                        E(start[0]), E(start[1]), E(end[0]), E(end[1]))
+                                    conn.line.color.rgb = _rgb(color)
+                                    conn.line.width = E(thickness)
+                                    # Native, editable arrowhead at the END point.
+                                    try:
+                                        from pptx.oxml.ns import qn
+                                        ln = conn.line._get_or_add_ln()
+                                        tail = ln.makeelement(
+                                            qn('a:tailEnd'),
+                                            {'type': 'triangle', 'w': 'med', 'len': 'med'})
+                                        ln.append(tail)
+                                    except Exception:
+                                        pass
                             elif stype == 'rectangle':
                                 rect = shape_data.get('rect')
                                 if rect:
