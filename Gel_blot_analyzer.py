@@ -11493,6 +11493,35 @@ if __name__ == "__main__":
                 except Exception:
                     return qss
 
+            def _ui_font_scale(self):
+                """Multiplier applied to the on-screen UI (widget chrome) font size.
+
+                Tied to the user's UI Scale preference so that choosing a larger UI
+                scale also enlarges the control fonts. This deliberately does NOT touch
+                the image/preview canvas text, which is rendered separately via QPainter
+                using `font_scale_factor` and must stay pixel-identical to before."""
+                try:
+                    s = float(getattr(self, 'ui_scale_preference', 1.0) or 1.0)
+                except (TypeError, ValueError):
+                    s = 1.0
+                return s if s > 0.1 else 1.0
+
+            def _scale_stylesheet_fonts(self, qss):
+                """Return `qss` with every `font-size: Npx` multiplied by the UI font
+                scale. Only affects Qt widget styling — the gel/preview canvas draws its
+                own text with QPainter and is intentionally left untouched here."""
+                try:
+                    scale = self._ui_font_scale()
+                    if abs(scale - 1.0) < 1e-3:
+                        return qss
+                    import re
+                    def _mul(m):
+                        px = max(1, int(round(float(m.group(1)) * scale)))
+                        return "font-size: %dpx" % px
+                    return re.sub(r'font-size:\s*([\d.]+)px', _mul, qss)
+                except Exception:
+                    return qss
+
             def _apply_initial_theme(self, current_theme):
                 """Applies the theme stylesheet based on the loaded preference."""
                 app = QApplication.instance()
@@ -11506,11 +11535,11 @@ if __name__ == "__main__":
                     self._indicators_skinned = True
 
                 if current_theme == "dark":
-                    app.setStyleSheet(self.dark_stylesheet)
+                    app.setStyleSheet(self._scale_stylesheet_fonts(self.dark_stylesheet))
                     if hasattr(self, 'theme_action'):
                         self.theme_action.setChecked(True)
                 else:
-                    app.setStyleSheet(self.light_stylesheet)
+                    app.setStyleSheet(self._scale_stylesheet_fonts(self.light_stylesheet))
                     if hasattr(self, 'theme_action'):
                         self.theme_action.setChecked(False)
 
@@ -11530,10 +11559,10 @@ if __name__ == "__main__":
                 if not app: return
 
                 if checked:
-                    app.setStyleSheet(self.dark_stylesheet)
+                    app.setStyleSheet(self._scale_stylesheet_fonts(self.dark_stylesheet))
                     self.current_theme = "dark"
                 else:
-                    app.setStyleSheet(self.light_stylesheet)
+                    app.setStyleSheet(self._scale_stylesheet_fonts(self.light_stylesheet))
                     self.current_theme = "light"
                 
                 # --- FIX: Call the helper method to regenerate icons with the new theme color ---
@@ -19438,6 +19467,16 @@ if __name__ == "__main__":
                         self._prepare_multilane_for_viewer_resize()
                         self._update_main_layout(getattr(self, 'viewer_position', 'Top'))
                         self.update_live_view()
+                    except Exception:
+                        pass
+
+                # A UI-scale change also changes the on-screen widget font size (tied to
+                # the scale). Re-apply the active theme stylesheet so the bigger/smaller
+                # control fonts take effect immediately, without a restart. The preview
+                # canvas text is unaffected (drawn separately via QPainter).
+                if old_ui_scale != self.ui_scale_preference:
+                    try:
+                        self._apply_initial_theme(getattr(self, 'current_theme', 'light'))
                     except Exception:
                         pass
 
