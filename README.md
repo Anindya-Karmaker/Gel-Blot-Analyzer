@@ -203,7 +203,7 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 
 ## Grant Information
 
-The authors gratefully acknowledge financial support from the National Science Foundation (Grant No. 2016563) and McDonald-Nandi lab at UC Davis. This grant funded the Alpha-1 antitrypsin project, which served as a case study for demonstrating the utility of the software.
+The authors gratefully acknowledge financial support from the National Science Foundation (NSF grant # IIP-2016563) and McDonald-Nandi lab at UC Davis. This grant funded the Alpha-1 antitrypsin project, which served as a case study for demonstrating the utility of the software.
 
 ---
 
