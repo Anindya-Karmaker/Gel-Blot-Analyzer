@@ -11809,6 +11809,11 @@ if __name__ == "__main__":
                 config_data["viewer_fixed_height"] = int(getattr(self, "viewer_fixed_height", 350))
                 config_data["safe_content_width"] = int(getattr(self, "safe_content_width", 1000))
 
+                # Persist UI scale and GPU settings so they survive the resize-debounce
+                # rewrite (save_full_config writes them, but this method would drop them).
+                config_data["ui_scale_preference"] = getattr(self, "ui_scale_preference", 1.0)
+                config_data["use_gpu"] = getattr(self, "use_gpu", True)
+
                 if hasattr(self, 'gpu_id_input'):
                     self.gpu_device_id = self.gpu_id_input.text().strip()
                 config_data["gpu_device_id"] = self.gpu_device_id
