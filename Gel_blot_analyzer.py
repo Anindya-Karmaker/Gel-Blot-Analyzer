@@ -10965,6 +10965,8 @@ if __name__ == "__main__":
                 self.resize_timer.timeout.connect(self.save_app_settings)
                 self.saved_window_width = None
                 self.saved_window_height = None
+                self.saved_window_x = None
+                self.saved_window_y = None
                 # Debounced re-render of the (now user-resizable) viewer: coalesces the flood
                 # of resize events from a splitter drag into one repaint so dragging stays smooth.
                 self._viewer_render_timer = QTimer()
@@ -10972,6 +10974,23 @@ if __name__ == "__main__":
                 self._viewer_render_timer.setInterval(30)
                 self._viewer_render_timer.timeout.connect(self.update_live_view)
                 self._suppress_viewer_resize_sync = False
+                # Becomes True on the user's first real mouse/key interaction (set from the
+                # app event filter). Until then, viewer-resize events are programmatic startup
+                # auto-sizing and must not overwrite the saved viewer size.
+                self._app_started = False
+                # Debounce that keeps the viewer->settings sync SUPPRESSED until the window's
+                # automatic startup/layout resizing has been quiet for a moment. Without this,
+                # the transient resizes on startup (window show, _fit_window_to_screen, the
+                # singleShot fits in __main__) fire LiveViewLabel.resizeEvent AFTER the old
+                # singleShot(0) un-suppress, so `_on_viewer_label_resized` overwrote the SAVED
+                # viewer_fixed_width/height with the transient size — i.e. the UI "forgot" its
+                # remembered size on every launch. Each resize during suppression restarts this
+                # timer, so it only lifts once auto-resizing has actually settled.
+                self._resize_sync_settle_timer = QTimer()
+                self._resize_sync_settle_timer.setSingleShot(True)
+                self._resize_sync_settle_timer.setInterval(350)
+                self._resize_sync_settle_timer.timeout.connect(
+                    lambda: setattr(self, '_suppress_viewer_resize_sync', False))
                 # --- 1. GPU/CPU Initialization (CRITICAL: Must run first) ---
                 self.gpu_device_id = ":GPU:0" # Default to 0 (usually Integrated)
                 self.use_gpu = True
@@ -11435,7 +11454,17 @@ if __name__ == "__main__":
                 except Exception:
                     pass
                 super().resizeEvent(event)
-            
+
+            def moveEvent(self, event):
+                """Persist the window position too (debounced, same 1s timer as resize) so
+                the window reopens where the user left it — not just at its last size."""
+                # Only bother once the app is interactive; startup does several programmatic
+                # moves (show, _fit_window_to_screen, saved-pos restore) whose final resting
+                # place is already captured on close, so we skip the churn until then.
+                if getattr(self, '_app_started', False):
+                    self.resize_timer.start()
+                super().moveEvent(event)
+
             def _render_indicator_png(self, kind, color_hex):
                 """Vector-draw a small UI indicator (spin/combo arrow, checkbox tick, radio
                 dot) with QPainter and save it to a PNG file, returning the file path.
@@ -11714,6 +11743,12 @@ if __name__ == "__main__":
             # --- ADD THIS NEW METHOD ---
             def save_app_settings(self):
                 """Saves non-preset global settings like theme and layout to the config file."""
+                # Right after "Reset All Settings" the config file is deleted on purpose; the
+                # live layout rebuild fires a resize whose debounced save would otherwise
+                # immediately re-create it. Skip that one incidental save so the file truly
+                # stays gone until the user actively changes something.
+                if getattr(self, '_suppress_settings_save', False):
+                    return
                 app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
                 if not os.path.exists(app_path):
                     os.makedirs(app_path)
@@ -11733,12 +11768,47 @@ if __name__ == "__main__":
                 # Update the settings we want to save
                 config_data["window_width"] = self.width()
                 config_data["window_height"] = self.height()
+                # Persist the window POSITION (frame top-left, in logical desktop coords) so
+                # the window reopens where the user left it. self.pos() is the frame origin
+                # for a top-level window, which round-trips through move() on restore.
+                try:
+                    pos = self.pos()
+                    self.saved_window_x = int(pos.x())
+                    self.saved_window_y = int(pos.y())
+                    config_data["window_x"] = self.saved_window_x
+                    config_data["window_y"] = self.saved_window_y
+                except Exception:
+                    pass
                 config_data["theme"] = self.current_theme
                 config_data["viewer_position"] = self.viewer_position
-                # Persist the (now drag-adjustable) viewer size so it restores next launch.
+                # Persist the (drag-adjustable) viewer size and Program UI Width. Read them
+                # AUTHORITATIVELY from the live widgets — but ONLY once the user has actually
+                # interacted with the app (`_app_started`). A window-border resize has no in-app
+                # mouse press, so the live read is what captures it. During STARTUP, however, the
+                # live widgets are inflated by the window chrome (a fixed margin), so re-reading
+                # them every launch would grow the saved size by that margin each time — a slow
+                # feedback drift (previously hidden because the old ~80%-of-screen defaults were
+                # already clamped at the screen edge). So on startup we persist the loaded values
+                # unchanged; only a genuine resize updates them.
+                ui = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
+                if getattr(self, '_app_started', False):
+                    try:
+                        lv = getattr(self, 'live_view_label', None)
+                        if lv is not None and lv.width() > 0 and lv.height() > 0:
+                            self.viewer_fixed_width = max(50, int(round(lv.width() / ui)))
+                            self.viewer_fixed_height = max(50, int(round(lv.height() / ui)))
+                    except Exception:
+                        pass
+                    try:
+                        tw = getattr(self, 'tab_widget', None)
+                        if tw is not None and tw.width() > 0:
+                            self.safe_content_width = max(200, int(round(tw.width() / ui)))
+                    except Exception:
+                        pass
                 config_data["viewer_fixed_width"] = int(getattr(self, "viewer_fixed_width", 550))
                 config_data["viewer_fixed_height"] = int(getattr(self, "viewer_fixed_height", 350))
-                
+                config_data["safe_content_width"] = int(getattr(self, "safe_content_width", 1000))
+
                 if hasattr(self, 'gpu_id_input'):
                     self.gpu_device_id = self.gpu_id_input.text().strip()
                 config_data["gpu_device_id"] = self.gpu_device_id
@@ -12379,9 +12449,13 @@ if __name__ == "__main__":
                     except Exception:
                         pass
 
-                # Sizing/build is done — allow viewer-resize syncing again on the next event loop
-                # pass (after the transient build-time resizes have flushed).
-                QTimer.singleShot(0, lambda: setattr(self, '_suppress_viewer_resize_sync', False))
+                # Sizing/build is done — but DON'T un-suppress on the next event-loop pass:
+                # the window is still about to auto-resize (show + _fit_window_to_screen, incl.
+                # the singleShot fits in __main__). Arm the settle debounce instead; it lifts
+                # suppression only after those resizes have been quiet for 350ms, so the saved
+                # viewer size is never clobbered by transient startup resizing.
+                self._suppress_viewer_resize_sync = True
+                self._resize_sync_settle_timer.start(350)
 
                 if new_layout:
                     old_central_widget = self.centralWidget()
@@ -12415,11 +12489,75 @@ if __name__ == "__main__":
                     # bar and controls can't be clipped or pushed off-screen.
                     self._fit_window_to_screen()
 
+                    # On a startup/settings RESTORE (not an explicit placement), reinstate the
+                    # user's saved viewer size exactly. The initial setSizes above opens ~50:50,
+                    # which only coincides with the saved size when the viewer is the larger,
+                    # screen-fitting pane; an asymmetric split (e.g. a small viewer) would
+                    # otherwise be forgotten. We do this AFTER the window has its real size (via
+                    # singleShot) so the splitter's actual length is known, and while the resize
+                    # sync is still suppressed so it doesn't feed back.
+                    if not force_fit_split:
+                        # Reinstate the user's saved viewer/UI SPLIT exactly. The initial
+                        # setSizes above opens ~50:50, which only matches the saved split when
+                        # the viewer is the larger, screen-fitting pane; an asymmetric split
+                        # (e.g. a small viewer) would otherwise be forgotten. This must run
+                        # AFTER the window has reached its final size, or the splitter is still
+                        # tiny, the viewer clamps small, and (because the viewer pane has
+                        # stretch 0) the later window growth all goes to the controls — leaving
+                        # the viewer stuck small and the wrong split then getting saved. A
+                        # single singleShot(0) is racy on systems where the window is shown
+                        # asynchronously, so we RETRY until the splitter is genuinely sized and
+                        # re-assert a few times to survive late startup resizes. It bails out
+                        # the moment the user interacts (`_app_started`) so it never fights a
+                        # real drag.
+                        self._pending_split_restore = {
+                            'vf': int(VIEWER_FIXED_HEIGHT if is_vertical else VIEWER_FIXED_WIDTH),
+                            'mv': int(MIN_VIEWER_H if is_vertical else MIN_VIEWER_W),
+                            'mu': int(MIN_UI_H if is_vertical else MIN_UI_W),
+                            'vidx': viewer_idx, 'vertical': is_vertical, 'handle': HANDLE,
+                            'tries': 0, 'applied': 0,
+                        }
+                        QTimer.singleShot(0, self._try_restore_saved_split)
+
                 
 
                 
                 
                 
+            def _try_restore_saved_split(self):
+                """Retry-driven restore of the saved viewer/UI split (see `_update_main_layout`).
+                Runs only until the splitter is genuinely sized (so the viewer isn't clamped
+                small on a not-yet-shown window), re-asserts a few times to survive late
+                startup resizes, and stops as soon as the user interacts."""
+                info = getattr(self, '_pending_split_restore', None)
+                if not info:
+                    return
+                # User has taken over — never fight a real drag.
+                if getattr(self, '_app_started', False):
+                    self._pending_split_restore = None
+                    return
+                sp = getattr(self, 'viewer_splitter', None)
+                if sp is None:
+                    self._pending_split_restore = None
+                    return
+                info['tries'] += 1
+                try:
+                    total = sp.height() if info['vertical'] else sp.width()
+                    need = info['handle'] + info['mv'] + info['mu']
+                    if total >= need:
+                        vsz = max(info['mv'], min(info['vf'], total - info['handle'] - info['mu']))
+                        usz = max(info['mu'], total - info['handle'] - vsz)
+                        sp.setSizes([vsz, usz] if info['vidx'] == 0 else [usz, vsz])
+                        info['applied'] += 1
+                except Exception:
+                    pass
+                # Stop once we've successfully re-asserted a few times (survives the last few
+                # startup resizes) or after a bounded number of attempts (never loops forever).
+                if info['applied'] >= 3 or info['tries'] >= 25:
+                    self._pending_split_restore = None
+                else:
+                    QTimer.singleShot(70, self._try_restore_saved_split)
+
             def _fit_window_to_screen(self):
                 """Clamp the main window to the available screen area and move it fully
                 on-screen. Safety net for HighDPI / large-layout cases that would
@@ -19657,21 +19795,12 @@ if __name__ == "__main__":
                                       "Specific GPU ID changes require a restart.")
             
             def _default_viewer_size(self):
-                """Default viewer dimensions for a FRESH install / Reset All Settings: size the
-                viewer to ~80% of the available screen so the app opens large by default instead
-                of the tiny 550x350. Returned in LOGICAL px (divided by the UI-scale preference,
-                because _update_main_layout multiplies these by ui_scale_factor). Falls back to
-                550x350 if the screen geometry can't be read."""
-                try:
-                    geo = QGuiApplication.primaryScreen().availableGeometry()
-                    scale = float(getattr(self, 'ui_scale_preference', 1.0) or 1.0)
-                    if scale <= 0.1:
-                        scale = 1.0
-                    w = max(300, int(round(geo.width() * 0.80 / scale)))
-                    h = max(200, int(round(geo.height() * 0.80 / scale)))
-                    return w, h
-                except Exception:
-                    return 550, 350
+                """Default viewer dimensions for a FRESH install / Reset All Settings.
+                Returns a modest fixed size in LOGICAL px. (Previously this sized the viewer
+                to ~80% of the screen, but that large default got baked into the persisted
+                viewer_fixed_width/height, which then forced the window's minimum size up and
+                prevented a smaller saved window size from being restored.)"""
+                return 550, 350
 
             def reset_all_settings(self):
                 """Delete the saved application configuration file and restore default settings.
@@ -19697,12 +19826,14 @@ if __name__ == "__main__":
                     self.ui_scale_preference = 1.0
                     self.viewer_position     = "Top"
                     self.use_gpu             = True
-                    # Default viewer = ~80% of the screen (not the old 550x350).
+                    # Default viewer = fixed 550x350.
                     self.viewer_fixed_width, self.viewer_fixed_height = self._default_viewer_size()
                     self.safe_content_width  = 1000
                     self.presets_data        = {}
                     self.saved_window_width  = None
                     self.saved_window_height = None
+                    self.saved_window_x      = None
+                    self.saved_window_y      = None
 
                     # Reflect the defaults in the Settings tab controls (spin boxes, combos).
                     try:
@@ -19720,20 +19851,24 @@ if __name__ == "__main__":
                     # Apply LIVE: rebuild the layout with the default arrangement + viewer size.
                     # With saved_window_* now None, _update_main_layout resizes the window to its
                     # default too, so the viewer/UI width, layout and window size all reset without
-                    # a restart.
+                    # a restart. Suppress the incidental resize-triggered auto-save while this
+                    # happens so the just-deleted config file isn't immediately re-created.
+                    self._suppress_settings_save = True
                     try:
                         self._prepare_multilane_for_viewer_resize()
                         self._update_main_layout("Top")
                         self.update_live_view()
                     except Exception:
                         pass
+                    # Lift the suppression after the layout's resize events have settled (the
+                    # resize debounce is 1s, so clear it a bit later). From then on a genuine
+                    # user resize/move will persist normally.
+                    QTimer.singleShot(1500, lambda: setattr(self, '_suppress_settings_save', False))
 
-                    # Persist the fresh defaults (with the now-default window size) so nothing
-                    # stale is written back by a later resize.
-                    try:
-                        self.save_full_config()
-                    except Exception:
-                        pass
+                    # Deliberately DO NOT recreate the config file here. Reset deletes it
+                    # entirely so the next launch is a true first-boot with fresh defaults.
+                    # The file is only re-created later if the user actually changes something
+                    # (a resize/move fires save_app_settings, or a preset is saved).
 
                     QMessageBox.information(
                         self, "Settings Reset",
@@ -19973,7 +20108,15 @@ if __name__ == "__main__":
             def eventFilter(self, obj, event):
                 """App-level safety net: when this window is active and a tool is armed, make
                 Esc reliably run the cancel logic (which reverts the green tool button),
-                regardless of which child widget currently has keyboard focus."""
+                regardless of which child widget currently has keyboard focus. Also marks the
+                app as "started" on the first real user input so programmatic startup resizes
+                don't overwrite the saved viewer size."""
+                try:
+                    if not getattr(self, '_app_started', False) and event.type() in (
+                            QEvent.MouseButtonPress, QEvent.KeyPress, QEvent.Wheel):
+                        self._app_started = True
+                except Exception:
+                    pass
                 try:
                     if (event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride)
                             and event.key() == Qt.Key_Escape
@@ -21128,6 +21271,8 @@ if __name__ == "__main__":
                     "viewer_position": getattr(self, "viewer_position", "Top"),
                     "window_width": getattr(self, "window_width", self.width()),
                     "window_height": getattr(self, "window_height", self.height()),
+                    "window_x": getattr(self, "saved_window_x", None) if getattr(self, "saved_window_x", None) is not None else int(self.pos().x()),
+                    "window_y": getattr(self, "saved_window_y", None) if getattr(self, "saved_window_y", None) is not None else int(self.pos().y()),
                     "use_gpu": getattr(self, "use_gpu", True),
                     "ui_scale_preference": getattr(self, "ui_scale_preference", 1.0),
                     "viewer_fixed_width": getattr(self, "viewer_fixed_width", 550),
@@ -21290,6 +21435,8 @@ if __name__ == "__main__":
 
                         self.saved_window_width = loaded_json.get("window_width", None)
                         self.saved_window_height = loaded_json.get("window_height", None)
+                        self.saved_window_x = loaded_json.get("window_x", None)
+                        self.saved_window_y = loaded_json.get("window_y", None)
 
                         APP_GLOBAL_WINDOW_HEIGHT = self.saved_window_height
                         APP_GLOBAL_WINDOW_WIDTH = self.saved_window_width
@@ -22901,7 +23048,23 @@ if __name__ == "__main__":
                 changes size (splitter drag, or window resize shrinking it). Re-anchors
                 densitometry boxes to the content, re-renders (debounced), and mirrors the new
                 logical viewer dimensions into the Settings tab / saved config."""
+                # Only sync the viewer size to settings/config in response to a REAL user
+                # action (splitter drag or manual window resize). Until the user first
+                # interacts with the app (`_app_started`, set from the app event filter on the
+                # first mouse/key press), every resize is programmatic startup auto-sizing —
+                # window show + _fit_window_to_screen + the singleShot fits in __main__ — which
+                # must NOT overwrite the SAVED viewer size, or the UI "forgets" its remembered
+                # size on every launch. `_suppress_viewer_resize_sync` additionally covers the
+                # transient resizes right after a layout rebuild.
+                if not getattr(self, '_app_started', False):
+                    return
                 if getattr(self, '_suppress_viewer_resize_sync', False):
+                    try:
+                        t = getattr(self, '_resize_sync_settle_timer', None)
+                        if t is not None:
+                            t.start(350)
+                    except Exception:
+                        pass
                     return
                 nw = int(new_size.width()); nh = int(new_size.height())
                 if nw <= 0 or nh <= 0:
@@ -22938,12 +23101,15 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
-                # 2b) In a side (Left/Right) layout the divider also sets the controls width,
-                #     so mirror the live controls-pane width into the Program UI Width setting.
-                #     (Top/Bottom split heights, not the UI width, so leave it untouched.)
+                # 2b) Mirror the live controls-pane width into the Program UI Width setting so
+                #     it tracks reality and round-trips through save/restore. This applies in
+                #     EVERY layout: in a side (Left/Right) layout the divider sets the controls
+                #     width; in a Top/Bottom layout the controls span the window, so resizing
+                #     the window widens them. Previously this only ran for Left/Right, so a
+                #     Top/Bottom window resize never updated Program UI Width and the stale
+                #     value got saved.
                 try:
-                    if getattr(self, 'viewer_position', 'Top') in ("Left", "Right") \
-                            and hasattr(self, 'tab_widget'):
+                    if hasattr(self, 'tab_widget'):
                         cw = int(self.tab_widget.width())
                         if cw > 0:
                             self.safe_content_width = max(200, int(round(cw / ui)))
@@ -26730,7 +26896,24 @@ if __name__ == "__main__":
             loading_dialog = None      # <<--- ADD THIS LINE HERE
         
         screen_geo = QGuiApplication.primaryScreen().availableGeometry()
-        main_window.move(screen_geo.x(), screen_geo.y())
+        # Restore the window to its last saved position if we have one AND it lands on a
+        # currently-attached screen (so a window saved on a now-disconnected monitor doesn't
+        # open off-screen). Otherwise fall back to the primary screen's top-left. The final
+        # _fit_window_to_screen() calls below still clamp it fully on-screen either way.
+        _sx = getattr(main_window, "saved_window_x", None)
+        _sy = getattr(main_window, "saved_window_y", None)
+        _restored_pos = False
+        if _sx is not None and _sy is not None:
+            try:
+                for _scr in QGuiApplication.screens():
+                    if _scr.availableGeometry().contains(int(_sx), int(_sy)):
+                        main_window.move(int(_sx), int(_sy))
+                        _restored_pos = True
+                        break
+            except Exception:
+                _restored_pos = False
+        if not _restored_pos:
+            main_window.move(screen_geo.x(), screen_geo.y())
         main_window.show()
 
         # Now that the window is shown, the frame (title bar) geometry is accurate, so
