@@ -10579,6 +10579,8 @@ if __name__ == "__main__":
                 
                 QTabWidget { background-color: #F0F2F5; }
                 QTabWidget::pane { border-top: 1px solid #D0D5DB; background-color: #F0F2F5; }
+                
+                QSplitter::handle { background-color: transparent; }
                 /* ------------------------------------------------ */
 
                 QGroupBox { background-color: #FBFCFD; border: 1px solid #D0D5DB; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
@@ -10728,6 +10730,8 @@ if __name__ == "__main__":
                 
                 QTabWidget { background-color: #2D2D30; }
                 QTabWidget::pane { border-top: 1px solid #505055; background-color: #2D2D30; }
+                
+                QSplitter::handle { background-color: transparent; }
                 /* ------------------------------------------------ */
 
                 QGroupBox { background-color: #38383C; border: 1px solid #505055; border-radius: 6px; margin-top: 18px; padding: 8px 5px 5px 5px; }
@@ -12609,18 +12613,19 @@ if __name__ == "__main__":
 
                     # 1) UI Scale — 1280x720 (the supported minimum) is the reference for
                     #    100%, because the layout already fits there at full scale. Only
-                    #    desktops SMALLER than that get a proportionally smaller scale,
-                    #    snapped DOWN to a value the Settings combo actually offers.
+                    #    desktops SMALLER than that need a proportionally smaller scale.
+                    #    On desktops LARGER than the reference, the user's preference
+                    #    (which may be >1.0, e.g. 1.25 or 1.5) is honoured as-is.
                     rec = min(sw / 1280.0, sh / 720.0)
                     options = sorted({v for (_t, v) in getattr(self, 'scale_options',
                                       [("", 0.5), ("", 0.75), ("", 1.0)]) if v and v >= 0.5})
                     if not options:
                         options = [0.5, 0.75, 1.0]
+                    # Find the largest scale option the screen can support.
                     snapped = options[0]
                     for v in options:
-                        if v <= rec + 1e-6 and v <= 1.0:
+                        if v <= rec + 1e-6:
                             snapped = v
-                    snapped = min(1.0, snapped)
                     cur_scale = float(getattr(self, 'ui_scale_preference', 1.0) or 1.0)
                     # Cap only: respect a user who already chose an even smaller scale.
                     self.ui_scale_preference = min(cur_scale, snapped)
