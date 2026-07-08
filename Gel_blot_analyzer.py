@@ -11403,6 +11403,10 @@ if __name__ == "__main__":
                 self.viewer_position = "Top" # Default value before loading
                 self.load_config()
                 self._update_main_layout(self.viewer_position)
+                # Scale the Python-set geometry (fixed sizes, layout margins/spacing, icons)
+                # once, now that every control exists and ui_scale_factor is known. The
+                # stylesheet (applied just below) handles chrome/fonts.
+                self._apply_ui_scale_to_tree_once()
 
                 
 
@@ -11535,20 +11539,121 @@ if __name__ == "__main__":
                 return s if s > 0.1 else 1.0
 
             def _scale_stylesheet_fonts(self, qss):
-                """Return `qss` with every `font-size: Npx` multiplied by the UI font
-                scale. Only affects Qt widget styling — the gel/preview canvas draws its
-                own text with QPainter and is intentionally left untouched here."""
+                """Backwards-compatible alias — now scales EVERY pixel dimension, not just
+                fonts (see `_scale_stylesheet`)."""
+                return self._scale_stylesheet(qss)
+
+            def _scale_stylesheet(self, qss):
+                """Return `qss` with EVERY `Npx` dimension multiplied by the UI scale — fonts,
+                padding, margins, borders, border-radius, min/max width & height, spacing,
+                sub-control widths, icon sizes, etc. This is what makes the whole widget
+                chrome (not just text) grow/shrink with the UI Scale preference.
+
+                base64 `url(...)` blocks are protected first, because raw base64 can contain
+                substrings like `A3px` that would otherwise be corrupted. `0px` is preserved
+                (never promoted to 1px). The gel/preview CANVAS text is drawn separately with
+                QPainter and is intentionally NOT touched here."""
                 try:
                     scale = self._ui_font_scale()
                     if abs(scale - 1.0) < 1e-3:
                         return qss
                     import re
+                    stash = []
+                    def _protect(m):
+                        stash.append(m.group(0))
+                        return "\x00%d\x00" % (len(stash) - 1)
+                    protected = re.sub(r'url\([^)]*\)', _protect, qss)
+
                     def _mul(m):
-                        px = max(1, int(round(float(m.group(1)) * scale)))
-                        return "font-size: %dpx" % px
-                    return re.sub(r'font-size:\s*([\d.]+)px', _mul, qss)
+                        val = float(m.group(1))
+                        if val == 0:
+                            return "0px"
+                        return "%dpx" % max(1, int(round(val * scale)))
+                    scaled = re.sub(r'(\d+(?:\.\d+)?)px', _mul, protected)
+
+                    scaled = re.sub(r'\x00(\d+)\x00', lambda m: stash[int(m.group(1))], scaled)
+                    return scaled
                 except Exception:
                     return qss
+
+            def _apply_ui_scale_to_tree_once(self):
+                """Scale hardcoded pixel dimensions that the stylesheet can't reach — widget
+                fixed/min/max sizes, layout contents-margins & spacing, explicit spacers, and
+                button/toolbar icon sizes — by the UI Scale factor. The stylesheet scaler
+                handles chrome (padding/borders/fonts); this handles the Python-set geometry
+                so the WHOLE UI scales, not just text.
+
+                Runs exactly ONCE (UI Scale requires a restart, so widgets are freshly built
+                at their design sizes — no risk of compounding). Widgets whose size is already
+                scaled in code (the viewer and the tab/controls area) are tagged `_ui_noscale`
+                and skipped for their own size; their children are still visited. Everything is
+                guarded so a failure can never break startup."""
+                try:
+                    if getattr(self, '_ui_scale_tree_applied', False):
+                        return
+                    scale = float(getattr(self, 'ui_scale_factor', 1.0) or 1.0)
+                    if abs(scale - 1.0) < 1e-3:
+                        self._ui_scale_tree_applied = True
+                        return
+                    from PySide6.QtWidgets import QAbstractButton, QToolBar, QLayout, QWidgetItem, QSpacerItem
+                    QWSM = 16777215  # QWIDGETSIZE_MAX
+                    def _s(v):
+                        return int(round(v * scale))
+                    # Exclude widgets already scaled in code.
+                    for _w in (getattr(self, 'live_view_label', None),
+                               getattr(self, 'tab_widget', None),
+                               getattr(self, 'tool_bar', None)):
+                        if _w is not None:
+                            try: _w.setProperty('_ui_noscale', True)
+                            except Exception: pass
+
+                    def _scale_widget(w):
+                        try:
+                            if w is self or w.property('_ui_noscale'):
+                                return
+                            mn = w.minimumSize()
+                            if mn.width() > 0 or mn.height() > 0:
+                                w.setMinimumSize(_s(mn.width()) if mn.width() > 0 else mn.width(),
+                                                 _s(mn.height()) if mn.height() > 0 else mn.height())
+                            mx = w.maximumSize()
+                            nw = _s(mx.width()) if 0 < mx.width() < QWSM else mx.width()
+                            nh = _s(mx.height()) if 0 < mx.height() < QWSM else mx.height()
+                            if nw != mx.width() or nh != mx.height():
+                                w.setMaximumSize(nw, nh)
+                            if isinstance(w, QAbstractButton):
+                                isz = w.iconSize()
+                                if isz.width() > 0 and isz.height() > 0:
+                                    w.setIconSize(QSize(_s(isz.width()), _s(isz.height())))
+                        except Exception:
+                            pass
+
+                    def _scale_layout(lay):
+                        try:
+                            m = lay.contentsMargins()
+                            lay.setContentsMargins(_s(m.left()), _s(m.top()), _s(m.right()), _s(m.bottom()))
+                            sp = lay.spacing()
+                            if sp and sp > 0:
+                                lay.setSpacing(_s(sp))
+                            # Scale ONLY fixed spacers (from addSpacing); never touch the
+                            # expanding spacers from addStretch(), or the stretch would break.
+                            for i in range(lay.count()):
+                                it = lay.itemAt(i)
+                                if isinstance(it, QSpacerItem) and int(it.expandingDirections()) == 0:
+                                    sh = it.sizeHint()
+                                    it.changeSize(_s(sh.width()), _s(sh.height()),
+                                                  QSizePolicy.Fixed, QSizePolicy.Fixed)
+                        except Exception:
+                            pass
+
+                    # Scale every widget (direct-child walk) and every layout in the tree.
+                    for w in self.findChildren(QWidget):
+                        _scale_widget(w)
+                    for lay in self.findChildren(QLayout):
+                        _scale_layout(lay)
+
+                    self._ui_scale_tree_applied = True
+                except Exception:
+                    self._ui_scale_tree_applied = True
 
             def _apply_initial_theme(self, current_theme):
                 """Applies the theme stylesheet based on the loaded preference."""
@@ -12659,21 +12764,18 @@ if __name__ == "__main__":
                     pass
 
             def _active_tool_button_qss(self, is_dark=None):
-                """Green 'active tool' button style — same family as the Show Markers
-                button — applied ONLY while a draw/mark/label/highlight tool is armed."""
-                if is_dark is None:
-                    is_dark = getattr(self, 'current_theme', 'light') == 'dark'
-                if is_dark:
-                    return ("QPushButton { background-color: #3D984E; border: 1px solid #5DBB6F; "
-                            "color: white; } QPushButton:hover { background-color: #46AC59; }")
-                return ("QPushButton { background-color: #D4EDDA; border: 1px solid #74B882; "
-                        "color: #194D27; } QPushButton:hover { background-color: #C6E6CE; }")
+                """Per user request, tool buttons NEVER change colour when armed. This returns a
+                neutral stylesheet whose only job is to override the global
+                `QPushButton:checked { green }` rule for the checkable Move/Resize button, so a
+                checked (armed) button looks identical to a normal one — nothing can get 'stuck
+                green'. `palette(...)` roles keep it correct in both light and dark themes."""
+                return ("QPushButton:checked { background-color: palette(button); "
+                        "border: 1px solid palette(mid); color: palette(button-text); }")
 
             def _register_action_button(self, button, colorize=False):
-                """Tag a button as an interactive-tool trigger. Per user request, only the
-                Move/Resize tools actually change colour while active (`colorize=True`); all
-                other tool buttons keep their normal appearance at all times, so this is a
-                no-op for them."""
+                """Tag a button as an interactive-tool trigger. Tool buttons no longer change
+                colour while active; for the colourised ones we permanently pin a neutral
+                stylesheet that cancels the global checked-green so they can never appear armed."""
                 try:
                     if not colorize:
                         return button
@@ -12681,28 +12783,31 @@ if __name__ == "__main__":
                         self._action_buttons = []
                     if button not in self._action_buttons:
                         self._action_buttons.append(button)
+                    button.setStyleSheet(self._active_tool_button_qss())
                 except Exception:
                     pass
                 return button
-                return button
 
             def _activate_tool_button(self, button):
-                """Highlight `button` green to show its tool is armed; revert every other
-                registered tool button to its normal appearance."""
+                """Formerly highlighted the armed tool green; now a no-op for colour. We only
+                record which button is 'armed' (used by the Esc filter) and keep the neutral
+                stylesheet applied so nothing ever turns green."""
                 try:
                     self._active_tool_button = button
                     qss = self._active_tool_button_qss()
                     for b in getattr(self, '_action_buttons', []):
-                        b.setStyleSheet(qss if b is button else "")
+                        b.setStyleSheet(qss)
                 except Exception:
                     pass
 
             def _deactivate_tool_buttons(self):
-                """Revert all tool buttons to their normal (theme default) appearance."""
+                """Revert all tool buttons to their normal appearance (keep the neutral
+                checked-green override pinned)."""
                 try:
                     self._active_tool_button = None
+                    qss = self._active_tool_button_qss()
                     for b in getattr(self, '_action_buttons', []):
-                        b.setStyleSheet("")
+                        b.setStyleSheet(qss)
                 except Exception:
                     pass
 
@@ -12765,14 +12870,13 @@ if __name__ == "__main__":
                     pass
 
             def _refresh_action_button_styles(self):
-                """Re-apply styling after a theme switch: only the currently-armed tool
-                button stays green, everything else uses the theme default."""
+                """Re-apply the neutral checked-override after a theme switch (tool buttons
+                never colourise, so every registered button just keeps the override pinned)."""
                 try:
-                    active = getattr(self, '_active_tool_button', None)
                     qss = self._active_tool_button_qss()
                     for btn in getattr(self, '_action_buttons', []):
                         try:
-                            btn.setStyleSheet(qss if (active is not None and btn is active) else "")
+                            btn.setStyleSheet(qss)
                         except Exception:
                             pass
                     # Re-accent the active status message text for the new theme.
@@ -13265,7 +13369,18 @@ if __name__ == "__main__":
                 
             def _update_toolbar_icons(self):
                 """Regenerates all toolbar icons based on the current theme's palette."""
-                icon_size = QSize(30, 30) 
+                # Scale toolbar icons with the UI Scale preference (the toolbar is excluded
+                # from the generic widget-tree scaler because its icons have their own
+                # vector-drawing pipeline; we scale them here instead). Base = 30px drawn /
+                # 25px displayed at 100%.
+                _sc = float(getattr(self, 'ui_scale_factor', 1.0) or 1.0)
+                icon_size = QSize(max(8, int(round(30 * _sc))), max(8, int(round(30 * _sc))))
+                try:
+                    _disp = max(8, int(round(25 * _sc)))
+                    if hasattr(self, 'tool_bar') and self.tool_bar is not None:
+                        self.tool_bar.setIconSize(QSize(_disp, _disp))
+                except Exception:
+                    pass
                 # --- FIX: Get the text color from the CURRENT palette ---
                 if hasattr(self, 'current_theme') and self.current_theme == 'dark':
                     text_color = QColor("#F1F1F1") # White/Light Gray for Dark Mode
@@ -14963,18 +15078,18 @@ if __name__ == "__main__":
                 if not self._require_image("lane definition"):
                     return
 
-                # If a multi-lane session is NOT already active, start a new one.
+                # If a multi-lane session is NOT already active, (re)enter it.
                 if not self.multi_lane_mode_active:
-                    # Starting a new lane-definition session turns off any other active tool.
+                    # Entering the tool turns off any other active tool.
                     self._cancel_all_interaction_modes()
                     self.save_state()
-                    self.multi_lane_definitions = [] # Start a new session, clear old definitions
-                    self.latest_multi_lane_peak_areas.clear()
-                    self.latest_multi_lane_calculated_quantities.clear()
+                    # IMPORTANT: do NOT wipe existing lane regions / results here. Pressing Esc
+                    # only ENDS the session (regions are preserved); re-clicking a region tool
+                    # must CONTINUE from those regions, not reset them. Only the explicit
+                    # "Clear Markers" button (clear_predict_molecular_weight) resets regions.
                     self.multi_lane_processing_finished = False
-                    self.target_protein_areas_text.clear()
                     self.multi_lane_mode_active = True
-                    pass # print("INFO: Starting new multi-lane definition session.")
+                    pass # print("INFO: (Re)entering multi-lane definition session.")
 
                 # Set up the UI and handlers for the next region to be drawn.
                 self._set_next_region_type(region_type)
@@ -19541,6 +19656,23 @@ if __name__ == "__main__":
                                       "CPU/GPU mode and viewer size switched immediately.\n"
                                       "Specific GPU ID changes require a restart.")
             
+            def _default_viewer_size(self):
+                """Default viewer dimensions for a FRESH install / Reset All Settings: size the
+                viewer to ~80% of the available screen so the app opens large by default instead
+                of the tiny 550x350. Returned in LOGICAL px (divided by the UI-scale preference,
+                because _update_main_layout multiplies these by ui_scale_factor). Falls back to
+                550x350 if the screen geometry can't be read."""
+                try:
+                    geo = QGuiApplication.primaryScreen().availableGeometry()
+                    scale = float(getattr(self, 'ui_scale_preference', 1.0) or 1.0)
+                    if scale <= 0.1:
+                        scale = 1.0
+                    w = max(300, int(round(geo.width() * 0.80 / scale)))
+                    h = max(200, int(round(geo.height() * 0.80 / scale)))
+                    return w, h
+                except Exception:
+                    return 550, 350
+
             def reset_all_settings(self):
                 """Delete the saved application configuration file and restore default settings.
                 Per-image saved configuration files (.txt saved alongside each gel) are NOT touched."""
@@ -19565,8 +19697,8 @@ if __name__ == "__main__":
                     self.ui_scale_preference = 1.0
                     self.viewer_position     = "Top"
                     self.use_gpu             = True
-                    self.viewer_fixed_width  = 550
-                    self.viewer_fixed_height = 350
+                    # Default viewer = ~80% of the screen (not the old 550x350).
+                    self.viewer_fixed_width, self.viewer_fixed_height = self._default_viewer_size()
                     self.safe_content_width  = 1000
                     self.presets_data        = {}
                     self.saved_window_width  = None
@@ -19843,10 +19975,17 @@ if __name__ == "__main__":
                 Esc reliably run the cancel logic (which reverts the green tool button),
                 regardless of which child widget currently has keyboard focus."""
                 try:
-                    if (event.type() == QEvent.KeyPress
+                    if (event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride)
                             and event.key() == Qt.Key_Escape
-                            and QApplication.activeWindow() is self
+                            # `None` covers a transient no-active-window state (seen on macOS
+                            # mid/just-after a drag); a real dialog is a non-None, non-self
+                            # window and is correctly left alone.
+                            and QApplication.activeWindow() in (self, None)
                             and self._is_interaction_mode_armed()):
+                        if event.type() == QEvent.ShortcutOverride:
+                            # Claim the key so it arrives as a normal KeyPress we handle below.
+                            event.accept()
+                            return True
                         self.keyPressEvent(event)
                         if event.isAccepted():
                             return True
@@ -20204,6 +20343,10 @@ if __name__ == "__main__":
                                 self.moving_custom_item_info = {'type': 'shape', 'index': i}
                                 self.resizing_corner_index = corner_idx
                                 self.shape_points_at_drag_start_label = handles_ls
+                                # Snapshot the thickness at grab time so arrow thickness handles
+                                # (indices 2/3) can adjust RELATIVE to it — no jump on grab.
+                                self._arrow_thickness_at_drag_start = float(
+                                    self.custom_shapes[i].get('thickness', 1))
                                 item_selected = True
                                 break
                     if item_selected: break
@@ -20441,16 +20584,36 @@ if __name__ == "__main__":
                             else:
                                 shape_data['start'], shape_data['end'] = (p1_img.x(), p1_img.y()), (p2_img.x(), p2_img.y())
                         else:
-                            # Thickness handle: use the fixed endpoints captured at drag start to
-                            # find the shaft midpoint, then set thickness from the mouse distance.
+                            # Thickness handle: RELATIVE, jump-free control. We start from the
+                            # thickness captured when the handle was grabbed and adjust it by how
+                            # far the mouse moves ALONG THE PERPENDICULAR to the shaft (movement
+                            # parallel to the shaft is ignored). Using an absolute distance from
+                            # the midpoint made thickness "jump" the instant you grabbed the
+                            # handle, because the handle floats a minimum distance off a thin
+                            # shaft and that distance mapped to a much larger thickness.
                             p_start_ls = self.shape_points_at_drag_start_label[0]
                             p_end_ls = self.shape_points_at_drag_start_label[1]
-                            mid_x = (p_start_ls.x() + p_end_ls.x()) / 2.0
-                            mid_y = (p_start_ls.y() + p_end_ls.y()) / 2.0
-                            dist_ls = math.hypot(current_mouse_pos_ls.x() - mid_x,
-                                                 current_mouse_pos_ls.y() - mid_y)
-                            new_thickness_img = max(0.5, (dist_ls * 2.0) / scale) if scale else 0.5
-                            shape_data['thickness'] = new_thickness_img
+                            dxs = p_end_ls.x() - p_start_ls.x(); dys = p_end_ls.y() - p_start_ls.y()
+                            seg_len = math.hypot(dxs, dys)
+                            if seg_len < 1e-6:
+                                ux, uy = 1.0, 0.0
+                            else:
+                                ux, uy = dxs / seg_len, dys / seg_len
+                            perp_x, perp_y = -uy, ux
+                            # Handle 2 sits on the +perp side, handle 3 on the -perp side; dragging
+                            # either one AWAY from the shaft thickens the arrow.
+                            sign = 1.0 if self.resizing_corner_index == 2 else -1.0
+                            init_mouse = self.initial_mouse_pos_for_shape_drag_label
+                            disp_x = current_mouse_pos_ls.x() - init_mouse.x()
+                            disp_y = current_mouse_pos_ls.y() - init_mouse.y()
+                            perp_disp = (disp_x * perp_x + disp_y * perp_y) * sign
+                            init_th = getattr(self, '_arrow_thickness_at_drag_start', None)
+                            if init_th is None:
+                                init_th = float(shape_data.get('thickness', 1))
+                            # Each 1 px of perpendicular mouse travel changes the half-thickness by
+                            # 1 px (label space) → 2 px of thickness, converted back to image space.
+                            new_thickness_img = init_th + (2.0 * perp_disp) / scale if scale else init_th
+                            shape_data['thickness'] = max(0.5, new_thickness_img)
 
                 self.update_live_view()
 
@@ -21183,11 +21346,11 @@ if __name__ == "__main__":
                         self.presets_data = default_presets_init.copy() # Fallback
                 else:
                     self.presets_data = default_presets_init.copy()
-                    self.viewer_position = "Top" 
-                    # Defaults for new file
+                    self.viewer_position = "Top"
+                    # Defaults for new file (first boot). Open the viewer at ~80% of the
+                    # screen instead of the tiny 550x350.
                     self.use_gpu = True
-                    self.viewer_fixed_width = 550
-                    self.viewer_fixed_height = 350
+                    self.viewer_fixed_width, self.viewer_fixed_height = self._default_viewer_size()
                     self.safe_content_width = 1000
                     
                     try:
