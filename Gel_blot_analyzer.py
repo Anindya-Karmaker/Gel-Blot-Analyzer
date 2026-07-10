@@ -19817,8 +19817,9 @@ if __name__ == "__main__":
                 Per-image saved configuration files (.txt saved alongside each gel) are NOT touched."""
                 reply = QMessageBox.warning(
                     self, "Reset All Settings",
-                    "This will delete the saved application configuration — window/viewer/UI settings, "
-                    "CPU/GPU preference, and saved marker presets — and restore the original defaults.\n\n"
+                    "This will reset the saved application configuration — window/viewer/UI settings "
+                    "and CPU/GPU preference — and restore the original defaults.\n\n"
+                    "Your saved marker presets and any custom markers on the image are NOT affected.\n"
                     "Your per-image saved configuration files are NOT affected.\n\n"
                     "The viewer size, UI width, layout and window size reset immediately (a specific "
                     "GPU-ID change would still need a restart). Continue?",
@@ -19828,8 +19829,22 @@ if __name__ == "__main__":
                 try:
                     app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
                     config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
-                    if os.path.exists(config_filepath):
-                        os.remove(config_filepath)
+                    # Reset window/viewer/UI/GPU settings, but PRESERVE the user's saved marker
+                    # presets ("marker options"): rewrite the config with ONLY the presets rather
+                    # than deleting it outright, so those presets survive both the reset and the
+                    # next launch. On-image custom markers/shapes live in memory (and in each
+                    # per-image .txt) and are never touched by this action.
+                    preserved_presets = dict(getattr(self, 'presets_data', {}) or {})
+                    try:
+                        if preserved_presets:
+                            if not os.path.exists(app_path):
+                                os.makedirs(app_path)
+                            with open(config_filepath, "w", encoding='utf-8') as f:
+                                json.dump({"presets": preserved_presets}, f, indent=4)
+                        elif os.path.exists(config_filepath):
+                            os.remove(config_filepath)
+                    except Exception:
+                        pass
 
                     # Restore ALL in-memory defaults, including the persisted window size so the
                     # layout rebuild below opens at the default size instead of the last one.
@@ -19839,7 +19854,8 @@ if __name__ == "__main__":
                     # Default viewer = fixed 550x350.
                     self.viewer_fixed_width, self.viewer_fixed_height = self._default_viewer_size()
                     self.safe_content_width  = 1000
-                    self.presets_data        = {}
+                    # NOTE: self.presets_data is intentionally NOT cleared — saved marker presets
+                    # (marker options) must survive a settings reset.
                     self.saved_window_width  = None
                     self.saved_window_height = None
                     self.saved_window_x      = None
@@ -19864,9 +19880,15 @@ if __name__ == "__main__":
                     # a restart. Suppress the incidental resize-triggered auto-save while this
                     # happens so the just-deleted config file isn't immediately re-created.
                     self._suppress_settings_save = True
+                    # Belt-and-suspenders: snapshot on-image annotations so a settings reset can
+                    # never drop them, even if the layout rebuild re-initialises marker state.
+                    _saved_custom_markers = list(getattr(self, 'custom_markers', []) or [])
+                    _saved_custom_shapes  = list(getattr(self, 'custom_shapes', []) or [])
                     try:
                         self._prepare_multilane_for_viewer_resize()
                         self._update_main_layout("Top")
+                        self.custom_markers = _saved_custom_markers
+                        self.custom_shapes  = _saved_custom_shapes
                         self.update_live_view()
                     except Exception:
                         pass
@@ -19884,7 +19906,8 @@ if __name__ == "__main__":
                         self, "Settings Reset",
                         "Application settings have been reset to defaults — viewer size, UI width, "
                         "layout arrangement and window size.\n\n"
-                        "Your per-image saved configuration files are not affected.")
+                        "Your saved marker presets and any custom markers on the image were "
+                        "preserved. Your per-image saved configuration files are not affected.")
                 except Exception as e:
                     QMessageBox.critical(self, "Reset Error", f"Could not reset settings:\n{e}")
 
@@ -26631,6 +26654,32 @@ if __name__ == "__main__":
                                 return d
                         return None
 
+                    def _char_arrow_dir(ch):
+                        for d, glyphs in _ARROW_DIRS.items():
+                            if ch in glyphs:
+                                return d
+                        return None
+
+                    def _split_arrow_segments(s):
+                        """Break a marker string into ordered ('arrow', glyph, dir) and
+                        ('text', run, None) segments so a mixed label such as '→A' exports the
+                        arrow part as a native block arrow and the letters as an editable text
+                        box. Without this, the arrow glyph is emitted as a font character and
+                        renders differently (or broken) depending on the viewer's OS/fonts."""
+                        segs = []
+                        buf = ""
+                        for ch in str(s):
+                            d = _char_arrow_dir(ch)
+                            if d is not None:
+                                if buf:
+                                    segs.append(('text', buf, None)); buf = ""
+                                segs.append(('arrow', ch, d))
+                            else:
+                                buf += ch
+                        if buf:
+                            segs.append(('text', buf, None))
+                        return segs
+
                     def _add_arrow(direction, cx, cy, box_w, box_h, color):
                         """Native PowerPoint block arrow centred on (cx, cy) (image px),
                         filling the glyph's box so it lands where the character would."""
@@ -26709,13 +26758,32 @@ if __name__ == "__main__":
                             cqf.setBold(bool(is_bold)); cqf.setItalic(bool(is_italic))
                             fm_c = QFontMetrics(cqf)
                             adv = fm_c.horizontalAdvance(str(mtext))
-                            arrow_dir = _arrow_direction(mtext)
-                            if arrow_dir is not None:
-                                # Standalone arrow glyph → native PowerPoint block arrow.
-                                _add_arrow(arrow_dir, x_pos, y_pos, adv, fm_c.height(), color)
-                            else:
-                                _add_text(str(mtext), x_pos, y_pos, adv, fm_c.height(), fsize,
+                            box_h = fm_c.height()
+                            segments = _split_arrow_segments(mtext)
+                            n_arrows = sum(1 for k, _t, _d in segments if k == 'arrow')
+                            if n_arrows == 0:
+                                # No arrow glyphs → single editable text box.
+                                _add_text(str(mtext), x_pos, y_pos, adv, box_h, fsize,
                                           fam, color, PP_ALIGN.CENTER, bold=is_bold, italic=is_italic)
+                            elif len(segments) == 1:
+                                # Standalone arrow glyph → native PowerPoint block arrow.
+                                _add_arrow(segments[0][2], x_pos, y_pos, adv, box_h, color)
+                            else:
+                                # Mixed 'arrow + text' label (e.g. '→A'): lay the segments out
+                                # left-to-right while keeping the whole run centred on
+                                # (x_pos, y_pos) exactly as the app draws the combined string.
+                                # Each arrow glyph becomes a native block arrow; letter runs stay
+                                # editable text boxes, so nothing depends on a host arrow font.
+                                cursor = x_pos - adv / 2.0
+                                for kind, seg_text, seg_dir in segments:
+                                    seg_adv = fm_c.horizontalAdvance(seg_text)
+                                    seg_cx = cursor + seg_adv / 2.0
+                                    if kind == 'arrow':
+                                        _add_arrow(seg_dir, seg_cx, y_pos, seg_adv, box_h, color)
+                                    else:
+                                        _add_text(seg_text, seg_cx, y_pos, seg_adv, box_h, fsize,
+                                                  fam, color, PP_ALIGN.CENTER, bold=is_bold, italic=is_italic)
+                                    cursor += seg_adv
                         except Exception:
                             continue
 
