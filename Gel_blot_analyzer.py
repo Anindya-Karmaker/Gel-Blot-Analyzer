@@ -2,6 +2,7 @@ import sys
 import re
 import os
 import math
+import json
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
                              QHBoxLayout, QFrame, QProgressBar, QMessageBox)
 from PySide6.QtCore import Qt
@@ -26,11 +27,164 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.1"
+APP_VERSION = "8.2"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
 APP_GLOBAL_WINDOW_WIDTH = 1000
+
+
+# ---------------------------------------------------------------------------
+# Per-dialog geometry persistence
+# ---------------------------------------------------------------------------
+# The main window remembers its size/position across runs (save_app_settings /
+# load_config). The secondary dialogs (Analysis Results & History, Advanced
+# Densitometry, Auto Gel wizard, …) did not: every open re-computed a size from
+# the screen, which on smaller displays could open larger than the desktop with
+# the OK/Cancel row pushed off-screen ("cannot be resized to fit"). These helpers
+# give any dialog the same "smart" behaviour as the main UI — restore the last
+# user-chosen size/position (clamped to the current screen so it always fits) and
+# save it again when the dialog closes. Geometry is stored in the same shared
+# config file, under a "dialog_geometries" sub-dictionary keyed by a short name.
+
+def _gba_settings_filepath():
+    """Path to the shared global-settings/preset config file (see
+    CombinedSDSApp.save_app_settings, which writes the same file)."""
+    return os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer",
+                        "Gel_Blot_Analyzer_preset_config.txt")
+
+
+def _gba_load_settings_dict():
+    """Return the shared config as a dict (empty dict on any error)."""
+    try:
+        with open(_gba_settings_filepath(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_dialog_geometry(key):
+    """Return the saved {x, y, width, height} for the dialog `key`, or None."""
+    data = _gba_load_settings_dict()
+    geos = data.get("dialog_geometries", {})
+    if isinstance(geos, dict):
+        g = geos.get(key)
+        if (isinstance(g, dict) and g.get("width") and g.get("height")):
+            return g
+    return None
+
+
+def save_dialog_geometry(key, dialog):
+    """Persist `dialog`'s current frame geometry under `key` in the shared config.
+
+    Merges into the existing file (never clobbers presets or window settings) and
+    fails silently — geometry persistence must never break closing a dialog."""
+    if not key or dialog is None:
+        return
+    try:
+        if dialog.isMinimized():
+            return
+        w = int(dialog.width())
+        h = int(dialog.height())
+        pos = dialog.pos()
+        x = int(pos.x())
+        y = int(pos.y())
+        if w <= 0 or h <= 0:
+            return
+    except Exception:
+        return
+
+    path = _gba_settings_filepath()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except Exception:
+        pass
+
+    data = _gba_load_settings_dict()
+    geos = data.get("dialog_geometries")
+    if not isinstance(geos, dict):
+        geos = {}
+    geos[key] = {"x": x, "y": y, "width": w, "height": h}
+    data["dialog_geometries"] = geos
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
+
+
+def apply_dialog_geometry(dialog, key, default_w, default_h, min_w=400, min_h=300):
+    """Size and position a dialog when it opens.
+
+    Restores the user's last saved geometry for `key` if present, otherwise uses
+    (default_w, default_h) centered on the screen. The result is ALWAYS clamped to
+    the current available screen area, so the dialog can never open larger than —
+    or off of — the visible desktop. This is what makes every dialog resizable-to-
+    fit even on small laptop screens.
+
+    Also sets a modest minimum size (clamped to the screen) so the user can shrink
+    the window down toward its layout minimum, and wires the dialog so its geometry
+    is saved automatically whenever it closes (any accept/reject/X path).
+    """
+    # Auto-save the size/position on close. QDialog.finished fires for every close
+    # path (OK, Cancel, window X); the widget keeps its geometry while hidden, so we
+    # can still read it here. Guard against double-wiring if called more than once.
+    try:
+        if not getattr(dialog, "_geom_autosave_wired", False):
+            dialog.finished.connect(
+                lambda _r, d=dialog, k=key: save_dialog_geometry(k, d))
+            dialog._geom_autosave_wired = True
+    except Exception:
+        pass
+
+    try:
+        screen = dialog.screen() if dialog.screen() else QGuiApplication.primaryScreen()
+    except Exception:
+        screen = QGuiApplication.primaryScreen()
+    avail = screen.availableGeometry() if screen else None
+
+    saved = load_dialog_geometry(key)
+    if saved:
+        w = int(saved.get("width", default_w))
+        h = int(saved.get("height", default_h))
+        x = saved.get("x", None)
+        y = saved.get("y", None)
+    else:
+        w = int(default_w)
+        h = int(default_h)
+        x = y = None
+
+    if avail is not None:
+        max_w, max_h = avail.width(), avail.height()
+        # Allow shrinking to min_w/min_h but never require more than the screen.
+        eff_min_w = min(min_w, max_w)
+        eff_min_h = min(min_h, max_h)
+        try:
+            dialog.setMinimumSize(eff_min_w, eff_min_h)
+        except Exception:
+            pass
+        w = max(min(w, max_w), eff_min_w)
+        h = max(min(h, max_h), eff_min_h)
+    else:
+        w = max(w, min_w)
+        h = max(h, min_h)
+
+    dialog.resize(w, h)
+
+    if avail is not None:
+        if x is None or y is None:
+            x = avail.x() + max(0, (avail.width() - w) // 2)
+            y = avail.y() + max(0, (avail.height() - h) // 2)
+        else:
+            x = int(x)
+            y = int(y)
+            x = min(max(x, avail.x()), avail.x() + avail.width() - w)
+            y = min(max(y, avail.y()), avail.y() + avail.height() - h)
+        try:
+            dialog.move(x, y)
+        except Exception:
+            pass
 
 
 def _resource_candidates(filename):
@@ -366,7 +520,7 @@ if __name__ == "__main__":
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
-            QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget,
+            QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, QListWidgetItem,
             QStackedWidget, QProgressDialog, QSplitter,
         )
         from PySide6.QtGui import (
@@ -608,6 +762,37 @@ if __name__ == "__main__":
                         '<circle cx="19" cy="19" r="3" fill="%s"/>' % (c, c))
             return ("0 0 24 24", '<circle cx="12" cy="12" r="5" fill="%s"/>' % c)
 
+        # Matplotlib text is sized in POINTS, so it ignores the app's UI % scaling that
+        # drives every Qt widget — the graphs kept their fonts while the rest of the
+        # interface grew or shrank. Every on-screen plot sizes its text through plot_font():
+        # ONE size (Settings ▸ Plot Font Size) shared by titles, axis labels, tick labels,
+        # legends and annotations, multiplied by the UI Scale so it follows the scale
+        # automatically.
+        # NOTE: on-screen plots only. The PDF report builds a fixed-size document and
+        # deliberately keeps its own absolute point sizes.
+        _FALLBACK_PLOT_FONT_SIZE = 8.0
+
+        def plot_font(app, _legacy_base_pt=None):
+            """Point size for on-screen matplotlib text.
+
+            Every graph element uses this single size, so labels, ticks and legends always
+            match. It is the user's Plot Font Size preference multiplied by the UI Scale.
+            `_legacy_base_pt` is accepted and ignored: call sites used to pass a per-element
+            size, and keeping the parameter avoids a flag-day change across every plot.
+            """
+            try:
+                s = float(getattr(app, 'ui_scale_preference', 1.0) or 1.0)
+            except (TypeError, ValueError):
+                s = 1.0
+            if s <= 0.1:
+                s = 1.0
+            try:
+                base = float(getattr(app, 'plot_font_size', _FALLBACK_PLOT_FONT_SIZE)
+                             or _FALLBACK_PLOT_FONT_SIZE)
+            except (TypeError, ValueError):
+                base = _FALLBACK_PLOT_FONT_SIZE
+            return max(3.0, base * s)
+
         def create_vector_icon(name: str, icon_size: QSize, color: QColor) -> QIcon:
             """Render a toolbar icon from its SVG definition via QSvgRenderer, so every icon
             looks identical on all computers (no font/glyph dependency) and stays crisp at any
@@ -653,7 +838,11 @@ if __name__ == "__main__":
                         initial_calibration=None):
                 super().__init__(parent_app)
                 self.setWindowTitle("Prediction & Calibration")
-                self.setMinimumSize(650, 700)
+                # Restore last size/position (clamped to screen so it always fits);
+                # the old fixed 650x700 minimum could exceed small laptop screens.
+                self._geometry_key = "prediction_calibration"
+                apply_dialog_geometry(self, self._geometry_key, 650, 700,
+                                      min_w=520, min_h=460)
 
                 self.parent_app = parent_app
                 self.all_marker_positions = all_marker_positions
@@ -927,9 +1116,11 @@ if __name__ == "__main__":
                 self.ax.axvline(norm_protein_pos, color="orange", linestyle="-", label="Target")
                 self.ax.plot(norm_protein_pos, final_log_mw, 'o', color="orange", markersize=8)
 
-                self.ax.set_ylabel("Log(MW)")
-                self.ax.set_xlabel("Normalized Distance")
-                self.ax.legend(fontsize='x-small', loc='best')
+                _fs = lambda pt=None: plot_font(self.parent_app, pt)
+                self.ax.set_ylabel("Log(MW)", fontsize=_fs(10))
+                self.ax.set_xlabel("Normalized Distance", fontsize=_fs(10))
+                self.ax.tick_params(axis='both', which='major', labelsize=_fs(9))
+                self.ax.legend(fontsize=_fs(8.33), loc='best')
                 self.ax.grid(True, linestyle=':', linewidth=0.5)
                 self.fig.tight_layout(pad=0.5)
                 self.canvas.draw()
@@ -973,7 +1164,11 @@ if __name__ == "__main__":
             def __init__(self, sequence, base_mw, glycan_mass, num_oligomers, num_glycans_prev, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Protein Size Analysis")
-                self.setMinimumSize(900, 700) 
+                # Restore last size/position (clamped to screen so it always fits);
+                # the old fixed 900x700 minimum could exceed small laptop screens.
+                self._geometry_key = "protein_size_analysis"
+                apply_dialog_geometry(self, self._geometry_key, 900, 700,
+                                      min_w=620, min_h=480)
 
                 if parent and hasattr(parent, 'styleSheet'):
                     self.setStyleSheet(parent.styleSheet())
@@ -1647,7 +1842,11 @@ if __name__ == "__main__":
             def __init__(self, markers_list, shapes_list, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Modify Custom Markers and Shapes")
-                self.setMinimumSize(950, 650)
+                # Restore last size/position (clamped to screen so it always fits);
+                # the old fixed 950x650 minimum could exceed small laptop screens.
+                self._geometry_key = "modify_markers"
+                apply_dialog_geometry(self, self._geometry_key, 950, 650,
+                                      min_w=680, min_h=480)
         
                 # The data model: two lists for markers to handle scaling correctly, one for shapes.
                 self._original_markers_data = [tuple(m) for m in markers_list] # Pristine backup for scaling
@@ -2097,11 +2296,17 @@ if __name__ == "__main__":
                          parent_app_instance=None, peak_details_data=None):
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
-                
+
+                # Remember the user's last size/position (clamped to the current
+                # screen so it always fits); default to ~half-width / three-quarter
+                # height on first open. See apply_dialog_geometry / save_dialog_geometry.
+                self._geometry_key = "analysis_results"
                 screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
-                w = min(int(screen_geometry.width() * 0.5), 1200)
-                h = min(int(screen_geometry.height() * 0.75), screen_geometry.height())
-                self.resize(max(600, w), max(500, h))
+                default_w = min(int(screen_geometry.width() * 0.5), 1200)
+                default_h = min(int(screen_geometry.height() * 0.75), screen_geometry.height())
+                apply_dialog_geometry(self, self._geometry_key,
+                                      max(600, default_w), max(500, default_h),
+                                      min_w=600, min_h=450)
                 self.temp_clipboard_file_path = None
                 self.parent_app = parent_app_instance
                 self.current_results_data = {} 
@@ -2207,8 +2412,18 @@ if __name__ == "__main__":
                 self.accept()
 
             def _create_current_results_tab(self):
+                # The page scrolls as a whole: on a short window the standard curve, the
+                # band table and the lane preview no longer get squeezed until the preview
+                # image is clipped — a vertical scrollbar appears instead.
                 current_tab_widget = QWidget()
-                current_main_layout = QVBoxLayout(current_tab_widget)
+                tab_outer_layout = QVBoxLayout(current_tab_widget)
+                tab_outer_layout.setContentsMargins(0, 0, 0, 0)
+                current_page_scroll = QScrollArea()
+                current_page_scroll.setWidgetResizable(True)
+                current_page_scroll.setFrameShape(QFrame.NoFrame)
+                current_page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                current_page_content = QWidget()
+                current_main_layout = QVBoxLayout(current_page_content)
                 current_main_layout.setSpacing(10)
                 name_group = QGroupBox("Analysis Identification")
                 name_layout = QHBoxLayout(name_group)
@@ -2224,12 +2439,24 @@ if __name__ == "__main__":
                 model_layout_current.addWidget(QLabel("Regression Model:"))
                 self.model_combo_current = QComboBox()
                 self.model_combo_current.addItems(self._get_available_models())
+                # Reopen on the model the results were last quantified with (restored from
+                # the analysis file), not always "Linear". blockSignals: the display update
+                # this would fire needs widgets that don't exist yet.
+                _saved_model = str(getattr(self.parent_app, 'latest_standard_curve_model', '') or '')
+                _mi = self.model_combo_current.findText(_saved_model)
+                if _mi >= 0:
+                    self.model_combo_current.blockSignals(True)
+                    self.model_combo_current.setCurrentIndex(_mi)
+                    self.model_combo_current.blockSignals(False)
+                    self.current_model_name = _saved_model
                 self.model_combo_current.currentTextChanged.connect(lambda: self._update_analysis_display_for_tab(is_for_history=False))
                 model_layout_current.addWidget(self.model_combo_current, 1)
                 plot_layout_current.addLayout(model_layout_current)
                 self.plot_placeholder_current = QWidget() # Placeholder for the canvas
                 plot_layout_current.addWidget(self.plot_placeholder_current, 1)
-                self.plot_group_current.setMinimumHeight(280)
+                # Height is set by _apply_plot_group_sizing(): tall when there is a curve to
+                # draw, collapsed to the model row when there are no standards (an empty
+                # 280 px box used to push the band preview out of view).
                 current_main_layout.addWidget(self.plot_group_current)
 
                 results_group = QGroupBox("Band Analysis")
@@ -2238,7 +2465,17 @@ if __name__ == "__main__":
                 self.results_display_layout_current = QVBoxLayout(results_display_area)
                 self.results_display_layout_current.setContentsMargins(0,0,0,0)
                 results_layout.addWidget(results_display_area)
-                current_main_layout.addWidget(results_group, 1)
+                self._apply_plot_group_sizing(self.plot_group_current,
+                                              bool(self.current_standard_dictionary))
+                current_page_scroll.setWidget(current_page_content)
+                # Only the identification + standard-curve blocks scroll with the page; Band
+                # Analysis sits below it and takes all the height that's left. Putting it in
+                # the page scroll instead let the table grow to its full row count, so it
+                # never scrolled on its own — and then there was no table scrollbar to keep
+                # in step with the lane image.
+                tab_outer_layout.addWidget(current_page_scroll, 0)
+                results_group.setMinimumHeight(240)
+                tab_outer_layout.addWidget(results_group, 1)
                 current_buttons_layout = QHBoxLayout()
                 copy_current_button = QPushButton("Copy Active Lane Table")
                 copy_current_button.clicked.connect(self._copy_active_lane_table_data)
@@ -2256,8 +2493,23 @@ if __name__ == "__main__":
                     "anyone replicate this analysis.")
                 export_pdf_current_button.clicked.connect(self._export_current_to_pdf)
                 current_buttons_layout.addWidget(copy_current_button); current_buttons_layout.addStretch(); current_buttons_layout.addWidget(export_pdf_current_button); current_buttons_layout.addWidget(export_current_button)
-                current_main_layout.addLayout(current_buttons_layout)
+                # Buttons live OUTSIDE the scroll area so they stay reachable at any size.
+                current_buttons_layout.setContentsMargins(9, 4, 9, 4)
+                tab_outer_layout.addLayout(current_buttons_layout)
                 self.tab_widget.addTab(current_tab_widget, "Current Analysis")
+
+            def _apply_plot_group_sizing(self, group_box, has_standard_curve):
+                """Give the Standard Curve box room only when a curve is actually drawn.
+                Without standards the plot area renders a blank placeholder, so the box
+                collapses to its model-selector row and the space goes to Band Analysis."""
+                if group_box is None:
+                    return
+                if has_standard_curve:
+                    group_box.setMinimumHeight(280)
+                    group_box.setMaximumHeight(16777215)
+                else:
+                    group_box.setMinimumHeight(0)
+                    group_box.setMaximumHeight(group_box.sizeHint().height() + 8)
 
             def _create_previous_results_tab(self):
                 previous_tab_widget = QWidget()
@@ -2288,7 +2540,7 @@ if __name__ == "__main__":
                 self.previous_plot_placeholder_label = QLabel("Select an analysis from the list to view details.\n"); self.previous_plot_placeholder_label.setAlignment(Qt.AlignCenter)
                 self.plot_placeholder_history.setLayout(QVBoxLayout()); self.plot_placeholder_history.layout().addWidget(self.previous_plot_placeholder_label)
                 self.previous_plot_groupbox_layout.addWidget(self.plot_placeholder_history, 1)
-                self.previous_plot_groupbox.setMinimumHeight(280)
+                self._apply_plot_group_sizing(self.previous_plot_groupbox, False)
                 right_layout.addWidget(self.previous_plot_groupbox)
 
                 self.history_results_display_container = QWidget()
@@ -2339,6 +2591,8 @@ if __name__ == "__main__":
                                 widget.deleteLater()
                     layout.addWidget(new_plot)
                     self.plot_placeholder_history.layout().addWidget(new_plot)
+                    self._apply_plot_group_sizing(self.previous_plot_groupbox,
+                                                  bool(std_dict) and len(std_dict) >= 2)
 
                     # Update tables
                     old_content = self.history_results_display_layout.takeAt(0).widget()
@@ -2349,6 +2603,10 @@ if __name__ == "__main__":
                 else: # For current tab
                     model_name = self.model_combo_current.currentText()
                     self.current_model_name = model_name # Store for saving history
+                    # Remember it on the app so it is written to the analysis file and the
+                    # window reopens with the same model.
+                    if self.parent_app is not None:
+                        self.parent_app.latest_standard_curve_model = model_name
 
                     if self.current_standard_dictionary and self.parent_app:
                         std_qtys = list(self.current_standard_dictionary.keys())
@@ -2365,6 +2623,9 @@ if __name__ == "__main__":
                     if old_widget: old_widget.deleteLater()
                     if not self.plot_placeholder_current.layout(): self.plot_placeholder_current.setLayout(QVBoxLayout())
                     self.plot_placeholder_current.layout().addWidget(new_plot)
+                    self._apply_plot_group_sizing(
+                        self.plot_group_current,
+                        bool(self.current_standard_dictionary) and len(self.current_standard_dictionary) >= 2)
                     
                     old_content = self.results_display_layout_current.takeAt(0).widget() if self.results_display_layout_current.count() > 0 else None
                     if old_content: old_content.deleteLater()
@@ -2458,6 +2719,8 @@ if __name__ == "__main__":
                 is_std_mode = bool(standard_dictionary)
                 if not is_std_mode or len(standard_dictionary) < 2:
                     return QLabel(" ", alignment=Qt.AlignCenter)
+                # Graph text follows the Plot Font Size setting x UI Scale.
+                _fs = lambda pt=None: plot_font(self.parent_app, pt)
                 try:
                     quantities = np.array(list(standard_dictionary.keys()), dtype=float)
                     areas = np.array(list(standard_dictionary.values()), dtype=float)
@@ -2508,12 +2771,15 @@ if __name__ == "__main__":
                          pass # print(f"Fit Error: {fit_error}")
                          ax.text(0.5, 0.5, f"Could not fit\n{model_name}", ha='center', va='center', color='red', transform=ax.transAxes)
 
-                    ax.set_xlabel('Known Quantity', fontsize=8); ax.set_ylabel('Measured Peak Area', fontsize=8)
-                    ax.set_title('Standard Curve', fontsize=9, fontweight='bold')
-                    leg = ax.legend(fontsize='xx-small', loc='best'); leg.get_frame().set_facecolor(ax.get_facecolor())
+                    ax.set_xlabel('Known Quantity', fontsize=_fs(8)); ax.set_ylabel('Measured Peak Area', fontsize=_fs(8))
+                    ax.set_title('Standard Curve', fontsize=_fs(9), fontweight='bold')
+                    leg = ax.legend(fontsize=_fs(5.79), loc='best'); leg.get_frame().set_facecolor(ax.get_facecolor())
                     for text in leg.get_texts(): text.set_color(text_color)
                     ax.grid(True, linestyle=':', alpha=0.7, linewidth=0.5, color=grid_color)
-                    ax.tick_params(axis='both', which='major', labelsize=7)
+                    ax.tick_params(axis='both', which='major', labelsize=_fs(7))
+                    for _ax_name in ('xaxis', 'yaxis'):
+                        _off = getattr(ax, _ax_name).get_offset_text()
+                        _off.set_fontsize(_fs(7)); _off.set_color(text_color)
                     if np.any(areas > 1e4) or (np.any(areas < 1e-2) and np.any(areas != 0)): ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0), useMathText=True)
                     if np.any(quantities > 1e4) or (np.any(quantities < 1e-2) and np.any(quantities != 0)): ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
                     try: fig.set_constrained_layout(True)
@@ -2717,24 +2983,54 @@ if __name__ == "__main__":
                 return None
 
 
+            def _link_vertical_scrollbars(self, bar_a, bar_b):
+                """Make two vertical scrollbars travel together by POSITION FRACTION, so the
+                band table and the lane image stay in register: scroll down to Band 8 in the
+                table and the picture scrolls to the same part of the lane (and vice versa).
+                Their ranges differ wildly (table rows vs image pixels), hence the fraction.
+                A shared re-entrancy guard stops the two from driving each other in a loop,
+                and a bar with no range to scroll is simply left alone."""
+                if bar_a is None or bar_b is None:
+                    return
+                state = {'syncing': False}
+
+                def _follow(src, dst):
+                    def _on_value(value):
+                        if state['syncing']:
+                            return
+                        src_span = src.maximum() - src.minimum()
+                        dst_span = dst.maximum() - dst.minimum()
+                        if src_span <= 0 or dst_span <= 0:
+                            return
+                        frac = (value - src.minimum()) / float(src_span)
+                        state['syncing'] = True
+                        try:
+                            dst.setValue(int(round(dst.minimum() + frac * dst_span)))
+                        finally:
+                            state['syncing'] = False
+                    return _on_value
+
+                bar_a.valueChanged.connect(_follow(bar_a, bar_b))
+                bar_b.valueChanged.connect(_follow(bar_b, bar_a))
+
             def _create_lane_data_display_widget(self, lane_id, peak_areas, calculated_quantities, is_std_mode,
                                                 pil_lane_image=None, peak_details_for_lane=None, is_for_history=False,
                                                 font_registry=None, on_font_size_changed=None):
                 lane_widget = QWidget()
                 lane_layout = QHBoxLayout(lane_widget)
 
-                # --- Table (left side, unchanged) ---
-                table_scroll_area = QScrollArea()
-                table_scroll_area.setWidgetResizable(True)
+                # --- Table (left side) ---
+                # No QScrollArea wrapper: a QTableWidget scrolls itself, and wrapping it
+                # produced a second, redundant scrollbar right next to the table's own.
                 table_for_lane = QTableWidget()
                 table_for_lane.setColumnCount(4)
                 table_for_lane.setHorizontalHeaderLabels(["Band", "Peak Area", "Percentage (%)", "Quantity (Unit)"])
                 table_for_lane.setEditTriggers(QTableWidget.NoEditTriggers)
                 table_for_lane.setSelectionBehavior(QTableWidget.SelectRows)
+                table_for_lane.setMinimumHeight(120)
                 single_lane_data = {1: {'areas': peak_areas, 'quantities': calculated_quantities}}
                 self._populate_table_generic(table_for_lane, single_lane_data, is_std_mode, is_multi_lane_data=False)
-                table_scroll_area.setWidget(table_for_lane)
-                lane_layout.addWidget(table_scroll_area, 3)
+                lane_layout.addWidget(table_for_lane, 3)
 
                 # --- Image preview (right side) ---
                 if pil_lane_image and not is_for_history:
@@ -2758,15 +3054,42 @@ if __name__ == "__main__":
                     font_ctrl_layout.addStretch()
                     image_panel_layout.addLayout(font_ctrl_layout)
 
-                    # Aspect-ratio-preserving image label
+                    # Aspect-ratio-preserving image label.
+                    # The lane is shown at (most of) the panel width and asks its scroll area
+                    # for the height that width implies, so the bands stay big enough to read
+                    # and the panel scrolls down through them (rather than shrinking the whole
+                    # lane to thumbnail size). A lane short enough to fit just fills the panel
+                    # and doesn't scroll at all.
                     class AspectLabel(QLabel):
+                        # Fraction of the panel width the lane is drawn at. Full width made
+                        # the preview overbearing, so it's scaled back 30% — that also means
+                        # 30% less scrolling to walk the whole lane.
+                        WIDTH_FRACTION = 0.7
+
                         def __init__(self, *args, **kwargs):
                             super().__init__(*args, **kwargs)
                             self._source_pixmap = None
 
                         def setSourcePixmap(self, px):
                             self._source_pixmap = px
+                            self._apply_natural_height()
                             self._refresh()
+
+                        def _apply_natural_height(self):
+                            px = self._source_pixmap
+                            if not px or px.isNull() or px.width() <= 0:
+                                return
+                            # Fit the panel width (less WIDTH_FRACTION), but never magnify past
+                            # the lane's own pixels — beyond 1:1 you only get a blurrier
+                            # picture and more scrolling for the same information.
+                            draw_w = self.width() * self.WIDTH_FRACTION
+                            want = min(int(round(draw_w * px.height() / float(px.width()))),
+                                       int(round(px.height() * self.WIDTH_FRACTION)))
+                            # Only react to real changes: setMinimumHeight re-enters
+                            # resizeEvent, and a 1px tolerance stops that from oscillating
+                            # when the scrollbar appears/disappears.
+                            if abs(self.minimumHeight() - want) > 1:
+                                self.setMinimumHeight(max(1, want))
 
                         def _refresh(self):
                             if self._source_pixmap and not self._source_pixmap.isNull():
@@ -2775,6 +3098,7 @@ if __name__ == "__main__":
                                 super().setPixmap(scaled)
 
                         def resizeEvent(self, event):
+                            self._apply_natural_height()
                             self._refresh()
                             super().resizeEvent(event)
 
@@ -2785,6 +3109,18 @@ if __name__ == "__main__":
                     # White background, subtle border
                     lane_image_label.setStyleSheet(
                         "border: 1px solid #C0C5CB; background-color: white; border-radius: 4px;")
+
+                    # The preview keeps its minimum size inside a scroll area, so a short
+                    # panel scrolls to the rest of the lane instead of clipping the bands
+                    # off the bottom. With room to spare the label grows and the pixmap is
+                    # re-scaled to fit, exactly as before.
+                    lane_image_scroll = QScrollArea()
+                    lane_image_scroll.setWidgetResizable(True)
+                    lane_image_scroll.setFrameShape(QFrame.NoFrame)
+                    lane_image_scroll.setAlignment(Qt.AlignCenter)
+                    lane_image_scroll.setMinimumHeight(90)
+                    lane_image_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+                    lane_image_scroll.setWidget(lane_image_label)
 
                     # Capture variables explicitly to avoid closure scoping bugs
                     def _refresh_image(
@@ -2813,8 +3149,12 @@ if __name__ == "__main__":
                     # Initial render
                     _refresh_image()
 
-                    image_panel_layout.addWidget(lane_image_label, 1)
+                    image_panel_layout.addWidget(lane_image_scroll, 1)
                     lane_layout.addWidget(image_panel, 1)
+
+                    # Scroll the band list and the band picture as one.
+                    self._link_vertical_scrollbars(table_for_lane.verticalScrollBar(),
+                                                   lane_image_scroll.verticalScrollBar())
 
                 return lane_widget
             def _copy_active_lane_table_data(self):
@@ -3741,16 +4081,14 @@ if __name__ == "__main__":
                 self.parent_app = parent
                 self.setWindowTitle("Advanced Densitometry & Band Analysis")
 
-                screen_geometry = QGuiApplication.primaryScreen().availableGeometry()
-                screen_width = screen_geometry.width()
-                screen_height = screen_geometry.height()
-
-                # Open at a size similar to the main UI window (tracked in the global
-                # APP_GLOBAL_WINDOW_* vars), clamped to the available screen.
-                dialog_width = min(max(800, int(APP_GLOBAL_WINDOW_WIDTH)), screen_width)
-                dialog_height = min(max(700, int(APP_GLOBAL_WINDOW_HEIGHT)), screen_height)
-
-                self.resize(dialog_width, dialog_height)
+                # First open: size similar to the main UI window (tracked in the global
+                # APP_GLOBAL_WINDOW_* vars). Thereafter restore the user's last size/
+                # position — always clamped to the available screen so it fits.
+                self._geometry_key = "peak_area"
+                apply_dialog_geometry(self, self._geometry_key,
+                                      max(800, int(APP_GLOBAL_WINDOW_WIDTH)),
+                                      max(700, int(APP_GLOBAL_WINDOW_HEIGHT)),
+                                      min_w=700, min_h=520)
 
                 if isinstance(cropped_data, list):
                     for item in cropped_data:
@@ -3769,10 +4107,32 @@ if __name__ == "__main__":
                 # still blank.
                 self.lane_mw_labels = {}
                 self.mwm_lane_ids = set()
+                # Per-lane preset name (so switching lanes restores the picker exactly as the
+                # user left it) and the set of band indices whose LABEL the user hid.
+                self.lane_mwm_preset = {}
+                self.lane_mw_hidden = {}
+                _presets_lib = getattr(parent, 'presets_data', None) or {}
+
+                def _infer_preset(values):
+                    """Name the ladder whose values these are, so the picker opens on the
+                    user's actual marker instead of a hard-coded default."""
+                    if not values:
+                        return "Custom"
+                    for _name, _cfg in _presets_lib.items():
+                        if not isinstance(_cfg, dict):
+                            continue
+                        if [str(v).strip() for v in (_cfg.get("marker_values") or [])] == values:
+                            return _name
+                    return "Custom"
+
                 for lane in self.lanes_data:
                     if lane.get('is_mwm') or lane.get('mw_labels'):
-                        self.mwm_lane_ids.add(lane['id'])
-                        self.lane_mw_labels[lane['id']] = [str(v) for v in (lane.get('mw_labels') or [])]
+                        lid = lane['id']
+                        vals = [str(v).strip() for v in (lane.get('mw_labels') or [])]
+                        self.mwm_lane_ids.add(lid)
+                        self.lane_mw_labels[lid] = vals
+                        self.lane_mw_hidden[lid] = set(int(i) for i in (lane.get('mw_hidden') or []))
+                        self.lane_mwm_preset[lid] = str(lane.get('mwm_preset') or _infer_preset(vals))
 
                 self.lanes_state = {}
                 for lane in self.lanes_data:
@@ -3810,7 +4170,7 @@ if __name__ == "__main__":
                 main_layout = QVBoxLayout(self)
                 main_layout.setSpacing(10)
                 self.fig = plt.figure(figsize=(10, 4))
-                gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.1, figure=self.fig)
+                gs = self._make_plot_gridspec(height_ratios=[3, 1])
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
                 self.canvas = FigureCanvas(self.fig)
@@ -3821,7 +4181,7 @@ if __name__ == "__main__":
                 self.canvas.mpl_connect('button_release_event', self.on_canvas_release)
                 # Keep the graph from being squashed by the controls below, but keep it
                 # compact (~half the previous height) so the controls get more room.
-                self.canvas.setMinimumHeight(180)
+                self._apply_canvas_min_height()
                 main_layout.addWidget(self.canvas, stretch=1)
 
                 # --- Live quality / diagnostics readout -------------------------------- #
@@ -3835,19 +4195,23 @@ if __name__ == "__main__":
                 )
                 main_layout.addWidget(self.quality_label)
 
-                controls_main_hbox = QHBoxLayout()
-                left_controls_vbox = QVBoxLayout()
-
-                # Lane selector dropdown
+                # Lane selector: lives OUTSIDE the scrolling controls area (added to
+                # main_layout right below the plot) so it stays put while the settings
+                # underneath scroll — switching lanes is the thing you do most often here,
+                # and it used to scroll away with everything else.
                 if len(self.lanes_data) > 1:
                     self.lane_selector_layout = QHBoxLayout()
+                    self.lane_selector_layout.setContentsMargins(4, 0, 4, 0)
                     self.lane_selector_layout.addWidget(QLabel("<b>Select Lane:</b>"))
                     self.lane_combo = QComboBox()
                     for lane in self.lanes_data:
                         self.lane_combo.addItem(f"Lane {lane['id']}", lane['id'])
                     self.lane_combo.currentIndexChanged.connect(self._on_lane_selection_changed)
-                    self.lane_selector_layout.addWidget(self.lane_combo)
-                    left_controls_vbox.addLayout(self.lane_selector_layout)
+                    self.lane_selector_layout.addWidget(self.lane_combo, 1)
+                    main_layout.addLayout(self.lane_selector_layout)
+
+                controls_main_hbox = QHBoxLayout()
+                left_controls_vbox = QVBoxLayout()
 
                 # --- Molecular Weight Marker picker (visible only for MWM/ladder lanes) ---
                 self.mwm_group = QGroupBox("Molecular Weight Marker (ladder lane)")
@@ -3869,6 +4233,34 @@ if __name__ == "__main__":
                     "Values assigned to the detected bands (top → bottom). A blank entry "
                     "(e.g. '250, , 100') leaves that band detected but unlabeled.")
                 _mwm_grid.addWidget(self.mwm_values_edit, 1, 1)
+
+                # --- Per-band label visibility ---------------------------------- #
+                # Un-tick a band to keep it detected (and its area measured) but leave its
+                # MW label off the gel and off the profile plot.
+                _mwm_grid.addWidget(QLabel("Show labels:"), 2, 0, Qt.AlignTop)
+                self.mwm_visibility_list = QListWidget()
+                self.mwm_visibility_list.setToolTip(
+                    "Which detected bands get their molecular-weight label drawn.\n"
+                    "Un-tick a band to hide just its label — the band is still detected and "
+                    "its area is still measured/exported.\n"
+                    "Use the buttons below to tick or un-tick everything at once.")
+                self.mwm_visibility_list.setMaximumHeight(110)
+                self.mwm_visibility_list.setAlternatingRowColors(True)
+                self.mwm_visibility_list.itemChanged.connect(self._on_mwm_visibility_item_changed)
+                _mwm_grid.addWidget(self.mwm_visibility_list, 2, 1)
+
+                _vis_btn_row = QHBoxLayout()
+                _show_all_btn = QPushButton("Show all")
+                _show_all_btn.setToolTip("Label every detected band")
+                _show_all_btn.clicked.connect(lambda: self._set_all_mwm_labels_visible(True))
+                _hide_all_btn = QPushButton("Hide all")
+                _hide_all_btn.setToolTip("Hide every MW label (bands stay detected)")
+                _hide_all_btn.clicked.connect(lambda: self._set_all_mwm_labels_visible(False))
+                _vis_btn_row.addWidget(_show_all_btn)
+                _vis_btn_row.addWidget(_hide_all_btn)
+                _vis_btn_row.addStretch()
+                _mwm_grid.addLayout(_vis_btn_row, 3, 1)
+
                 left_controls_vbox.addWidget(self.mwm_group)
                 self.mwm_preset_combo.currentTextChanged.connect(self._on_mwm_preset_changed)
                 self.mwm_values_edit.textChanged.connect(self._on_mwm_values_changed)
@@ -5026,33 +5418,140 @@ if __name__ == "__main__":
                 self.update_plot()
 
             def _refresh_mwm_picker(self):
-                """Show the MW-marker picker only for MWM/ladder lanes and sync its field
-                to the current lane's stored MW labels."""
+                """Show the MW-marker picker only for MWM/ladder lanes and sync every field
+                (preset, values, per-band label visibility) to the current lane's state."""
                 if not hasattr(self, 'mwm_group'):
                     return
                 lid = getattr(self, 'current_lane_id', None)
                 is_mwm = lid in getattr(self, 'mwm_lane_ids', set())
                 self.mwm_group.setVisible(bool(is_mwm))
-                if is_mwm:
-                    vals = self.lane_mw_labels.get(lid, [])
-                    self.mwm_values_edit.blockSignals(True)
-                    self.mwm_values_edit.setText(", ".join(str(v) for v in vals))
-                    self.mwm_values_edit.blockSignals(False)
+                if not is_mwm:
+                    return
+
+                vals = self.lane_mw_labels.get(lid, [])
+                self.mwm_values_edit.blockSignals(True)
+                self.mwm_values_edit.setText(", ".join(str(v) for v in vals))
+                self.mwm_values_edit.blockSignals(False)
+
+                # Restore this lane's preset selection (never clobber the user's choice with
+                # the hard-coded default — that was the "it reverts to Bio-Rad" bug).
+                preset = self.lane_mwm_preset.get(lid, "Custom")
+                idx = self.mwm_preset_combo.findText(preset)
+                self.mwm_preset_combo.blockSignals(True)
+                self.mwm_preset_combo.setCurrentIndex(idx if idx >= 0 else
+                                                      self.mwm_preset_combo.findText("Custom"))
+                self.mwm_preset_combo.blockSignals(False)
+
+                self._rebuild_mwm_visibility_list()
+
+            def _mwm_band_count(self):
+                """How many bands are currently detected in the active lane."""
+                try:
+                    return len(self.peaks)
+                except Exception:
+                    return 0
+
+            def _rebuild_mwm_visibility_list(self):
+                """Re-populate the per-band 'Show labels' checklist for the current lane.
+                One row per DETECTED band (top → bottom) showing the MW value it will carry;
+                ticked = label drawn, un-ticked = label hidden."""
+                if not hasattr(self, 'mwm_visibility_list'):
+                    return
+                lid = getattr(self, 'current_lane_id', None)
+                if lid is None or lid not in getattr(self, 'mwm_lane_ids', set()):
+                    return
+                vals = self.lane_mw_labels.get(lid, [])
+                hidden = self.lane_mw_hidden.setdefault(lid, set())
+                n = max(self._mwm_band_count(), len(vals))
+
+                self.mwm_visibility_list.blockSignals(True)
+                self.mwm_visibility_list.clear()
+                for i in range(n):
+                    val = str(vals[i]).strip() if i < len(vals) else ""
+                    text = f"Band {i + 1}: {val}" if val else f"Band {i + 1}: (no value)"
+                    item = QListWidgetItem(text)
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setCheckState(Qt.Unchecked if i in hidden else Qt.Checked)
+                    item.setData(Qt.UserRole, i)
+                    self.mwm_visibility_list.addItem(item)
+                self.mwm_visibility_list.blockSignals(False)
+
+            def _on_mwm_visibility_item_changed(self, item):
+                lid = getattr(self, 'current_lane_id', None)
+                if lid is None:
+                    return
+                idx = item.data(Qt.UserRole)
+                if idx is None:
+                    return
+                hidden = self.lane_mw_hidden.setdefault(lid, set())
+                if item.checkState() == Qt.Checked:
+                    hidden.discard(int(idx))
+                else:
+                    hidden.add(int(idx))
+                try:
+                    self.update_plot()
+                except Exception:
+                    pass
+
+            def _set_all_mwm_labels_visible(self, visible):
+                lid = getattr(self, 'current_lane_id', None)
+                if lid is None:
+                    return
+                if visible:
+                    self.lane_mw_hidden[lid] = set()
+                else:
+                    n = max(self._mwm_band_count(), len(self.lane_mw_labels.get(lid, [])))
+                    self.lane_mw_hidden[lid] = set(range(n))
+                self._rebuild_mwm_visibility_list()
+                try:
+                    self.update_plot()
+                except Exception:
+                    pass
+
+            def visible_mw_labels_for_lane(self, lane_id):
+                """The lane's MW values with hidden bands blanked out.
+                This is what callers should place on the gel: a blank label renders nothing,
+                so the band keeps its position/area but shows no text."""
+                vals = [str(v).strip() for v in self.lane_mw_labels.get(lane_id, [])]
+                hidden = self.lane_mw_hidden.get(lane_id, set())
+                return ["" if i in hidden else v for i, v in enumerate(vals)]
 
             def _on_mwm_preset_changed(self, name):
+                lid = getattr(self, 'current_lane_id', None)
+                if lid is not None:
+                    self.lane_mwm_preset[lid] = name
                 if name and name != "Custom":
                     cfg = (getattr(self, '_mwm_preset_map', {}) or {}).get(name)
                     vals = list(cfg.get("marker_values", []) or []) if isinstance(cfg, dict) else []
                     if vals:
-                        self.mwm_values_edit.setText(", ".join(str(v) for v in vals))
+                        # Switching ladders re-numbers the bands, so old hides no longer mean
+                        # anything — start from "everything labeled".
+                        if lid is not None:
+                            self.lane_mw_hidden[lid] = set()
+                        # Filling the field from a preset must not flip the selector to
+                        # "Custom" (the textChanged handler below).
+                        self._applying_mwm_preset = True
+                        try:
+                            self.mwm_values_edit.setText(", ".join(str(v) for v in vals))
+                        finally:
+                            self._applying_mwm_preset = False
 
             def _on_mwm_values_changed(self, text):
                 lid = getattr(self, 'current_lane_id', None)
                 if lid is None:
                     return
+                # Hand-editing the band sizes means these are no longer the preset's values.
+                if not getattr(self, '_applying_mwm_preset', False):
+                    self.lane_mwm_preset[lid] = "Custom"
+                    _ci = self.mwm_preset_combo.findText("Custom")
+                    if _ci >= 0 and self.mwm_preset_combo.currentIndex() != _ci:
+                        self.mwm_preset_combo.blockSignals(True)
+                        self.mwm_preset_combo.setCurrentIndex(_ci)
+                        self.mwm_preset_combo.blockSignals(False)
                 # Preserve blank entries (e.g. "250, , 100") so a band stays detected but
                 # unlabeled — the positional top→bottom mapping is kept intact.
                 self.lane_mw_labels[lid] = [v.strip() for v in text.split(',')]
+                self._rebuild_mwm_visibility_list()
                 try:
                     self.update_plot()
                 except Exception:
@@ -5092,9 +5591,55 @@ if __name__ == "__main__":
                     results[lane_id] = peak_info_list
                 return results
 
+            def _apply_canvas_min_height(self):
+                """Floor the canvas height at something the graph's text can actually fit in.
+
+                Everything on the figure scales with the Plot Font Size: the title, ticks,
+                x label and legend eat ~6x the font size in height, and the rotated
+                "Intensity" label needs the profile panel to be about as tall as the word is
+                long or it spills onto its neighbours. ~20x the font size covers both; below
+                that the layout engine has no choice but to overlap/clip. The 180px floor
+                keeps the historical default (8 pt) pixel-identical.
+                """
+                if not hasattr(self, 'canvas') or self.canvas is None:
+                    return
+                need = int(round(20.0 * plot_font(self.parent_app)))
+                self.canvas.setMinimumHeight(max(180, need))
+
+            def _make_plot_gridspec(self, height_ratios):
+                """Build the profile/lane-image GridSpec under a CONSTRAINED layout engine.
+
+                Constrained layout measures the real text extents at draw time and sizes the
+                margins to fit, which fixed fractions (subplots_adjust) cannot do: the title
+                was clipped by the top edge, "Lane Width" collided with the profile's "0"
+                tick, and the legend sat on top of the "Pixel Index" label. It matters even
+                more now that the graph font size is user-adjustable — any hard-coded margin
+                is only ever right for one font size. Pair this with a `loc='outside ...'`
+                legend so the legend gets its own reserved band instead of overlapping the
+                axes' labels.
+                """
+                self.fig.set_layout_engine('constrained')
+                try:
+                    # h_pad/w_pad are INCHES of breathing room around the axes, so they must
+                    # scale with the (user-adjustable) font — a fixed pad is a couple of
+                    # pixels at 8 pt and leaves the legend touching the x label at 16 pt.
+                    _pad_in = max(0.04, plot_font(self.parent_app) / 72.0 * 0.6)
+                    # hspace is the gap BETWEEN the profile and the lane image (fraction of
+                    # their height) — small, so the two panels stay visually paired.
+                    self.fig.get_layout_engine().set(h_pad=_pad_in, w_pad=_pad_in,
+                                                     hspace=0.02, wspace=0.0)
+                except (AttributeError, TypeError):
+                    pass
+                # NOTE: no hspace here — the layout engine owns the spacing.
+                return GridSpec(2, 1, height_ratios=height_ratios, figure=self.fig)
+
             def update_plot(self):
                 if not hasattr(self, 'canvas') or self.canvas is None:
                     return
+                # Every font size below goes through _fs() so the graph text follows the
+                # Plot Font Size setting x UI Scale. The old per-element argument is still
+                # accepted (and ignored) — every element shares one size now.
+                _fs = lambda pt=None: plot_font(self.parent_app, pt)
                 profile_to_plot_and_calc = self.profile_original_inverted
 
                 is_dark_theme = (
@@ -5125,8 +5670,9 @@ if __name__ == "__main__":
                     rv_line_color      = 'blue'
                     fill_color_rv = 'yellow'; fill_alpha_rv = 0.7
 
+                self._apply_canvas_min_height()
                 self.fig.clf()
-                gs = GridSpec(2, 1, height_ratios=[2, 1], hspace=0.15, figure=self.fig)
+                gs = self._make_plot_gridspec(height_ratios=[2, 1])
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
                 self.fig.patch.set_facecolor(bg_color)
@@ -5136,14 +5682,14 @@ if __name__ == "__main__":
                     axis.patch.set_facecolor(ax_bg_color)
                     for spine in axis.spines.values():
                         spine.set_color(spine_color)
-                    axis.tick_params(axis='x', colors=text_color, labelsize=9)
-                    axis.tick_params(axis='y', colors=text_color, labelsize=9)
+                    axis.tick_params(axis='x', colors=text_color, labelsize=_fs(9))
+                    axis.tick_params(axis='y', colors=text_color, labelsize=_fs(9))
                     axis.yaxis.label.set_color(text_color)
                     axis.xaxis.label.set_color(text_color)
                     axis.title.set_color(text_color)
 
                 if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0:
-                    self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=7)
+                    self.ax_image.set_xlabel("Pixel Index", color=text_color, fontsize=_fs(7))
                     self.ax.tick_params(axis='x', labelbottom=False)
                     self.ax_image.text(0.5, 0.5, 'No Profile Data', ha='center', va='center',
                                     color=text_color, transform=self.ax_image.transAxes)
@@ -5358,8 +5904,17 @@ if __name__ == "__main__":
                 # (top→bottom) instead of the area distribution %. Map each peak index i
                 # to its MW value by the peak's rank along the lane.
                 _cur_lid = getattr(self, 'current_lane_id', None)
-                _mw_labels_cur = getattr(self, 'lane_mw_labels', {}).get(_cur_lid, [])
                 _is_mwm_lane = _cur_lid in getattr(self, 'mwm_lane_ids', set())
+                # Bands the user un-ticked in "Show labels" come back blank here, so the plot
+                # matches what will be drawn on the gel.
+                _mw_labels_cur = (self.visible_mw_labels_for_lane(_cur_lid)
+                                  if _is_mwm_lane else [])
+                # Detection may have added/removed bands since the checklist was built
+                # (e.g. the user changed a threshold) — keep the rows in step.
+                if _is_mwm_lane and hasattr(self, 'mwm_visibility_list'):
+                    _n_rows = max(len(self.peaks), len(self.lane_mw_labels.get(_cur_lid, [])))
+                    if self.mwm_visibility_list.count() != _n_rows:
+                        self._rebuild_mwm_visibility_list()
                 _mw_by_i = {}
                 if _is_mwm_lane and len(self.peaks) > 0:
                     _ranks = np.argsort(np.argsort(np.asarray(self.peaks, dtype=float)))
@@ -5506,7 +6061,7 @@ if __name__ == "__main__":
                 for x_t, y_t, text_str in text_positions:
                     text_artist = self.ax.text(
                         x_t, y_t, text_str,
-                        ha="center", va="bottom", fontsize=7, color=text_color, zorder=20,
+                        ha="center", va="bottom", fontsize=_fs(7), color=text_color, zorder=20,
                         bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8)
                     )
                     renderer = self.canvas.get_renderer()
@@ -5523,16 +6078,29 @@ if __name__ == "__main__":
                 # --- Legend ---
                 handles, labels = self.ax.get_legend_handles_labels()
                 if handles:
+                    # 'outside lower center' makes the constrained layout reserve a band
+                    # for the legend, so it can never cover the "Pixel Index" label the way a
+                    # figure-fraction bbox_to_anchor did.
+                    # One row of entries gets wider as the font grows and eventually runs
+                    # off the figure, so wrap to as many columns as actually fit. The width
+                    # per entry (text + marker + padding) all scales with the font: measured
+                    # legends came out at ~1.04 px per character per point, and 1.15 leaves a
+                    # safety margin — wrapping one column early is harmless, overflowing the
+                    # figure is not. (The legend can't be measured here: it has no real
+                    # extent until the figure is drawn.)
+                    _fig_w = max(1.0, float(self.fig.bbox.width))
+                    _entry_w = max(len(str(l)) for l in labels) * 1.15 * _fs()
+                    _ncol = max(1, min(len(handles), int((_fig_w - 20.0) // max(1.0, _entry_w))))
                     leg = self.fig.legend(
-                        handles, labels, loc='lower center',
-                        ncol=len(handles), bbox_to_anchor=(0.5, 0.01),
-                        fontsize='small', facecolor=bg_color, edgecolor=spine_color
+                        handles, labels, loc='outside lower center',
+                        ncol=_ncol,
+                        fontsize=_fs(), facecolor=bg_color, edgecolor=spine_color
                     )
                     for text in leg.get_texts():
                         text.set_color(text_color)
 
-                self.ax.set_ylabel("Intensity", fontsize=9)
-                self.ax.set_title(f"Profile & Peak Engine ({self.method})", fontsize=10, weight='bold')
+                self.ax.set_ylabel("Intensity", fontsize=_fs(9))
+                self.ax.set_title(f"Profile & Peak Engine ({self.method})", fontsize=_fs(10), weight='bold')
                 self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
 
                 if len(profile_to_plot_and_calc) > 1:
@@ -5544,6 +6112,11 @@ if __name__ == "__main__":
 
                 if np.max(profile_to_plot_and_calc) > 10000:
                     self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
+                    # The "x10^6" exponent is a separate artist and keeps the rcParam size
+                    # unless told otherwise.
+                    _off = self.ax.yaxis.get_offset_text()
+                    _off.set_fontsize(_fs(9))
+                    _off.set_color(text_color)
 
                 # --- Lane image panel ---
                 self.ax_image.clear()
@@ -5555,8 +6128,14 @@ if __name__ == "__main__":
                         np.array(rotated_pil), cmap=cmap_val, aspect='auto', extent=image_extent
                     )
                     self.ax_image.set_yticks([])
-                    self.ax_image.set_ylabel("Lane Width", fontsize=9)
-                    self.ax_image.set_xlabel("Pixel Index", fontsize=9)
+                    # Horizontal, short label: the lane strip is only a third of the
+                    # figure, so a ROTATED "Lane Width" is taller than its own axes and
+                    # spills upwards onto the profile's y tick labels (no layout engine can
+                    # fix a label that doesn't fit its axes). One line of text at the axes'
+                    # vertical centre always fits.
+                    self.ax_image.set_ylabel("Lane", fontsize=_fs(), rotation=0,
+                                             ha='right', va='center', labelpad=6)
+                    self.ax_image.set_xlabel("Pixel Index", fontsize=_fs())
 
                     for p in self.peaks:
                         self.ax_image.axvline(p, color='red', alpha=0.5, linewidth=1,
@@ -5581,7 +6160,8 @@ if __name__ == "__main__":
                         self.interactive_artists.append((peak_idx, 'start_line', start_line))
                         self.interactive_artists.append((peak_idx, 'end_line', end_line))
 
-                self.fig.subplots_adjust(left=0.1, right=0.9, top=0.92, bottom=0.25)
+                # (No subplots_adjust: the constrained layout engine set up in
+                # _make_plot_gridspec computes the margins from the actual text sizes.)
                 self._update_quality_readout()
                 self.canvas.draw_idle()
                 plt.close(self.fig)
@@ -6253,6 +6833,10 @@ if __name__ == "__main__":
         class LiveViewLabel(QLabel):
             mouseMovedInLabel = Signal(QPointF, QPointF, bool)
             CORNER_HANDLE_BASE_RADIUS = 6.0
+            # Zoom range. Below 1.0 the whole image shrinks inside the viewer, leaving empty
+            # space around it to annotate (e.g. custom markers/shapes above the gel).
+            MIN_ZOOM = 0.1
+            MAX_ZOOM = 20.0
             def __init__(self, font_type, font_size, marker_color, app_instance, parent=None):
                 super().__init__(parent)
                 self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -6384,10 +6968,10 @@ if __name__ == "__main__":
                 elif num_steps < 0: # Zooming out
                     self.zoom_level *= (zoom_factor_decrement ** abs(num_steps))
             
-                # --- Clamp Zoom Level (optional, but good practice) ---
-                min_zoom = 0.1 # Example minimum zoom
-                max_zoom = 20.0  # Example maximum zoom
-                self.zoom_level = max(min_zoom, min(self.zoom_level, max_zoom))
+                # --- Clamp Zoom Level ---
+                # Zooming out past 1.0 shrinks the image inside the viewer, which is what
+                # makes room to place markers/shapes above (or beside) the gel.
+                self.zoom_level = max(self.MIN_ZOOM, min(self.zoom_level, self.MAX_ZOOM))
             
                 # --- Zoom Towards Mouse Cursor ---
                 mouse_point_widget = event.position() 
@@ -6398,13 +6982,15 @@ if __name__ == "__main__":
                 new_pan_x = mouse_point_widget.x() - (point_before_zoom_unzoomed_label.x() * self.zoom_level)
                 new_pan_y = mouse_point_widget.y() - (point_before_zoom_unzoomed_label.y() * self.zoom_level)
                 self.pan_offset = QPointF(new_pan_x, new_pan_y)
-            
-                if self.zoom_level <= 1.0001: # Use a small tolerance for float comparison
+
+                # Landing within a hair of 100% snaps to exactly 1.0 (and re-centres), so the
+                # unzoomed view is always pixel-identical to the un-panned default.
+                if abs(self.zoom_level - 1.0) < 0.001:
                     self.zoom_level = 1.0
                     self.pan_offset = QPointF(0, 0)
-            
+
                 if not self.is_panning: # is_panning check is important here
-                    if self.zoom_level > 1.001: # Use a small tolerance for float comparison
+                    if self.is_view_transformed():
                         self.setCursor(Qt.OpenHandCursor)
                     else:
                         self.setCursor(Qt.ArrowCursor)
@@ -6496,7 +7082,7 @@ if __name__ == "__main__":
                     super().mouseMoveEvent(event)
                 
             def mousePressEvent(self, event: 'QMouseEvent'):
-                if event.button() == Qt.RightButton and self.zoom_level > 1.001:
+                if event.button() == Qt.RightButton and self.is_view_transformed():
                     self.is_panning = True
                     self.pan_start_view_coords = event.position()
                     self.pan_offset_at_drag_start = QPointF(self.pan_offset)
@@ -6526,7 +7112,7 @@ if __name__ == "__main__":
                     self.is_panning = False
                     self.pan_start_view_coords = None
                     self.pan_offset_at_drag_start = None
-                    if self.zoom_level > 1.001: self.setCursor(Qt.OpenHandCursor)
+                    if self.is_view_transformed(): self.setCursor(Qt.OpenHandCursor)
                     else: self.setCursor(Qt.ArrowCursor)
                     event.accept()
                     return
@@ -6541,22 +7127,27 @@ if __name__ == "__main__":
                 if not event.isAccepted():
                     super().mouseReleaseEvent(event)
 
+            def is_view_transformed(self):
+                """True when the view is zoomed (in OR out) or panned — i.e. anything other
+                than the plain 1:1 fitted view. Panning is allowed in this state."""
+                return (abs(self.zoom_level - 1.0) > 0.001
+                        or not self.pan_offset.isNull())
+
             def transform_point(self, point):
                 """Transform a point from widget coordinates to image coordinates."""
-                if self.zoom_level != 1.0:
-                    return QPointF(
-                        (point.x() - self.pan_offset.x()) / self.zoom_level,
-                        (point.y() - self.pan_offset.y()) / self.zoom_level
-                    )
-                return QPointF(point)
-            
-            
-            def zoom_in(self): # Zooms towards view center by default
-                mouse_center_widget = QPoint(self.width() // 2, self.height() // 2) # Center of the label
-                old_zoom_level = self.zoom_level
-                self.zoom_level *= 1.1
-                self.zoom_level = min(self.zoom_level, 20.0) # Max zoom
-            
+                z = self.zoom_level if self.zoom_level > 1e-9 else 1.0
+                return QPointF(
+                    (point.x() - self.pan_offset.x()) / z,
+                    (point.y() - self.pan_offset.y()) / z
+                )
+
+            def _zoom_about_center(self, factor):
+                """Multiply the zoom by `factor`, keeping the view centre fixed."""
+                mouse_center_widget = QPoint(self.width() // 2, self.height() // 2)
+                old_zoom_level = self.zoom_level if self.zoom_level > 1e-9 else 1.0
+                self.zoom_level = max(self.MIN_ZOOM,
+                                      min(self.zoom_level * factor, self.MAX_ZOOM))
+
                 point_before_zoom_unzoomed_label = QPointF(
                     (mouse_center_widget.x() - self.pan_offset.x()) / old_zoom_level,
                     (mouse_center_widget.y() - self.pan_offset.y()) / old_zoom_level
@@ -6564,36 +7155,32 @@ if __name__ == "__main__":
                 new_pan_x = mouse_center_widget.x() - (point_before_zoom_unzoomed_label.x() * self.zoom_level)
                 new_pan_y = mouse_center_widget.y() - (point_before_zoom_unzoomed_label.y() * self.zoom_level)
                 self.pan_offset = QPointF(new_pan_x, new_pan_y)
-            
-                if not self.is_panning: self.setCursor(Qt.ArrowCursor)
-                
+
+                if abs(self.zoom_level - 1.0) < 0.001:
+                    self.zoom_level = 1.0
+                    self.pan_offset = QPointF(0, 0)
+
+                if not self.is_panning:
+                    self.setCursor(Qt.OpenHandCursor if self.is_view_transformed()
+                                   else Qt.ArrowCursor)
+
                 if self.app_instance: self.app_instance.update_live_view()
                 else: self.update()
 
+            def zoom_in(self): # Zooms towards view center by default
+                self._zoom_about_center(1.1)
+
             def zoom_out(self): # Zooms towards view center
-                mouse_center_widget = QPoint(self.width() // 2, self.height() // 2) # Center of the label
-                old_zoom_level = self.zoom_level
-                self.zoom_level /= 1.1
-                self.zoom_level = max(self.zoom_level, 0.1) # Min zoom
-            
-                point_before_zoom_unzoomed_label = QPointF(
-                    (mouse_center_widget.x() - self.pan_offset.x()) / old_zoom_level,
-                    (mouse_center_widget.y() - self.pan_offset.y()) / old_zoom_level
-                )
-                new_pan_x = mouse_center_widget.x() - (point_before_zoom_unzoomed_label.x() * self.zoom_level)
-                new_pan_y = mouse_center_widget.y() - (point_before_zoom_unzoomed_label.y() * self.zoom_level)
-                self.pan_offset = QPointF(new_pan_x, new_pan_y)
-            
-                if self.zoom_level <= 1.0:
-                    self.zoom_level = 1.0
-                    self.pan_offset = QPointF(0, 0)
-                    if not self.is_panning: self.setCursor(Qt.ArrowCursor)
-                else:
-                    if not self.is_panning: self.setCursor(Qt.ArrowCursor)
-            
+                self._zoom_about_center(1 / 1.1)
+
+            def reset_view(self):
+                """Back to the fitted, un-panned 1:1 view."""
+                self.zoom_level = 1.0
+                self.pan_offset = QPointF(0, 0)
+                if not self.is_panning: self.setCursor(Qt.ArrowCursor)
                 if self.app_instance: self.app_instance.update_live_view()
                 else: self.update()
-                
+
 
             def paintEvent(self, event):
                 """
@@ -6873,6 +7460,16 @@ if __name__ == "__main__":
                         painter.setPen(selection_pen)
                         if isinstance(selection_shape, QPolygonF): painter.drawPolygon(selection_shape)
                         elif isinstance(selection_shape, QRectF): painter.drawRect(selection_shape)
+
+                        # Font-resize grip for the selected text item: drag it to scale the
+                        # text (custom marker = just that label; standard marker = the whole
+                        # L/R/top set, which shares one font size).
+                        handle_pt, _centre = self.app_instance._get_text_item_font_handle_ls(info)
+                        if handle_pt is not None:
+                            painter.setPen(handle_pen); painter.setBrush(handle_brush)
+                            r = handle_radius * (1.2 if is_resizing else 1.0)
+                            painter.drawEllipse(handle_pt, r, r)
+                            painter.setBrush(Qt.NoBrush)
 
                 # --- Crop and Custom Shape Drawing Previews ---
                 preview_pen_crop = QPen(Qt.red); effective_pen_width_crop = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 0.5); preview_pen_crop.setWidthF(effective_pen_width_crop)
@@ -7347,9 +7944,15 @@ if __name__ == "__main__":
                         parent_app, initial_band_settings, gel_color_np=None):
                 super().__init__(parent_app)
                 self.setWindowTitle("Auto Gel Analysis  —  One-Step Wizard")
+                # Restore the user's last size/position (clamped to the screen), else
+                # default to a large fraction of the screen on first open.
+                self._geometry_key = "auto_gel_wizard"
                 screen_geo = QGuiApplication.primaryScreen().availableGeometry()
-                self.resize(min(APP_GLOBAL_WINDOW_WIDTH, int(screen_geo.width() * 0.88)),
-                            min(APP_GLOBAL_WINDOW_HEIGHT,  int(screen_geo.height() * 0.92)))
+                apply_dialog_geometry(
+                    self, self._geometry_key,
+                    min(APP_GLOBAL_WINDOW_WIDTH, int(screen_geo.width() * 0.88)),
+                    min(APP_GLOBAL_WINDOW_HEIGHT, int(screen_geo.height() * 0.92)),
+                    min_w=760, min_h=560)
 
                 self.gel_pil        = gel_pil_image
                 self.gel_region_def = gel_region_def
@@ -7957,8 +8560,8 @@ if __name__ == "__main__":
                     self._prep_ax.set_ylim(h - 0.5, -0.5)
                     self._prep_ax.set_title(
                         "Crop: drag box edge/corner to resize · inside to move · on image to draw new",
-                        fontsize=9, pad=3)
-                    self._prep_ax.tick_params(labelsize=7)
+                        fontsize=plot_font(self.parent_app, 9), pad=3)
+                    self._prep_ax.tick_params(labelsize=plot_font(self.parent_app, 7))
                     self._prep_fig.tight_layout(pad=0.5)
                     self._prep_canvas.draw_idle()
                 except Exception:
@@ -8218,8 +8821,12 @@ if __name__ == "__main__":
                 # left/right marker placement on the committed gel.
                 layout.addWidget(lane_grp, stretch=1)
 
-                self._mwm_preset_name = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
-                _seed_vals = self._mwm_values_for(self._mwm_preset_name)
+                # Seed the ladder from whatever the app is currently using (preset selector /
+                # edited values) instead of hard-coding Bio-Rad — hard-coding it here is what
+                # made a user-chosen marker "revert to the default" on commit. The marker is
+                # confirmed/edited per lane in the densitometry dialog either way.
+                _seed_vals, _seed_hidden, _seed_preset = self.parent_app._mwm_seed_for_dialog()
+                self._mwm_preset_name = _seed_preset or "Custom"
                 self._mwm_custom_text = ", ".join(str(v) for v in _seed_vals) if _seed_vals else ""
 
                 # ── Top-label styling (font, size, colour, rotation, axis) ──
@@ -8885,9 +9492,9 @@ if __name__ == "__main__":
                     self._ax1_img.imshow(
                         dsp, cmap='gray', aspect='auto', interpolation='nearest',
                         extent=[-0.5, Wd - 0.5, Hd - 0.5, -0.5])
-                    self._ax1_img.set_ylabel("Row", fontsize=7)
-                    self._ax1_img.tick_params(labelsize=6)
-                    self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=8, pad=3)
+                    self._ax1_img.set_ylabel("Row", fontsize=plot_font(self.parent_app, 7))
+                    self._ax1_img.tick_params(labelsize=plot_font(self.parent_app, 6))
+                    self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=plot_font(self.parent_app, 8), pad=3)
 
                     colors = plt.cm.tab10.colors
                     self._sync_lane_skew_length()
@@ -8906,7 +9513,7 @@ if __name__ == "__main__":
                         self._ax1_img.add_patch(poly)
                         self._ax1_img.text(
                             (x0 + x1) / 2 + t, Hd * 0.06, f"L{i+1}",
-                            color='white', fontsize=7, ha='center', va='top',
+                            color='white', fontsize=plot_font(self.parent_app, 7), ha='center', va='top',
                             bbox=dict(boxstyle='round,pad=0.15', fc=c, alpha=0.8, ec='none'))
 
                         # Slanted left/right boundary lines (still pickable for width drags).
@@ -8927,9 +9534,9 @@ if __name__ == "__main__":
                             self._ax1_prof.fill_between(np.arange(x0, x1 + 1), 0, cn[x0:x1 + 1], alpha=0.40, color=c)
                     self._ax1_prof.set_xlim(-0.5, Wd - 0.5)
                     self._ax1_prof.set_ylim(-0.02, 1.15)
-                    self._ax1_prof.set_xlabel("Column (px)", fontsize=7)
-                    self._ax1_prof.set_ylabel("Normalised profile", fontsize=7)
-                    self._ax1_prof.tick_params(labelsize=6)
+                    self._ax1_prof.set_xlabel("Column (px)", fontsize=plot_font(self.parent_app, 7))
+                    self._ax1_prof.set_ylabel("Normalised profile", fontsize=plot_font(self.parent_app, 7))
+                    self._ax1_prof.tick_params(labelsize=plot_font(self.parent_app, 6))
                 except Exception:
                     pass
                 finally:
@@ -9689,14 +10296,14 @@ if __name__ == "__main__":
                         self._ax2_gel.add_patch(poly)
                         self._ax2_gel.text(
                             (x0 + x1) / 2 + t, H * 0.06, f"L{i+1}",
-                            color='white', fontsize=7, ha='center', va='top',
+                            color='white', fontsize=plot_font(self.parent_app, 7), ha='center', va='top',
                             bbox=dict(boxstyle='round,pad=0.15',
                                       fc=c, alpha=0.8, ec='none'))
 
                     n_bands = len(peak_info) if peak_info else 0
                     self._ax2_gel.set_title(
                         f"Lane {lane_idx + 1} highlighted  "
-                        f"({n_bands} band(s) detected)", fontsize=9, pad=3)
+                        f"({n_bands} band(s) detected)", fontsize=plot_font(self.parent_app, 9), pad=3)
                     self._ax2_gel.axis('off')
 
                     # Band profile
@@ -9760,16 +10367,16 @@ if __name__ == "__main__":
                                     self._ax2_prof.text(
                                         (lf + rf) / 2, prof_sm[pk],
                                         str(bi + 1), color='darkred',
-                                        fontsize=6, ha='center', va='bottom')
+                                        fontsize=plot_font(self.parent_app, 6), ha='center', va='bottom')
 
-                        self._ax2_prof.set_xlabel("Row (px)", fontsize=7)
-                        self._ax2_prof.set_ylabel("Intensity", fontsize=7)
+                        self._ax2_prof.set_xlabel("Row (px)", fontsize=plot_font(self.parent_app, 7))
+                        self._ax2_prof.set_ylabel("Intensity", fontsize=plot_font(self.parent_app, 7))
                         n_bands = len(peak_info) if peak_info else 0
                         self._ax2_prof.set_title(
                             f"Band profile — Lane {lane_idx + 1}  "
                             f"({n_bands} band(s))",
-                            fontsize=8, pad=2)
-                        self._ax2_prof.tick_params(labelsize=6)
+                            fontsize=plot_font(self.parent_app, 8), pad=2)
+                        self._ax2_prof.tick_params(labelsize=plot_font(self.parent_app, 6))
 
                     self._apply_fig_theme(self._fig2, [self._ax2_gel, self._ax2_prof])
                     self._fig2.tight_layout(pad=0.5)
@@ -10041,14 +10648,12 @@ if __name__ == "__main__":
                 preset_name = self._mwm_preset_name
                 if mwm_indices and preset_name != "None (labels only)":
                     try:
-                        # The band-size field is the single source of truth (pre-filled from
-                        # the preset, possibly edited by the user). Fall back to the preset's
-                        # library values if it is empty for some reason.
-                        raw = ""
-                        try:
-                            raw = self._p3_custom_edit.text().strip()
-                        except Exception:
-                            raw = (self._mwm_custom_text or "").strip()
+                        # The Step-4 band-size field was removed (the marker is picked per
+                        # lane in the densitometry dialog), so the ladder here is the one the
+                        # app already carries — seeded in _build_page3 from the user's own
+                        # preset/values. These labels are provisional: whatever the user
+                        # confirms in the densitometry dialog replaces them further down.
+                        raw = (self._mwm_custom_text or "").strip()
                         if raw:
                             vals = [v.strip() for v in raw.split(',') if v.strip()]
                         else:
@@ -10222,11 +10827,15 @@ if __name__ == "__main__":
                             pil_lane = Image.fromarray(lane8, mode='L')
                             _lane = {'pil': pil_lane, 'id': i + 1}
                             # MWM-marked lanes carry their MW values so the densitometry
-                            # graph shows molecular-weight labels on the detected bands.
+                            # graph shows molecular-weight labels on the detected bands, and
+                            # the picker opens on the ladder the app is actually using.
                             if i in mwm_indices:
-                                _mv = [str(v) for v in getattr(app, 'marker_values', []) if str(v).strip()]
+                                _mv, _mh, _mp = app._mwm_seed_for_dialog()
                                 if _mv:
+                                    _lane['is_mwm'] = True
                                     _lane['mw_labels'] = _mv
+                                    _lane['mw_hidden'] = _mh
+                                    _lane['mwm_preset'] = _mp
                             lane_dicts.append(_lane)
 
                         if lane_dicts:
@@ -10283,7 +10892,6 @@ if __name__ == "__main__":
                                     _gy   = getattr(self, '_saved_gy_eff', 0)
                                     _cy   = getattr(self, '_saved_crop_offset_y', 0)
                                     _midx = getattr(self, '_saved_mwm_indices', [])
-                                    _pvs  = getattr(app, 'marker_values', [])
                                     _Wg   = self._gel_arr.shape[1]
                                     _ld = False; _rd = False
                                     for _mi in _midx:
@@ -10301,6 +10909,12 @@ if __name__ == "__main__":
                                         else:
                                             if _ld: continue
                                             _ld = True; _tgt = app.left_markers
+                                        # Labels come from the dialog's picker for THIS lane —
+                                        # the values/preset the user actually chose, with any
+                                        # band they un-ticked left blank (renders nothing).
+                                        # Reading app.marker_values here instead is what made
+                                        # the wizard fall back to the default ladder.
+                                        _pvs = app._store_mwm_state_from_dialog(dlg, _lid)
                                         _tgt.clear()
                                         for _bi, _b in enumerate(_bands):
                                             _y = float(_gy + _b['y_coord_in_lane_image'] - _cy)
@@ -10342,8 +10956,11 @@ if __name__ == "__main__":
                                 lane8 = np.zeros((gel_h, x1c - x0c + 1), dtype=np.uint8)
                             lbl = (lane_labels[_mi] if _mi < len(lane_labels)
                                    else f"MWM Lane {_mi + 1}")
+                            _mv, _mh, _mp = app._mwm_seed_for_dialog()
                             mwm_lane_dicts.append({'pil': Image.fromarray(lane8, mode='L'),
-                                                   'id': _mi + 1, 'label': lbl})
+                                                   'id': _mi + 1, 'label': lbl,
+                                                   'is_mwm': True, 'mw_labels': _mv,
+                                                   'mw_hidden': _mh, 'mwm_preset': _mp})
 
                         if mwm_lane_dicts:
                             dlg = PeakAreaDialog(
@@ -10363,7 +10980,6 @@ if __name__ == "__main__":
                                     _gy   = getattr(self, '_saved_gy_eff', 0)
                                     _cy   = getattr(self, '_saved_crop_offset_y', 0)
                                     _midx = getattr(self, '_saved_mwm_indices', [])
-                                    _pvs  = getattr(app, 'marker_values', [])
                                     _Wg   = self._gel_arr.shape[1]
                                     _ld = False; _rd = False
                                     for _mi in _midx:
@@ -10381,6 +10997,12 @@ if __name__ == "__main__":
                                         else:
                                             if _ld: continue
                                             _ld = True; _tgt = app.left_markers
+                                        # Labels come from the dialog's picker for THIS lane —
+                                        # the values/preset the user actually chose, with any
+                                        # band they un-ticked left blank (renders nothing).
+                                        # Reading app.marker_values here instead is what made
+                                        # the wizard fall back to the default ladder.
+                                        _pvs = app._store_mwm_state_from_dialog(dlg, _lid)
                                         _tgt.clear()
                                         for _bi, _b in enumerate(_bands):
                                             _y = float(_gy + _b['y_coord_in_lane_image'] - _cy)
@@ -10563,6 +11185,18 @@ if __name__ == "__main__":
         class CombinedSDSApp(QMainWindow):
             CONFIG_PRESET_FILE_NAME = "Gel_Blot_Analyzer_preset_config.txt"
             MIME_TYPE_CUSTOM_ITEMS = "application/x-Gel-Blot-Analyzer.customitems+json"
+            # Font-size limits for drag-to-resize text, matching the spinners that drive the
+            # same values (custom_font_size_spinbox and font_size_spinner respectively).
+            CUSTOM_TEXT_FONT_RANGE = (1, 150)
+            STANDARD_TEXT_FONT_RANGE = (6, 72)
+            # Settings ▸ User Interface Scaling. Both are BASE sizes at 100% UI Scale and are
+            # multiplied by ui_scale_preference, so they track the scale automatically.
+            # DEFAULT_UI_FONT_SIZE must match the `font-size: Npx` in the theme stylesheets'
+            # base QWidget rule (that value is what _scale_stylesheet rewrites).
+            DEFAULT_UI_FONT_SIZE = 12       # px
+            UI_FONT_SIZE_RANGE = (7, 24)
+            DEFAULT_PLOT_FONT_SIZE = 8      # pt — one size for every matplotlib element
+            PLOT_FONT_SIZE_RANGE = (5, 24)
             light_stylesheet = """
                 /* 
                 ================================================================================
@@ -10813,8 +11447,25 @@ if __name__ == "__main__":
                     border: 1px solid #505055;
                     gridline-color: #505055;
                     color: #F1F1F1;
+                    background-color: #3C3C3F;
+                    /* Views with setAlternatingRowColors(True) (Sample Results, the MWM
+                       "Show labels" list) otherwise fall back to Qt's LIGHT default for the
+                       alternate row — white background under this rule's white text, i.e.
+                       invisible. Keep it a shade off the base so rows stay easy to follow. */
+                    alternate-background-color: #46464C;
                     selection-background-color: #007ACC;
                     selection-color: white;
+                }
+
+                /* Text colour only — setting an item background here would paint over the
+                   alternating row colours (as the light theme's item rule does). */
+                QTableView::item, QTableWidget::item, QListView::item, QListWidget::item {
+                    color: #F1F1F1;
+                }
+                QTableView::item:selected, QTableWidget::item:selected,
+                QListView::item:selected, QListWidget::item:selected {
+                    background-color: #007ACC;
+                    color: white;
                 }
 
                 QHeaderView {
@@ -11092,6 +11743,9 @@ if __name__ == "__main__":
                 self.viewer_fixed_height = 350
                 self.safe_content_width = 1000
                 self.show_once_prompt = True
+                # Base font sizes at 100% UI Scale (Settings ▸ User Interface Scaling).
+                self.ui_font_size = self.DEFAULT_UI_FONT_SIZE
+                self.plot_font_size = self.DEFAULT_PLOT_FONT_SIZE
                 
                 self.label_size = self.preview_label_width_setting
                 self.window_title=f"GEL BLOT ANALYZER {APP_VERSION}"
@@ -11163,6 +11817,11 @@ if __name__ == "__main__":
                 self.latest_peak_details = [] # List of dicts: [{'area':val, 'y_coord_in_lane_image':val}, ...]
                 self.latest_peak_areas = []
                 self.latest_calculated_quantities = []
+                # Regression model the saved densitometry results were quantified with.
+                self.latest_standard_curve_model = "Linear"
+                # True once the user edits anything after an analysis load/save — Load
+                # Analysis uses it to decide whether to warn before overwriting.
+                self._analysis_dirty_since_load = False
                 self.image_path = None
                 self.image = None
                 self.image_master= None
@@ -11234,6 +11893,13 @@ if __name__ == "__main__":
                 # Initialize self.marker_values to None initially
                 self.top_label=["MWM" , "S1", "S2", "S3" , "S4", "S5" , "S6", "S7", "S8", "S9", "MWM"] # Default internal top_label
                 self.marker_values = [] # Default internal marker_values (for L/R) - will be populated by preset
+                # Molecular-weight-marker label state (set from the densitometry dialog).
+                # mwm_label_values keeps the FULL ladder even when some labels are hidden, so
+                # a hidden label can be brought back; mwm_hidden_label_indices are positions
+                # (top→bottom) whose label is suppressed. Both are saved to the image config
+                # and default to "nothing hidden" for files written before this existed.
+                self.mwm_label_values = []
+                self.mwm_hidden_label_indices = []
 
                 self.custom_marker_name = "Custom"
                 self.presets_data = {}
@@ -11576,6 +12242,27 @@ if __name__ == "__main__":
                 fonts (see `_scale_stylesheet`)."""
                 return self._scale_stylesheet(qss)
 
+            def _clamp_setting(self, value, rng, default):
+                """Int `value` clamped into `rng`, falling back to `default` when it isn't a
+                number (a hand-edited or corrupt config must not break startup)."""
+                try:
+                    v = int(round(float(value)))
+                except (TypeError, ValueError):
+                    return int(default)
+                return min(max(v, rng[0]), rng[1])
+
+            def _ui_font_size_ratio(self):
+                """The user's UI Font Size relative to the stylesheet's design size, i.e. the
+                extra factor applied to `font-size` on top of the UI scale. 1.0 by default."""
+                try:
+                    px = float(getattr(self, 'ui_font_size', self.DEFAULT_UI_FONT_SIZE)
+                               or self.DEFAULT_UI_FONT_SIZE)
+                except (TypeError, ValueError):
+                    px = float(self.DEFAULT_UI_FONT_SIZE)
+                lo, hi = self.UI_FONT_SIZE_RANGE
+                px = min(max(px, lo), hi)
+                return px / float(self.DEFAULT_UI_FONT_SIZE)
+
             def _scale_stylesheet(self, qss):
                 """Return `qss` with EVERY `Npx` dimension multiplied by the UI scale — fonts,
                 padding, margins, borders, border-radius, min/max width & height, spacing,
@@ -11585,10 +12272,15 @@ if __name__ == "__main__":
                 base64 `url(...)` blocks are protected first, because raw base64 can contain
                 substrings like `A3px` that would otherwise be corrupted. `0px` is preserved
                 (never promoted to 1px). The gel/preview CANVAS text is drawn separately with
-                QPainter and is intentionally NOT touched here."""
+                QPainter and is intentionally NOT touched here.
+
+                `font-size` declarations get an EXTRA factor first — the user's UI Font Size
+                setting relative to the stylesheet's design size — so text can be tuned
+                independently of the chrome, and still ends up multiplied by the UI scale."""
                 try:
                     scale = self._ui_font_scale()
-                    if abs(scale - 1.0) < 1e-3:
+                    font_ratio = self._ui_font_size_ratio()
+                    if abs(scale - 1.0) < 1e-3 and abs(font_ratio - 1.0) < 1e-3:
                         return qss
                     import re
                     stash = []
@@ -11596,6 +12288,15 @@ if __name__ == "__main__":
                         stash.append(m.group(0))
                         return "\x00%d\x00" % (len(stash) - 1)
                     protected = re.sub(r'url\([^)]*\)', _protect, qss)
+
+                    if abs(font_ratio - 1.0) >= 1e-3:
+                        def _mul_font(m):
+                            val = float(m.group(2))
+                            if val == 0:
+                                return m.group(0)
+                            return "%s%dpx" % (m.group(1), max(1, int(round(val * font_ratio))))
+                        protected = re.sub(r'(font-size:\s*)(\d+(?:\.\d+)?)px',
+                                           _mul_font, protected)
 
                     def _mul(m):
                         val = float(m.group(1))
@@ -11813,9 +12514,12 @@ if __name__ == "__main__":
                 config_data["viewer_fixed_height"] = int(getattr(self, "viewer_fixed_height", 350))
                 config_data["safe_content_width"] = int(getattr(self, "safe_content_width", 1000))
 
-                # Persist UI scale and GPU settings so they survive the resize-debounce
-                # rewrite (save_full_config writes them, but this method would drop them).
+                # Persist UI scale, font sizes and GPU settings so they survive the
+                # resize-debounce rewrite (save_full_config writes them, but this method
+                # would drop them).
                 config_data["ui_scale_preference"] = getattr(self, "ui_scale_preference", 1.0)
+                config_data["ui_font_size"] = int(getattr(self, "ui_font_size", self.DEFAULT_UI_FONT_SIZE))
+                config_data["plot_font_size"] = int(getattr(self, "plot_font_size", self.DEFAULT_PLOT_FONT_SIZE))
                 config_data["use_gpu"] = getattr(self, "use_gpu", True)
 
                 if hasattr(self, 'gpu_id_input'):
@@ -11925,10 +12629,10 @@ if __name__ == "__main__":
                     
                     self.hist_ax.grid(True, linestyle=':', alpha=0.6, color=grid_col)
                     self.hist_ax.set_yticks([])
-                    self.hist_ax.set_ylabel("Log Density", fontsize=7, color=text_col)
+                    self.hist_ax.set_ylabel("Log Density", fontsize=plot_font(self, 7), color=text_col)
                     
                     title = 'Intensity (16-bit)' if is_16bit else 'Intensity (8-bit)'
-                    self.hist_ax.set_title(title, fontsize=8, pad=3, color=text_col, fontweight='bold')
+                    self.hist_ax.set_title(title, fontsize=plot_font(self, 8), pad=3, color=text_col, fontweight='bold')
                     
                     # Spines
                     for spine in self.hist_ax.spines.values():
@@ -11948,7 +12652,7 @@ if __name__ == "__main__":
                     else:
                         tick_labels = [f"{int(x)}" for x in x_ticks]
                         
-                    self.hist_ax.set_xticklabels(tick_labels, fontsize=7, color=text_col)
+                    self.hist_ax.set_xticklabels(tick_labels, fontsize=plot_font(self, 7), color=text_col)
                     self.hist_ax.tick_params(axis='x', colors=text_col)
 
                     # Draw Level Markers
@@ -12138,6 +12842,7 @@ if __name__ == "__main__":
                 # --- View Actions ---
                 self.zoom_in_action = QAction("Zoom &In", self)
                 self.zoom_out_action = QAction("Zoom &Out", self)
+                self.reset_view_action = QAction("Reset &View (100%)", self)
                 self.pan_left_action = QAction("Pan Left", self)
                 self.pan_right_action = QAction("Pan Right", self)
                 self.pan_up_action = QAction("Pan Up", self)
@@ -12193,7 +12898,12 @@ if __name__ == "__main__":
                 self.copy_action.setToolTip("Copy rendered image to clipboard (Ctrl+C)")
                 self.paste_action.setToolTip("Paste image from clipboard (Ctrl+V)")
                 self.zoom_in_action.setToolTip("Increase zoom level (Ctrl+= or mouse scroll bar)")
-                self.zoom_out_action.setToolTip("Decrease zoom level (Ctrl+- or mouse scroll bar)). Auto resets the zoom when reaches zero.")
+                self.zoom_out_action.setToolTip(
+                    "Decrease zoom level (Ctrl+- or mouse scroll bar).\n"
+                    "Keeps going below 100% (down to 10%) so the image shrinks in the viewer "
+                    "and you can annotate the space around it.\n"
+                    "Use View ▸ Reset View (Ctrl+0) to return to 100%.")
+                self.reset_view_action.setToolTip("Return to the fitted 100% view, un-panned (Ctrl+0)")
                 self.pan_left_action.setToolTip("Pan the view left (when zoomed) (Arrow key left or mouse right click)")
                 self.pan_right_action.setToolTip("Pan the view right (when zoomed) (Arrow key right or mouse right click")
                 self.pan_up_action.setToolTip("Pan the view up (when zoomed) (Arrow key up or mouse right click)")
@@ -12211,6 +12921,7 @@ if __name__ == "__main__":
                 self.redo_action.setShortcut(QKeySequence.Redo)
                 self.zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
                 self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
+                self.reset_view_action.setShortcut(QKeySequence("Ctrl+0"))
                 self.reset_action.setShortcut(QKeySequence("Ctrl+R"))
 
                 self.load_action.triggered.connect(self.load_image)
@@ -12224,14 +12935,15 @@ if __name__ == "__main__":
                 self.paste_action.triggered.connect(self.paste_image)
                 self.zoom_in_action.triggered.connect(self.zoom_in)
                 self.zoom_out_action.triggered.connect(self.zoom_out)
+                self.reset_view_action.triggered.connect(self.reset_view)
                 pan_step = 30
-                self.pan_right_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() + pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+                self.pan_right_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() + pan_step) if self.live_view_label.is_view_transformed() else None)
                 self.pan_right_action.triggered.connect(self.update_live_view)
-                self.pan_left_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() - pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+                self.pan_left_action.triggered.connect(lambda: self.live_view_label.pan_offset.setX(self.live_view_label.pan_offset.x() - pan_step) if self.live_view_label.is_view_transformed() else None)
                 self.pan_left_action.triggered.connect(self.update_live_view)
-                self.pan_down_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() + pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+                self.pan_down_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() + pan_step) if self.live_view_label.is_view_transformed() else None)
                 self.pan_down_action.triggered.connect(self.update_live_view)
-                self.pan_up_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() - pan_step) if self.live_view_label.zoom_level > 1.0 else None)
+                self.pan_up_action.triggered.connect(lambda: self.live_view_label.pan_offset.setY(self.live_view_label.pan_offset.y() - pan_step) if self.live_view_label.is_view_transformed() else None)
                 self.pan_up_action.triggered.connect(self.update_live_view)
                 self.copy_custom_items_action.triggered.connect(self.copy_custom_items)
                 self.paste_custom_items_action.triggered.connect(self.paste_custom_items)
@@ -13985,6 +14697,74 @@ if __name__ == "__main__":
                         # --- END FIX ---
                         self.update_live_view()
 
+            def _mwm_seed_for_dialog(self):
+                """Seed values for the densitometry MW-marker picker: whatever ladder the app
+                is currently carrying (preset selection / edited values / hidden labels), so
+                the dialog opens on the user's marker instead of a hard-coded default.
+                Returns (values, hidden_indices, preset_name)."""
+                vals = [str(v).strip() for v in (getattr(self, 'mwm_label_values', None) or [])]
+                if not vals:
+                    vals = [str(v).strip() for v in (getattr(self, 'marker_values', []) or [])]
+                preset = (self.combo_box.currentText()
+                          if hasattr(self, 'combo_box') else "Custom")
+                if not vals:
+                    # Nothing chosen yet — fall back to the stock ladder.
+                    _pd = getattr(self, 'presets_data', {}) or {}
+                    _default_preset = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
+                    cfg = _pd.get(_default_preset)
+                    if isinstance(cfg, dict):
+                        vals = [str(v).strip() for v in (cfg.get('marker_values') or [])]
+                        preset = _default_preset
+                hidden = [int(i) for i in (getattr(self, 'mwm_hidden_label_indices', []) or [])]
+                return vals, hidden, preset
+
+            def _store_mwm_state_from_dialog(self, dialog, lane_id):
+                """Adopt the MW-marker choices the user made in the densitometry dialog.
+                self.marker_values gets the VISIBLE labels (hidden bands become blank, which
+                renders nothing), while the full ladder + hidden positions are kept so the
+                state can be saved and restored. Returns the visible label list."""
+                full = [str(v).strip() for v in getattr(dialog, 'lane_mw_labels', {}).get(lane_id, [])]
+                if not full:
+                    # Not a ladder lane (or the picker was never populated) — leave the
+                    # existing marker values alone rather than blanking them.
+                    return [str(v) for v in (getattr(self, 'marker_values', []) or [])]
+                hidden = sorted(int(i) for i in getattr(dialog, 'lane_mw_hidden', {}).get(lane_id, set()))
+                visible = ["" if i in hidden else v for i, v in enumerate(full)]
+
+                self.mwm_label_values = full
+                self.mwm_hidden_label_indices = hidden
+                self.marker_values = list(visible)
+                if hasattr(self, 'marker_values_textbox'):
+                    self.marker_values_textbox.blockSignals(True)
+                    self.marker_values_textbox.setText(", ".join(visible))
+                    self.marker_values_textbox.blockSignals(False)
+
+                # Left AND right MWM markers both take their text from marker_values, so a
+                # hidden label has to disappear from BOTH sides. The caller only rebuilds the
+                # side(s) it just placed, which left the opposite side showing stale labels
+                # (hide a band on the left → the right ladder still showed it).
+                self._relabel_standard_markers('left_marker')
+                self._relabel_standard_markers('right_marker')
+
+                # Keep the main preset selector honest: a named preset stays named, edited or
+                # partially hidden ladders read as Custom. blockSignals is essential — letting
+                # on_combobox_changed run would re-load the preset values and undo the edit.
+                preset = str(getattr(dialog, 'lane_mwm_preset', {}).get(lane_id, "Custom"))
+                if hidden:
+                    preset = "Custom"
+                if hasattr(self, 'combo_box'):
+                    idx = self.combo_box.findText(preset)
+                    if idx < 0:
+                        idx = self.combo_box.findText("Custom")
+                    if idx >= 0:
+                        self.combo_box.blockSignals(True)
+                        self.combo_box.setCurrentIndex(idx)
+                        self.combo_box.blockSignals(False)
+                        if hasattr(self, 'marker_values_textbox'):
+                            self.marker_values_textbox.setEnabled(
+                                self.combo_box.currentText() == "Custom")
+                return visible
+
             def process_auto_lane_region(self, qimage_region, original_region_definition, is_quad_warp):
                 """
                 Processes the extracted/warped region, opens tuning dialog, and places markers.
@@ -14010,15 +14790,11 @@ if __name__ == "__main__":
                 # Densitometry & Band Analysis" dialog as everything else. It is flagged as
                 # an MWM lane so the dialog shows the MW-marker picker and labels the bands
                 # with molecular weights (top→bottom) instead of the area distribution.
-                _pd = getattr(self, 'presets_data', {}) or {}
-                _default_preset = "Precision Plus Protein All Blue Prestained (Bio-Rad)"
-                _mw_seed = []
-                if _default_preset in _pd and isinstance(_pd[_default_preset], dict):
-                    _mw_seed = [str(v) for v in (_pd[_default_preset].get('marker_values', []) or [])]
-                if not _mw_seed:
-                    _mw_seed = [str(v) for v in (getattr(self, 'marker_values', []) or [])]
+                _mw_seed, _mw_hidden, _mw_preset = self._mwm_seed_for_dialog()
 
-                lane_dicts = [{'pil': dialog_image_pil, 'id': 1, 'is_mwm': True, 'mw_labels': _mw_seed}]
+                lane_dicts = [{'pil': dialog_image_pil, 'id': 1, 'is_mwm': True,
+                               'mw_labels': _mw_seed, 'mw_hidden': _mw_hidden,
+                               'mwm_preset': _mw_preset}]
                 dialog = PeakAreaDialog(
                     cropped_data=lane_dicts,
                     current_settings=self.peak_dialog_settings,
@@ -14031,11 +14807,10 @@ if __name__ == "__main__":
                     self._persist_peak_dialog_settings(dialog, False)
                     bands = all_info.get(1, [])
 
-                    # MW labels come from the dialog's (editable) picker. Blank entries are
-                    # kept so those bands are detected/placed but rendered without a label.
-                    self.marker_values = [str(v) for v in getattr(dialog, 'lane_mw_labels', {}).get(1, [])]
-                    if hasattr(self, 'marker_values_textbox'):
-                        self.marker_values_textbox.setText(", ".join(self.marker_values))
+                    # MW labels come from the dialog's (editable) picker, with any band the
+                    # user un-ticked in "Show labels" blanked out. Blank entries are kept so
+                    # those bands are still detected/placed, just rendered without a label.
+                    self._store_mwm_state_from_dialog(dialog, 1)
 
                     if bands:
                         peak_coords = np.array(
@@ -14074,8 +14849,11 @@ if __name__ == "__main__":
                 else:
                     return
 
-                self.on_combobox_changed() 
-                current_marker_values_for_labels = self.marker_values 
+                # NOTE: do NOT call on_combobox_changed() here. It re-reads the marker values
+                # from the preset selector, which silently overwrote the values the user just
+                # picked/edited in the densitometry dialog (they "reverted to the default
+                # ladder"). The caller owns self.marker_values; this method only consumes it.
+                current_marker_values_for_labels = list(self.marker_values)
 
                 if not current_marker_values_for_labels: 
                     current_marker_values_for_labels = [""] * len(peak_coords_in_dialog)
@@ -14185,6 +14963,9 @@ if __name__ == "__main__":
 
             def zoom_out(self):
                 self.live_view_label.zoom_out()
+
+            def reset_view(self):
+                self.live_view_label.reset_view()
                 
             
             
@@ -14385,6 +15166,13 @@ if __name__ == "__main__":
                 """
                 if not self.image_master or self.image_master.isNull():
                     return
+
+                # Every edit funnels through here, so it's the natural place to notice that
+                # the on-screen state has diverged from the analysis file — that's what makes
+                # Load Analysis ask before it overwrites the user's work. Restoring an undo
+                # snapshot isn't a user edit.
+                if not getattr(self, '_is_restoring_state', False):
+                    self._analysis_dirty_since_load = True
 
                 UNDO_LIMIT = 20
                 while len(self.undo_stack) >= UNDO_LIMIT:
@@ -14974,6 +15762,7 @@ if __name__ == "__main__":
                         json.dump(config_data_to_save, config_file, indent=4)
                     
                     self.is_modified = False # Mark as saved
+                    self._analysis_dirty_since_load = False  # file now matches the screen
                     self.setWindowTitle(f"{self.window_title}::{config_base}")
                     self._update_status_bar()
                     QMessageBox.information(self, "Analysis Saved", f"Analysis configuration saved successfully to:\n{os.path.basename(config_save_path)}")
@@ -14981,6 +15770,128 @@ if __name__ == "__main__":
                 except Exception as e:
                     QMessageBox.critical(self, "Save Analysis Error", f"Could not save the analysis config file: {e}")
                     traceback.print_exc()
+
+            def _apply_analysis_extras(self, config_data):
+                """Restore the analysis state that lives outside apply_config's core: the
+                standard curve, the protein-sequence data and the saved densitometry results.
+
+                Shared by the Load Analysis button and the image-open path, so opening an
+                image brings its analysis back automatically — no Load Analysis click needed
+                before Show Markers, and no re-running the densitometry. Every field falls
+                back to its empty default, so configs saved before these keys existed load
+                exactly as they did before.
+                """
+                # --- Standard curve (quantity -> area) ---
+                raw_qpa_dict = config_data.get("quantities_peak_area_dict", {}) or {}
+                try:
+                    self.quantities_peak_area_dict = {float(k): float(v) for k, v in raw_qpa_dict.items()}
+                except (TypeError, ValueError):
+                    self.quantities_peak_area_dict = {}
+                if hasattr(self, 'standard_protein_values'):
+                    formatted_quantities = [f"{qty:.2f}" for qty in self.quantities_peak_area_dict.keys()]
+                    formatted_areas = [f"{area:.3f}" for area in self.quantities_peak_area_dict.values()]
+                    self.standard_protein_values.setText(", ".join(formatted_quantities))
+                    self.standard_protein_areas_text.setText(", ".join(formatted_areas))
+
+                # --- Protein analysis data ---
+                protein_analysis_data = config_data.get("protein_analysis_data", {}) or {}
+                self.protein_sequence = protein_analysis_data.get("protein_sequence", "")
+                try:
+                    self.base_protein_mw = float(protein_analysis_data.get("base_protein_mw", 0.0))
+                    self.avg_glycan_mass = float(protein_analysis_data.get("avg_glycan_mass", 0.0))
+                    self.num_oligomers_to_model = int(protein_analysis_data.get("num_oligomers_to_model", 1))
+                    self.num_glycans_to_model = int(protein_analysis_data.get("num_glycans_to_model", 0))
+                    self.last_predicted_mw = float(protein_analysis_data.get("last_predicted_mw", 0.0))
+                except (TypeError, ValueError):
+                    pass
+                self.last_mw_prediction_model = protein_analysis_data.get("last_mw_prediction_model", None)
+                if self.last_mw_prediction_model and "coeffs" in self.last_mw_prediction_model:
+                    c = self.last_mw_prediction_model["coeffs"]
+                    if isinstance(c, list):
+                        self.last_mw_prediction_model["coeffs"] = np.array(c)
+
+                # --- Densitometry results (added 2026-07; absent in older files) ---
+                dens = config_data.get("densitometry_results")
+                if isinstance(dens, dict):
+                    def _to_int_keyed(d, conv):
+                        out = {}
+                        for k, v in (d or {}).items():
+                            try:
+                                out[int(k)] = conv(v)
+                            except (TypeError, ValueError):
+                                continue
+                        return out
+
+                    self.latest_multi_lane_peak_areas = _to_int_keyed(
+                        dens.get("multi_lane_peak_areas"), lambda v: [float(a) for a in (v or [])])
+                    self.latest_multi_lane_peak_details = _to_int_keyed(
+                        dens.get("multi_lane_peak_details"),
+                        lambda v: [dict(d) for d in (v or []) if isinstance(d, dict)])
+                    self.latest_multi_lane_calculated_quantities = _to_int_keyed(
+                        dens.get("multi_lane_calculated_quantities"),
+                        lambda v: [float(q) for q in (v or [])])
+                    self.latest_peak_areas = [float(a) for a in (dens.get("peak_areas") or [])]
+                    self.latest_peak_details = [dict(d) for d in (dens.get("peak_details") or [])
+                                                if isinstance(d, dict)]
+                    self.latest_calculated_quantities = [
+                        float(q) for q in (dens.get("calculated_quantities") or [])]
+                    self.multi_lane_processing_finished = bool(
+                        dens.get("multi_lane_processing_finished", False))
+                    self.latest_standard_curve_model = str(dens.get("standard_curve_model", "Linear"))
+                else:
+                    # Legacy config (or one saved before any analysis): it carries no
+                    # results, so clear rather than leave whatever the previously-open image
+                    # measured — those numbers do not belong to this file.
+                    self.latest_multi_lane_peak_areas = {}
+                    self.latest_multi_lane_peak_details = {}
+                    self.latest_multi_lane_calculated_quantities = {}
+                    self.latest_peak_areas = []
+                    self.latest_peak_details = []
+                    self.latest_calculated_quantities = []
+                    self.latest_standard_curve_model = "Linear"
+                    # Only the flag was ever stored at the top level.
+                    self.multi_lane_processing_finished = config_data.get(
+                        "multi_lane_processing_finished", False)
+
+                # Rebuild the "Sample Results" summary so the restored analysis is visible in
+                # the Process Regions panel too, not just in View Full Results and History.
+                self._refresh_sample_results_text()
+
+                # Everything now matches the file on disk.
+                self._analysis_dirty_since_load = False
+
+            def _refresh_sample_results_text(self):
+                """Repopulate the Sample Results box from the current densitometry results.
+
+                Uses the same "Lane N: Areas=[...], Qty=[...]" wording the analysis itself
+                produces, which is what SampleResultsTable parses into its table.
+                """
+                widget = getattr(self, 'target_protein_areas_text', None)
+                if widget is None:
+                    return
+                areas_by_lane = getattr(self, 'latest_multi_lane_peak_areas', {}) or {}
+                qty_by_lane = getattr(self, 'latest_multi_lane_calculated_quantities', {}) or {}
+                if not areas_by_lane and getattr(self, 'latest_peak_areas', None):
+                    areas_by_lane = {1: self.latest_peak_areas}
+                    qty_by_lane = {1: getattr(self, 'latest_calculated_quantities', []) or []}
+                if not areas_by_lane:
+                    widget.clear()
+                    return
+
+                lines = []
+                for lane_id in sorted(areas_by_lane.keys()):
+                    areas = areas_by_lane.get(lane_id) or []
+                    if not areas:
+                        lines.append(f"Lane {lane_id}: No peaks found.")
+                        continue
+                    qtys = qty_by_lane.get(lane_id) or []
+                    txt = f"Lane {lane_id}: Areas=[{', '.join(f'{float(a):.3f}' for a in areas)}]"
+                    if len(qtys) == len(areas):
+                        txt += f", Qty=[{', '.join(f'{float(q):.2f}' for q in qtys)}]"
+                    else:
+                        txt += " (No std curve for qty)"
+                    lines.append(txt)
+                widget.setText("\n".join(lines))
 
             def load_analysis_from_config(self):
                 """
@@ -14990,6 +15901,20 @@ if __name__ == "__main__":
                 if not self.image_path:
                     QMessageBox.warning(self, "Load Error", "An image must be loaded and saved to have an associated analysis file.")
                     return
+
+                # The analysis is loaded automatically when the image is opened, so reaching
+                # for this button usually means re-loading over work in progress. Only ask
+                # when there is actually something to lose.
+                if getattr(self, '_analysis_dirty_since_load', False):
+                    reply = QMessageBox.question(
+                        self, "Reload Analysis?",
+                        "You have unsaved changes to this image.\n\n"
+                        "Loading the saved analysis will replace the current markers, shapes "
+                        "and analysis results with the contents of the analysis file.\n\n"
+                        "Load the saved analysis anyway?",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply != QMessageBox.Yes:
+                        return
 
                 # --- START OF MODIFICATION: Auto-find the config file ---
                 base_name_no_ext = os.path.splitext(os.path.basename(self.image_path))[0]
@@ -15009,32 +15934,8 @@ if __name__ == "__main__":
 
                     # --- MODIFICATION: Call apply_config to load ALL data ---
                     self.apply_config(config_data,load_analysis=True)
+                    self._apply_analysis_extras(config_data)
 
-                    # Specifically load analysis-related data that might be separate
-                    raw_qpa_dict = config_data.get("quantities_peak_area_dict", {})
-                    self.quantities_peak_area_dict = {float(k): float(v) for k, v in raw_qpa_dict.items()}
-                    self.multi_lane_processing_finished = config_data.get("multi_lane_processing_finished", False)
-                    
-                    # Update UI text fields for standards
-                    formatted_quantities = [f"{qty:.2f}" for qty in self.quantities_peak_area_dict.keys()]
-                    formatted_areas = [f"{area:.3f}" for area in self.quantities_peak_area_dict.values()]
-                    self.standard_protein_values.setText(", ".join(formatted_quantities))
-                    self.standard_protein_areas_text.setText(", ".join(formatted_areas))
-
-                    # Load Protein Analysis data
-                    protein_analysis_data = config_data.get("protein_analysis_data", {})
-                    self.protein_sequence = protein_analysis_data.get("protein_sequence", "")
-                    self.base_protein_mw = float(protein_analysis_data.get("base_protein_mw", 0.0))
-                    self.avg_glycan_mass = float(protein_analysis_data.get("avg_glycan_mass", 0.0))
-                    self.num_oligomers_to_model = int(protein_analysis_data.get("num_oligomers_to_model", 1))
-                    self.num_glycans_to_model = int(protein_analysis_data.get("num_glycans_to_model", 0))
-                    self.last_predicted_mw = float(protein_analysis_data.get("last_predicted_mw", 0.0))
-                    self.last_mw_prediction_model = protein_analysis_data.get("last_mw_prediction_model", None)
-                    if self.last_mw_prediction_model and "coeffs" in self.last_mw_prediction_model:
-                        c = self.last_mw_prediction_model["coeffs"]
-                        if isinstance(c, list):
-                            self.last_mw_prediction_model["coeffs"] = np.array(c)
-                    
                     self.is_modified = True
                     self.update_live_view()
                     QMessageBox.information(self, "Analysis Loaded", f"Analysis configuration loaded successfully from:\n{os.path.basename(config_path)}")
@@ -18835,6 +19736,18 @@ if __name__ == "__main__":
                     content_w = max(1, self.image.width() - cl - cr)
                     content_h = max(1, self.image.height() - ct - cb)
 
+                    # Where the user has actually parked the label anchors, expressed
+                    # CONTENT-relative so the numbers survive padding (Apply Padding shifts the
+                    # content and the anchors together). These are the Markers-tab Left/Right/
+                    # Top offset sliders; ignoring them is what made the recommendation the same
+                    # no matter where the labels sat.
+                    #   left  : label text ENDS at   shift_l_rel (grows leftwards)
+                    #   right : label text STARTS at shift_r_rel (grows rightwards)
+                    #   top   : label baseline at    shift_t_rel (rotated text grows upwards)
+                    shift_l_rel = float(getattr(self, 'left_marker_shift_added', 0)) - cl
+                    shift_r_rel = float(getattr(self, 'right_marker_shift_added', 0)) - cl
+                    shift_t_rel = float(getattr(self, 'top_marker_shift_added', 0)) - ct
+
                     font_size = max(1, int(getattr(self, 'font_size', 16)))
                     family    = str(getattr(self, 'font_family', 'Arial'))
                     rotation  = float(getattr(self, 'font_rotation', -45))
@@ -19002,9 +19915,15 @@ if __name__ == "__main__":
                         eff_px = min(max(eff_px, float(font_size)), font_size * 10.0)
                         top_e, lw, rw, ep = _extents(eff_px)
                         margin = max(6.0, ep / 3.0)
-                        pad_top = math.ceil(top_e) + margin + 0.4 * ep
-                        pad_l = lw + margin
-                        pad_r = rw + margin
+                        # Size each side so the label INK clears the canvas edge, given where
+                        # the offset sliders put the anchors. After padding P_l the left label
+                        # spans [P_l + shift_l_rel - lw, P_l + shift_l_rel], so it needs
+                        # P_l >= margin + lw - shift_l_rel; the right/top follow the same way.
+                        # With the anchors at their defaults (left 0, right = content edge,
+                        # top 0) these collapse to the previous lw/rw/top_e + margin values.
+                        pad_top = max(0.0, math.ceil(top_e) + margin + 0.4 * ep - shift_t_rel)
+                        pad_l = max(0.0, lw + margin - shift_l_rel)
+                        pad_r = max(0.0, shift_r_rel + rw + margin - content_w)
                         # Fold in custom markers/shapes (and the vertical extent of the
                         # standard L/R marker labels) that spill past the canvas edges.
                         cust_l, cust_r, cust_t, cust_b = _custom_overflow(view_scale, ep)
@@ -19411,7 +20330,17 @@ if __name__ == "__main__":
                 
                 self.move_resize_button = QPushButton("Move/Resize")
                 self.move_resize_button.setCheckable(True)
-                self.move_resize_button.setToolTip("Select and Move/Resize items.\n- Drag body to move.\n- Drag corners to resize (Shapes).\n- Hold Shift to constrain axis.\n- Arrow keys to nudge selected item (1 px).\n- Shift+Arrow to nudge by 10 px.")
+                self.move_resize_button.setToolTip(
+                    "Select and Move/Resize items.\n"
+                    "- Drag body to move.\n"
+                    "- Rectangle: drag a corner to resize, or the handle above the top edge "
+                    "to change border thickness.\n"
+                    "- Line/Arrow: drag an end to re-aim, or a side handle to change thickness.\n"
+                    "- Text: click to select, then drag the handle at its lower-right to "
+                    "resize the font.\n"
+                    "- Hold Shift to constrain axis (or snap lines to 45°).\n"
+                    "- Arrow keys to nudge selected item (1 px).\n"
+                    "- Shift+Arrow to nudge by 10 px.")
                 self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
                 self._register_action_button(self.move_resize_button, colorize=True)
                 
@@ -19631,25 +20560,32 @@ if __name__ == "__main__":
                 proc_layout.addLayout(gpu_selection_layout)
                 layout.addWidget(proc_group)
                 
-                # --- User Interface Scaling ---
-                ui_group = QGroupBox("User Interface Scaling (Requires Restart)")
-                ui_layout = QHBoxLayout(ui_group)
-                
-                ui_layout.addWidget(QLabel("UI Scale:"))
+                # --- User Interface Scaling & Fonts ---
+                # Laid out like "Application Dimensions" below: label in column 0, the
+                # control stretched across column 1. The control column MUST take the
+                # stretch — a trailing stretch column instead left the spin boxes at their
+                # minimum width, which clipped their suffix ("12 p:") once the UI font grew.
+                ui_group = QGroupBox("User Interface Scaling && Fonts")
+                ui_layout = QGridLayout(ui_group)
+                ui_layout.setVerticalSpacing(10)
+                # No column stretch and Expanding fields — the same construction as
+                # "Application Dimensions" below, so the two groups look identical.
+
+                ui_layout.addWidget(QLabel("UI Scale:"), 0, 0)
                 self.ui_scale_combo = QComboBox()
-                
+
                 # Option mapping: Text -> Float Value
                 self.scale_options = [
                     ("0%", 0.0), ("50%", 0.5), ("75%", 0.75), ("100% (No Scaling)", 1.0),
                     ("125%", 1.25), ("150%", 1.50), ("175%", 1.75), ("200%", 2.00),
                     ("225%", 2.25), ("250%", 2.50)
                 ]
-                
+
                 current_pref = getattr(self, 'ui_scale_preference', 1.0)
-                
+
                 for text, val in self.scale_options:
                     self.ui_scale_combo.addItem(text, val)
-                    
+
                 # Set current index
                 index_to_set = 3
                 for i, (text, val) in enumerate(self.scale_options):
@@ -19657,8 +20593,38 @@ if __name__ == "__main__":
                         index_to_set = i
                         break
                 self.ui_scale_combo.setCurrentIndex(index_to_set)
-                
-                ui_layout.addWidget(self.ui_scale_combo)
+                self.ui_scale_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.ui_scale_combo.setToolTip(
+                    "Scales the whole interface — controls, spacing AND both font sizes "
+                    "below, which are multiplied by this percentage so they follow the scale "
+                    "automatically.\nApplied immediately; the window layout settles fully "
+                    "after a restart.")
+                ui_layout.addWidget(self.ui_scale_combo, 0, 1)
+
+                ui_layout.addWidget(QLabel("UI Font Size:"), 1, 0)
+                self.spin_ui_font = QSpinBox()
+                self.spin_ui_font.setRange(self.UI_FONT_SIZE_RANGE[0], self.UI_FONT_SIZE_RANGE[1])
+                self.spin_ui_font.setValue(int(getattr(self, 'ui_font_size', self.DEFAULT_UI_FONT_SIZE)))
+                self.spin_ui_font.setSuffix(" px")
+                self.spin_ui_font.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.spin_ui_font.setToolTip(
+                    f"Base text size for the interface at 100% UI Scale (default "
+                    f"{self.DEFAULT_UI_FONT_SIZE} px). The UI Scale above multiplies it.")
+                ui_layout.addWidget(self.spin_ui_font, 1, 1)
+
+                ui_layout.addWidget(QLabel("Plot Font Size:"), 2, 0)
+                self.spin_plot_font = QSpinBox()
+                self.spin_plot_font.setRange(self.PLOT_FONT_SIZE_RANGE[0], self.PLOT_FONT_SIZE_RANGE[1])
+                self.spin_plot_font.setValue(int(getattr(self, 'plot_font_size', self.DEFAULT_PLOT_FONT_SIZE)))
+                self.spin_plot_font.setSuffix(" pt")
+                self.spin_plot_font.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.spin_plot_font.setToolTip(
+                    f"Text size used for EVERY graph — titles, axis labels, tick labels, "
+                    f"legends and band annotations all share this size (default "
+                    f"{self.DEFAULT_PLOT_FONT_SIZE} pt) at 100% UI Scale. The UI Scale above "
+                    f"multiplies it.")
+                ui_layout.addWidget(self.spin_plot_font, 2, 1)
+
                 layout.addWidget(ui_group)
 
                 # --- Viewer Dimensions ---
@@ -19762,6 +20728,14 @@ if __name__ == "__main__":
                 if hasattr(self, 'ui_scale_combo'):
                     self.ui_scale_preference = self.ui_scale_combo.currentData()
 
+                # Font sizes (base values at 100% scale)
+                old_ui_font = getattr(self, 'ui_font_size', self.DEFAULT_UI_FONT_SIZE)
+                old_plot_font = getattr(self, 'plot_font_size', self.DEFAULT_PLOT_FONT_SIZE)
+                if hasattr(self, 'spin_ui_font'):
+                    self.ui_font_size = int(self.spin_ui_font.value())
+                if hasattr(self, 'spin_plot_font'):
+                    self.plot_font_size = int(self.spin_plot_font.value())
+
                 old_viewer_w = getattr(self, 'viewer_fixed_width', None)
                 old_viewer_h = getattr(self, 'viewer_fixed_height', None)
                 self.viewer_fixed_width = self.spin_viewer_w.value()
@@ -19793,9 +20767,18 @@ if __name__ == "__main__":
                 # the scale). Re-apply the active theme stylesheet so the bigger/smaller
                 # control fonts take effect immediately, without a restart. The preview
                 # canvas text is unaffected (drawn separately via QPainter).
-                if old_ui_scale != self.ui_scale_preference:
+                if old_ui_scale != self.ui_scale_preference or old_ui_font != self.ui_font_size:
                     try:
                         self._apply_initial_theme(getattr(self, 'current_theme', 'light'))
+                    except Exception:
+                        pass
+                # Matplotlib text is sized in points at draw time, so redraw the always-on
+                # histogram for its labels to pick up the new size. Dialog plots are built
+                # fresh each time they open.
+                if (old_ui_scale != self.ui_scale_preference
+                        or old_plot_font != self.plot_font_size):
+                    try:
+                        self._update_levels_histogram()
                     except Exception:
                         pass
 
@@ -19849,6 +20832,8 @@ if __name__ == "__main__":
                     # Restore ALL in-memory defaults, including the persisted window size so the
                     # layout rebuild below opens at the default size instead of the last one.
                     self.ui_scale_preference = 1.0
+                    self.ui_font_size        = self.DEFAULT_UI_FONT_SIZE
+                    self.plot_font_size      = self.DEFAULT_PLOT_FONT_SIZE
                     self.viewer_position     = "Top"
                     self.use_gpu             = True
                     # Default viewer = fixed 550x350.
@@ -19929,6 +20914,10 @@ if __name__ == "__main__":
                 if hasattr(self, 'spin_viewer_w'): self.spin_viewer_w.setValue(self.viewer_fixed_width)
                 if hasattr(self, 'spin_viewer_h'): self.spin_viewer_h.setValue(self.viewer_fixed_height)
                 if hasattr(self, 'spin_content_w'): self.spin_content_w.setValue(self.safe_content_width)
+                if hasattr(self, 'spin_ui_font'):
+                    self.spin_ui_font.setValue(int(getattr(self, 'ui_font_size', self.DEFAULT_UI_FONT_SIZE)))
+                if hasattr(self, 'spin_plot_font'):
+                    self.spin_plot_font.setValue(int(getattr(self, 'plot_font_size', self.DEFAULT_PLOT_FONT_SIZE)))
                 
                 # FIX: Force label refresh to match new settings
                 self._update_active_device_label()
@@ -20349,11 +21338,18 @@ if __name__ == "__main__":
 
                     self._notify_once(
                         "move_custom_items", "Move/Resize Custom Items",
-                        "Click on a marker or shape to select it.\n"
-                        "Drag its body to move, or a corner handle to resize (shapes only).\n"
+                        "Click on a marker or shape to select it, then drag its body to move it.\n\n"
+                        "Red handles resize the selection:\n"
+                        "• Rectangle — corners resize the box; the handle above the top edge "
+                        "sets the border thickness.\n"
+                        "• Line / Arrow — the ends re-aim it; the two side handles set the "
+                        "thickness.\n"
+                        "• Text — one handle at the lower-right scales the font. For a custom "
+                        "marker it resizes just that label; for a left/right/top marker it "
+                        "resizes the whole set (they share one font size).\n\n"
                         "Press ESC or un-check the button to exit this mode.")
                     self.show_mode_status("MOVE/RESIZE items — click a marker/shape, drag to move or "
-                                          "use a corner to resize. Press Esc to exit.",
+                                          "use a handle to resize. Press Esc to exit.",
                                           active_button=getattr(self, 'move_resize_button', None))
                     self.update_live_view()
                 else:
@@ -20495,12 +21491,65 @@ if __name__ == "__main__":
                 except Exception:
                     return bool(body_ls and body_ls.contains(point_ls))
 
+            def _get_text_item_font_size(self, info):
+                """Current font size of a selected text item (custom marker or standard
+                L/R/top marker)."""
+                if info['type'] == 'marker':
+                    try:
+                        return float(self.custom_markers[info['index']][5])
+                    except (IndexError, TypeError, ValueError):
+                        return float(getattr(self, 'font_size', 12))
+                return float(getattr(self, 'font_size', 12))
+
+            def _get_text_item_font_handle_ls(self, info):
+                """Label-space (handle_point, text_centre) for resizing a text item's font,
+                or (None, None) if the item has no measurable box right now. The handle sits
+                just off the lower-right of the text, like a corner grip."""
+                try:
+                    if info['type'] == 'marker':
+                        shape = self._get_marker_bounding_box_in_label_space(info['index'])
+                    elif info['type'] in ('left_marker', 'right_marker', 'top_marker'):
+                        shape = self._get_standard_marker_bounding_box_in_label_space(
+                            info['type'], info['index'])
+                    else:
+                        return None, None
+                    if shape is None:
+                        return None, None
+                    rect = shape.boundingRect() if isinstance(shape, QPolygonF) else shape
+                    if not isinstance(rect, QRectF) or rect.isNull():
+                        return None, None
+                    gap = 5.0
+                    return (QPointF(rect.right() + gap, rect.bottom() + gap), rect.center())
+                except Exception:
+                    return None, None
+
             def handle_custom_item_selection_click(self, event):
                 if self.current_selection_mode != "select_custom_item" or event.button() != Qt.LeftButton:
                     return
 
                 clicked_point_ls = self.live_view_label.transform_point(event.position())
                 item_selected = False
+
+                # A text item's font handle is offered only once that item is selected, so an
+                # unselected label can never steal a click meant for something else. Click the
+                # text to select it, then drag the handle at its lower-right to resize.
+                sel_info = self.moving_custom_item_info
+                if sel_info and sel_info['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
+                    handle_pt, centre_pt = self._get_text_item_font_handle_ls(sel_info)
+                    if handle_pt is not None:
+                        grab = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 2.0
+                        if (clicked_point_ls - handle_pt).manhattanLength() < grab:
+                            self.resizing_corner_index = 0   # text items have a single handle
+                            self.shape_points_at_drag_start_label = [centre_pt, handle_pt]
+                            self._font_size_at_drag_start = self._get_text_item_font_size(sel_info)
+                            self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
+                            self.current_selection_mode = "resizing_custom_item"
+                            self.live_view_label.mode = "resizing_custom_item"
+                            self.live_view_label.setCursor(Qt.SizeFDiagCursor)
+                            self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_custom_item_drag
+                            self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_custom_item_drag_release
+                            self.update_live_view()
+                            return
 
                 # Iterate in reverse to select topmost items first
                 # Check shape handles first (higher priority than body)
@@ -20691,16 +21740,32 @@ if __name__ == "__main__":
                 # --- RESIZE LOGIC ---
                 elif self.current_selection_mode == "resizing_custom_item":
                     snapped_mouse_ls = self.snap_point_to_grid(current_mouse_pos_ls)
+                    if info['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
+                        # Text items resize by FONT SIZE: drag the handle away from the text
+                        # centre to grow it, towards the centre to shrink. Scaling by the
+                        # ratio of distances (not an absolute distance) means the size never
+                        # jumps on grab, however far the handle sits from the text.
+                        self._resize_text_item_from_drag(info, current_mouse_pos_ls)
+                        self.update_live_view()
+                        return
+
                     shape_data = self.custom_shapes[info['index']]
-                    if shape_data['type'] == 'rectangle':
+                    stype = shape_data['type']
+                    if stype == 'rectangle' and self.resizing_corner_index == 4:
+                        # Border-thickness handle (floats above the top edge): only vertical
+                        # travel counts, and it is applied RELATIVE to the thickness captured
+                        # on grab, so there is no jump when the handle is picked up.
+                        shape_data['thickness'] = self._thickness_from_perp_drag(
+                            shape_data, current_mouse_pos_ls, 0.0, -1.0, scale)
+                    elif stype == 'rectangle':
                         fixed_corner_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 2) % 4]
-                        
+
                         # Constrain to square if Shift is pressed
                         if QApplication.keyboardModifiers() == Qt.ShiftModifier:
                             delta_x = snapped_mouse_ls.x() - fixed_corner_ls.x()
                             delta_y = snapped_mouse_ls.y() - fixed_corner_ls.y()
                             max_delta = max(abs(delta_x), abs(delta_y))
-                            
+
                             new_x = fixed_corner_ls.x() + (max_delta if delta_x > 0 else -max_delta)
                             new_y = fixed_corner_ls.y() + (max_delta if delta_y > 0 else -max_delta)
                             snapped_mouse_ls = QPointF(new_x, new_y)
@@ -20708,45 +21773,17 @@ if __name__ == "__main__":
                         p1_img = label_to_image(fixed_corner_ls); p2_img = label_to_image(snapped_mouse_ls)
                         xs = sorted([p1_img.x(), p2_img.x()]); ys = sorted([p1_img.y(), p2_img.y()])
                         shape_data['rect'] = (xs[0], ys[0], xs[1] - xs[0], ys[1] - ys[0])
-                    elif shape_data['type'] == 'line':
-                        fixed_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
-                        
-                        # Snap to angles if Shift is pressed
-                        if QApplication.keyboardModifiers() == Qt.ShiftModifier:
-                            delta = snapped_mouse_ls - fixed_endpoint_ls
-                            angle_rad = np.arctan2(delta.y(), delta.x())
-                            angle_deg = np.degrees(angle_rad)
-                            
-                            # Snap angle to nearest 45 degrees
-                            snapped_angle_deg = round(angle_deg / 45.0) * 45.0
-                            snapped_angle_rad = np.radians(snapped_angle_deg)
-                            
-                            # Recalculate the snapped mouse position
-                            length = np.sqrt(delta.x()**2 + delta.y()**2)
-                            snapped_mouse_ls = QPointF(
-                                fixed_endpoint_ls.x() + length * np.cos(snapped_angle_rad),
-                                fixed_endpoint_ls.y() + length * np.sin(snapped_angle_rad)
-                            )
-
-                        p1_img = label_to_image(fixed_endpoint_ls)
-                        p2_img = label_to_image(snapped_mouse_ls)
-                        
-                        if self.resizing_corner_index == 0:
-                            shape_data['start'], shape_data['end'] = (p2_img.x(), p2_img.y()), (p1_img.x(), p1_img.y())
-                        else:
-                            shape_data['start'], shape_data['end'] = (p1_img.x(), p1_img.y()), (p2_img.x(), p2_img.y())
-                    elif shape_data['type'] == 'arrow':
-                        # Handles 0 & 1 re-aim the arrow (drag an endpoint, exactly like a line).
-                        # Handles 2 & 3 change the THICKNESS (distance from the shaft midpoint).
+                    elif stype in ('line', 'arrow'):
+                        # Handles 0 & 1 re-aim the shape (drag an endpoint).
+                        # Handles 2 & 3 change the THICKNESS (perpendicular to the shaft).
                         if self.resizing_corner_index in (0, 1):
                             fixed_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
 
+                            # Snap to 45° angles if Shift is pressed
                             if QApplication.keyboardModifiers() == Qt.ShiftModifier:
                                 delta = snapped_mouse_ls - fixed_endpoint_ls
-                                angle_rad = np.arctan2(delta.y(), delta.x())
-                                angle_deg = np.degrees(angle_rad)
-                                snapped_angle_deg = round(angle_deg / 45.0) * 45.0
-                                snapped_angle_rad = np.radians(snapped_angle_deg)
+                                angle_deg = np.degrees(np.arctan2(delta.y(), delta.x()))
+                                snapped_angle_rad = np.radians(round(angle_deg / 45.0) * 45.0)
                                 length = np.sqrt(delta.x()**2 + delta.y()**2)
                                 snapped_mouse_ls = QPointF(
                                     fixed_endpoint_ls.x() + length * np.cos(snapped_angle_rad),
@@ -20760,38 +21797,80 @@ if __name__ == "__main__":
                             else:
                                 shape_data['start'], shape_data['end'] = (p1_img.x(), p1_img.y()), (p2_img.x(), p2_img.y())
                         else:
-                            # Thickness handle: RELATIVE, jump-free control. We start from the
-                            # thickness captured when the handle was grabbed and adjust it by how
-                            # far the mouse moves ALONG THE PERPENDICULAR to the shaft (movement
-                            # parallel to the shaft is ignored). Using an absolute distance from
-                            # the midpoint made thickness "jump" the instant you grabbed the
-                            # handle, because the handle floats a minimum distance off a thin
-                            # shaft and that distance mapped to a much larger thickness.
                             p_start_ls = self.shape_points_at_drag_start_label[0]
                             p_end_ls = self.shape_points_at_drag_start_label[1]
                             dxs = p_end_ls.x() - p_start_ls.x(); dys = p_end_ls.y() - p_start_ls.y()
                             seg_len = math.hypot(dxs, dys)
-                            if seg_len < 1e-6:
-                                ux, uy = 1.0, 0.0
-                            else:
-                                ux, uy = dxs / seg_len, dys / seg_len
-                            perp_x, perp_y = -uy, ux
-                            # Handle 2 sits on the +perp side, handle 3 on the -perp side; dragging
-                            # either one AWAY from the shaft thickens the arrow.
+                            ux, uy = (1.0, 0.0) if seg_len < 1e-6 else (dxs / seg_len, dys / seg_len)
+                            # Handle 2 sits on the +perpendicular side, handle 3 on the -side;
+                            # dragging either one AWAY from the shaft thickens the shape.
                             sign = 1.0 if self.resizing_corner_index == 2 else -1.0
-                            init_mouse = self.initial_mouse_pos_for_shape_drag_label
-                            disp_x = current_mouse_pos_ls.x() - init_mouse.x()
-                            disp_y = current_mouse_pos_ls.y() - init_mouse.y()
-                            perp_disp = (disp_x * perp_x + disp_y * perp_y) * sign
-                            init_th = getattr(self, '_arrow_thickness_at_drag_start', None)
-                            if init_th is None:
-                                init_th = float(shape_data.get('thickness', 1))
-                            # Each 1 px of perpendicular mouse travel changes the half-thickness by
-                            # 1 px (label space) → 2 px of thickness, converted back to image space.
-                            new_thickness_img = init_th + (2.0 * perp_disp) / scale if scale else init_th
-                            shape_data['thickness'] = max(0.5, new_thickness_img)
+                            shape_data['thickness'] = self._thickness_from_perp_drag(
+                                shape_data, current_mouse_pos_ls, -uy * sign, ux * sign, scale)
 
                 self.update_live_view()
+
+            def _thickness_from_perp_drag(self, shape_data, current_mouse_ls, perp_x, perp_y, scale):
+                """New thickness (image space) for a thickness-handle drag.
+
+                Only mouse travel along (perp_x, perp_y) — the direction that points away
+                from the shape — counts; travel along the shape is ignored. The result is
+                RELATIVE to the thickness captured when the handle was grabbed, so the shape
+                never jumps the instant you grab it (the handle floats a minimum distance off
+                a thin shape, and an absolute mapping would snap the thickness to that gap).
+                """
+                init_mouse = self.initial_mouse_pos_for_shape_drag_label
+                disp_x = current_mouse_ls.x() - init_mouse.x()
+                disp_y = current_mouse_ls.y() - init_mouse.y()
+                perp_disp = disp_x * perp_x + disp_y * perp_y
+                init_th = getattr(self, '_arrow_thickness_at_drag_start', None)
+                if init_th is None:
+                    init_th = float(shape_data.get('thickness', 1))
+                if not scale:
+                    return max(0.5, init_th)
+                # 1 px of perpendicular travel = 1 px of half-thickness = 2 px of thickness.
+                return max(0.5, init_th + (2.0 * perp_disp) / scale)
+
+            def _resize_text_item_from_drag(self, info, current_mouse_ls):
+                """Scale a text item's font size from a handle drag.
+
+                The new size is the grabbed size times how much further the cursor now is
+                from the text centre than the handle was — so the drag starts at exactly 1.0
+                (no jump) and feels like dragging a corner to scale.
+                """
+                centre_ls = self.shape_points_at_drag_start_label[0]
+                grab_ls = self.initial_mouse_pos_for_shape_drag_label
+                grab_dist = math.hypot(grab_ls.x() - centre_ls.x(), grab_ls.y() - centre_ls.y())
+                if grab_dist < 1e-3:
+                    return
+                cur_dist = math.hypot(current_mouse_ls.x() - centre_ls.x(),
+                                      current_mouse_ls.y() - centre_ls.y())
+                ratio = max(0.1, min(cur_dist / grab_dist, 10.0))
+                init_size = float(getattr(self, '_font_size_at_drag_start', 12) or 12)
+                # Stay inside the matching spinner's range, otherwise the spinner would clamp
+                # and silently disagree with the size actually drawn.
+                lo, hi = (self.CUSTOM_TEXT_FONT_RANGE if info['type'] == 'marker'
+                          else self.STANDARD_TEXT_FONT_RANGE)
+                new_size = int(round(max(lo, min(init_size * ratio, hi))))
+
+                if info['type'] == 'marker':
+                    # Custom markers carry their own font size (index 5).
+                    try:
+                        self.custom_markers[info['index']][5] = new_size
+                    except (IndexError, TypeError):
+                        return
+                    if hasattr(self, 'custom_font_size_spinbox'):
+                        self.custom_font_size_spinbox.blockSignals(True)
+                        self.custom_font_size_spinbox.setValue(new_size)
+                        self.custom_font_size_spinbox.blockSignals(False)
+                else:
+                    # Standard L/R/top markers share ONE font size, so this resizes the whole
+                    # set — the same value the Markers tab's font-size spinner drives.
+                    self.font_size = new_size
+                    if hasattr(self, 'font_size_spinner'):
+                        self.font_size_spinner.blockSignals(True)
+                        self.font_size_spinner.setValue(new_size)
+                        self.font_size_spinner.blockSignals(False)
 
             def handle_custom_item_drag_release(self, event):
                 if self.current_selection_mode in ["dragging_custom_item", "resizing_custom_item"] and event.button() == Qt.LeftButton:
@@ -20851,18 +21930,20 @@ if __name__ == "__main__":
                         x, y, w, h = shape_data['rect']
                         p1 = img_to_label((x, y)); p2 = img_to_label((x + w, y + h))
                         body = QRectF(p1, p2).normalized()
-                        handles = [body.topLeft(), body.topRight(), body.bottomRight(), body.bottomLeft()]
-                    elif shape_type == 'line':
+                        # Handles 0-3 are the corners (resize the box). Handle 4 floats just
+                        # outside the top edge and sets the BORDER THICKNESS — drag it away
+                        # from the box to thicken, towards it to thin.
+                        offset_ls = max(10.0, float(shape_data.get('thickness', 1)) * scale / 2.0)
+                        thickness_handle = QPointF(body.center().x(), body.top() - offset_ls)
+                        handles = [body.topLeft(), body.topRight(), body.bottomRight(),
+                                   body.bottomLeft(), thickness_handle]
+                    elif shape_type in ('line', 'arrow'):
                         p1 = img_to_label(shape_data['start']); p2 = img_to_label(shape_data['end'])
                         # The "body" for clicking a line needs tolerance
                         body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5)
-                        handles = [p1, p2]
-                    elif shape_type == 'arrow':
-                        p1 = img_to_label(shape_data['start']); p2 = img_to_label(shape_data['end'])
-                        body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5)
-                        # Handles 0,1 are the endpoints (re-aim / re-length the arrow).
+                        # Handles 0,1 are the endpoints (re-aim / re-length the shape).
                         # Handles 2,3 sit perpendicular to the shaft at its midpoint and
-                        # control the arrow THICKNESS (drag out = thicker, in = thinner).
+                        # control the THICKNESS (drag out = thicker, in = thinner).
                         mid_x = (p1.x() + p2.x()) / 2.0; mid_y = (p1.y() + p2.y()) / 2.0
                         dx = p2.x() - p1.x(); dy = p2.y() - p1.y()
                         seg_len = math.hypot(dx, dy)
@@ -21270,8 +22351,20 @@ if __name__ == "__main__":
                     config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
                     # -------------------------------
 
+                    # Merge into the existing config so window/UI settings and the
+                    # per-dialog remembered sizes survive a preset removal.
+                    config_data = {}
+                    try:
+                        if os.path.exists(config_filepath):
+                            with open(config_filepath, "r", encoding='utf-8') as f:
+                                config_data = json.load(f)
+                        if not isinstance(config_data, dict):
+                            config_data = {}
+                    except Exception:
+                        config_data = {}
+                    config_data["presets"] = self.presets_data
                     with open(config_filepath, "w", encoding='utf-8') as f:
-                        json.dump({"presets": self.presets_data}, f, indent=4)
+                        json.dump(config_data, f, indent=4)
 
                     # Update ComboBox
                     self.combo_box.blockSignals(True)
@@ -21308,18 +22401,32 @@ if __name__ == "__main__":
                     "window_y": getattr(self, "saved_window_y", None) if getattr(self, "saved_window_y", None) is not None else int(self.pos().y()),
                     "use_gpu": getattr(self, "use_gpu", True),
                     "ui_scale_preference": getattr(self, "ui_scale_preference", 1.0),
+                    "ui_font_size": int(getattr(self, "ui_font_size", self.DEFAULT_UI_FONT_SIZE)),
+                    "plot_font_size": int(getattr(self, "plot_font_size", self.DEFAULT_PLOT_FONT_SIZE)),
                     "viewer_fixed_width": getattr(self, "viewer_fixed_width", 550),
                     "viewer_fixed_height": getattr(self, "viewer_fixed_height", 350),
                     "safe_content_width": getattr(self, "safe_content_width", 1000),
                     "presets": getattr(self, "presets_data", {})
                 }
-                
+
                 app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
                 if not os.path.exists(app_path):
                     os.makedirs(app_path)
 
                 config_filepath = os.path.join(app_path, self.CONFIG_PRESET_FILE_NAME)
-                
+
+                # Preserve the per-dialog remembered sizes (written by the secondary
+                # dialogs via save_dialog_geometry) — this full rewrite would otherwise
+                # drop them.
+                try:
+                    if os.path.exists(config_filepath):
+                        with open(config_filepath, "r", encoding='utf-8') as f:
+                            _existing = json.load(f)
+                        if isinstance(_existing, dict) and isinstance(_existing.get("dialog_geometries"), dict):
+                            config_data["dialog_geometries"] = _existing["dialog_geometries"]
+                except Exception:
+                    pass
+
                 try:
                     with open(config_filepath, "w", encoding='utf-8') as f:
                         json.dump(config_data, f, indent=4)
@@ -21483,6 +22590,13 @@ if __name__ == "__main__":
                         self.viewer_fixed_width = loaded_json.get("viewer_fixed_width", 550)
                         self.viewer_fixed_height = loaded_json.get("viewer_fixed_height", 350)
                         self.safe_content_width = loaded_json.get("safe_content_width", 1000)
+                        # Font sizes (absent in configs written before these existed → default)
+                        self.ui_font_size = self._clamp_setting(
+                            loaded_json.get("ui_font_size", self.DEFAULT_UI_FONT_SIZE),
+                            self.UI_FONT_SIZE_RANGE, self.DEFAULT_UI_FONT_SIZE)
+                        self.plot_font_size = self._clamp_setting(
+                            loaded_json.get("plot_font_size", self.DEFAULT_PLOT_FONT_SIZE),
+                            self.PLOT_FONT_SIZE_RANGE, self.DEFAULT_PLOT_FONT_SIZE)
                         
                         # Check for new "presets" key
                         if "presets" in loaded_json and isinstance(loaded_json["presets"], dict):
@@ -21638,7 +22752,10 @@ if __name__ == "__main__":
                                     try:
                                         with open(config_path, "r") as config_file:
                                             config_data = json.load(config_file)
-                                        self.apply_config(config_data,load_analysis=False) # Apply loaded settings
+                                        # Same as the open path: dropping/pasting an image file
+                                        # restores its full saved analysis automatically.
+                                        self.apply_config(config_data,load_analysis=True)
+                                        self._apply_analysis_extras(config_data)
                                         config_loaded_from_paste = True # Set flag
                                         paste_loaded_config_data = config_data
                                     except Exception as e:
@@ -21750,7 +22867,7 @@ if __name__ == "__main__":
                     if paste_loaded_config_data is not None:
                         self._finalize_loaded_marker_shifts(paste_loaded_config_data)
 
-                    enable_pan = self.live_view_label.zoom_level > 1.0
+                    enable_pan = self.live_view_label.is_view_transformed()
                     if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
                     if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
@@ -22023,7 +23140,13 @@ if __name__ == "__main__":
                             with open(config_path, "r") as config_file:
                                 config_data = json.load(config_file)
                             # Apply loaded settings (this will overwrite main_image_is_inverted if defined in config)
-                            self.apply_config(config_data, load_analysis=False)
+                            # load_analysis=True + _apply_analysis_extras: opening an image
+                            # restores its FULL saved state (densitometry regions, standard
+                            # curve, protein data and the measured results), so Show Markers
+                            # shows everything immediately and the analysis never has to be
+                            # re-run. This used to need a manual Load Analysis click first.
+                            self.apply_config(config_data, load_analysis=True)
+                            self._apply_analysis_extras(config_data)
                             loaded_config_data = config_data
                         except Exception as e:
                             QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
@@ -22065,15 +23188,19 @@ if __name__ == "__main__":
                     self._finalize_loaded_marker_shifts(loaded_config_data)
 
                 self._update_status_bar()
-                enable_pan = self.live_view_label.zoom_level > 1.0
+                enable_pan = self.live_view_label.is_view_transformed()
                 if hasattr(self, 'pan_left_action'): self.pan_left_action.setEnabled(enable_pan)
                 if hasattr(self, 'pan_right_action'): self.pan_right_action.setEnabled(enable_pan)
                 if hasattr(self, 'pan_up_action'): self.pan_up_action.setEnabled(enable_pan)
                 if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
                 QTimer.singleShot(0, self.update_live_view)
-                self._update_levels_histogram()                 
+                self._update_levels_histogram()
                 self.save_state()
-            
+                # That save_state is just the baseline undo snapshot for the freshly opened
+                # image, not a user edit — the on-screen state still matches the analysis
+                # file, so Load Analysis shouldn't warn about losing changes yet.
+                self._analysis_dirty_since_load = False
+
             def apply_config(self, config_data,load_analysis=False):
                 # --- 1. Load data from config_data into self attributes ---
                 if "peak_dialog_settings" in config_data:
@@ -22128,6 +23255,22 @@ if __name__ == "__main__":
                     # If no L/R values from this specific image config,
                     # self.marker_values will be populated by on_combobox_changed based on the selected preset.
                     self.marker_values = []
+
+                # Molecular-weight-marker label state. Backward compatible: a config written
+                # before this key existed has no "mwm_labels", so the full ladder falls back
+                # to the loaded L/R values and nothing is marked hidden — exactly the old
+                # behaviour.
+                mwm_labels_data = config_data.get("mwm_labels")
+                if isinstance(mwm_labels_data, dict):
+                    self.mwm_label_values = [str(v) for v in (mwm_labels_data.get("values") or [])]
+                    try:
+                        self.mwm_hidden_label_indices = sorted(
+                            int(i) for i in (mwm_labels_data.get("hidden") or []))
+                    except (TypeError, ValueError):
+                        self.mwm_hidden_label_indices = []
+                else:
+                    self.mwm_label_values = [str(v) for v in (self.marker_values or [])]
+                    self.mwm_hidden_label_indices = []
 
                 if load_analysis:
                     # Densitometry boxes are anchored in IMAGE space (viewer-independent),
@@ -22509,6 +23652,48 @@ if __name__ == "__main__":
 
                 config["quantities_peak_area_dict"] = self.quantities_peak_area_dict
 
+                # --- Densitometry results ------------------------------------------------
+                # The measured band areas/quantities, so reopening the image restores the
+                # Analysis Results window instead of forcing the whole analysis to be re-run.
+                # Keys are stringified for JSON and converted back on load. Files written
+                # before this key existed simply have no "densitometry_results" and load with
+                # empty results, exactly as they did before (see apply_config).
+                def _details_to_json(details_list):
+                    out = []
+                    for d in (details_list or []):
+                        if isinstance(d, dict):
+                            out.append({k: make_json_serializable(v) for k, v in d.items()})
+                    return out
+
+                config["densitometry_results"] = {
+                    "multi_lane_peak_areas": {
+                        str(k): [float(a) for a in v]
+                        for k, v in (getattr(self, 'latest_multi_lane_peak_areas', {}) or {}).items()},
+                    "multi_lane_peak_details": {
+                        str(k): _details_to_json(v)
+                        for k, v in (getattr(self, 'latest_multi_lane_peak_details', {}) or {}).items()},
+                    "multi_lane_calculated_quantities": {
+                        str(k): [float(q) for q in (v or [])]
+                        for k, v in (getattr(self, 'latest_multi_lane_calculated_quantities', {}) or {}).items()},
+                    "peak_areas": [float(a) for a in (getattr(self, 'latest_peak_areas', []) or [])],
+                    "peak_details": _details_to_json(getattr(self, 'latest_peak_details', [])),
+                    "calculated_quantities": [
+                        float(q) for q in (getattr(self, 'latest_calculated_quantities', []) or [])],
+                    "multi_lane_processing_finished": bool(
+                        getattr(self, 'multi_lane_processing_finished', False)),
+                    "standard_curve_model": str(getattr(self, 'latest_standard_curve_model', 'Linear')),
+                }
+
+                # Molecular-weight-marker labels: the FULL ladder plus the positions whose
+                # label the user hid in the densitometry dialog. The visible labels already
+                # round-trip via marker_positions; this block is what lets a hidden label be
+                # un-hidden after a reload. Files saved before this key existed simply have
+                # no "mwm_labels" entry and load with nothing hidden (see apply_config).
+                config["mwm_labels"] = {
+                    "values": [str(v) for v in getattr(self, 'mwm_label_values', []) or []],
+                    "hidden": [int(i) for i in getattr(self, 'mwm_hidden_label_indices', []) or []],
+                }
+
                 # --- START OF THE PROTEIN SEQUENCE FIX ---
                 config["protein_analysis_data"] = {
                     "protein_sequence": self.protein_sequence,
@@ -22882,6 +24067,8 @@ if __name__ == "__main__":
                 This function is called BEFORE the image is actually padded.
                 """
 
+                # (The *_marker_shift_added anchors are adjusted at the end of this method.)
+
                 # Adjust standard markers (Y for L/R, X for Top)
                 self.left_markers = [(y_pos_img + padding_top, label) for y_pos_img, label in getattr(self, 'left_markers', [])]
                 self.right_markers = [(y_pos_img + padding_top, label) for y_pos_img, label in getattr(self, 'right_markers', [])]
@@ -23188,7 +24375,7 @@ if __name__ == "__main__":
                 # --- END FIX ---
 
                 if hasattr(self, 'live_view_label') and hasattr(self, 'pan_left_action'):
-                    enable_pan_actions = self.live_view_label.zoom_level > 1.0
+                    enable_pan_actions = self.live_view_label.is_view_transformed()
                     self.pan_left_action.setEnabled(enable_pan_actions)
                     self.pan_right_action.setEnabled(enable_pan_actions)
                     self.pan_up_action.setEnabled(enable_pan_actions)
@@ -24914,6 +26101,8 @@ if __name__ == "__main__":
                     return False
 
                 self.is_modified = False
+                # The analysis file now matches what's on screen.
+                self._analysis_dirty_since_load = False
                 self.image_path = original_save_path
 
                 QMessageBox.information(self, "Saved", f"Files saved successfully to '{os.path.dirname(base_save_path)}'")
@@ -26148,6 +27337,7 @@ if __name__ == "__main__":
                 view_menu = menubar.addMenu("&View")
                 view_menu.addAction(self.zoom_in_action)
                 view_menu.addAction(self.zoom_out_action)
+                view_menu.addAction(self.reset_view_action)
                 
                 tools_menu = menubar.addMenu("&Tools")
                 tools_menu.addAction(self.auto_analyze_gel_action)
