@@ -26568,47 +26568,110 @@ if __name__ == "__main__":
                     if sys.platform == "win32":
                         # ---- Windows: write directly via Win32 clipboard API ----
                         # This ensures both Word and PowerPoint can read the image.
+                        #
+                        # Three things must be done carefully here, otherwise pasted
+                        # markers/labels and transparent regions come out corrupted
+                        # (the classic "transparent shows as black" / garbled-edges bug):
+                        #
+                        #  (a) ctypes signatures. GlobalAlloc/GlobalLock/SetClipboardData
+                        #      return 64-bit HANDLEs/pointers. Without an explicit
+                        #      .restype, ctypes assumes a 32-bit C int and TRUNCATES the
+                        #      handle on 64-bit Python, so GlobalLock later receives a
+                        #      corrupt handle and the write fails/garbles intermittently
+                        #      (depends on where Windows happened to allocate). We must set
+                        #      restype/argtypes so the full 64-bit values survive.
+                        #
+                        #  (b) Do NOT call QClipboard.setMimeData() afterwards. On Windows
+                        #      Qt uses OLE, which EMPTIES the whole clipboard and replaces
+                        #      it — that would wipe the CF_PNG we set here, leaving only a
+                        #      DIB whose alpha most apps ignore (transparent -> black).
+                        #      So every format is published in this single Win32 session.
+                        #
+                        #  (c) The legacy CF_DIB is flattened onto white first, so apps
+                        #      that read the DIB (and ignore alpha) show white where the
+                        #      image is transparent instead of black garbage. Apps that
+                        #      understand PNG still get true transparency from CF_PNG.
                         import ctypes
-                        import ctypes.wintypes
+                        import ctypes.wintypes as wintypes
+                        import struct
 
                         png_raw = bytes(png_bytes)  # QByteArray → bytes
 
                         user32   = ctypes.windll.user32
                         kernel32 = ctypes.windll.kernel32
 
+                        # (a) Correct signatures so 64-bit handles are not truncated.
+                        kernel32.GlobalAlloc.restype  = ctypes.c_void_p
+                        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+                        kernel32.GlobalLock.restype   = ctypes.c_void_p
+                        kernel32.GlobalLock.argtypes  = [ctypes.c_void_p]
+                        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+                        kernel32.GlobalFree.restype   = ctypes.c_void_p
+                        kernel32.GlobalFree.argtypes  = [ctypes.c_void_p]
+                        user32.SetClipboardData.restype  = ctypes.c_void_p
+                        user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+                        user32.RegisterClipboardFormatW.restype = wintypes.UINT
+                        user32.OpenClipboard.argtypes = [wintypes.HWND]
+
                         GMEM_MOVEABLE = 0x0002
-                        CF_PNG = user32.RegisterClipboardFormatW("PNG")
+                        CF_DIB   = 8
+                        CF_HDROP = 15
+                        CF_PNG   = user32.RegisterClipboardFormatW("PNG")
 
-                        user32.OpenClipboard(None)
-                        try:
-                            user32.EmptyClipboard()
+                        def _put_clipboard_bytes(fmt, data):
+                            """Copy `data` into a moveable global and hand it to the
+                            clipboard. On success the OS owns the memory (do NOT free);
+                            on any failure we free it ourselves. Must run inside an open
+                            clipboard session."""
+                            if not fmt or not data:
+                                return False
+                            h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+                            if not h_mem:
+                                return False
+                            ptr = kernel32.GlobalLock(h_mem)
+                            if not ptr:
+                                kernel32.GlobalFree(h_mem)
+                                return False
+                            ctypes.memmove(ptr, data, len(data))
+                            kernel32.GlobalUnlock(h_mem)
+                            if not user32.SetClipboardData(fmt, h_mem):
+                                kernel32.GlobalFree(h_mem)
+                                return False
+                            return True
 
-                            # --- 1. Native PNG format (Word, PowerPoint, modern apps) ---
-                            h_png = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(png_raw))
-                            if h_png:
-                                ptr = kernel32.GlobalLock(h_png)
-                                if ptr:
-                                    ctypes.memmove(ptr, png_raw, len(png_raw))
-                                    kernel32.GlobalUnlock(h_png)
-                                user32.SetClipboardData(CF_PNG, h_png)
+                        # (c) Build a white-flattened CF_DIB. A Qt-saved BMP is a
+                        # BITMAPFILEHEADER (14 bytes) + DIB; CF_DIB wants just the DIB.
+                        flat = QImage(out_img.size(), QImage.Format_RGB32)
+                        flat.fill(Qt.white)
+                        _fp = QPainter(flat)
+                        _fp.drawImage(0, 0, out_img)
+                        _fp.end()
+                        _bmp_buf = QBuffer()
+                        _bmp_buf.open(QBuffer.ReadWrite)
+                        flat.save(_bmp_buf, "BMP")
+                        dib_bytes = bytes(_bmp_buf.data())[14:]
+                        _bmp_buf.close()
 
-                            # --- 2. CF_DIB legacy fallback via Qt (older apps) ---
-                            #    We set this through a temporary QMimeData so Qt
-                            #    handles the DIB conversion; then we steal the handle
-                            #    that Qt already put on the clipboard and re-open ours.
-                            #    Simpler: just also expose setImageData via Qt after
-                            #    closing our own OpenClipboard block.
-                        finally:
-                            user32.CloseClipboard()
+                        # CF_HDROP so the temp PNG can also be pasted as a file (this
+                        # replaces the old Qt setUrls path, which we can no longer use).
+                        # DROPFILES { DWORD pFiles; POINT pt; BOOL fNC; BOOL fWide; }
+                        hdrop_bytes = (struct.pack("<Lll II", 20, 0, 0, 0, 1)
+                                       + (temp_file_path + "\x00\x00").encode("utf-16-le"))
 
-                        # Also push a Qt CF_DIB for legacy targets (does NOT clobber
-                        # the CF_PNG we just set because Qt uses SetClipboardData
-                        # for only the formats it knows about; CF_PNG was registered
-                        # with a custom ID so Qt won't touch it).
-                        mime_legacy = QMimeData()
-                        mime_legacy.setImageData(out_img)
-                        mime_legacy.setUrls([QUrl.fromLocalFile(temp_file_path)])
-                        QApplication.clipboard().setMimeData(mime_legacy)
+                        if user32.OpenClipboard(None):
+                            try:
+                                user32.EmptyClipboard()
+                                _put_clipboard_bytes(CF_PNG, png_raw)       # transparency-aware
+                                _put_clipboard_bytes(CF_DIB, dib_bytes)     # legacy, white bg
+                                _put_clipboard_bytes(CF_HDROP, hdrop_bytes) # paste-as-file
+                            finally:
+                                user32.CloseClipboard()
+                        else:
+                            # Last-resort fallback if the clipboard could not be opened.
+                            mime_fallback = QMimeData()
+                            mime_fallback.setImageData(out_img)
+                            mime_fallback.setUrls([QUrl.fromLocalFile(temp_file_path)])
+                            QApplication.clipboard().setMimeData(mime_fallback)
 
                     else:
                         # ---- macOS / Linux: existing Qt path (works as-is) ----
