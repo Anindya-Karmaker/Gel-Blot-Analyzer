@@ -24298,6 +24298,17 @@ if __name__ == "__main__":
                         self._capture_multilane_anchors_with_label_size(ow, oh)
                         if any(d.get('points_image') for d in self.multi_lane_definitions):
                             self._multilane_reproject_pending = True
+                            # Reproject NOW (cheap coordinate math), not only on the debounced
+                            # render below. During a continuous drag-resize, many resizeEvents
+                            # fire before the debounced update_live_view gets to run; if
+                            # points_label were left frozen at the pre-drag size, the NEXT
+                            # event's anchor capture — which assumes points_label is valid at
+                            # that event's old_size — would read stale label coords and compute
+                            # a CORRUPTED image anchor, so the boxes stop tracking the gel until
+                            # a Load Analysis. Reprojecting synchronously here keeps points_label
+                            # in lockstep with the live label size, so every per-event capture
+                            # stays correct. The debounced render still handles the repaint.
+                            self._reproject_multilane_if_pending()
                 except Exception:
                     pass
 
