@@ -27,7 +27,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.2"
+APP_VERSION = "8.3"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -14966,7 +14966,23 @@ if __name__ == "__main__":
 
             def reset_view(self):
                 self.live_view_label.reset_view()
-                
+
+            def _autofit_view_after_major_op(self):
+                """Reset the viewer to the fitted, un-panned 100% view after any operation that
+                changes the image dimensions (crop, padding, skew, alignment, perspective, etc.).
+                The zoom/pan the user had was relative to the PREVIOUS image geometry; carrying it
+                over shows the new image as a random zoomed-in corner. Just reset the transform
+                state here — the caller triggers the actual repaint via apply_all_adjustments/
+                update_live_view immediately afterwards."""
+                lbl = getattr(self, 'live_view_label', None)
+                if lbl is None:
+                    return
+                lbl.zoom_level = 1.0
+                lbl.pan_offset = QPointF(0, 0)
+                if not getattr(lbl, 'is_panning', False):
+                    lbl.setCursor(Qt.ArrowCursor)
+
+
             
             
             
@@ -17371,19 +17387,24 @@ if __name__ == "__main__":
 
                 _orig_press = type(self.live_view_label).mousePressEvent
 
+                # Store points in UNZOOMED label space (via transform_point) so the rubber-band
+                # and the image-space mapping in _append_overlay_region stay correct while the
+                # view is zoomed/panned. Using raw event.position() (widget space) put the region
+                # in the wrong place whenever zoom != 1.0 or the view was panned.
                 def on_press(event):
                     if event.button() == Qt.LeftButton:
-                        self._region_select_start = QPointF(event.position())
-                        self._region_select_current = QPointF(event.position())
+                        p = self.live_view_label.transform_point(event.position())
+                        self._region_select_start = QPointF(p)
+                        self._region_select_current = QPointF(p)
 
                 def on_move(event):
                     if self._region_select_start is not None:
-                        self._region_select_current = QPointF(event.position())
+                        self._region_select_current = QPointF(self.live_view_label.transform_point(event.position()))
                         self.update_live_view()   # repaints rubber-band
 
                 def on_release(event):
                     if event.button() == Qt.LeftButton and self._region_select_start is not None:
-                        self._region_select_current = QPointF(event.position())
+                        self._region_select_current = QPointF(self.live_view_label.transform_point(event.position()))
                         self._append_overlay_region()
                         # stay armed — user can draw another region immediately
                         self._region_select_start = None
@@ -19921,9 +19942,22 @@ if __name__ == "__main__":
                         # P_l >= margin + lw - shift_l_rel; the right/top follow the same way.
                         # With the anchors at their defaults (left 0, right = content edge,
                         # top 0) these collapse to the previous lw/rw/top_e + margin values.
-                        pad_top = max(0.0, math.ceil(top_e) + margin + 0.4 * ep - shift_t_rel)
-                        pad_l = max(0.0, lw + margin - shift_l_rel)
-                        pad_r = max(0.0, shift_r_rel + rw + margin - content_w)
+                        #
+                        # CLAMP the anchors to the content box first. A crop shifts every anchor
+                        # by -crop_start (see update_crop), which can leave a label anchored far
+                        # OUTSIDE the cropped image (e.g. a ladder cropped out of a 2750px-wide
+                        # gel leaves left_marker_shift_added ≈ -1100). Without clamping, the
+                        # formula then demands ~1100px of padding to "reveal" a label the user
+                        # can no longer see, ballooning the canvas. Clamping means an off-canvas
+                        # anchor is treated as sitting on the nearest content edge, so the label
+                        # only ever asks for its own width + margin. Anchors already inside the
+                        # content are unchanged, so normal gels behave exactly as before.
+                        clamp_t = min(max(shift_t_rel, 0.0), float(content_h))
+                        clamp_l = min(max(shift_l_rel, 0.0), float(content_w))
+                        clamp_r = min(max(shift_r_rel, 0.0), float(content_w))
+                        pad_top = max(0.0, math.ceil(top_e) + margin + 0.4 * ep - clamp_t)
+                        pad_l = max(0.0, lw + margin - clamp_l)
+                        pad_r = max(0.0, clamp_r + rw + margin - content_w)
                         # Fold in custom markers/shapes (and the vertical extent of the
                         # standard L/R marker labels) that spill past the canvas edges.
                         cust_l, cust_r, cust_t, cust_b = _custom_overflow(view_scale, ep)
@@ -24031,7 +24065,11 @@ if __name__ == "__main__":
                     self.image_before_padding = None
                     self.image_padded = bool(padding_left or padding_right or padding_top or padding_bottom)
                     self.is_modified = True
-                    
+
+                    # Auto-fit: the canvas size changed, so drop any stale zoom/pan and show the
+                    # newly padded image fitted in the viewer.
+                    self._autofit_view_after_major_op()
+
                     # 4. Refresh display and sliders
                     #self.reset_all_adjustments()
                     self.apply_all_adjustments(save_history=True)
@@ -24976,6 +25014,8 @@ if __name__ == "__main__":
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
+                    # Rotation changes the canvas size (new bounding box) — auto-fit the result.
+                    self._autofit_view_after_major_op()
                     # User requested reset on permanent changes
                     #self.reset_all_adjustments()
                     self.apply_all_adjustments(save_history=True)
@@ -25122,9 +25162,16 @@ if __name__ == "__main__":
                     if cropped_qimage.isNull(): raise ValueError("Cropping resulted in an invalid image.")
 
                     # --- Clear Crop UI State ---
-                    self.crop_rectangle_coords = None 
-                    self.live_view_label.clear_crop_preview() 
-                    self.cancel_rectangle_crop_mode() 
+                    self.crop_rectangle_coords = None
+                    self.live_view_label.clear_crop_preview()
+                    self.cancel_rectangle_crop_mode()
+
+                    # --- Auto-fit the cropped image ---
+                    # The image dimensions change here. Any zoom/pan the user had while framing
+                    # the crop was relative to the OLD (larger) image; keeping it would render the
+                    # new, smaller crop as a random zoomed-in corner. Reset to the fitted 100%
+                    # view so the freshly cropped gel fills the viewer properly.
+                    self._autofit_view_after_major_op()
 
                     # --- Update Master Image ---
                     self.image_master = cropped_qimage.copy()
@@ -25300,6 +25347,7 @@ if __name__ == "__main__":
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
+                    self._autofit_view_after_major_op()
                     self.apply_all_adjustments() # Re-apply visual adjustments
                     # --- END BUG FIX ---
 
@@ -25664,6 +25712,7 @@ if __name__ == "__main__":
                     self._update_status_bar()
                     self._update_marker_slider_ranges()
                     self._update_overlay_slider_ranges()
+                    self._autofit_view_after_major_op()
                     self.apply_all_adjustments()
 
                 except Exception as e:
