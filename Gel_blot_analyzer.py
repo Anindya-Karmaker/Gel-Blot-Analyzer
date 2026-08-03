@@ -19919,7 +19919,14 @@ if __name__ == "__main__":
                             # L/R labels only need a small margin so they aren't clipped.
                             ot = max(ot, small_margin - lmin_y)
                             ob = max(ob, lmax_y - content_h + small_margin)
-                        return max(0.0, ol), max(0.0, orr), max(0.0, ot), max(0.0, ob)
+                        # Cap each side's overflow to the content size. A custom item parked far
+                        # OFF-canvas (e.g. a label left behind outside the region after a crop —
+                        # crop now keeps such items instead of deleting them) would otherwise ask
+                        # for padding equal to its full off-canvas distance, ballooning the canvas.
+                        # Capping means Set Recommended never grows a side by more than the content
+                        # itself; the user can still drag a stray label back into view.
+                        return (max(0.0, min(ol, float(content_w))), max(0.0, min(orr, float(content_w))),
+                                max(0.0, min(ot, float(content_h))), max(0.0, min(ob, float(content_h))))
 
                     pad_top = content_h * 0.15
                     pad_l = pad_r = content_w * 0.15
@@ -25116,40 +25123,47 @@ if __name__ == "__main__":
                     self.top_markers = new_top_markers
 
                     # --- Adjust Custom Markers ---
-                    new_custom_markers = [] 
+                    # Custom markers/labels are deliberate annotations the user placed (often in
+                    # the margin ABOVE/BESIDE the gel). Cropping must NOT delete them — it only
+                    # re-expresses their position in the cropped image's coordinate system by
+                    # subtracting the crop origin. Items that now fall outside the cropped canvas
+                    # are KEPT (just off-canvas); the user can drag them back or add padding to
+                    # reveal them, and Apply Padding / Set Recommended will bring the margin back.
+                    # (Previously anything outside [0,crop_w)×[0,crop_h) was silently dropped,
+                    # which lost the user's labels on every crop.)
+                    new_custom_markers = []
                     if hasattr(self, "custom_markers"):
                         for marker_data in self.custom_markers:
                             try:
-                                m_list = list(marker_data); x_old, y_old = float(m_list[0]), float(m_list[1])
-                                x_new, y_new = x_old - crop_x_start, y_old - crop_y_start
-                                if 0 <= x_new < crop_width and 0 <= y_new < crop_height:
-                                    m_list[0] = x_new; m_list[1] = y_new
-                                    new_custom_markers.append(m_list)
-                            except: pass
+                                m_list = list(marker_data)
+                                m_list[0] = float(m_list[0]) - crop_x_start
+                                m_list[1] = float(m_list[1]) - crop_y_start
+                                new_custom_markers.append(m_list)
+                            except Exception:
+                                # Keep the marker unchanged rather than dropping it on a parse error.
+                                new_custom_markers.append(marker_data)
                     self.custom_markers = new_custom_markers
 
                     # --- Adjust Custom Shapes ---
+                    # Same principle: reposition every shape by the crop origin and keep them all.
+                    # Rectangles are shifted whole (no longer clipped/dropped to the crop overlap),
+                    # so a rectangle straddling or outside the crop survives intact.
                     new_custom_shapes = []
                     if hasattr(self, "custom_shapes"):
                         for shape_data_orig in self.custom_shapes:
-                            shape_data = dict(shape_data_orig); adjusted_shape_data = None
+                            shape_data = dict(shape_data_orig)
                             try:
                                 stype = shape_data.get('type')
                                 if stype in ('line', 'arrow'):
                                     sx_old, sy_old = map(float, shape_data['start']); ex_old, ey_old = map(float, shape_data['end'])
-                                    adjusted_shape_data = shape_data.copy()
-                                    adjusted_shape_data['start'] = (sx_old - crop_x_start, sy_old - crop_y_start)
-                                    adjusted_shape_data['end'] = (ex_old - crop_x_start, ey_old - crop_y_start)
+                                    shape_data['start'] = (sx_old - crop_x_start, sy_old - crop_y_start)
+                                    shape_data['end'] = (ex_old - crop_x_start, ey_old - crop_y_start)
                                 elif stype == 'rectangle':
                                     rx_old, ry_old, rw_old, rh_old = map(float, shape_data['rect'])
-                                    overlap_x1 = max(crop_x_start, rx_old); overlap_y1 = max(crop_y_start, ry_old)
-                                    overlap_x2 = min(crop_x_start + crop_width, rx_old + rw_old)
-                                    overlap_y2 = min(crop_y_start + crop_height, ry_old + rh_old)
-                                    if overlap_x2 > overlap_x1 and overlap_y2 > overlap_y1:
-                                        adjusted_shape_data = shape_data.copy()
-                                        adjusted_shape_data['rect'] = (overlap_x1 - crop_x_start, overlap_y1 - crop_y_start, overlap_x2 - overlap_x1, overlap_y2 - overlap_y1)
-                                if adjusted_shape_data: new_custom_shapes.append(adjusted_shape_data)
-                            except: pass
+                                    shape_data['rect'] = (rx_old - crop_x_start, ry_old - crop_y_start, rw_old, rh_old)
+                            except Exception:
+                                pass
+                            new_custom_shapes.append(shape_data)
                     self.custom_shapes = new_custom_shapes
 
                     # --- Update Internal Shifts (The Correct New Values) ---
