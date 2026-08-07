@@ -27,7 +27,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.3"
+APP_VERSION = "8.5"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -3710,10 +3710,13 @@ if __name__ == "__main__":
                     return None
 
                 def _add_table(ax, col_labels, rows, col_widths=None, header_color="#4472C4",
-                               font_size=8):
+                               font_size=8, highlight_rows=None):
+                    # highlight_rows: set of 0-based DATA row indices to flag (saturated
+                    # bands) — tinted red with bold dark-red text so clipped bands stand out.
                     ax.axis('off')
                     if not rows:
                         return
+                    highlight_rows = set(highlight_rows or ())
                     tbl = ax.table(cellText=rows, colLabels=col_labels, cellLoc='center',
                                    loc='upper center', colWidths=col_widths)
                     tbl.auto_set_font_size(False)
@@ -3724,8 +3727,31 @@ if __name__ == "__main__":
                         if r == 0:
                             cell.set_facecolor(header_color)
                             cell.set_text_props(color="white", fontweight="bold")
+                        elif (r - 1) in highlight_rows:
+                            cell.set_facecolor("#FBE4E4")
+                            cell.set_text_props(color="#B30000", fontweight="bold")
                         elif r % 2 == 0:
                             cell.set_facecolor("#F2F5FB")
+
+                def _lane_saturation(lid):
+                    """Return (set_of_saturated_band_indices, {band_index: clipped_fraction})
+                    for a lane, read from the per-band 'details' produced by the densitometry
+                    dialog (get_final_peak_info / get_all_lanes_peak_info)."""
+                    details = results_data_for_export.get(lid, {}).get('details', []) or []
+                    sat_idx, sat_frac = set(), {}
+                    for i, det in enumerate(details):
+                        if not isinstance(det, dict):
+                            continue
+                        if det.get('is_saturated'):
+                            sat_idx.add(i)
+                            sat_frac[i] = float(det.get('saturation_fraction', 0.0))
+                    return sat_idx, sat_frac
+
+                # Pre-compute saturation across every lane so the report can lead with a
+                # data-quality verdict and flag the affected bands everywhere they appear.
+                saturation_by_lane = {lid: _lane_saturation(lid) for lid in lane_ids}
+                total_saturated_bands = sum(len(s[0]) for s in saturation_by_lane.values())
+                saturated_lane_ids = [lid for lid in lane_ids if saturation_by_lane[lid][0]]
 
                 try:
                     with PdfPages(file_path) as pdf:
@@ -3869,6 +3895,68 @@ if __name__ == "__main__":
                         fig.text(0.08, 0.88, narrative, fontsize=10, va="top", ha="left", wrap=True)
                         pdf.savefig(fig); plt.close(fig)
 
+                        # =============== PAGE: DATA QUALITY & SATURATION ===============
+                        # A dedicated page so the reader immediately sees whether any band is
+                        # clipped/saturated — the classic densitometry pitfall (a clipped band
+                        # reads lower than its true amount, so its area/quantity is an
+                        # under-estimate and must not be trusted for quantification).
+                        fig = plt.figure(figsize=A4)
+                        fig.suptitle("Data quality — band saturation check",
+                                     fontsize=14, fontweight="bold", y=0.97)
+
+                        total_bands = sum(len(results_data_for_export[lid].get('areas', []) or [])
+                                          for lid in lane_ids)
+                        if total_saturated_bands > 0:
+                            verdict = (f"⚠  SATURATION DETECTED — {total_saturated_bands} of {total_bands} "
+                                       f"band(s) across {len(saturated_lane_ids)} lane(s) contain clipped "
+                                       f"pixels.")
+                            verdict_color = "#B30000"
+                        else:
+                            verdict = (f"✓  No saturation detected — all {total_bands} band(s) are within "
+                                       f"the detector's linear range.")
+                            verdict_color = "#1a7a1a"
+                        # ⚠/✓ may be missing from the PDF font; draw a coloured status bar so the
+                        # verdict reads clearly regardless of glyph coverage.
+                        fig.patches.append(plt.Rectangle((0.06, 0.85), 0.88, 0.045,
+                                           transform=fig.transFigure,
+                                           facecolor=("#FBE4E4" if total_saturated_bands else "#E5F5E5"),
+                                           edgecolor=verdict_color, linewidth=1.2, zorder=0))
+                        fig.text(0.08, 0.872, verdict, fontsize=11, fontweight="bold",
+                                 color=verdict_color, va="center")
+
+                        explain = (
+                            "Saturation (clipping) occurs when a band is so intense that pixels hit the "
+                            "top of the detector's range (e.g. 255 for 8-bit or 65535 for 16-bit) — or so "
+                            "dark they are crushed to 0. The true signal above that ceiling is lost, so the "
+                            "integrated area flattens and UNDER-estimates the real amount. Densitometry is "
+                            "only quantitative while every band stays within the linear range.\n\n"
+                            "A band is flagged when at least "
+                            f"{PeakAreaDialog.SATURATION_BAND_FRACTION*100:.0f}% of its pixels are clipped "
+                            f"(≥{PeakAreaDialog.SATURATION_LEVEL_FRACTION*100:.0f}% of full scale). "
+                            "If bands are flagged, re-acquire the image with a shorter exposure / lower gain "
+                            "(or use unsaturated technical replicates) before trusting absolute quantities.")
+                        fig.text(0.08, 0.82, explain, fontsize=9.5, va="top", ha="left", wrap=True)
+
+                        # Per-flagged-band table (only the clipped bands, most useful first).
+                        sat_rows, sat_hl = [], []
+                        for lid in lane_ids:
+                            sat_idx, sat_frac = saturation_by_lane[lid]
+                            areas = results_data_for_export[lid].get('areas', []) or []
+                            for i in sorted(sat_idx):
+                                area_v = areas[i] if i < len(areas) else 0.0
+                                sat_rows.append([str(lid), f"{i+1}", f"{area_v:.3f}",
+                                                 f"{sat_frac.get(i, 0.0)*100:.0f}% clipped"])
+                        if sat_rows:
+                            sat_hl = list(range(len(sat_rows)))  # every listed band is saturated
+                            fig.text(0.08, 0.52, "Flagged bands (areas under-estimated)",
+                                     fontsize=11, fontweight="bold")
+                            ax_sat = fig.add_axes([0.08, 0.10, 0.84, 0.40])
+                            _add_table(ax_sat, ["Lane", "Band", "Peak area", "Clipping"],
+                                       sat_rows, col_widths=[0.2, 0.2, 0.35, 0.25],
+                                       header_color="#B30000", font_size=9,
+                                       highlight_rows=sat_hl)
+                        pdf.savefig(fig); plt.close(fig)
+
                         # =============== PAGE 2: ANNOTATED GEL IMAGE ===============
                         gel_png = _qimage_to_png(gel_qimage)
                         if gel_png:
@@ -3911,25 +3999,60 @@ if __name__ == "__main__":
                             ax_plot.grid(True, linestyle=':', alpha=0.6)
                             ax_plot.legend(fontsize=8, loc="best")
 
-                            # Fit description
+                            # Evaluate the fitted model at each standard quantity so the
+                            # calibration can be QC'd (fitted vs measured area, % error). This is
+                            # the forward model — no inversion needed.
+                            def _model_at(qv):
+                                if fit is None:
+                                    return None
+                                p = fit.get('params')
+                                try:
+                                    if "4-PL" in model_name:
+                                        return float(four_param_logistic(qv, *p))
+                                    return float(np.polyval(p, qv))
+                                except Exception:
+                                    return None
+
+                            # Fit description (+ worst-case calibration error across standards)
                             if fit is not None:
+                                worst_err = 0.0
+                                for q, a in standard_dict_for_export.items():
+                                    fa = _model_at(float(q))
+                                    if fa is not None and abs(float(a)) > 1e-9:
+                                        worst_err = max(worst_err, abs(float(a) - fa) / abs(float(a)) * 100.0)
                                 fit_text = (f"Model: {model_name}\n"
                                             f"Equation: {fit['equation']}\n"
-                                            f"Goodness of fit (R²): {fit['r_squared']:.5f}")
+                                            f"Goodness of fit (R²): {fit['r_squared']:.5f}\n"
+                                            f"Max standard back-fit error: {worst_err:.1f}%")
                             else:
                                 fit_text = (f"Model: {model_name}\n"
                                             "Fit could not be computed (insufficient or unsuitable data).")
-                            fig.text(0.12, 0.40, fit_text, fontsize=9, va="top",
+                            fig.text(0.12, 0.41, fit_text, fontsize=8.5, va="top",
                                      family="monospace")
 
-                            # Standard data table
+                            # Standard data table — with fitted area + residual % so the reader
+                            # can judge how well each calibrator sits on the curve.
+                            has_fit = fit is not None
+                            std_cols = ["Known quantity", "Measured area"]
+                            if has_fit:
+                                std_cols += ["Fitted area", "Error %"]
                             std_rows = []
                             for q, a in sorted(standard_dict_for_export.items(), key=lambda kv: float(kv[0])):
-                                std_rows.append([f"{float(q):.4g}", f"{float(a):.4g}"])
-                            ax_std = fig.add_axes([0.20, 0.06, 0.60, 0.26])
-                            _add_table(ax_std, ["Known quantity", "Total peak area"], std_rows,
-                                       col_widths=[0.5, 0.5], font_size=9)
-                            fig.text(0.5, 0.34, "Standard curve data", fontsize=11,
+                                q = float(q); a = float(a)
+                                row = [f"{q:.4g}", f"{a:.4g}"]
+                                if has_fit:
+                                    fa = _model_at(q)
+                                    if fa is None:
+                                        row += ["N/A", "N/A"]
+                                    else:
+                                        err = (a - fa) / a * 100.0 if abs(a) > 1e-9 else 0.0
+                                        row += [f"{fa:.4g}", f"{err:+.1f}%"]
+                                std_rows.append(row)
+                            ncol = len(std_cols)
+                            ax_std = fig.add_axes([0.12, 0.05, 0.76, 0.24])
+                            _add_table(ax_std, std_cols, std_rows,
+                                       col_widths=[1.0 / ncol] * ncol, font_size=9)
+                            fig.text(0.5, 0.31, "Standard curve data & per-point fit", fontsize=11,
                                      fontweight="bold", ha="center")
                             pdf.savefig(fig); plt.close(fig)
 
@@ -3941,10 +4064,17 @@ if __name__ == "__main__":
                             col_labels = ["Lane", "Band", "Peak area", "% of lane"]
                             if is_std_mode:
                                 col_labels.append("Quantity")
+                            # Only add the Clipping column when something is actually saturated,
+                            # so clean analyses keep the compact original table.
+                            show_clip_col = total_saturated_bands > 0
+                            if show_clip_col:
+                                col_labels.append("Clipping")
                             summary_rows = []
+                            summary_flags = []   # parallel: True == saturated band row
                             for lid in lane_ids:
                                 areas = results_data_for_export[lid].get('areas', [])
                                 qtys = results_data_for_export[lid].get('quantities', [])
+                                sat_idx, sat_frac = saturation_by_lane[lid]
                                 total = float(sum(areas)) if areas else 0.0
                                 for i, area in enumerate(areas):
                                     perc = (area / total * 100.0) if total else 0.0
@@ -3955,15 +4085,24 @@ if __name__ == "__main__":
                                             try: qv = f"{float(qtys[i]):.3f}"
                                             except (ValueError, TypeError): qv = str(qtys[i])
                                         row.append(qv)
+                                    if show_clip_col:
+                                        row.append(f"{sat_frac.get(i, 0.0)*100:.0f}% clipped"
+                                                   if i in sat_idx else "")
                                     summary_rows.append(row)
+                                    summary_flags.append(i in sat_idx)
                                 tot_row = [f"Lane {lid}", "Total", f"{total:.3f}", ""]
                                 if is_std_mode:
                                     tot_row.append("")
+                                if show_clip_col:
+                                    tot_row.append("")
                                 summary_rows.append(tot_row)
+                                summary_flags.append(False)
                             # paginate the summary if very long
                             max_rows = 34
                             for start in range(0, len(summary_rows), max_rows):
                                 chunk = summary_rows[start:start + max_rows]
+                                chunk_flags = summary_flags[start:start + max_rows]
+                                hl = [j for j, f in enumerate(chunk_flags) if f]
                                 if start > 0:
                                     fig = plt.figure(figsize=A4)
                                     fig.suptitle("Summary — all lanes & bands (cont.)",
@@ -3971,7 +4110,8 @@ if __name__ == "__main__":
                                 ncol = len(col_labels)
                                 ax_sum = fig.add_axes([0.07, 0.05, 0.86, 0.86])
                                 _add_table(ax_sum, col_labels, chunk,
-                                           col_widths=[1.0 / ncol] * ncol, font_size=8)
+                                           col_widths=[1.0 / ncol] * ncol, font_size=8,
+                                           highlight_rows=hl)
                                 pdf.savefig(fig); plt.close(fig)
 
                         # =============== PER-LANE PAGES (image + band table) ===============
@@ -4013,10 +4153,15 @@ if __name__ == "__main__":
                                          "(Lane image not available for this entry)",
                                          fontsize=9, color="#888888", ha="center")
 
+                            lane_sat_idx, lane_sat_frac = saturation_by_lane.get(lid, (set(), {}))
+                            show_clip_col = bool(lane_sat_idx)
                             col_labels = ["Band", "Peak area", "% of lane"]
                             if is_std_mode:
                                 col_labels.append("Quantity")
+                            if show_clip_col:
+                                col_labels.append("Clipping")
                             rows = []
+                            row_flags = []
                             for i, area in enumerate(areas):
                                 perc = (area / total * 100.0) if total else 0.0
                                 row = [f"{i+1}", f"{area:.3f}", f"{perc:.2f}%"]
@@ -4026,15 +4171,28 @@ if __name__ == "__main__":
                                         try: qv = f"{float(qtys[i]):.3f}"
                                         except (ValueError, TypeError): qv = str(qtys[i])
                                     row.append(qv)
+                                if show_clip_col:
+                                    row.append(f"{lane_sat_frac.get(i, 0.0)*100:.0f}% clipped"
+                                               if i in lane_sat_idx else "")
                                 rows.append(row)
+                                row_flags.append(i in lane_sat_idx)
                             tot_row = ["Total", f"{total:.3f}", ""]
                             if is_std_mode:
                                 tot_row.append("")
+                            if show_clip_col:
+                                tot_row.append("")
                             rows.append(tot_row)
+                            row_flags.append(False)
                             ncol = len(col_labels)
                             ax_tbl = fig.add_axes([table_left, 0.30, table_width, 0.60])
                             _add_table(ax_tbl, col_labels, rows,
-                                       col_widths=[1.0 / ncol] * ncol, font_size=8)
+                                       col_widths=[1.0 / ncol] * ncol, font_size=8,
+                                       highlight_rows=[j for j, f in enumerate(row_flags) if f])
+                            if show_clip_col:
+                                fig.text(0.5, 0.06,
+                                         "Red bands are saturated/clipped — their areas and quantities "
+                                         "under-estimate the true amount (see the Data quality page).",
+                                         fontsize=8, color="#B30000", ha="center", wrap=True)
                             pdf.savefig(fig); plt.close(fig)
 
                         # PDF document metadata
@@ -4075,6 +4233,17 @@ if __name__ == "__main__":
             - Detection controls split into Basic / collapsible Advanced groups.
             """
             HANDLE_SIZE = 2  # Pixel size for draggable handles on ax_image
+
+            # --- Saturation / clipping detection thresholds -----------------------------
+            # A pixel counts as "clipped" when the SIGNAL reaches (near) the top of the
+            # detector's range. Using 99% of full-scale catches sensors/exports that clamp
+            # a hair below the nominal maximum. A band is flagged as saturated when a
+            # meaningful share of its 2-D region is clipped (not just a stray hot pixel),
+            # because clipped bands underestimate the true signal — the classic
+            # densitometry pitfall.
+            SATURATION_LEVEL_FRACTION = 0.99   # pixel >= 99% of full scale == clipped
+            SATURATION_BAND_FRACTION  = 0.01   # >=1% of a band's pixels clipped -> flag
+            SATURATION_MIN_PIXELS     = 4      # ...and at least this many clipped pixels
 
             def __init__(self, cropped_data, current_settings, persist_checked, parent=None):
                 super().__init__(parent)
@@ -4660,6 +4829,64 @@ if __name__ == "__main__":
                 self.update_rb_controls_enabled_state()
                 self.detect_peaks()
 
+            def _compute_peak_saturation(self, src=None, width=None, peaks=None, regions=None):
+                """Measure, for every detected peak, how much of its band is clipped/saturated.
+
+                Returns a list aligned with `peaks`; each entry is
+                {'count': clipped-pixel count, 'frac': clipped fraction of the band's 2-D
+                region, 'saturated': bool}. A True flag means the band's true signal is
+                underestimated (a plateau clipped at full scale), so its area/quantity
+                should not be trusted for quantification.
+
+                With no arguments it reads the CURRENT lane (self.*) and also caches the
+                result on self.peak_saturation. Callers aggregating other lanes (e.g.
+                get_all_lanes_peak_info) pass a lane's stored `saturated_row_counts`,
+                `lane_pixel_width`, `peaks`, and `peak_regions` explicitly.
+
+                Uses the per-row clipped-pixel counts computed in
+                regenerate_profile_and_detect and the band row-spans in peak_regions
+                (falling back to a small window around the apex if regions aren't built)."""
+                store = src is None and peaks is None
+                if src is None:
+                    src = getattr(self, 'saturated_row_counts', None)
+                if peaks is None:
+                    peaks = getattr(self, 'peaks', np.array([]))
+                if width is None:
+                    width = getattr(self, 'lane_pixel_width', 1)
+                if regions is None:
+                    regions = getattr(self, 'peak_regions', None)
+
+                if src is None or peaks is None or len(peaks) == 0:
+                    if store:
+                        self.peak_saturation = []
+                    return []
+
+                width = max(1, int(width))
+                n = len(src)
+                result = []
+                for i, pk in enumerate(peaks):
+                    try:
+                        pk = int(pk)
+                    except (TypeError, ValueError):
+                        result.append({'count': 0, 'frac': 0.0, 'saturated': False}); continue
+                    if regions is not None and i < len(regions) and regions[i] is not None:
+                        s, e = int(regions[i][0]), int(regions[i][1])
+                    else:
+                        s, e = pk - 5, pk + 5
+                    s = int(np.clip(s, 0, n - 1)); e = int(np.clip(e, 0, n - 1))
+                    if e < s:
+                        s, e = e, s
+                    band = src[s:e + 1]
+                    count = int(band.sum())
+                    total = max(1, (e - s + 1) * width)
+                    frac = count / total
+                    saturated = (frac >= self.SATURATION_BAND_FRACTION and
+                                 count >= self.SATURATION_MIN_PIXELS)
+                    result.append({'count': count, 'frac': frac, 'saturated': bool(saturated)})
+                if store:
+                    self.peak_saturation = result
+                return result
+
             def _update_quality_readout(self):
                 """Refresh the diagnostics line under the plot."""
                 if not hasattr(self, 'quality_label'):
@@ -4674,6 +4901,18 @@ if __name__ == "__main__":
                     parts.append(f"{n_comp} fitted component{'s' if n_comp != 1 else ''}")
                     flag = "" if r2 >= 0.95 else "  ⚠ low fit quality"
                     parts.append(f"fit R² = {r2:.3f}{flag}")
+
+                # --- Saturation warning ------------------------------------------------ #
+                sat = self._compute_peak_saturation()
+                n_sat = sum(1 for s in sat if s.get('saturated'))
+                if n_sat > 0:
+                    worst = max((s['frac'] for s in sat if s.get('saturated')), default=0.0)
+                    parts.append(f"⚠ {n_sat} saturated band{'s' if n_sat != 1 else ''} "
+                                 f"(up to {worst * 100:.0f}% clipped) — areas underestimated")
+                    self.quality_label.setStyleSheet("color:#b30000; font-weight:bold;")
+                else:
+                    self.quality_label.setStyleSheet("")
+
                 self.quality_label.setText("   ·   ".join(parts))
 
             # --- MATH ENGINE: ASLS BASELINE ---
@@ -5205,6 +5444,12 @@ if __name__ == "__main__":
                     'profile_original_inverted': None,
                     'profile': None,
                     'background': None,
+                    # Saturation / clipping map (per image row) + lane width, so a band's
+                    # clipped fraction survives lane switches without re-deriving the trace.
+                    'saturated_row_counts': None,
+                    'lane_pixel_width': 1,
+                    'saturation_total_fraction': 0.0,
+                    'sat_pixel_level': float(original_max_value) * self.SATURATION_LEVEL_FRACTION,
                     'peaks': np.array([]),
                     'initial_valley_regions': [],
                     'peak_regions': [],
@@ -5249,6 +5494,11 @@ if __name__ == "__main__":
                 state['profile_original_inverted'] = self.profile_original_inverted
                 state['profile'] = self.profile
                 state['background'] = self.background
+                state['saturated_row_counts'] = getattr(self, 'saturated_row_counts', None)
+                state['lane_pixel_width'] = getattr(self, 'lane_pixel_width', 1)
+                state['saturation_total_fraction'] = getattr(self, 'saturation_total_fraction', 0.0)
+                state['sat_pixel_level'] = getattr(self, 'sat_pixel_level',
+                                                    float(self.original_max_value) * self.SATURATION_LEVEL_FRACTION)
                 state['peaks'] = self.peaks
                 state['initial_valley_regions'] = self.initial_valley_regions
                 state['peak_regions'] = self.peak_regions
@@ -5288,6 +5538,11 @@ if __name__ == "__main__":
                 self.profile_original_inverted = state['profile_original_inverted']
                 self.profile = state['profile']
                 self.background = state['background']
+                self.saturated_row_counts = state.get('saturated_row_counts', None)
+                self.lane_pixel_width = state.get('lane_pixel_width', 1)
+                self.saturation_total_fraction = state.get('saturation_total_fraction', 0.0)
+                self.sat_pixel_level = state.get('sat_pixel_level',
+                                                 float(state['original_max_value']) * self.SATURATION_LEVEL_FRACTION)
                 self.peaks = state['peaks']
                 self.initial_valley_regions = state['initial_valley_regions']
                 self.peak_regions = state['peak_regions']
@@ -5574,19 +5829,31 @@ if __name__ == "__main__":
                     peaks = state['peaks']
                     num_valid_peaks = len(peaks)
                     num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
+                    # Per-band saturation for THIS lane, from its stored clipping map.
+                    lane_sat = self._compute_peak_saturation(
+                        src=state.get('saturated_row_counts'),
+                        width=state.get('lane_pixel_width', 1),
+                        peaks=peaks,
+                        regions=state.get('peak_regions'),
+                    )
                     for i in range(num_peaks_to_process):
                         try:
                             original_peak_x_in_profile = int(peaks[i])
+                            s = lane_sat[i] if i < len(lane_sat) else {}
                             peak_info_list.append({
                                 'area': current_area_list[i],
                                 'y_coord_in_lane_image': original_peak_x_in_profile,
-                                'original_peak_index': original_peak_x_in_profile
+                                'original_peak_index': original_peak_x_in_profile,
+                                'is_saturated': bool(s.get('saturated', False)),
+                                'saturation_fraction': float(s.get('frac', 0.0)),
                             })
                         except IndexError:
                             peak_info_list.append({
                                 'area': 0.0,
                                 'y_coord_in_lane_image': 0,
-                                'original_peak_index': -1
+                                'original_peak_index': -1,
+                                'is_saturated': False,
+                                'saturation_fraction': 0.0
                             })
                     results[lane_id] = peak_info_list
                 return results
@@ -5715,6 +5982,31 @@ if __name__ == "__main__":
                             color=peak_marker_color, marker='x', s=40,
                             label="Detected Peaks", zorder=15
                         )
+                        # --- Flag saturated/clipped bands on the trace --------------- #
+                        # A red hollow triangle + "SAT" sits above any band whose apex is
+                        # clipped, so the user can see at a glance which areas are unsafe
+                        # to quantify.
+                        try:
+                            sat_info = self._compute_peak_saturation()
+                            sat_x, sat_y = [], []
+                            for i, pk in enumerate(self.peaks):
+                                if i < len(sat_info) and sat_info[i].get('saturated') \
+                                        and 0 <= int(pk) < len(profile_for_display):
+                                    sat_x.append(int(pk)); sat_y.append(profile_for_display[int(pk)])
+                            if sat_x:
+                                y_off = 0.06 * (np.ptp(profile_for_display) or 1.0)
+                                self.ax.scatter(
+                                    sat_x, [y + y_off for y in sat_y],
+                                    color='#d10000', marker='v', s=90, zorder=18,
+                                    edgecolors='#d10000', facecolors='none', linewidths=1.6,
+                                    label="Saturated (clipped)"
+                                )
+                                for sx, sy in zip(sat_x, sat_y):
+                                    self.ax.annotate("SAT", (sx, sy + y_off), color='#d10000',
+                                                     fontsize=_fs(7), fontweight='bold',
+                                                     ha='center', va='bottom', zorder=18)
+                        except Exception:
+                            pass
                         if self.selected_peak_for_ui_focus != -1 and 0 <= self.selected_peak_for_ui_focus < len(self.peaks):
                             fx = self.peaks[self.selected_peak_for_ui_focus]
                             self.ax.plot(fx, profile_for_display[fx], 'o', markersize=12,
@@ -6276,11 +6568,21 @@ if __name__ == "__main__":
                 num_valid_peaks = len(self.peaks)
                 num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
 
+                sat_info = self._compute_peak_saturation()
                 for i in range(num_peaks_to_process):
                     try:
                         original_peak_x_in_profile = int(self.peaks[i])
-                        peak_info_list.append({'area': current_area_list[i], 'y_coord_in_lane_image': original_peak_x_in_profile, 'original_peak_index': original_peak_x_in_profile})
-                    except IndexError: peak_info_list.append({'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1})
+                        s = sat_info[i] if i < len(sat_info) else {}
+                        peak_info_list.append({
+                            'area': current_area_list[i],
+                            'y_coord_in_lane_image': original_peak_x_in_profile,
+                            'original_peak_index': original_peak_x_in_profile,
+                            'is_saturated': bool(s.get('saturated', False)),
+                            'saturation_fraction': float(s.get('frac', 0.0)),
+                        })
+                    except IndexError:
+                        peak_info_list.append({'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1,
+                                               'is_saturated': False, 'saturation_fraction': 0.0})
                 return peak_info_list
 
             def toggle_manual_select_mode(self, checked):
@@ -6413,6 +6715,26 @@ if __name__ == "__main__":
                     array_for_summing = base_array
                 else:
                     array_for_summing = self.original_max_value - base_array
+
+                # --- Saturation / clipping map (densitometry pitfall guard) ------------ #
+                # The band signal is `array_for_summing`; it reaches the detector's full
+                # scale exactly when the acquisition clipped (a bright band pinned at the
+                # sensor max, or a dark band crushed to 0 — both map to signal == max here).
+                # Count clipped pixels per image row so each detected band can later report
+                # how much of it is saturated. Computed on the RAW extracted intensities
+                # (before speck removal / smoothing) so it reflects the real acquisition.
+                try:
+                    self.sat_pixel_level = float(self.original_max_value) * self.SATURATION_LEVEL_FRACTION
+                    _sat_mask_2d = array_for_summing >= self.sat_pixel_level
+                    if _sat_mask_2d.ndim == 1:
+                        _sat_mask_2d = _sat_mask_2d[:, np.newaxis]
+                    self.saturated_row_counts = np.sum(_sat_mask_2d, axis=1).astype(np.int64)
+                    self.lane_pixel_width = int(_sat_mask_2d.shape[1])
+                    self.saturation_total_fraction = float(_sat_mask_2d.mean()) if _sat_mask_2d.size else 0.0
+                except Exception:
+                    self.saturated_row_counts = None
+                    self.lane_pixel_width = 1
+                    self.saturation_total_fraction = 0.0
 
                 # Build the 1-D trace by summing each row across the lane width. When speck
                 # removal is enabled, small bright specks are neutralized first so they cannot
@@ -7181,6 +7503,37 @@ if __name__ == "__main__":
                 if self.app_instance: self.app_instance.update_live_view()
                 else: self.update()
 
+            # Fixed export reference — the ONE place the on-image font scale is defined, shared by
+            # the live view and (implicitly) the exporters. Must equal the save/copy reference.
+            EXPORT_REF_W = 550.0
+            EXPORT_REF_H = 350.0
+
+            def _on_image_font_scale(self):
+                """Return the on-screen multiplier applied to on-image label fonts so the live
+                view is a pixel-faithful, DPI-independent preview of the saved/copied image.
+
+                The exporters (save_image / copy_to_clipboard / _render_annotated_gel_qimage)
+                size every label as `font_pt * render_scale / min(550/imgW, 350/imgH)` on a
+                `render_scale*img` canvas, i.e. an on-IMAGE font of
+                `font_pt * max(imgW/550, imgH/350)` — tied only to the image and the fixed
+                550x350 reference, never to the viewer size or the monitor's DPI/scaling.
+
+                On screen the image is drawn at `fit = min(labelW/imgW, labelH/imgH)`, so the
+                matching on-screen font multiplier is `fit * max(imgW/550, imgH/350)`. Returns
+                1.0 when there is no valid image. At the default 550x350 viewer this equals 1.0
+                for any image, so the historical appearance is preserved."""
+                app = getattr(self, 'app_instance', None)
+                img = getattr(app, 'image', None) if app else None
+                if img is None or img.isNull():
+                    return 1.0
+                iw, ih = float(img.width()), float(img.height())
+                lw, lh = float(self.width()), float(self.height())
+                if iw <= 0 or ih <= 0 or lw <= 0 or lh <= 0:
+                    return 1.0
+                fit = min(lw / iw, lh / ih)
+                export_ref = max(iw / self.EXPORT_REF_W, ih / self.EXPORT_REF_H)
+                scale = fit * export_ref
+                return scale if scale > 1e-6 else 1.0
 
             def paintEvent(self, event):
                 """
@@ -7192,21 +7545,18 @@ if __name__ == "__main__":
                 super().paintEvent(event)
                 painter = QPainter(self)
                 painter.setRenderHint(QPainter.TextAntialiasing, True)
-                # Resolve the UI scale once so it is always defined for every preview/label
-                # branch below (some branches reference it without a local assignment).
-                current_ui_scale = getattr(self.app_instance, 'ui_scale_factor', 1.0)
-                # Scale markers/labels/fonts together with the viewer size: when the viewer is
-                # enlarged (Settings ▸ Viewer Fixed Width/Height) the image is fit to the larger
-                # label, so the text must grow with it to stay proportional. This factor is 1.0
-                # at the default viewer size, so the standard appearance is unchanged.
-                try:
-                    _ui = float(getattr(self.app_instance, 'ui_scale_factor', 1.0) or 1.0)
-                    _base_w, _base_h = 550.0 * _ui, 350.0 * _ui
-                    if _base_w > 0 and _base_h > 0 and self.width() > 0 and self.height() > 0:
-                        _viewer_scale = min(self.width() / _base_w, self.height() / _base_h)
-                        current_ui_scale *= max(0.5, min(_viewer_scale, 8.0))
-                except Exception:
-                    pass
+                # Font scale for on-image labels. This MUST match the save/copy exporters so the
+                # live view is a true preview of the output on every machine. The exporters size
+                # fonts against a FIXED 550x350 reference (never the on-screen viewer size or the
+                # display's DPI/scaling) via font_scale_factor = render_scale / min(550/W,350/H).
+                # The correct on-screen multiplier is therefore
+                #   current_ui_scale = fit_scale * max(imgW/550, imgH/350)
+                # where fit_scale is the image→viewer fit (computed below). The OLD code scaled
+                # by the raw viewer WIDGET size (min(viewerW/550, viewerH/350)), so the label font
+                # changed whenever the viewer was resized or moved (Top/Bottom vs Left/Right) and
+                # no longer matched the exported image. The shared helper returns the correct
+                # value (1.0 when there is no image, for the preview/error branches below).
+                current_ui_scale = self._on_image_font_scale()
 
                 painter.save()
                 if self.zoom_level != 1.0:
@@ -13420,7 +13770,16 @@ if __name__ == "__main__":
                     # Show the widgets again in their new positions
                     self.live_view_label.show()
                     self.tab_widget.show()
-                    
+
+                    # Glue the densitometry boxes back onto the gel at the viewer's FINAL size.
+                    # The splitter settles its 50:50 sizes over the next layout pass(es), so the
+                    # single reprojection that update_live_view would do runs against a transient
+                    # label size and the boxes drift when the viewer moves Top/Bottom/Left/Right.
+                    # Reproject from the (already-captured) image anchors once the shown widgets
+                    # have taken their real sizes, and again on the next passes to be safe.
+                    QApplication.processEvents()
+                    self._reproject_multilane_after_layout_settle()
+
                     # Redraw the content
                     self.update_live_view()
 
@@ -20779,6 +21138,7 @@ if __name__ == "__main__":
 
                 old_viewer_w = getattr(self, 'viewer_fixed_width', None)
                 old_viewer_h = getattr(self, 'viewer_fixed_height', None)
+                old_content_w = getattr(self, 'safe_content_width', None)
                 self.viewer_fixed_width = self.spin_viewer_w.value()
                 self.viewer_fixed_height = self.spin_viewer_h.value()
                 self.safe_content_width = self.spin_content_w.value()
@@ -20794,12 +21154,22 @@ if __name__ == "__main__":
                 # stale viewer coordinates while the image rescales).
                 viewer_size_changed = (old_viewer_w != self.viewer_fixed_width or
                                        old_viewer_h != self.viewer_fixed_height or
+                                       old_content_w != self.safe_content_width or
                                        old_ui_scale != self.ui_scale_preference)
                 if viewer_size_changed and not getattr(self, 'is_in_dedicated_edit_mode', False):
                     try:
                         # Capture box anchors under the current size, then reproject after resize.
                         self._prepare_multilane_for_viewer_resize()
                         self._update_main_layout(getattr(self, 'viewer_position', 'Top'))
+                        # Honour the requested Viewer Fixed Size immediately (the passive restore
+                        # bails once the user has interacted), then let the splitter settle.
+                        QApplication.processEvents()
+                        self._apply_fixed_viewer_split()
+                        # Reproject the densitometry boxes from their captured anchors AFTER the
+                        # sizes settle — a single reproject against a stale/transient label size
+                        # makes the boxes drift (same trap as the layout-location change).
+                        QApplication.processEvents()
+                        self._reproject_multilane_after_layout_settle()
                         self.update_live_view()
                     except Exception:
                         pass
@@ -20915,6 +21285,9 @@ if __name__ == "__main__":
                         self._update_main_layout("Top")
                         self.custom_markers = _saved_custom_markers
                         self.custom_shapes  = _saved_custom_shapes
+                        # Keep densitometry boxes glued to the gel after the rebuild settles.
+                        QApplication.processEvents()
+                        self._reproject_multilane_after_layout_settle()
                         self.update_live_view()
                     except Exception:
                         pass
@@ -24280,6 +24653,65 @@ if __name__ == "__main__":
                     except Exception:
                         continue
                 self._multilane_reproject_pending = False
+
+            def _apply_fixed_viewer_split(self):
+                """Force the viewer/controls splitter to give the viewer its configured Fixed
+                Width (side layouts) or Fixed Height (top/bottom layouts).
+
+                Used ONLY on an explicit 'Apply and Save Settings' — unlike the passive startup
+                restore (`_try_restore_saved_split`), which deliberately bails once the user has
+                interacted so it never fights a live splitter drag. Because the user just asked
+                for a specific viewer size, we honour it immediately here instead of leaving the
+                ~50:50 rebuild split in place (that was why changing Viewer Fixed Width/Height and
+                pressing Apply appeared to do nothing)."""
+                sp = getattr(self, 'viewer_splitter', None)
+                lbl = getattr(self, 'live_view_label', None)
+                if sp is None or lbl is None:
+                    return
+                try:
+                    is_vertical = sp.orientation() == Qt.Vertical
+                    ui = float(getattr(self, 'ui_scale_factor', 1.0) or 1.0)
+                    want = int((self.viewer_fixed_height if is_vertical
+                                else self.viewer_fixed_width) * ui)
+                    total = sp.height() if is_vertical else sp.width()
+                    handle = sp.handleWidth()
+                    idx = sp.indexOf(lbl)
+                    if idx < 0 or total <= 0 or want <= 0:
+                        return
+                    min_ui = 160  # keep the controls pane usable
+                    vsz = max(80, min(want, total - handle - min_ui))
+                    usz = max(min_ui, total - handle - vsz)
+                    sizes = [0, 0]
+                    sizes[idx] = vsz
+                    sizes[1 - idx] = usz
+                    sp.setSizes(sizes)
+                except Exception:
+                    pass
+
+            def _reproject_multilane_after_layout_settle(self):
+                """Reproject densitometry boxes from their image anchors at the CURRENT label
+                size, then again on the next event-loop pass(es) in case the splitter is still
+                settling its sizes after a viewer location/size change. Reprojection-from-anchor
+                is idempotent and never RE-captures the anchor, so repeating it is safe and
+                guarantees the boxes land on the same gel region regardless of when Qt finalises
+                the new label geometry. Used after a Top/Bottom/Left/Right layout transition."""
+                if not getattr(self, 'multi_lane_definitions', None):
+                    return
+                def _do():
+                    try:
+                        if any(d.get('points_image') for d in self.multi_lane_definitions):
+                            self._multilane_reproject_pending = True
+                            self._reproject_multilane_if_pending()
+                            self.update_live_view()
+                    except Exception:
+                        pass
+                _do()
+                try:
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, _do)
+                    QTimer.singleShot(80, _do)
+                except Exception:
+                    pass
 
             def _prepare_multilane_for_viewer_resize(self):
                 """Capture anchors and arm a reprojection ahead of a viewer/layout resize so
