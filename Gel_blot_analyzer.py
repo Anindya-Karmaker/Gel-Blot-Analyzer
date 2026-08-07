@@ -776,22 +776,18 @@ if __name__ == "__main__":
             """Point size for on-screen matplotlib text.
 
             Every graph element uses this single size, so labels, ticks and legends always
-            match. It is the user's Plot Font Size preference multiplied by the UI Scale.
+            match. It is the user's Plot Font Size preference, taken as an ABSOLUTE point size
+            that is INDEPENDENT of the UI Scale — an "8 pt" plot label is 8 pt whether the UI is
+            at 50% or 200%, so the user gets exactly the size they set on any machine.
             `_legacy_base_pt` is accepted and ignored: call sites used to pass a per-element
             size, and keeping the parameter avoids a flag-day change across every plot.
             """
-            try:
-                s = float(getattr(app, 'ui_scale_preference', 1.0) or 1.0)
-            except (TypeError, ValueError):
-                s = 1.0
-            if s <= 0.1:
-                s = 1.0
             try:
                 base = float(getattr(app, 'plot_font_size', _FALLBACK_PLOT_FONT_SIZE)
                              or _FALLBACK_PLOT_FONT_SIZE)
             except (TypeError, ValueError):
                 base = _FALLBACK_PLOT_FONT_SIZE
-            return max(3.0, base * s)
+            return max(3.0, base)
 
         def create_vector_icon(name: str, icon_size: QSize, color: QColor) -> QIcon:
             """Render a toolbar icon from its SVG definition via QSvgRenderer, so every icon
@@ -12792,6 +12788,8 @@ if __name__ == "__main__":
                         return "\x00%d\x00" % (len(stash) - 1)
                     protected = re.sub(r'url\([^)]*\)', _protect, qss)
 
+                    # Apply the user's UI Font Size (font_ratio, relative to the 12px design)
+                    # to every font-size, preserving the relative sizing between selectors.
                     if abs(font_ratio - 1.0) >= 1e-3:
                         def _mul_font(m):
                             val = float(m.group(2))
@@ -12801,6 +12799,16 @@ if __name__ == "__main__":
                         protected = re.sub(r'(font-size:\s*)(\d+(?:\.\d+)?)px',
                                            _mul_font, protected)
 
+                    # PROTECT font-size values from the UI-scale multiply below, so the UI FONT is
+                    # ABSOLUTE (independent of UI Scale) — a 12px font is 12px at 50% or 200%.
+                    # Only the surrounding chrome (padding/margins/borders/widths) scales with the
+                    # UI Scale; the text size is the user's setting, full stop.
+                    fstash = []
+                    def _protect_font(m):
+                        fstash.append(m.group(0))
+                        return "\x01%d\x01" % (len(fstash) - 1)
+                    protected = re.sub(r'font-size:\s*\d+(?:\.\d+)?px', _protect_font, protected)
+
                     def _mul(m):
                         val = float(m.group(1))
                         if val == 0:
@@ -12808,6 +12816,7 @@ if __name__ == "__main__":
                         return "%dpx" % max(1, int(round(val * scale)))
                     scaled = re.sub(r'(\d+(?:\.\d+)?)px', _mul, protected)
 
+                    scaled = re.sub(r'\x01(\d+)\x01', lambda m: fstash[int(m.group(1))], scaled)
                     scaled = re.sub(r'\x00(\d+)\x00', lambda m: stash[int(m.group(1))], scaled)
                     return scaled
                 except Exception:
@@ -18592,12 +18601,20 @@ if __name__ == "__main__":
                 self.convert_8bit_button.clicked.connect(self.convert_to_8bit_depth)
                 invert_button = QPushButton("Invert")
                 invert_button.clicked.connect(self.invert_image)
+                self.optimize_levels_button = QPushButton("Optimize Levels")
+                self.optimize_levels_button.setToolTip(
+                    "Auto-set the Black and White points to the feet (troughs) of the intensity "
+                    "histogram so the used tonal range fills the full scale — instant, balanced "
+                    "contrast. Respects the current Invert state and is fully reversible (Reset "
+                    "Image or drag the sliders).")
+                self.optimize_levels_button.clicked.connect(self.optimize_levels)
                 reset_button = QPushButton("Reset Image")
                 reset_button.clicked.connect(self.reset_all_adjustments)
-                
+
                 actions_layout.addWidget(self.bw_button)
                 actions_layout.addWidget(self.convert_8bit_button)
                 actions_layout.addWidget(invert_button)
+                actions_layout.addWidget(self.optimize_levels_button)
                 actions_layout.addStretch()
                 actions_layout.addWidget(reset_button)
 
@@ -19616,6 +19633,67 @@ if __name__ == "__main__":
                 
                 return fully_adjusted_image
             
+            def optimize_levels(self):
+                """Auto-set the Black/White points to the histogram's feet (troughs) so the used
+                tonal range fills the full scale — one-click 'auto levels'.
+
+                The intensity is read from the SAME source the Levels histogram shows and with
+                the SAME inversion applied (so the sliders land exactly on the curve the user
+                sees, whether or not Invert is active). The feet are found robustly by clipping a
+                tiny fraction of pixels at each tail (outliers/hot pixels) rather than using the
+                raw min/max. Purely a display adjustment — Reset Image or the sliders undo it."""
+                try:
+                    # Mirror _update_levels_histogram's source + inversion selection.
+                    if self.adjustment_context == "Overlay 1 (Base)":
+                        source = getattr(self, 'image1_original', None)
+                        inv = bool(self.image1_adjustments.get('is_inverted', False))
+                    elif self.adjustment_context == "Overlay 2 (Overlay)":
+                        source = getattr(self, 'image2_original', None)
+                        inv = bool(self.image2_adjustments.get('is_inverted', False))
+                    else:
+                        source = self.image_master
+                        inv = bool(getattr(self, 'main_image_is_inverted', False))
+                    if source is None or source.isNull():
+                        return
+                    np_img = self.qimage_to_numpy(source)
+                    if np_img is None:
+                        return
+                    max_v = 65535 if np_img.dtype == np.uint16 else 255
+                    if inv:
+                        # Same inversion the histogram uses, so the sliders match the shown curve.
+                        np_img = max_v - np_img
+                    if np_img.ndim == 3:
+                        gray = (cv2.cvtColor(np_img[..., :3], cv2.COLOR_BGR2GRAY)
+                                if np_img.shape[2] >= 3 else np_img[..., 0])
+                    else:
+                        gray = np_img
+                    flat = gray.reshape(-1)
+                    if flat.size == 0:
+                        return
+                    # Feet of the curve: clip 0.25% of pixels at each tail so a few stray hot/dark
+                    # pixels don't stretch the range past the real data.
+                    clip = 0.25
+                    lo = float(np.percentile(flat, clip))
+                    hi = float(np.percentile(flat, 100.0 - clip))
+                    if hi <= lo:  # near-flat image — fall back to true min/max
+                        lo = float(flat.min()); hi = float(flat.max())
+                        if hi <= lo:
+                            hi = lo + 1.0
+
+                    s_max = int(self.black_point_slider.maximum())
+                    bp = int(np.clip(round(lo), 0, s_max - 1))
+                    wp = int(np.clip(round(hi), bp + 1, s_max))
+
+                    for sl, lbl, val in ((self.black_point_slider, self.black_point_value_label, bp),
+                                         (self.white_point_slider, self.white_point_value_label, wp)):
+                        sl.blockSignals(True); sl.setValue(val); sl.blockSignals(False)
+                        lbl.setText(str(val))
+                    # Apply and refresh the histogram markers.
+                    self.update_image_levels_and_gamma()
+                    self._update_levels_histogram()
+                except Exception:
+                    traceback.print_exc()
+
             def update_image_levels_and_gamma(self):
                 """Applies levels and gamma adjustments based on current slider values."""
                 if not self.image or self.image.isNull():
@@ -21148,10 +21226,11 @@ if __name__ == "__main__":
                 self.ui_scale_combo.setCurrentIndex(index_to_set)
                 self.ui_scale_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.ui_scale_combo.setToolTip(
-                    "Scales the whole interface — controls, spacing AND both font sizes "
-                    "below, which are multiplied by this percentage so they follow the scale "
-                    "automatically.\nApplied immediately; the window layout settles fully "
-                    "after a restart.")
+                    "Scales the interface chrome — control sizes, spacing and padding — by this "
+                    "percentage. The two FONT sizes below are INDEPENDENT of this scale (a 12 px "
+                    "font is 12 px at any scale); changing the scale just resets them to sensible "
+                    "defaults.\nApplied immediately; the window layout settles fully after a "
+                    "restart.")
                 ui_layout.addWidget(self.ui_scale_combo, 0, 1)
 
                 ui_layout.addWidget(QLabel("UI Font Size:"), 1, 0)
@@ -21161,8 +21240,9 @@ if __name__ == "__main__":
                 self.spin_ui_font.setSuffix(" px")
                 self.spin_ui_font.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.spin_ui_font.setToolTip(
-                    f"Base text size for the interface at 100% UI Scale (default "
-                    f"{self.DEFAULT_UI_FONT_SIZE} px). The UI Scale above multiplies it.")
+                    f"Absolute text size for the interface (default {self.DEFAULT_UI_FONT_SIZE} "
+                    f"px). Independent of the UI Scale — {self.DEFAULT_UI_FONT_SIZE} px is "
+                    f"{self.DEFAULT_UI_FONT_SIZE} px at any scale.")
                 ui_layout.addWidget(self.spin_ui_font, 1, 1)
 
                 ui_layout.addWidget(QLabel("Plot Font Size:"), 2, 0)
@@ -21172,11 +21252,22 @@ if __name__ == "__main__":
                 self.spin_plot_font.setSuffix(" pt")
                 self.spin_plot_font.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self.spin_plot_font.setToolTip(
-                    f"Text size used for EVERY graph — titles, axis labels, tick labels, "
-                    f"legends and band annotations all share this size (default "
-                    f"{self.DEFAULT_PLOT_FONT_SIZE} pt) at 100% UI Scale. The UI Scale above "
-                    f"multiplies it.")
+                    f"Absolute text size used for EVERY graph — titles, axis labels, tick "
+                    f"labels, legends and band annotations all share this size (default "
+                    f"{self.DEFAULT_PLOT_FONT_SIZE} pt). Independent of the UI Scale.")
                 ui_layout.addWidget(self.spin_plot_font, 2, 1)
+
+                # When the user CHANGES the UI Scale, reset both font sizes to sensible defaults
+                # (12 px UI, 8 pt plot). The fonts are independent of the scale, so this just
+                # gives a clean starting point at the new scale. Connected AFTER setCurrentIndex
+                # above so building the combo never fires it.
+                def _on_ui_scale_changed(_idx):
+                    try:
+                        self.spin_ui_font.setValue(self.DEFAULT_UI_FONT_SIZE)
+                        self.spin_plot_font.setValue(self.DEFAULT_PLOT_FONT_SIZE)
+                    except Exception:
+                        pass
+                self.ui_scale_combo.currentIndexChanged.connect(_on_ui_scale_changed)
 
                 layout.addWidget(ui_group)
 
@@ -26654,8 +26745,10 @@ if __name__ == "__main__":
                 label_width = 550.0; label_height = 350.0
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
 
-                # Apply UI Scale Preference to the Font Size
-                current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
+                # Font size for exported annotations is tied ONLY to the image size via the
+                # FIXED 550x350 reference (font_scale_factor) — never the UI Scale, the on-screen
+                # viewer size, or the monitor DPI — so the saved/copied image is byte-identical on
+                # every machine and every display. (Do NOT reintroduce a ui_scale factor here.)
                 font_scale_factor = (render_scale / scale_native_to_view) if scale_native_to_view > 1e-6 else float(render_scale)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -26962,8 +27055,10 @@ if __name__ == "__main__":
                 label_width = 550.0; label_height = 350.0
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 
-                # Apply UI Scale Preference to the Font Size
-                current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
+                # Font size for exported annotations is tied ONLY to the image size via the
+                # FIXED 550x350 reference (font_scale_factor) — never the UI Scale, the on-screen
+                # viewer size, or the monitor DPI — so the saved/copied image is byte-identical on
+                # every machine and every display. (Do NOT reintroduce a ui_scale factor here.)
                 font_scale_factor = (render_scale / scale_native_to_view) if scale_native_to_view > 1e-6 else float(render_scale)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -27131,8 +27226,10 @@ if __name__ == "__main__":
                 label_width = 550.0; label_height = 350.0
                 scale_native_to_view = min(label_width / native_width, label_height / native_height) if label_width > 0 and label_height > 0 else 1.0
                 
-                # Apply UI Scale Preference to the Font Size
-                current_ui_scale = getattr(self, 'ui_scale_factor', 1.0)
+                # Font size for exported annotations is tied ONLY to the image size via the
+                # FIXED 550x350 reference (font_scale_factor) — never the UI Scale, the on-screen
+                # viewer size, or the monitor DPI — so the saved/copied image is byte-identical on
+                # every machine and every display. (Do NOT reintroduce a ui_scale factor here.)
                 font_scale_factor = (render_scale / scale_native_to_view) if scale_native_to_view > 1e-6 else float(render_scale)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
