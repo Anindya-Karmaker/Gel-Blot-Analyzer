@@ -3696,7 +3696,11 @@ if __name__ == "__main__":
                     except Exception:
                         ts_display = str(timestamp)
 
+                import textwrap
                 A4 = (8.27, 11.69)
+                REPORT_DPI = 200          # crisp raster (gel/lane images) in the PDF
+                MARGIN_L, MARGIN_R = 0.07, 0.07   # symmetric page margins (figure fraction)
+                CONTENT_W = 1.0 - MARGIN_L - MARGIN_R
                 temp_files = []
 
                 def _qimage_to_png(img):
@@ -3709,10 +3713,50 @@ if __name__ == "__main__":
                         return path
                     return None
 
+                def _page_frame(fig):
+                    """Draw a thin border that hugs the page edge (a narrow margin), so every
+                    page reads as a bordered sheet without wasting space."""
+                    inset = 0.014
+                    fig.patches.append(plt.Rectangle(
+                        (inset, inset), 1.0 - 2 * inset, 1.0 - 2 * inset,
+                        transform=fig.transFigure, fill=False,
+                        edgecolor="#B9C2D6", linewidth=0.9, zorder=0,
+                        clip_on=False))
+
+                def _para(fig, x, y, text, fontsize=10, width_chars=None, **kw):
+                    """Place a paragraph block with a REAL right margin (matplotlib's wrap=True
+                    runs text to the figure edge). Wraps each paragraph to a character width sized
+                    from the available content width so the left and right margins stay equal."""
+                    if width_chars is None:
+                        # ~ chars that fit across CONTENT_W of an A4 page at this font size.
+                        width_chars = max(30, int((CONTENT_W * A4[0]) / (fontsize * 0.0092)))
+                    blocks = []
+                    for para in str(text).split("\n\n"):
+                        para = " ".join(para.split())
+                        if para:
+                            blocks.append(textwrap.fill(para, width=width_chars))
+                    fig.text(x, y, "\n\n".join(blocks), fontsize=fontsize,
+                             va="top", ha="left", **kw)
+
+                def _finish_page(fig, pdf):
+                    """Add the border and save the page at report DPI (sharp raster)."""
+                    _page_frame(fig)
+                    pdf.savefig(fig, dpi=REPORT_DPI)
+                    plt.close(fig)
+
+                ROW_IN = 0.34   # on-page inches per table row (header + each data row)
+
+                def _table_h(n_data_rows):
+                    """Figure-fraction height of a table with this many DATA rows (+1 header),
+                    so its axes can be sized to the content — no big empty gaps below it."""
+                    return (n_data_rows + 1) * ROW_IN / A4[1]
+
                 def _add_table(ax, col_labels, rows, col_widths=None, header_color="#4472C4",
                                font_size=8, highlight_rows=None):
                     # highlight_rows: set of 0-based DATA row indices to flag (saturated
                     # bands) — tinted red with bold dark-red text so clipped bands stand out.
+                    # The table fills its axes exactly (uniform cell heights), so sizing the axes
+                    # via _table_h keeps every table content-fitted and professional.
                     ax.axis('off')
                     if not rows:
                         return
@@ -3721,8 +3765,9 @@ if __name__ == "__main__":
                                    loc='upper center', colWidths=col_widths)
                     tbl.auto_set_font_size(False)
                     tbl.set_fontsize(font_size)
-                    tbl.scale(1, 1.4)
+                    row_h = 1.0 / (len(rows) + 1)   # fill the axes vertically, no gap
                     for (r, c), cell in tbl.get_celld().items():
+                        cell.set_height(row_h)
                         cell.set_edgecolor("#BBBBBB")
                         if r == 0:
                             cell.set_facecolor(header_color)
@@ -3770,14 +3815,18 @@ if __name__ == "__main__":
                             ("Quantification", "Standard-curve mode" if is_std_mode else "Relative (% area) only"),
                             ("Regression model", str(model_name) if is_std_mode else "N/A"),
                         ]
-                        ax_meta = fig.add_axes([0.07, 0.70, 0.86, 0.20])
+                        fig.text(MARGIN_L, 0.925, "Analysis metadata", fontsize=12, fontweight="bold")
+                        _h_meta = _table_h(len(meta_lines))
+                        _meta_top = 0.905
+                        ax_meta = fig.add_axes([MARGIN_L, _meta_top - _h_meta, CONTENT_W, _h_meta])
                         _add_table(ax_meta, ["Field", "Value"],
                                    [[k, v] for k, v in meta_lines],
                                    col_widths=[0.35, 0.65], header_color="#2F5597", font_size=9)
-                        fig.text(0.07, 0.925, "Analysis metadata", fontsize=12, fontweight="bold")
+                        _params_title_y = _meta_top - _h_meta - 0.035
 
                         # --- Peak analysis parameters (complete persisted parameter set) ---
-                        fig.text(0.07, 0.675, "Peak analysis parameters", fontsize=12, fontweight="bold")
+                        fig.text(MARGIN_L, _params_title_y, "Peak analysis parameters",
+                                 fontsize=12, fontweight="bold")
 
                         def _fmt_bool(v):
                             return "Yes" if bool(v) else "No"
@@ -3827,15 +3876,17 @@ if __name__ == "__main__":
                                                str(analysis_settings[key])])
                         if not param_rows:
                             param_rows = [["(no parameters recorded)", ""]]
-                        ax_param = fig.add_axes([0.07, 0.08, 0.86, 0.55])
+                        _h_param = min(_params_title_y - 0.06, _table_h(len(param_rows)))
+                        ax_param = fig.add_axes([MARGIN_L, _params_title_y - 0.02 - _h_param,
+                                                 CONTENT_W, _h_param])
                         _add_table(ax_param, ["Parameter", "Value"], param_rows,
-                                   col_widths=[0.66, 0.34], font_size=9)
+                                   col_widths=[0.62, 0.38], font_size=9)
 
                         fig.text(0.5, 0.03,
                                  f"Generated by Gel Blot Analyzer v{APP_VERSION} — the parameters above fully describe the "
                                  "analysis and allow replication.",
                                  fontsize=7, color="#666666", ha="center")
-                        pdf.savefig(fig); plt.close(fig)
+                        _finish_page(fig, pdf)
 
                         # =============== PAGE: METHOD SUMMARY (how the area was calculated) ===============
                         area_method = str(analysis_settings.get('area_subtraction_method', 'Rolling-valley'))
@@ -3892,8 +3943,8 @@ if __name__ == "__main__":
                         fig = plt.figure(figsize=A4)
                         fig.suptitle("Method summary — how band areas were calculated",
                                      fontsize=14, fontweight="bold", y=0.97)
-                        fig.text(0.08, 0.88, narrative, fontsize=10, va="top", ha="left", wrap=True)
-                        pdf.savefig(fig); plt.close(fig)
+                        _para(fig, MARGIN_L, 0.88, narrative, fontsize=10)
+                        _finish_page(fig, pdf)
 
                         # =============== PAGE: DATA QUALITY & SATURATION ===============
                         # A dedicated page so the reader immediately sees whether any band is
@@ -3935,7 +3986,7 @@ if __name__ == "__main__":
                             f"(≥{PeakAreaDialog.SATURATION_LEVEL_FRACTION*100:.0f}% of full scale). "
                             "If bands are flagged, re-acquire the image with a shorter exposure / lower gain "
                             "(or use unsaturated technical replicates) before trusting absolute quantities.")
-                        fig.text(0.08, 0.82, explain, fontsize=9.5, va="top", ha="left", wrap=True)
+                        _para(fig, MARGIN_L, 0.82, explain, fontsize=9.5)
 
                         # Per-flagged-band table (only the clipped bands, most useful first).
                         sat_rows, sat_hl = [], []
@@ -3948,14 +3999,15 @@ if __name__ == "__main__":
                                                  f"{sat_frac.get(i, 0.0)*100:.0f}% clipped"])
                         if sat_rows:
                             sat_hl = list(range(len(sat_rows)))  # every listed band is saturated
-                            fig.text(0.08, 0.52, "Flagged bands (areas under-estimated)",
+                            fig.text(MARGIN_L, 0.66, "Flagged bands (areas under-estimated)",
                                      fontsize=11, fontweight="bold")
-                            ax_sat = fig.add_axes([0.08, 0.10, 0.84, 0.40])
+                            _h_sat = min(0.56, _table_h(len(sat_rows)))
+                            ax_sat = fig.add_axes([MARGIN_L, 0.63 - _h_sat, CONTENT_W, _h_sat])
                             _add_table(ax_sat, ["Lane", "Band", "Peak area", "Clipping"],
                                        sat_rows, col_widths=[0.2, 0.2, 0.35, 0.25],
                                        header_color="#B30000", font_size=9,
                                        highlight_rows=sat_hl)
-                        pdf.savefig(fig); plt.close(fig)
+                        _finish_page(fig, pdf)
 
                         # =============== PAGE 2: ANNOTATED GEL IMAGE ===============
                         gel_png = _qimage_to_png(gel_qimage)
@@ -3973,7 +4025,7 @@ if __name__ == "__main__":
                                          "numbered badges identify each lane. MW markers and labels are "
                                          "rendered as displayed.",
                                          fontsize=8, color="#444444", ha="center", wrap=True)
-                                pdf.savefig(fig); plt.close(fig)
+                                _finish_page(fig, pdf)
                             except Exception:
                                 traceback.print_exc()
 
@@ -4049,12 +4101,13 @@ if __name__ == "__main__":
                                         row += [f"{fa:.4g}", f"{err:+.1f}%"]
                                 std_rows.append(row)
                             ncol = len(std_cols)
-                            ax_std = fig.add_axes([0.12, 0.05, 0.76, 0.24])
+                            _h_std = min(0.26, _table_h(len(std_rows)))
+                            ax_std = fig.add_axes([MARGIN_L, 0.30 - _h_std, CONTENT_W, _h_std])
                             _add_table(ax_std, std_cols, std_rows,
                                        col_widths=[1.0 / ncol] * ncol, font_size=9)
-                            fig.text(0.5, 0.31, "Standard curve data & per-point fit", fontsize=11,
+                            fig.text(0.5, 0.32, "Standard curve data & per-point fit", fontsize=11,
                                      fontweight="bold", ha="center")
-                            pdf.savefig(fig); plt.close(fig)
+                            _finish_page(fig, pdf)
 
                         # =============== SUMMARY TABLE PAGE ===============
                         if lane_ids:
@@ -4097,8 +4150,8 @@ if __name__ == "__main__":
                                     tot_row.append("")
                                 summary_rows.append(tot_row)
                                 summary_flags.append(False)
-                            # paginate the summary if very long
-                            max_rows = 34
+                            # paginate the summary if very long (rows sized so a full page fits)
+                            max_rows = 24
                             for start in range(0, len(summary_rows), max_rows):
                                 chunk = summary_rows[start:start + max_rows]
                                 chunk_flags = summary_flags[start:start + max_rows]
@@ -4108,11 +4161,12 @@ if __name__ == "__main__":
                                     fig.suptitle("Summary — all lanes & bands (cont.)",
                                                  fontsize=14, fontweight="bold", y=0.97)
                                 ncol = len(col_labels)
-                                ax_sum = fig.add_axes([0.07, 0.05, 0.86, 0.86])
+                                _h_sum = min(0.88, _table_h(len(chunk)))
+                                ax_sum = fig.add_axes([MARGIN_L, 0.92 - _h_sum, CONTENT_W, _h_sum])
                                 _add_table(ax_sum, col_labels, chunk,
                                            col_widths=[1.0 / ncol] * ncol, font_size=8,
                                            highlight_rows=hl)
-                                pdf.savefig(fig); plt.close(fig)
+                                _finish_page(fig, pdf)
 
                         # =============== PER-LANE PAGES (image + band table) ===============
                         font_size_for_labels = getattr(self, "current_label_font_size", 30)
@@ -4140,16 +4194,16 @@ if __name__ == "__main__":
                             if lane_png:
                                 try:
                                     lane_arr = np.asarray(Image.open(lane_png).convert("RGBA"))
-                                    ax_lane = fig.add_axes([0.06, 0.30, 0.34, 0.60])
+                                    ax_lane = fig.add_axes([MARGIN_L, 0.07, 0.34, 0.83])
                                     ax_lane.imshow(lane_arr)
                                     ax_lane.axis('off')
                                     ax_lane.set_title("Lane image", fontsize=9)
-                                    table_left, table_width = 0.44, 0.50
+                                    table_left, table_width = 0.46, 0.45
                                 except Exception:
-                                    table_left, table_width = 0.12, 0.76
+                                    table_left, table_width = MARGIN_L, CONTENT_W
                             else:
-                                table_left, table_width = 0.12, 0.76
-                                fig.text(0.5, 0.88,
+                                table_left, table_width = MARGIN_L, CONTENT_W
+                                fig.text(0.5, 0.935,
                                          "(Lane image not available for this entry)",
                                          fontsize=9, color="#888888", ha="center")
 
@@ -4184,7 +4238,8 @@ if __name__ == "__main__":
                             rows.append(tot_row)
                             row_flags.append(False)
                             ncol = len(col_labels)
-                            ax_tbl = fig.add_axes([table_left, 0.30, table_width, 0.60])
+                            _h_tbl = min(0.82, _table_h(len(rows)))
+                            ax_tbl = fig.add_axes([table_left, 0.90 - _h_tbl, table_width, _h_tbl])
                             _add_table(ax_tbl, col_labels, rows,
                                        col_widths=[1.0 / ncol] * ncol, font_size=8,
                                        highlight_rows=[j for j, f in enumerate(row_flags) if f])
@@ -4193,7 +4248,7 @@ if __name__ == "__main__":
                                          "Red bands are saturated/clipped — their areas and quantities "
                                          "under-estimate the true amount (see the Data quality page).",
                                          fontsize=8, color="#B30000", ha="center", wrap=True)
-                            pdf.savefig(fig); plt.close(fig)
+                            _finish_page(fig, pdf)
 
                         # PDF document metadata
                         d = pdf.infodict()
@@ -4243,6 +4298,7 @@ if __name__ == "__main__":
             # densitometry pitfall.
             SATURATION_LEVEL_FRACTION = 0.99   # pixel >= 99% of full scale == clipped
             SATURATION_BAND_FRACTION  = 0.01   # >=1% of a band's pixels clipped -> flag
+            SATURATION_APEX_FRACTION  = 0.05   # ...OR the most-clipped row is >=5% clipped
             SATURATION_MIN_PIXELS     = 4      # ...and at least this many clipped pixels
 
             def __init__(self, cropped_data, current_settings, persist_checked, parent=None):
@@ -4880,9 +4936,21 @@ if __name__ == "__main__":
                     count = int(band.sum())
                     total = max(1, (e - s + 1) * width)
                     frac = count / total
-                    saturated = (frac >= self.SATURATION_BAND_FRACTION and
-                                 count >= self.SATURATION_MIN_PIXELS)
-                    result.append({'count': count, 'frac': frac, 'saturated': bool(saturated)})
+                    # Apex clipping: the fraction of the MOST-clipped row's width that is at
+                    # full scale. A real saturated band clips across its apex row even when the
+                    # whole-region average is diluted by the many unclipped rows of a TALL band —
+                    # so flag on EITHER the region fraction OR a clearly-clipped apex. This is
+                    # what stops tall bands' saturation from slipping under the region threshold.
+                    apex_frac = (float(band.max()) / width) if (len(band) and width) else 0.0
+                    saturated = (count >= self.SATURATION_MIN_PIXELS and
+                                 (frac >= self.SATURATION_BAND_FRACTION
+                                  or apex_frac >= self.SATURATION_APEX_FRACTION))
+                    # Report the region fraction (share of the whole band clipped) — the same
+                    # meaning the user has seen; the apex only decides the flag. Floor a flagged
+                    # band at 1% so a tall band caught by its apex never prints "0% clipped".
+                    report_frac = max(frac, 0.01) if saturated else frac
+                    result.append({'count': count, 'frac': report_frac,
+                                   'saturated': bool(saturated)})
                 if store:
                     self.peak_saturation = result
                 return result
@@ -5315,6 +5383,17 @@ if __name__ == "__main__":
 
                     self.peak_regions = _tight_regions(self.background, threshold_fraction=0.02)
 
+                # Cache per-band saturation now that peaks + regions are current. This is the
+                # SINGLE authoritative computation — the live readout, plot markers, and the
+                # exported report all read this cached list, so they can never disagree. It runs
+                # here (not only in update_plot, which is skipped when the canvas isn't built yet
+                # — e.g. the dialog's per-lane pre-calc loop) so EVERY analysed lane's state
+                # carries its saturation, which is what the PDF report reads back per lane.
+                try:
+                    self._compute_peak_saturation()
+                except Exception:
+                    self.peak_saturation = []
+
 
             def detect_peaks(self):
                 # Automatic detection replaces any pasted/hand-edited regions, so the lane
@@ -5450,6 +5529,10 @@ if __name__ == "__main__":
                     'lane_pixel_width': 1,
                     'saturation_total_fraction': 0.0,
                     'sat_pixel_level': float(original_max_value) * self.SATURATION_LEVEL_FRACTION,
+                    # Authoritative per-band saturation (aligned with 'peaks'), cached at the end
+                    # of _recalculate_all_regions so the report reads exactly what the live view
+                    # computed rather than re-deriving it from possibly-stale geometry.
+                    'peak_saturation': [],
                     'peaks': np.array([]),
                     'initial_valley_regions': [],
                     'peak_regions': [],
@@ -5499,6 +5582,7 @@ if __name__ == "__main__":
                 state['saturation_total_fraction'] = getattr(self, 'saturation_total_fraction', 0.0)
                 state['sat_pixel_level'] = getattr(self, 'sat_pixel_level',
                                                     float(self.original_max_value) * self.SATURATION_LEVEL_FRACTION)
+                state['peak_saturation'] = getattr(self, 'peak_saturation', [])
                 state['peaks'] = self.peaks
                 state['initial_valley_regions'] = self.initial_valley_regions
                 state['peak_regions'] = self.peak_regions
@@ -5543,6 +5627,7 @@ if __name__ == "__main__":
                 self.saturation_total_fraction = state.get('saturation_total_fraction', 0.0)
                 self.sat_pixel_level = state.get('sat_pixel_level',
                                                  float(state['original_max_value']) * self.SATURATION_LEVEL_FRACTION)
+                self.peak_saturation = state.get('peak_saturation', [])
                 self.peaks = state['peaks']
                 self.initial_valley_regions = state['initial_valley_regions']
                 self.peak_regions = state['peak_regions']
@@ -5829,7 +5914,10 @@ if __name__ == "__main__":
                     peaks = state['peaks']
                     num_valid_peaks = len(peaks)
                     num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
-                    # Per-band saturation for THIS lane, from its stored clipping map.
+                    # Per-band saturation for THIS lane, computed from its stored clipping map +
+                    # regions (which every analysed lane now saves). Recomputing here — rather
+                    # than trusting a possibly-stale cache — keeps the report in lock-step with
+                    # the live readout and can't silently go blank.
                     lane_sat = self._compute_peak_saturation(
                         src=state.get('saturated_row_counts'),
                         width=state.get('lane_pixel_width', 1),
@@ -9555,6 +9643,65 @@ if __name__ == "__main__":
                     return np.zeros(W)
                 return (col_profile - float(np.min(col_profile))) / pr
 
+            @staticmethod
+            def _find_peaks_padded(col_norm, prominence, distance, height=None):
+                """find_peaks that also catches a lane at the very LEFT/RIGHT edge (e.g. a ladder
+                pressed against the image border). A lane on the border is a rising edge with no
+                down-slope, so plain find_peaks skips it. Reflect-pad both ends by `distance` so
+                an edge maximum gets a mirror down-slope and becomes detectable; then map indices
+                back and drop any outside the real width."""
+                col_norm = np.asarray(col_norm, dtype=float)
+                n = len(col_norm)
+                if n < 3:
+                    return np.array([], dtype=int)
+                pad = max(2, int(distance))
+                pad = min(pad, n - 1)
+                padded = np.pad(col_norm, pad, mode='reflect')
+                kw = dict(prominence=prominence, distance=max(1, int(distance)), width=1)
+                if height is not None:
+                    kw['height'] = height
+                try:
+                    pk, _ = find_peaks(padded, **kw)
+                except Exception:
+                    return np.array([], dtype=int)
+                pk = pk - pad
+                pk = pk[(pk >= 0) & (pk < n)]
+                return np.unique(pk).astype(int)
+
+            @staticmethod
+            def _lane_regularity_score(pk):
+                """Score a candidate lane-center set: reward MANY peaks that are REGULARLY
+                spaced (gel lanes sit on an even pitch). score = n · exp(-2·CV) where CV is the
+                coefficient of variation of the gaps. An even 8-lane set beats a ragged 4-lane
+                one, which is exactly what lets the sweep recover faint lanes a fixed threshold
+                misses without embracing noise spikes (those are irregular → low score)."""
+                pk = np.asarray(pk, dtype=float)
+                if len(pk) < 2:
+                    return len(pk) * 0.1
+                sp = np.diff(np.sort(pk)); sp = sp[sp > 0]
+                if len(sp) == 0:
+                    return len(pk) * 0.1
+                cv = float(np.std(sp) / (np.mean(sp) + 1e-9))
+                return float(len(pk)) * float(np.exp(-2.0 * cv))
+
+            def _adaptive_lane_peaks(self, col_norm):
+                """Sweep the prominence threshold and return the most regularly-spaced peak set.
+                Fixed thresholds either miss faint lanes (too high) or invent noise lanes (too
+                low); sweeping and picking the best-regularity set adapts to any gel. Honours the
+                user's Min Spacing (distance) as a hard floor so bands can't be over-split."""
+                if np.ptp(col_norm) < 1e-9:
+                    return np.array([], dtype=int)
+                dist = max(1, int(self._lane_dist))
+                floor = 0.01
+                hi = max(floor + 1e-3, float(self._lane_prom))
+                best_pk, best_score = np.array([], dtype=int), -1.0
+                for prom in np.linspace(hi, floor, 9):
+                    pk = self._find_peaks_padded(col_norm, float(prom), dist)
+                    score = self._lane_regularity_score(pk)
+                    if score > best_score:
+                        best_score, best_pk = score, pk
+                return best_pk.astype(int)
+
             def _run_lane_detection(self):
                 H, W = self._gel_arr.shape[:2]
                 col_norm = self._compute_lane_profile()
@@ -9567,15 +9714,21 @@ if __name__ == "__main__":
                     self._draw_phase1_figure(col_norm)
                     return
 
+                peaks = self._find_peaks_padded(
+                    col_norm, self._lane_prom, max(1, self._lane_dist),
+                    height=self._lane_height)
+
+                # Adaptive recovery: if a regularity-guided prominence sweep finds a clearly
+                # better (more regularly-spaced) set of lane centres, adopt it. This rescues
+                # faint sample lanes that the single fixed threshold misses, without disturbing
+                # gels the fixed pass already handles well (the sweep only wins by a margin).
                 try:
-                    peaks, _ = find_peaks(
-                        col_norm,
-                        height=self._lane_height,
-                        prominence=self._lane_prom,
-                        distance=max(1, self._lane_dist),
-                        width=1)
+                    adaptive = self._adaptive_lane_peaks(col_norm)
+                    if (self._lane_regularity_score(adaptive)
+                            > self._lane_regularity_score(peaks) * 1.15):
+                        peaks = adaptive
                 except Exception:
-                    peaks = np.array([], dtype=int)
+                    pass
 
                 self._lane_peaks  = peaks.astype(int)
                 self._lane_bounds = []
