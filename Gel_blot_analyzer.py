@@ -27,7 +27,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.5"
+APP_VERSION = "8.6"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -19689,8 +19689,7 @@ if __name__ == "__main__":
                         sl.blockSignals(True); sl.setValue(val); sl.blockSignals(False)
                         lbl.setText(str(val))
                     # Apply and refresh the histogram markers.
-                    self.update_image_levels_and_gamma()
-                    self._update_levels_histogram()
+                    self.apply_all_adjustments(save_history=True)
                 except Exception:
                     traceback.print_exc()
 
