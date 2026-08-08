@@ -27,7 +27,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.6"
+APP_VERSION = "8.8"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -398,62 +398,187 @@ class MinimalLoadingDialog(QDialog):
             self.move(100, 100)
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+# When frozen (PyInstaller), __file__ points inside the bundle which is often
+# read-only, so keep the log next to the executable instead.
+if getattr(sys, "frozen", False):
+    script_dir = os.path.dirname(os.path.abspath(sys.executable))
 log_file_path = os.path.join(script_dir, "error_log.txt")
 
-
-logging.basicConfig(
-    filename=log_file_path,
-    level=logging.ERROR,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-try:
-    logging.error("--- Logging initialized ---")
-except Exception as e:
-    pass # print(f"ERROR: Could not write initial log message: {e}")
+# ---------------------------------------------------------------------------
+# Robust crash / error logging
+# ---------------------------------------------------------------------------
+# Goals (from user reports of "crashes with nothing in the log"):
+#   * A single, well-formatted file handler (no duplicate lines).
+#   * Full tracebacks for every uncaught Python exception, including those
+#     raised inside Qt slots and background threads.
+#   * Native/C-level crashes (segfaults in Qt, numpy, OpenCV, ...) that never
+#     raise a Python exception are dumped via faulthandler.
+#   * Qt's own warning/critical/fatal messages are captured too.
+# Everything here is defensive: logging must never itself crash the app.
 
 logger = logging.getLogger()
 logger.setLevel(logging.ERROR)
 
+# Remove any handlers a prior import / basicConfig may have attached so we do
+# not write every line two or three times (the old code did exactly that).
+for _h in list(logger.handlers):
+    try:
+        logger.removeHandler(_h)
+    except Exception:
+        pass
+
 try:
-    handler = logging.FileHandler(log_file_path, 'a', 'utf-8')
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    
-    logging.error("--- Logging initialized ---")
-except Exception as e:
-    pass # print(f"ERROR: Could not configure logging or write initial message: {e}")
+    _file_handler = logging.FileHandler(log_file_path, 'a', 'utf-8')
+    _file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+    logger.addHandler(_file_handler)
+except Exception:
+    _file_handler = None
+
+# Also echo to stderr so crashes are visible when run from a console.
+try:
+    _stream_handler = logging.StreamHandler()
+    _stream_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+    logger.addHandler(_stream_handler)
+except Exception:
+    pass
+
+
+def _flush_log_handlers():
+    for _h in logging.getLogger().handlers:
+        try:
+            _h.flush()
+        except Exception:
+            pass
+
+
+def log_traceback(context=""):
+    """Record the currently-handled exception's full traceback to the error log.
+
+    Call this only from inside an ``except`` block. It is the logging-aware
+    replacement for bare ``traceback.print_exc()`` calls: it writes the full
+    traceback (with exc_info) to error_log.txt AND still prints to stderr, so
+    handled/recovered errors are no longer silently swallowed. Every step is
+    wrapped defensively so a logging failure can never turn a recoverable error
+    into a crash (preserving the original try/except recovery behavior).
+    """
+    try:
+        msg = "Handled exception" + (f" in {context}" if context else "")
+        logging.error(msg, exc_info=True)
+        _flush_log_handlers()
+    except Exception:
+        pass
+    try:
+        traceback.print_exc()
+    except Exception:
+        pass
+
+
+try:
+    logging.error("--- Logging initialized (v%s) ---", globals().get("APP_VERSION", "?"))
+    _flush_log_handlers()
+except Exception:
+    pass
+
+# --- faulthandler: dump a traceback on hard crashes (SIGSEGV / SIGABRT etc.) ---
+# Keep the file handle open for the whole process lifetime; faulthandler writes
+# to the raw file descriptor when a fatal signal fires.
+try:
+    import faulthandler
+    _fault_log = open(log_file_path, "a", encoding="utf-8")
+    _fault_log.write("\n=== faulthandler armed ===\n")
+    _fault_log.flush()
+    faulthandler.enable(file=_fault_log, all_threads=True)
+except Exception:
+    _fault_log = None
 
 
 def log_exception(exc_type, exc_value, exc_traceback):
-    pass # print("!!! log_exception called !!!")
+    """Global hook for uncaught exceptions (main thread & Qt slots)."""
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
+    tb_text = ""
     try:
-        logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-        
-        for handler in logging.getLogger().handlers:
-            handler.flush()
-
-    except Exception as log_err:
-        pass # print(f"ERROR: Failed to log exception to file: {log_err}")
-
-    try:
-        error_message = f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n(Check error_log.txt for details)"
-        QMessageBox.critical(
-            None,
-            "Unexpected Error",
-            error_message,
-            QMessageBox.Ok
+        tb_text = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_traceback)
         )
-    except Exception as q_err:
-         pass # print(f"ERROR: Failed to show QMessageBox: {q_err}")
+    except Exception:
+        tb_text = f"{exc_type.__name__}: {exc_value}"
+
+    try:
+        logging.error("Uncaught exception\n%s", tb_text)
+        _flush_log_handlers()
+    except Exception:
+        pass
+
+    # Show a dialog with an expandable "Details" section holding the traceback,
+    # but only if a Qt application actually exists (avoids re-crashing at startup).
+    try:
+        if QApplication.instance() is not None:
+            box = QMessageBox(QMessageBox.Critical, "Unexpected Error",
+                              f"An unexpected error occurred:\n\n"
+                              f"{exc_type.__name__}: {exc_value}\n\n"
+                              f"The full traceback has been written to:\n{log_file_path}")
+            box.setDetailedText(tb_text)
+            box.setStandardButtons(QMessageBox.Ok)
+            box.exec()
+    except Exception:
+        pass
 
 
 sys.excepthook = log_exception
+
+# --- Background-thread exceptions (Python >= 3.8) ---
+try:
+    import threading
+
+    def _thread_excepthook(args):
+        if issubclass(args.exc_type, KeyboardInterrupt):
+            return
+        try:
+            tb_text = "".join(traceback.format_exception(
+                args.exc_type, args.exc_value, args.exc_traceback))
+            logging.error("Uncaught exception in thread %s\n%s",
+                          getattr(args.thread, "name", "?"), tb_text)
+            _flush_log_handlers()
+        except Exception:
+            pass
+
+    threading.excepthook = _thread_excepthook
+except Exception:
+    pass
+
+# --- Qt message handler: capture Qt warnings / critical / fatal messages ---
+try:
+    from PySide6.QtCore import qInstallMessageHandler, QtMsgType
+
+    _QT_MSG_LEVEL = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+
+    def _qt_message_handler(mode, context, message):
+        try:
+            level = _QT_MSG_LEVEL.get(mode, logging.ERROR)
+            # Only persist warnings and worse to avoid flooding the log.
+            if level >= logging.WARNING:
+                logging.log(level, "Qt: %s", message)
+                if level >= logging.ERROR:
+                    _flush_log_handlers()
+        except Exception:
+            pass
+
+    qInstallMessageHandler(_qt_message_handler)
+except Exception:
+    pass
 	
 if __name__ == "__main__":
     # --- High-DPI configuration (matches the reference CombinedSDSApp) ---
@@ -1602,8 +1727,11 @@ if __name__ == "__main__":
                         fragments_text_lines.append(f" + 0 glycans: {oligomer_base_mw:.2f} kDa")
                         if glycan_mass > 0:
                             for i in range(1, num_glycans_to_calc + 1):
-                                potential_mw = oligomer_base_mw + (i * glycan_mass)
-                                fragments_text_lines.append(f" + {i} glycan(s): {potential_mw:.2f} kDa")
+                                # Glycan mass scales with the oligomer number j because each
+                                # subunit carries its own glycans (dimer -> 2x, trimer -> 3x, ...).
+                                potential_mw = oligomer_base_mw + (i * glycan_mass * j)
+                                label = f" + {i} glycan(s) x{j}" if j > 1 else f" + {i} glycan(s)"
+                                fragments_text_lines.append(f"{label}: {potential_mw:.2f} kDa")
                         fragments_text_lines.append("")
                     self.potential_fragments_text.setPlainText("\n".join(fragments_text_lines))
                 except (ValueError, TypeError): self.potential_fragments_text.clear()
@@ -2784,7 +2912,7 @@ if __name__ == "__main__":
                     plt.close(fig)
                     return canvas
                 except Exception as e:
-                    traceback.print_exc()
+                    log_traceback()
                     return QLabel(f"Error generating plot:\n{str(e)[:100]}...", alignment=Qt.AlignCenter, styleSheet="color: red;")
             
             # (All other TableWindow methods like _get_config_dir, _load_history, _save_history, etc., remain unchanged)
@@ -2975,7 +3103,7 @@ if __name__ == "__main__":
                     return final_pixmap
 
                 except Exception:
-                    traceback.print_exc()
+                    log_traceback()
                 return None
 
 
@@ -3589,7 +3717,7 @@ if __name__ == "__main__":
                         gel_qimage = self.parent_app._render_annotated_gel_qimage(
                             render_scale=3, draw_densitometry_boxes=True)
                     except Exception:
-                        traceback.print_exc()
+                        log_traceback()
                         gel_qimage = None
 
                 self._export_to_pdf_generic(
@@ -3649,7 +3777,7 @@ if __name__ == "__main__":
                         return {'x': x_line, 'y': y_line, 'r_squared': r_squared,
                                 'equation': equation, 'params': params}
                 except Exception:
-                    traceback.print_exc()
+                    log_traceback()
                 return None
 
             def _export_to_pdf_generic(self, results_data_for_export, analysis_name="Analysis_Results",
@@ -3719,12 +3847,9 @@ if __name__ == "__main__":
                         edgecolor="#B9C2D6", linewidth=0.9, zorder=0,
                         clip_on=False))
 
-                def _para(fig, x, y, text, fontsize=10, width_chars=None, **kw):
-                    """Place a paragraph block with a REAL right margin (matplotlib's wrap=True
-                    runs text to the figure edge). Wraps each paragraph to a character width sized
-                    from the available content width so the left and right margins stay equal."""
+                def _para_left(fig, x, y, text, fontsize=10, width_chars=None, **kw):
+                    """Fallback: left-aligned, character-wrapped paragraph (ragged right)."""
                     if width_chars is None:
-                        # ~ chars that fit across CONTENT_W of an A4 page at this font size.
                         width_chars = max(30, int((CONTENT_W * A4[0]) / (fontsize * 0.0092)))
                     blocks = []
                     for para in str(text).split("\n\n"):
@@ -3733,6 +3858,73 @@ if __name__ == "__main__":
                             blocks.append(textwrap.fill(para, width=width_chars))
                     fig.text(x, y, "\n\n".join(blocks), fontsize=fontsize,
                              va="top", ha="left", **kw)
+
+                def _para(fig, x, y, text, fontsize=10, width_chars=None, justify=True, **kw):
+                    """Place a fully-JUSTIFIED paragraph block with equal left/right margins.
+
+                    matplotlib has no native justification, so each line's words are measured
+                    with an Agg renderer and the inter-word space is stretched so every line
+                    (except the last of a paragraph) fills the content width exactly. On any
+                    failure it falls back to the previous left-aligned wrapping so older
+                    matplotlib versions still render a report."""
+                    if not justify:
+                        return _para_left(fig, x, y, text, fontsize, width_chars, **kw)
+                    try:
+                        from matplotlib.backends.backend_agg import FigureCanvasAgg
+                        renderer = FigureCanvasAgg(fig).get_renderer()
+                        fig_w_px = float(fig.bbox.width)
+                        right = 1.0 - MARGIN_R
+                        width_frac = max(0.1, right - x)
+                        figh_in = float(fig.get_figheight())
+                        line_h = (fontsize * 1.42 / 72.0) / figh_in    # one line, in fig-fraction
+                        para_gap = line_h * 0.6
+
+                        _wcache = {}
+                        def _w(s):
+                            if s not in _wcache:
+                                t = fig.text(0, 0, s, fontsize=fontsize, **kw)
+                                _wcache[s] = t.get_window_extent(renderer).width / fig_w_px
+                                t.remove()
+                            return _wcache[s]
+
+                        # A bare " " often measures as ~0; derive it from a difference instead.
+                        try:
+                            space_w = max(1e-4, _w("x x") - _w("xx"))
+                        except Exception:
+                            space_w = fontsize * 0.0009
+
+                        cy = y
+                        for para in str(text).split("\n\n"):
+                            words = para.split()
+                            if not words:
+                                cy -= para_gap
+                                continue
+                            ww = [_w(w) for w in words]
+                            # Greedily pack words into lines that fit width_frac.
+                            lines, cur, cur_w = [], [], 0.0
+                            for k in range(len(words)):
+                                add = ww[k] + (space_w if cur else 0.0)
+                                if cur and cur_w + add > width_frac:
+                                    lines.append(cur); cur, cur_w = [k], ww[k]
+                                else:
+                                    cur.append(k); cur_w += add
+                            if cur:
+                                lines.append(cur)
+                            for li, idxs in enumerate(lines):
+                                is_last = (li == len(lines) - 1)
+                                gaps = len(idxs) - 1
+                                natural = sum(ww[k] for k in idxs)
+                                gap = space_w if (is_last or gaps == 0) else (width_frac - natural) / gaps
+                                cx = x
+                                for k in idxs:
+                                    fig.text(cx, cy, words[k], fontsize=fontsize,
+                                             va="top", ha="left", **kw)
+                                    cx += ww[k] + gap
+                                cy -= line_h
+                            cy -= para_gap
+                    except Exception:
+                        log_traceback()
+                        _para_left(fig, x, y, text, fontsize, width_chars, **kw)
 
                 def _finish_page(fig, pdf):
                     """Add the border and save the page at report DPI (sharp raster)."""
@@ -4023,7 +4215,7 @@ if __name__ == "__main__":
                                          fontsize=8, color="#444444", ha="center", wrap=True)
                                 _finish_page(fig, pdf)
                             except Exception:
-                                traceback.print_exc()
+                                log_traceback()
 
                         # =============== PAGE 3: STANDARD CURVE ===============
                         if is_std_mode and len(standard_dict_for_export) >= 2:
@@ -4185,7 +4377,7 @@ if __name__ == "__main__":
                                     if pm is not None and not pm.isNull():
                                         lane_png = _qimage_to_png(pm.toImage())
                                 except Exception:
-                                    traceback.print_exc()
+                                    log_traceback()
 
                             if lane_png:
                                 try:
@@ -4255,7 +4447,7 @@ if __name__ == "__main__":
 
                     QMessageBox.information(self, "Success", f"PDF report exported to\n{file_path}")
                 except Exception as e:
-                    traceback.print_exc()
+                    log_traceback()
                     QMessageBox.critical(self, "Export Error", f"Could not create PDF report:\n{e}")
                 finally:
                     for p in temp_files:
@@ -7989,9 +8181,8 @@ if __name__ == "__main__":
                         painter.drawText(QPointF(predict_line_draw_start_x_ls, draw_y_mw_ls), line_symbol)
                     should_draw_oligomer_overlay = (self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_model is not None)
                     if should_draw_oligomer_overlay:
-                        line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]
-                        text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
-                        
+                        line_colors, text_colors = self.app_instance._oligomer_overlay_palette()
+
                         # --- UPDATED: Use Standard Marker Font Settings ---
                         # Uses app_instance.font_family/font_size instead of custom settings
                         base_font_size = self.app_instance.font_size
@@ -8006,25 +8197,20 @@ if __name__ == "__main__":
 
                         fm_text = QFontMetricsF(text_font)
                         text_height = fm_text.height()
-                        min_text_spacing = text_height * 1.2
+                        min_text_spacing = text_height * 1.45
+                        band_groups = self.app_instance._oligomer_band_groups(len(self.app_instance.oligomer_products))
                         bands_to_draw = []
                         for i, mw in enumerate(self.app_instance.oligomer_products):
                             y_pos_img = self.app_instance._get_y_pos_from_mw(mw, self.app_instance.last_mw_prediction_model, self.app_instance.last_mw_prediction_min_max_pos)
                             if y_pos_img is not None:
                                 y_pos_ls = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
-                                bands_to_draw.append({'mw': mw, 'y_ls': y_pos_ls, 'color': line_colors[i % len(line_colors)], 'text_color': text_colors[i % len(text_colors)]})
+                                bands_to_draw.append({'mw': mw, 'y_ls': y_pos_ls, 'group': band_groups[i], 'color': line_colors[i % len(line_colors)], 'text_color': text_colors[i % len(text_colors)]})
                         if not bands_to_draw: painter.restore(); return
-                        bands_to_draw.sort(key=lambda b: b['y_ls'])
-                        
-                        last_text_y = -float('inf')
-                        for band in bands_to_draw:
-                            ideal_text_y = band['y_ls']
-                            if ideal_text_y < last_text_y + min_text_spacing: band['text_y_ls'] = last_text_y + min_text_spacing
-                            else: band['text_y_ls'] = ideal_text_y
-                            last_text_y = band['text_y_ls']
-                        
+                        # De-crowd vertically and record each band's oligomer group order.
+                        self.app_instance._layout_oligomer_bands(bands_to_draw, 'y_ls', 'text_y_ls', min_text_spacing)
+
                         arrow_line_width = max(0.8, 2.0 / self.zoom_level)
-                        
+
                         # Determine Start X (Cursor location or Image Center)
                         start_x = 0
                         if self.mw_predict_preview_enabled and self.mw_predict_preview_position:
@@ -8036,42 +8222,49 @@ if __name__ == "__main__":
                         else:
                              start_x = _offset_x_img_in_label + _displayed_img_w_in_label / 2
 
+                        arrow_len = max(6.0 / self.zoom_level, arrow_line_width * 4.0)
+                        base_line_len = 30 / self.zoom_level
+                        text_offset = 6 / self.zoom_level
+                        line_origin_x = start_x + arrow_len   # leader starts at arrow base
+                        # Each oligomer group's stair begins at the end of the previous
+                        # group's labels (a true cascade), separated by group_gap.
+                        group_gap = max(12.0 / self.zoom_level, text_height * 0.9)
+                        self.app_instance._assign_oligomer_group_columns(bands_to_draw, fm_text, line_origin_x,
+                                                                         base_line_len, text_offset, group_gap)
+
+                        # Pass 1: arrowheads + leader lines first, so the label pills
+                        # below cleanly cover any lines that pass behind them.
                         for band in bands_to_draw:
-                            pen = QPen(band['color']); pen.setWidthF(arrow_line_width); painter.setPen(pen)
-                            text = f"{band['mw']:.1f} kDa"; text_rect = fm_text.boundingRect(text)
-                            
-                            # Draw stepped lines
-                            line_len_1 = 30 / self.zoom_level
-                            elbow_x = start_x + line_len_1
-                            text_start_x = elbow_x + (5 / self.zoom_level)
-                            
-                            p_start = QPointF(start_x, band['y_ls'])
-                            p_elbow_1 = QPointF(elbow_x, band['y_ls'])
-                            p_elbow_2 = QPointF(elbow_x, band['text_y_ls'])
-                            p_text_anchor = QPointF(text_start_x, band['text_y_ls'])
-
-                            # Use Polyline for clean joints
-                            polyline_points = [p_start, p_elbow_1, p_elbow_2, p_text_anchor]
-                            painter.drawPolyline(QPolygonF(polyline_points))
-                            
-                            text_draw_y = band['text_y_ls'] - (text_rect.top() + text_rect.height() / 2.0)
-                            
-                            painter.setFont(text_font)
-
-                            glow_color = QColor(255, 255, 255, 90)
-                            glow_pen = QPen(glow_color)
-                            glow_pen.setWidth(2) 
-                            painter.setPen(glow_pen)
-                            
-                            glow_offset = max(0.5, 1.0 / self.zoom_level)
-                            offsets = [
-                                (-glow_offset, -glow_offset), (glow_offset, -glow_offset),
-                                (-glow_offset, glow_offset), (glow_offset, glow_offset),
-                                (0, -glow_offset), (0, glow_offset),
-                                (-glow_offset, 0), (glow_offset, 0)
+                            # Pointed arrowhead with its tip on the band position.
+                            self.app_instance._draw_overlay_arrowhead(painter, line_origin_x, band['y_ls'],
+                                                                       arrow_len, band['color'])
+                            pen = QPen(band['color']); pen.setWidthF(arrow_line_width); pen.setJoinStyle(Qt.RoundJoin); painter.setPen(pen)
+                            polyline_points = [
+                                QPointF(line_origin_x, band['y_ls']),
+                                QPointF(band['elbow_x'], band['y_ls']),
+                                QPointF(band['elbow_x'], band['text_y_ls']),
+                                QPointF(band['text_start_x'], band['text_y_ls']),
                             ]
-                            for dx, dy in offsets:
-                                painter.drawText(QPointF(text_start_x + dx, text_draw_y + dy), text)
+                            painter.drawPolyline(QPolygonF(polyline_points))
+
+                        # Pass 2: label pills + text on top.
+                        painter.setFont(text_font)
+                        pad_x = max(1.5, 4.0 / self.zoom_level)
+                        pad_y = max(0.8, 2.0 / self.zoom_level)
+                        radius = max(1.0, 3.0 / self.zoom_level)
+                        for band in bands_to_draw:
+                            text = f"{band['mw']:.1f} kDa"; text_rect = fm_text.boundingRect(text)
+                            text_w = fm_text.horizontalAdvance(text)
+                            text_start_x = band['text_start_x']
+                            text_draw_y = band['text_y_ls'] - (text_rect.top() + text_rect.height() / 2.0)
+                            bg_rect = QRectF(text_start_x - pad_x,
+                                             band['text_y_ls'] - text_rect.height() / 2.0 - pad_y,
+                                             text_w + 2 * pad_x,
+                                             text_rect.height() + 2 * pad_y)
+                            painter.setPen(Qt.NoPen)
+                            painter.setBrush(QColor(255, 255, 255, 235))
+                            painter.drawRoundedRect(bg_rect, radius, radius)
+                            painter.setBrush(Qt.NoBrush)
 
                             painter.setPen(band['text_color'])
                             painter.drawText(QPointF(text_start_x, text_draw_y), text)
@@ -11066,7 +11259,7 @@ if __name__ == "__main__":
                         except Exception:
                             pass
                 except Exception:
-                    import traceback; traceback.print_exc()
+                    log_traceback()
 
                 # ── Step 1: Apply per-side transparent padding ────────
                 # Padding is auto-computed now (after lanes/labels are known) so the
@@ -11240,7 +11433,7 @@ if __name__ == "__main__":
                             if _left_done and _right_done:
                                 break
                     except Exception:
-                        import traceback; traceback.print_exc()
+                        log_traceback()
 
                 # ── Step 4: Build multi_lane_definitions ─
                 # Upright lanes commit as rectangles; skewed lanes (per-lane skew or the
@@ -11422,11 +11615,11 @@ if __name__ == "__main__":
                                             break
                                     app.update_live_view()
                                 except Exception:
-                                    import traceback; traceback.print_exc()
+                                    log_traceback()
 
                                 QTimer.singleShot(100, app.open_table_window)
                     except Exception:
-                        import traceback; traceback.print_exc()
+                        log_traceback()
 
                 elif mwm_indices:
                     # Densitometry is OFF for sample lanes, but open PeakAreaDialog
@@ -11510,9 +11703,9 @@ if __name__ == "__main__":
                                             break
                                     app.update_live_view()
                                 except Exception:
-                                    import traceback; traceback.print_exc()
+                                    log_traceback()
                     except Exception:
-                        import traceback; traceback.print_exc()
+                        log_traceback()
 
 
             # --- restored: _go_to_phase4 ---
@@ -12256,6 +12449,7 @@ if __name__ == "__main__":
                 self.num_glycans_to_model = 0
                 #self.num_glycosylation_sites = 0
                 self.oligomer_products = [] # Combined list for all forms
+                self.oligomer_product_groups = [] # Parallel: oligomer index j per product
                 self.last_mw_prediction_model = None
                 self.last_mw_prediction_min_max_pos = None
                 self.last_marker_source_choice = None
@@ -14000,7 +14194,7 @@ if __name__ == "__main__":
                                             f"{len(self.custom_markers)} markers and {len(self.custom_shapes)} shapes copied to clipboard.")
                 except Exception as e:
                     QMessageBox.critical(self, "Copy Error", f"Could not copy custom items: {e}")
-                    traceback.print_exc()
+                    log_traceback()
 
             def paste_custom_items(self):
                 """Pastes custom markers and shapes from the clipboard."""
@@ -14058,7 +14252,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Paste Error", f"Could not paste custom items: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                 
                 
             def _update_status_bar(self):
@@ -14664,7 +14858,7 @@ if __name__ == "__main__":
             
                 except Exception as e:
                     pass # print(f"Error in numpy_to_qimage: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                     return QImage()
 
 
@@ -14732,7 +14926,7 @@ if __name__ == "__main__":
                                                        borderValue=border_val)
                 except Exception as e:
                      QMessageBox.warning(self, "Warp Error", f"OpenCV perspective warp failed: {e}")
-                     traceback.print_exc()
+                     log_traceback()
                      return None
              
                 try:
@@ -15153,7 +15347,7 @@ if __name__ == "__main__":
                                                       is_quad_warp=True)
                     except Exception as e:
                         QMessageBox.critical(self, "Error", f"Failed to map quad points for marker placement: {e}")
-                        traceback.print_exc()
+                        log_traceback()
                 else:
                     QMessageBox.warning(self, "Error", "Failed to warp quadrilateral region for auto lane.")
 
@@ -15206,7 +15400,7 @@ if __name__ == "__main__":
     
                     except Exception as e:
                         QMessageBox.critical(self, "Error", f"Failed to finalize rectangle for auto lane: {e}")
-                        traceback.print_exc()
+                        log_traceback()
                     finally:
                         self._reset_live_view_label_custom_handlers()
                         self.live_view_label.mode = None
@@ -15901,7 +16095,7 @@ if __name__ == "__main__":
                 except Exception as e:
                     pass # print(f"Undo Error: {e}")
                     import traceback
-                    traceback.print_exc()
+                    log_traceback()
                 finally:
                     self._is_restoring_state = False
                     self.update_live_view()
@@ -15966,7 +16160,16 @@ if __name__ == "__main__":
                 self.show_oligomer_glyco_overlay_checkbox.setToolTip("After predicting an MW, overlay potential oligomeric and glycosylated bands on the image.")
                 self.show_oligomer_glyco_overlay_checkbox.stateChanged.connect(self.update_live_view)
                 mw_layout.addWidget(self.show_oligomer_glyco_overlay_checkbox, 1, 0, 1, 4)
-                
+
+                self.show_partial_glycosylation_checkbox = QCheckBox("Show Partial Glycosylation")
+                self.show_partial_glycosylation_checkbox.setToolTip(
+                    "Show every partial-occupancy band, not just the fully-glycosylated protein.\n"
+                    "e.g. a 50 kDa protein with 3 x 2 kDa glycans:\n"
+                    "  ON  -> 50, 52, 54, 56 kDa (0-3 sites occupied)\n"
+                    "  OFF -> 56 kDa (all sites occupied)")
+                self.show_partial_glycosylation_checkbox.stateChanged.connect(self._on_partial_glycosylation_toggled)
+                mw_layout.addWidget(self.show_partial_glycosylation_checkbox, 2, 0, 1, 4)
+
                 main_layout.addWidget(mw_group)
 
                 # --- Group 2: Lane Quantification Workflow ---
@@ -16306,7 +16509,7 @@ if __name__ == "__main__":
                 
                 except Exception as e:
                     QMessageBox.critical(self, "Save Analysis Error", f"Could not save the analysis config file: {e}")
-                    traceback.print_exc()
+                    log_traceback()
 
             def _apply_analysis_extras(self, config_data):
                 """Restore the analysis state that lives outside apply_config's core: the
@@ -16341,11 +16544,20 @@ if __name__ == "__main__":
                     self.last_predicted_mw = float(protein_analysis_data.get("last_predicted_mw", 0.0))
                 except (TypeError, ValueError):
                     pass
+                # Restore the 'Show Partial Glycosylation' toggle (default off).
+                _partial_glyco = bool(protein_analysis_data.get("show_partial_glycosylation", False))
+                if hasattr(self, 'show_partial_glycosylation_checkbox'):
+                    self.show_partial_glycosylation_checkbox.blockSignals(True)
+                    self.show_partial_glycosylation_checkbox.setChecked(_partial_glyco)
+                    self.show_partial_glycosylation_checkbox.blockSignals(False)
                 self.last_mw_prediction_model = protein_analysis_data.get("last_mw_prediction_model", None)
                 if self.last_mw_prediction_model and "coeffs" in self.last_mw_prediction_model:
                     c = self.last_mw_prediction_model["coeffs"]
                     if isinstance(c, list):
                         self.last_mw_prediction_model["coeffs"] = np.array(c)
+                # Rebuild the overlay product list from the restored parameters so the
+                # oligomer/glyco overlay is available immediately after loading.
+                self._rebuild_oligomer_products()
 
                 # --- Densitometry results (added 2026-07; absent in older files) ---
                 dens = config_data.get("densitometry_results")
@@ -16479,7 +16691,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Load Analysis Error", f"Failed to load or apply the configuration file: {e}")
-                    traceback.print_exc()
+                    log_traceback()
             
             def update_standards_from_text_fields(self):
                 """
@@ -16598,18 +16810,62 @@ if __name__ == "__main__":
                     self.num_oligomers_to_model = results["oligomers_to_use"]
 
                     # Recalculate and store all potential products
-                    self.oligomer_products = []
-                    if self.base_protein_mw > 0:
-                        for j in range(1, self.num_oligomers_to_model + 1):
-                            oligomer_base_mw = self.base_protein_mw * j
-                            # Add the unglycosylated oligomer itself
-                            self.oligomer_products.append(oligomer_base_mw)
-                            # Add glycosylated forms if glycan mass is positive
-                            if self.avg_glycan_mass > 0:
-                                for i in range(1, self.num_glycans_to_model + 1):
-                                    self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
-                    
+                    self._rebuild_oligomer_products()
                     self.update_live_view()
+
+            def _on_partial_glycosylation_toggled(self, _state=None):
+                """Rebuild the product list with/without partial glycosylation and redraw."""
+                self._rebuild_oligomer_products()
+                self.update_live_view()
+
+            def _rebuild_oligomer_products(self):
+                """(Re)build the oligomer/glyco product list used by the overlay.
+
+                Fills two parallel lists:
+                  * self.oligomer_products       — molecular weights (kDa)
+                  * self.oligomer_product_groups — the oligomer number j each product
+                                                    belongs to (for grouping/terracing)
+
+                Each oligomer j (j identical subunits) has base MW j*base and a total of
+                (sites*j) glycosylation sites, each adding one glycan mass. The 'Show
+                Partial Glycosylation' option controls which occupancies are listed:
+                  * OFF — only the FULLY-glycosylated form is shown (every site occupied):
+                          mass = j*base + (sites*j)*glycan. e.g. a 50 kDa protein with
+                          3 x 2 kDa glycans shows just 56 kDa.
+                  * ON  — every partial occupancy k = 0..(sites*j) is shown (0 = the
+                          unglycosylated backbone): mass = j*base + k*glycan. The same
+                          protein shows 50, 52, 54, 56 kDa.
+                If there are no glycans (sites or glycan mass = 0) only the oligomer base
+                MWs are listed in both modes.
+                """
+                self.oligomer_products = []
+                self.oligomer_product_groups = []
+                base = self.base_protein_mw or 0.0
+                if base <= 0:
+                    return
+                glycan = self.avg_glycan_mass or 0.0
+                sites = max(0, int(self.num_glycans_to_model or 0))
+                n_oligo = max(1, int(self.num_oligomers_to_model or 1))
+                partial = bool(getattr(self, 'show_partial_glycosylation_checkbox', None)
+                               and self.show_partial_glycosylation_checkbox.isChecked())
+                for j in range(1, n_oligo + 1):
+                    oligomer_base_mw = base * j
+                    total_sites = sites * j
+                    if glycan > 0 and total_sites > 0:
+                        if partial:
+                            # 0..total_sites glycans (0 = unglycosylated backbone).
+                            for k in range(0, total_sites + 1):
+                                self.oligomer_products.append(oligomer_base_mw + k * glycan)
+                                self.oligomer_product_groups.append(j)
+                        else:
+                            # Fully-glycosylated form only.
+                            self.oligomer_products.append(oligomer_base_mw + total_sites * glycan)
+                            self.oligomer_product_groups.append(j)
+                    else:
+                        # No glycosylation modelled: just the oligomer base MW.
+                        self.oligomer_products.append(oligomer_base_mw)
+                        self.oligomer_product_groups.append(j)
+
             def _get_y_pos_from_mw(self, mw, model_data, min_max_pos):
                 """Calculates the image Y-position for a given MW using the inverse regression model + calibration."""
                 if mw <= 0 or model_data is None: return None
@@ -17582,7 +17838,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     pass # print(f"Error converting QImage to Grayscale PIL: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                     return None     
                 
             def combine_image_tab(self):
@@ -19535,7 +19791,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     import traceback
-                    traceback.print_exc()
+                    log_traceback()
                     return qimage_base
                 
             def _get_fully_adjusted_image_for_analysis(self):
@@ -19691,7 +19947,7 @@ if __name__ == "__main__":
                     # Apply and refresh the histogram markers.
                     self.apply_all_adjustments(save_history=True)
                 except Exception:
-                    traceback.print_exc()
+                    log_traceback()
 
             def update_image_levels_and_gamma(self):
                 """Applies levels and gamma adjustments based on current slider values."""
@@ -19746,7 +20002,7 @@ if __name__ == "__main__":
                     self.update_live_view()
                 except Exception as e:
                     pass # print(f"Error in update_image_levels_and_gamma: {e}")
-                    traceback.print_exc()
+                    log_traceback()
             
             def _update_level_slider_ranges_and_defaults(self):
                 """
@@ -20299,7 +20555,7 @@ if __name__ == "__main__":
                     except Exception as e:
                          # Handle errors during coordinate calculation or UI update
                          QMessageBox.warning(self, "Coordinate Error", f"Could not calculate/update crop: {e}")
-                         traceback.print_exc()
+                         log_traceback()
                          self.crop_rectangle_coords = None
                          self.live_view_label.clear_crop_preview()
                          # Ensure sliders remain disabled on error
@@ -21709,7 +21965,7 @@ if __name__ == "__main__":
                 except Exception as e:
                      QMessageBox.critical(self, "Conversion Error", f"Could not convert image to grayscale: {e}")
                      import traceback
-                     traceback.print_exc()
+                     log_traceback()
                      return
 
                 if converted_image and not converted_image.isNull():
@@ -23046,7 +23302,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Error removing preset: {e}")
-                    traceback.print_exc()
+                    log_traceback()
 
             def save_full_config(self):
                 """Saves all application settings and presets to the config file."""
@@ -23291,7 +23547,7 @@ if __name__ == "__main__":
                         self.viewer_position = "Top"
                         
                     except Exception as e:
-                        traceback.print_exc()
+                        log_traceback()
                         QMessageBox.warning(self, "Preset Config Load Error",
                                             f"Unexpected error loading '{self.CONFIG_PRESET_FILE_NAME}'.\n\nUsing default presets.")
                         self.presets_data = default_presets_init.copy() # Fallback
@@ -23336,7 +23592,7 @@ if __name__ == "__main__":
                     else:
                         pass # print("Warning: combo_box UI element not found during config load.")
                 except Exception as e_ui:
-                    traceback.print_exc()
+                    log_traceback()
                     QMessageBox.warning(self, "UI Error", f"Error populating preset combobox: {e_ui}")
 
                 # Auto-shrink UI Scale / Program UI Width for small screens or high DPI so
@@ -24360,6 +24616,9 @@ if __name__ == "__main__":
                     "num_glycans_to_model": self.num_glycans_to_model,
                     "last_predicted_mw": self.last_predicted_mw,
                     "last_mw_prediction_model": self.last_mw_prediction_model,
+                    "show_partial_glycosylation": bool(
+                        getattr(self, 'show_partial_glycosylation_checkbox', None)
+                        and self.show_partial_glycosylation_checkbox.isChecked()),
                 }
 
                 config["peak_dialog_settings"] = self.peak_dialog_settings
@@ -24476,7 +24735,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                      import traceback
-                     traceback.print_exc()
+                     log_traceback()
                      QMessageBox.critical(self, "Error", f"An unexpected error occurred while adding the marker:\n{e}")
 
                 self.update_live_view()
@@ -24715,7 +24974,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                     if self.undo_stack:
                         try: self.undo_action_m()
                         except: pass
@@ -25705,7 +25964,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Rotation Error", f"Failed to rotate image: {e}")
-                    traceback.print_exc()
+                    log_traceback()
             
             def _update_marker_slider_ranges(self):
                 """
@@ -25896,7 +26155,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Crop Error", f"An error occurred during cropping: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                     if self.undo_stack: self.undo_action_m()
                 
             def update_skew(self):
@@ -26042,7 +26301,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Skew Error", f"Failed to apply skew: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                     if self.undo_stack:
                         self.undo_action_m()
 
@@ -26406,7 +26665,7 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     QMessageBox.critical(self, "Perspective Error", f"Failed to apply perspective correction: {e}")
-                    traceback.print_exc()
+                    log_traceback()
                     if self.undo_stack:
                         self.undo_action_m()
 
@@ -26418,6 +26677,116 @@ if __name__ == "__main__":
                 self._init_perspective_corners()
                 self.update_live_view()
 
+            def _oligomer_band_groups(self, n):
+                """Return a length-``n`` list giving the oligomer group index of each
+                product in ``self.oligomer_products``.
+
+                Prefers the stored parallel list ``self.oligomer_product_groups`` (which
+                handles partial glycosylation, where groups have unequal sizes); falls
+                back to the fixed base+glycans block-size heuristic for older analyses
+                that predate that list."""
+                groups = getattr(self, 'oligomer_product_groups', None)
+                if groups and len(groups) == n:
+                    return list(groups)
+                has_gly = (getattr(self, 'avg_glycan_mass', 0) or 0) > 0
+                gsize = max(1, (getattr(self, 'num_glycans_to_model', 0) + 1) if has_gly else 1)
+                return [i // gsize for i in range(n)]
+
+            def _oligomer_overlay_palette(self):
+                """Distinct, high-contrast colors for the oligomer/glyco overlay.
+
+                Returns ``(line_colors, text_colors)`` as parallel QColor lists;
+                callers index with ``i % len(...)``. Defined once here so the
+                live-view and Save/Copy renderers stay in sync. The label text uses
+                the EXACT same color as its leader line (user request), so the two
+                lists are identical; every hue is chosen dark enough to stay legible
+                on the white label pill.
+                """
+                specs = [
+                    (210, 105, 0), (0, 140, 55), (0, 90, 200), (150, 0, 150),
+                    (0, 150, 150), (200, 40, 40), (150, 90, 20), (199, 21, 133),
+                    (90, 40, 160), (30, 120, 120), (180, 0, 90), (0, 100, 160),
+                ]
+                line_colors = [QColor(r, g, b) for (r, g, b) in specs]
+                text_colors = [QColor(r, g, b) for (r, g, b) in specs]  # exact match
+                return line_colors, text_colors
+
+            def _layout_oligomer_bands(self, bands, y_key, ty_key, min_text_spacing):
+                """De-crowd overlay labels and record each band's oligomer group order.
+
+                Sorts ``bands`` in place by ``y_key`` and stores, per band, a pushed-down
+                label position under ``ty_key`` and a group-appearance index under
+                ``'gorder'`` (0 for the first oligomer group encountered top->bottom, 1
+                for the next, ...). The horizontal column X for each group is computed
+                later by :meth:`_assign_oligomer_group_columns`, which needs font metrics.
+                Members of one oligomer (its base + all glycan forms) share a group.
+                """
+                bands.sort(key=lambda b: b[y_key])
+
+                # Vertical de-crowding: push labels down so their pills don't overlap.
+                last_ty = -float('inf')
+                for b in bands:
+                    ideal = b[y_key]
+                    ty = ideal if ideal >= last_ty + min_text_spacing else last_ty + min_text_spacing
+                    b[ty_key] = ty
+                    last_ty = ty
+
+                # Group appearance order (one terrace per oligomer group).
+                order = {}
+                nxt = 0
+                for b in bands:
+                    g = b.get('group', 0)
+                    if g not in order:
+                        order[g] = nxt
+                        nxt += 1
+                    b['gorder'] = order[g]
+
+            def _assign_oligomer_group_columns(self, bands, fm, origin_x, base_line_len,
+                                               text_offset, group_gap):
+                """Place each oligomer group's leader column so a group's stair begins
+                at the RIGHT EDGE of the previous group's labels (a true cascade).
+
+                All members of a group share one ``elbow_x`` (flat column). The first
+                group starts ``base_line_len`` right of ``origin_x``; each subsequent
+                group starts past the previous group's widest label plus ``group_gap``.
+                Stores ``'elbow_x'`` and ``'text_start_x'`` on every band.
+                """
+                members = {}
+                for b in bands:
+                    members.setdefault(b['gorder'], []).append(b)
+                cursor = origin_x + base_line_len
+                for g in sorted(members):
+                    mem = members[g]
+                    max_w = max(fm.horizontalAdvance(f"{m['mw']:.1f} kDa") for m in mem)
+                    for b in mem:
+                        b['elbow_x'] = cursor
+                        b['text_start_x'] = cursor + text_offset
+                    # Next group's column starts past this group's label right edge.
+                    cursor += text_offset + max_w + group_gap
+
+            def _draw_overlay_arrowhead(self, painter, base_x, tip_y, length, color):
+                """Draw a clean, filled, left-pointing arrowhead at a band.
+
+                The tip is at ``(base_x - length, tip_y)`` (pointing left, into the
+                gel band) and the flat base is at ``base_x``; callers start the leader
+                line at ``base_x`` so the line meets the arrow base seamlessly. A thin
+                same-color outline keeps the triangle crisp at small sizes.
+                """
+                half_w = length * 0.5
+                tri = QPolygonF([
+                    QPointF(base_x - length, tip_y),          # tip (points left)
+                    QPointF(base_x, tip_y - half_w),          # base top
+                    QPointF(base_x, tip_y + half_w),          # base bottom
+                ])
+                painter.save()
+                pen = QPen(color)
+                pen.setWidthF(max(0.5, length * 0.12))
+                pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(pen)
+                painter.setBrush(color)
+                painter.drawPolygon(tri)
+                painter.restore()
+
             def _draw_oligomer_overlay_on_canvas(self, painter, render_scale, font_scale_factor):
                 """Helper to draw the oligomer overlay on a high-res canvas (Save/Copy)."""
                 if not (hasattr(self, 'show_oligomer_glyco_overlay_checkbox') and 
@@ -26426,12 +26795,11 @@ if __name__ == "__main__":
                         self.last_mw_prediction_model is not None):
                     return
 
-                line_colors = [QColor(255, 140, 0, 220), QColor(0, 128, 0, 220), QColor(0, 0, 139, 220), QColor(139, 0, 139, 220)]
-                text_colors = [QColor("#b35900"), QColor("#004d00"), QColor("#000052"), QColor("#520052")]
-                
+                line_colors, text_colors = self._oligomer_overlay_palette()
+
                 # --- UPDATE: Use Standard Marker Font Settings ---
                 # This ensures the size matches the Left/Right markers exactly
-                base_font_size = self.font_size 
+                base_font_size = self.font_size
                 scaled_font_size = int(base_font_size * font_scale_factor)
                 
                 text_font = QFont(self.font_family)
@@ -26442,35 +26810,30 @@ if __name__ == "__main__":
                 
                 fm_text = QFontMetricsF(text_font)
                 text_height = fm_text.height()
-                min_text_spacing = text_height * 1.2
+                min_text_spacing = text_height * 1.45
 
+                band_groups = self._oligomer_band_groups(len(self.oligomer_products))
                 bands_to_draw = []
                 for i, mw in enumerate(self.oligomer_products):
                     y_pos_img = self._get_y_pos_from_mw(mw, self.last_mw_prediction_model, self.last_mw_prediction_min_max_pos)
                     if y_pos_img is not None:
                         y_pos_canvas = y_pos_img * render_scale
                         bands_to_draw.append({
-                            'mw': mw, 
-                            'y_canvas': y_pos_canvas, 
-                            'color': line_colors[i % len(line_colors)], 
+                            'mw': mw,
+                            'y_canvas': y_pos_canvas,
+                            'group': band_groups[i],
+                            'color': line_colors[i % len(line_colors)],
                             'text_color': text_colors[i % len(text_colors)]
                         })
-                
+
                 if not bands_to_draw: return
 
-                bands_to_draw.sort(key=lambda b: b['y_canvas'])
-                last_text_y = -float('inf')
-                
-                for band in bands_to_draw:
-                    ideal_text_y = band['y_canvas']
-                    if ideal_text_y < last_text_y + min_text_spacing:
-                        band['text_y_canvas'] = last_text_y + min_text_spacing
-                    else:
-                        band['text_y_canvas'] = ideal_text_y
-                    last_text_y = band['text_y_canvas']
+                # De-crowd vertically and record each band's oligomer group order.
+                self._layout_oligomer_bands(bands_to_draw, 'y_canvas', 'text_y_canvas',
+                                            min_text_spacing)
 
                 arrow_line_width = max(1.0, 2.0 * font_scale_factor)
-                
+
                 # Determine Start X (Cursor location or Image Center)
                 if hasattr(self, "protein_location") and self.protein_location:
                     start_x = self.protein_location.x() * render_scale
@@ -26479,42 +26842,54 @@ if __name__ == "__main__":
 
                 # Visual offsets scaled by font_scale_factor to match zoom/view ratio
                 line_len_1 = 30 * font_scale_factor
-                text_offset = 5 * font_scale_factor
-                elbow_x = start_x + line_len_1
-                text_start_x = elbow_x + text_offset
+                text_offset = 6 * font_scale_factor
+                arrow_len = max(6.0, arrow_line_width * 4.0)
+                line_origin_x = start_x + arrow_len   # leader starts at the arrow base
+                # Each oligomer group's stair begins at the end of the previous group's
+                # labels (a true cascade), separated by group_gap.
+                group_gap = max(12.0, text_height * 0.9)
+                self._assign_oligomer_group_columns(bands_to_draw, fm_text, line_origin_x,
+                                                    line_len_1, text_offset, group_gap)
 
+                # Pass 1: arrowheads + leader lines first, so the label pills below
+                # cleanly cover any lines that pass behind them.
                 for band in bands_to_draw:
+                    # Pointed arrowhead with its tip on the band position.
+                    self._draw_overlay_arrowhead(painter, line_origin_x, band['y_canvas'],
+                                                 arrow_len, band['color'])
                     pen = QPen(band['color'])
                     pen.setWidthF(arrow_line_width)
+                    pen.setJoinStyle(Qt.RoundJoin)
                     painter.setPen(pen)
-                    
+                    polyline_points = [
+                        QPointF(line_origin_x, band['y_canvas']),
+                        QPointF(band['elbow_x'], band['y_canvas']),
+                        QPointF(band['elbow_x'], band['text_y_canvas']),
+                        QPointF(band['text_start_x'], band['text_y_canvas']),
+                    ]
+                    painter.drawPolyline(QPolygonF(polyline_points))
+
+                # Pass 2: label pills + text on top.
+                pad_x = max(2.0, 4.0 * font_scale_factor)
+                pad_y = max(1.0, 2.0 * font_scale_factor)
+                radius = max(1.5, 3.0 * font_scale_factor)
+                for band in bands_to_draw:
                     text = f"{band['mw']:.1f} kDa"
                     text_rect = fm_text.boundingRect(text)
-                    
-                    p_start = QPointF(start_x, band['y_canvas'])
-                    p_elbow_1 = QPointF(elbow_x, band['y_canvas'])
-                    p_elbow_2 = QPointF(elbow_x, band['text_y_canvas'])
-                    p_text_anchor = QPointF(text_start_x, band['text_y_canvas'])
-                    
-                    polyline_points = [p_start, p_elbow_1, p_elbow_2, p_text_anchor]
-                    painter.drawPolyline(QPolygonF(polyline_points))
-                    
+                    text_w = fm_text.horizontalAdvance(text)
+                    text_start_x = band['text_start_x']
                     text_draw_y = band['text_y_canvas'] - (text_rect.top() + text_rect.height() / 2.0)
-                    
-                    # Glow Effect
-                    glow_color = QColor(255, 255, 255, 90)
-                    glow_pen = QPen(glow_color)
-                    glow_pen.setWidth(int(3 * font_scale_factor)) 
-                    painter.setPen(glow_pen)
-                    
-                    glow_offset = max(1.0, 1.0 * font_scale_factor)
-                    offsets = [(-glow_offset, -glow_offset), (glow_offset, -glow_offset), (-glow_offset, glow_offset), (glow_offset, glow_offset)]
-                    for dx, dy in offsets:
-                        painter.drawText(QPointF(text_start_x + dx, text_draw_y + dy), text)
-                        
+                    bg_rect = QRectF(text_start_x - pad_x,
+                                     band['text_y_canvas'] - text_rect.height() / 2.0 - pad_y,
+                                     text_w + 2 * pad_x,
+                                     text_rect.height() + 2 * pad_y)
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(255, 255, 255, 235))
+                    painter.drawRoundedRect(bg_rect, radius, radius)
+                    painter.setBrush(Qt.NoBrush)
                     painter.setPen(band['text_color'])
                     painter.drawText(QPointF(text_start_x, text_draw_y), text)
-                
+
             def save_image(self):
                 self.draw_guides = False
                 if hasattr(self, 'show_guides_checkbox'): self.show_guides_checkbox.setChecked(False)
@@ -26940,11 +27315,16 @@ if __name__ == "__main__":
                     
             
             
-            def _draw_densitometry_boxes_on_canvas(self, painter, render_scale):
+            def _draw_densitometry_boxes_on_canvas(self, painter, render_scale, font_scale_factor=None):
                 """Draw the finalized multi-lane densitometry bounding boxes (and their
                 lane-id badges) onto the high-resolution export canvas. The box geometry is
                 stored in label space, so it is mapped to image space and then scaled by
-                render_scale to match the canvas (image_master and self.image share size)."""
+                render_scale to match the canvas (image_master and self.image share size).
+
+                The lane-id badge is sized from font_scale_factor (the same image-size-aware
+                factor the MW markers use) so it stays prominent on large gels embedded in
+                the PDF report, instead of the old fixed 11*render_scale which shrank to a
+                few pixels once the big image was scaled down onto the page."""
                 try:
                     lane_defs = getattr(self, 'multi_lane_definitions', None)
                     if not lane_defs:
@@ -26954,7 +27334,14 @@ if __name__ == "__main__":
                     box_pen = QPen(QColor(204, 153, 0), max(1.5, 2.0 * render_scale / 3.0), Qt.SolidLine)  # darkYellow
                     badge_font = QFont("Arial")
                     badge_font.setBold(True)
-                    badge_font.setPixelSize(max(10, int(11 * render_scale)))
+                    if font_scale_factor and font_scale_factor > 0:
+                        # Tie the badge to the user's font size and the image scale (as the
+                        # MW markers are), then enlarge a bit so lane numbers read clearly.
+                        badge_px = max(12, int(getattr(self, 'font_size', 12) * font_scale_factor * 1.4))
+                    else:
+                        badge_px = max(10, int(11 * render_scale))
+                    badge_font.setPixelSize(badge_px)
+                    badge_pad = max(6, int(badge_px * 0.55))
                     fm = QFontMetrics(badge_font)
 
                     for lane_def in lane_defs:
@@ -26984,7 +27371,7 @@ if __name__ == "__main__":
                             continue
                         painter.setFont(badge_font)
                         text_rect = fm.boundingRect(lane_id_str)
-                        diameter = max(text_rect.width(), text_rect.height()) + 8
+                        diameter = max(text_rect.width(), text_rect.height()) + badge_pad * 2
                         bg_rect = QRectF(0, 0, diameter, diameter)
                         bg_rect.moveCenter(center)
                         painter.setPen(Qt.NoPen)
@@ -26995,7 +27382,7 @@ if __name__ == "__main__":
                         painter.drawText(bg_rect, Qt.AlignCenter, lane_id_str)
                     painter.restore()
                 except Exception:
-                    traceback.print_exc()
+                    log_traceback()
 
             def _render_annotated_gel_qimage(self, render_scale=3, draw_densitometry_boxes=False):
                 """Render the fully-adjusted gel image plus all annotations (MW markers,
@@ -27111,7 +27498,7 @@ if __name__ == "__main__":
 
                 # --- Optionally overlay the densitometry lane bounding boxes ---
                 if draw_densitometry_boxes:
-                    self._draw_densitometry_boxes_on_canvas(painter, render_scale)
+                    self._draw_densitometry_boxes_on_canvas(painter, render_scale, font_scale_factor)
 
                 painter.end()
                 return render_canvas
@@ -27484,6 +27871,7 @@ if __name__ == "__main__":
                 self.last_mw_prediction_model = None
                 self.last_mw_prediction_min_max_pos = None
                 self.oligomer_products = []
+                self.oligomer_product_groups = []
                 self.last_mw_prediction_marker_x_ls = None
                 self.last_mw_prediction_marker_width_ls = None
                 if hasattr(self, 'show_oligomer_glyco_overlay_checkbox'):
@@ -27846,14 +28234,7 @@ if __name__ == "__main__":
                     if predicted_mw > 0: self.last_predicted_mw = predicted_mw
                     
                     if self.avg_glycan_mass <= 0: self.avg_glycan_mass = 0.0
-                    self.oligomer_products = []
-                    if self.base_protein_mw > 0:
-                        for j in range(1, self.num_oligomers_to_model + 1):
-                            oligomer_base_mw = self.base_protein_mw * j
-                            self.oligomer_products.append(oligomer_base_mw)
-                            if self.avg_glycan_mass > 0:
-                                for i in range(1, self.num_glycans_to_model + 1):
-                                    self.oligomer_products.append(oligomer_base_mw + (i * self.avg_glycan_mass))
+                    self._rebuild_oligomer_products()
                 else:
                     self.last_mw_prediction_model = None
                     self.run_predict_MW = False
@@ -28968,7 +29349,7 @@ if __name__ == "__main__":
                     return result_qimage
 
                 except Exception as e:
-                    traceback.print_exc() # Print detailed traceback
+                    log_traceback() # Print detailed traceback
                     return qimage # Return original QImage on error
 
         _splash("Building main window...", 98)
@@ -29027,7 +29408,7 @@ if __name__ == "__main__":
 
     except ImportError as e_imp:
         pass # print(f"FATAL ERROR: Missing required library: {e_imp}")
-        traceback.print_exc()
+        log_traceback()
         if loading_dialog:
             loading_dialog.close()
             loading_dialog.deleteLater() # Good
@@ -29055,7 +29436,7 @@ if __name__ == "__main__":
 
     except Exception as e_startup:
         pass # print(f"FATAL ERROR during application startup: {e_startup}")
-        traceback.print_exc()
+        log_traceback()
         if loading_dialog:
             loading_dialog.close()
             loading_dialog.deleteLater() # Good
