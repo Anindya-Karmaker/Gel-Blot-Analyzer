@@ -27,7 +27,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.8"
+APP_VERSION = "8.9"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -8758,6 +8758,7 @@ if __name__ == "__main__":
 
                 self._p0_crop_chk = QCheckBox("Crop image to gel boundary")
                 self._p0_crop_chk.setChecked(True)
+                self._p0_crop_chk.setHidden(True)
                 self._p0_crop_chk.setToolTip(
                     "Automatically crop the image to the drawn gel boundary.\n"
                     "Recommended white padding is added automatically after you set "
@@ -11180,6 +11181,12 @@ if __name__ == "__main__":
                 app = self.parent_app
                 app.save_state()
 
+                # Snapshot the user's custom markers/shapes (in OLD-image coordinates)
+                # so we can re-anchor them onto the committed gel below. Committing the
+                # gel changes the coordinate origin, so without this they end up misplaced.
+                orig_custom_markers = [list(m) for m in getattr(app, 'custom_markers', [])]
+                orig_custom_shapes  = [dict(s)  for s in getattr(app, 'custom_shapes', [])]
+
                 W = self._gel_arr.shape[1]   # gel-array width (already rotated if rotation was applied)
                 H = self._gel_arr.shape[0]
 
@@ -11267,6 +11274,7 @@ if __name__ == "__main__":
                 if self._do_padding:
                     self._auto_set_padding_for_labels()
                 applied_pt = 0
+                applied_pl = 0
                 if self._do_padding:
                     try:
                         pl = max(0, self._pad_left)
@@ -11290,8 +11298,65 @@ if __name__ == "__main__":
                                     crop_offset_x -= pl
                                     crop_offset_y -= pt
                                     applied_pt = pt
+                                    applied_pl = pl
                     except Exception:
                         pass
+
+                # ── Re-anchor the user's custom markers/shapes to the committed gel ──
+                # Committing the gel moved the coordinate origin (drawn region -> 0,0) and
+                # padding then shifted it by (applied_pl, applied_pt). adjust_elements_for_padding
+                # above only added the padding offset to custom items, leaving them misplaced.
+                # When the wizard transform is a pure crop+padding (rectangle boundary, no
+                # rotation / skew / quad-warp / internal crop) the correct map is exact:
+                #     new = old - region_origin + padding
+                # so we rebuild the custom items from their pre-wizard snapshot. For any other
+                # transform (quad warp, rotation, skew, resized crop) a translation is invalid,
+                # so we leave the items exactly as adjust_elements_for_padding produced them.
+                try:
+                    region = self.gel_region_def
+                    is_rect_region = ((not self.is_quad_warp)
+                                      and isinstance(region, (tuple, list)) and len(region) == 4)
+                    lane_skews_zero = all(
+                        abs(self._eff_lane_skew(i)[0]) < 1e-6 and abs(self._eff_lane_skew(i)[1]) < 1e-6
+                        for i in range(len(self._lane_bounds)))
+                    pure_translation = (
+                        is_rect_region
+                        and abs(float(getattr(self, '_rotation_angle', 0.0))) < 1e-6
+                        and abs(float(getattr(self, '_global_skew', 0.0))) < 1e-6
+                        and lane_skews_zero
+                        and int(self._gel_arr.shape[0]) == int(round(float(region[3])))
+                        and int(self._gel_arr.shape[1]) == int(round(float(region[2]))))
+                    if pure_translation:
+                        dx = applied_pl - float(region[0])
+                        dy = applied_pt - float(region[1])
+                        new_markers = []
+                        for m in orig_custom_markers:
+                            mm = list(m)
+                            try:
+                                mm[0] = float(mm[0]) + dx
+                                mm[1] = float(mm[1]) + dy
+                            except (IndexError, TypeError, ValueError):
+                                pass
+                            new_markers.append(mm)
+                        app.custom_markers = new_markers
+                        new_shapes = []
+                        for s in orig_custom_shapes:
+                            ss = dict(s)
+                            try:
+                                stype = ss.get('type')
+                                if stype in ('line', 'arrow'):
+                                    sx, sy = ss['start']; ex, ey = ss['end']
+                                    ss['start'] = (float(sx) + dx, float(sy) + dy)
+                                    ss['end']   = (float(ex) + dx, float(ey) + dy)
+                                elif stype == 'rectangle':
+                                    rx, ry, rw, rh = ss['rect']
+                                    ss['rect'] = (float(rx) + dx, float(ry) + dy, rw, rh)
+                            except (KeyError, IndexError, TypeError, ValueError):
+                                pass
+                            new_shapes.append(ss)
+                        app.custom_shapes = new_shapes
+                except Exception:
+                    log_traceback()
 
                 # Keep the committed gel non-inverted (it is already WYSIWYG).
                 app.main_image_is_inverted = False
@@ -11450,10 +11515,12 @@ if __name__ == "__main__":
                     off_x = (lbl_w - new_img_w * scale) / 2.0
                     off_y = (lbl_h - new_img_h * scale) / 2.0
 
+                    def _to_image(ix, iy):
+                        # gel-array coords → committed image coords.
+                        return ((gx_eff + ix) - crop_offset_x, (gy_eff + iy) - crop_offset_y)
+
                     def _to_label(ix, iy):
-                        # gel-array coords → committed image coords → label space.
-                        img_x = (gx_eff + ix) - crop_offset_x
-                        img_y = (gy_eff + iy) - crop_offset_y
+                        img_x, img_y = _to_image(ix, iy)
                         return QPointF(img_x * scale + off_x, img_y * scale + off_y)
 
                     for i, (x0, x1) in enumerate(self._lane_bounds):
@@ -11462,15 +11529,24 @@ if __name__ == "__main__":
                             # Upright → rectangle (top at gel row 0, bottom at gel row gh).
                             tl = _to_label(x0, 0); br = _to_label(x1, gh)
                             rect_ls = QRectF(tl, br).normalized()
+                            (ix0, iy0) = _to_image(x0, 0); (ix1, iy1) = _to_image(x1, gh)
                             app.multi_lane_definitions.append({
-                                'type': 'rectangle', 'points_label': [rect_ls], 'id': i + 1})
+                                'type': 'rectangle', 'points_label': [rect_ls], 'id': i + 1,
+                                # Image-space anchor so the box tracks the gel content through
+                                # any later padding / viewer resize (reprojected, not left at
+                                # stale absolute label coords).
+                                'points_image': ('rectangle', ix0, iy0, ix1, iy1)})
                         else:
                             # Trapezoid quad, ordered TL, TR, BR, BL (what the warp expects).
                             quad_ls = [
                                 _to_label(x0 + t, 0), _to_label(x1 + t, 0),
                                 _to_label(x1 + b, gh), _to_label(x0 + b, gh)]
+                            quad_img = [
+                                _to_image(x0 + t, 0), _to_image(x1 + t, 0),
+                                _to_image(x1 + b, gh), _to_image(x0 + b, gh)]
                             app.multi_lane_definitions.append({
-                                'type': 'quad', 'points_label': quad_ls, 'id': i + 1})
+                                'type': 'quad', 'points_label': quad_ls, 'id': i + 1,
+                                'points_image': ('quad', quad_img)})
                 except Exception:
                     pass
 
@@ -11483,7 +11559,10 @@ if __name__ == "__main__":
 
                 # Refresh the main window's recommended padding fields for the newly
                 # committed gel image so "Set Recommended Values" is up to date after the
-                # Auto Gel Analysis (requested feature).
+                # Auto Gel Analysis (requested feature). The accurate padding is APPLIED
+                # after the wizard closes (see _aag_open_wizard), when the viewer geometry
+                # has settled — applying it here, while the wizard is modal, reprojects the
+                # densitometry boxes against a transient viewer size and misaligns them.
                 try:
                     app.recommended_values()
                 except Exception:
@@ -15198,7 +15277,59 @@ if __name__ == "__main__":
                     initial_band_settings = self.peak_dialog_settings,
                     gel_color_np      = color_np
                 )
-                wizard.exec()
+                accepted = (wizard.exec() == QDialog.Accepted)
+                if accepted:
+                    # Now that the wizard (and its densitometry dialog) have closed and the
+                    # main viewer geometry has settled, apply the accurate recommended padding
+                    # and reproject the densitometry boxes. Deferred to the next event-loop
+                    # pass so the layout is final before we touch it (doing this while the
+                    # wizard was still modal misaligned the boxes against a transient size).
+                    want_pad = bool(getattr(wizard, '_do_padding', False))
+                    QTimer.singleShot(0, lambda wp=want_pad: self._auto_gel_settle_and_pad(wp))
+
+            def _auto_gel_settle_and_pad(self, apply_padding):
+                """Post-wizard finishing pass (runs after the modal Auto Gel wizard closes).
+
+                Applies the accurate recommended padding (which the wizard only set in the
+                fields, not applied) and re-anchors the densitometry boxes onto their lanes.
+                Runs here — not inside the wizard — because padding reprojects the boxes and
+                that must happen against the FINAL (settled) viewer size, not the transient
+                size while the wizard was modal.
+                """
+                try:
+                    if apply_padding:
+                        cl, cr, ct, cb = self._measure_transparent_margins()
+                        want = (max(0, int(self.left_padding_input.text())),
+                                max(0, int(self.right_padding_input.text())),
+                                max(0, int(self.top_padding_input.text())),
+                                max(0, int(self.bottom_padding_input.text())))
+                        if want != (cl, cr, ct, cb):
+                            # The lane boxes' image-space anchors (built from gel coordinates)
+                            # are authoritative. finalize_image → adjust_elements_for_padding
+                            # re-derives them from the on-screen label coords, which can be
+                            # stale right after the wizard; so preserve the authoritative
+                            # anchors and re-apply them, shifted by the ACTUAL padding change.
+                            saved = [d.get('points_image') for d in self.multi_lane_definitions]
+                            self.finalize_image()
+                            nl, nr, nt, nb = self._measure_transparent_margins()
+                            dxl, dyt = (nl - cl), (nt - ct)
+                            for d, pi in zip(self.multi_lane_definitions, saved):
+                                if not pi:
+                                    continue
+                                if pi[0] == 'rectangle':
+                                    _, x0, y0, x1, y1 = pi
+                                    d['points_image'] = ('rectangle', x0 + dxl, y0 + dyt,
+                                                         x1 + dxl, y1 + dyt)
+                                else:
+                                    d['points_image'] = ('quad', [(ix + dxl, iy + dyt)
+                                                                  for (ix, iy) in pi[1]])
+                    # Rebuild every box's on-screen coords from its (authoritative) image
+                    # anchor under the now-final geometry — across a few event-loop passes in
+                    # case the layout is still settling.
+                    self._reproject_multilane_after_layout_settle()
+                    self.update_live_view()
+                except Exception:
+                    log_traceback()
 
             # ──────────────────────────────────────────────────────────────
 
@@ -15909,6 +16040,14 @@ if __name__ == "__main__":
                 while len(self.undo_stack) >= UNDO_LIMIT:
                     self.undo_stack.pop(0)
 
+                # NOTE: do NOT call _capture_multilane_anchors() here. save_state is invoked
+                # mid-operation (e.g. finalize_image -> apply_all_adjustments -> save_state)
+                # AFTER a box's image anchor has been shifted for padding but BEFORE the
+                # label coords are reprojected — re-capturing from the stale label position
+                # would revert the shift and strand the boxes. Boxes keep their image anchor
+                # current at creation and on every drag/resize instead, so the snapshot below
+                # simply serializes whatever anchor each box already holds.
+
                 state = {
                     "selected_preset": self.combo_box.currentText() if hasattr(self, 'combo_box') else "Custom",
                     # --- Core Image ---
@@ -15949,13 +16088,21 @@ if __name__ == "__main__":
                     "image_padded": self.image_padded,
 
                     # --- ANALYSIS REGIONS (THE FIX) ---
+                    # Refresh each densitometry box's image-space anchor from its current
+                    # (on-screen-correct) label points BEFORE snapshotting, so undo can
+                    # reproject the box — and therefore the analyzed region — onto the same
+                    # gel location under whatever geometry is current at restore time. Without
+                    # the anchor, a restored box's absolute label coords could disagree with
+                    # the analysis mapping (boxes drawn but "Analyze as Sample" reading a
+                    # vertically-shifted region).
                     "multi_lane_definitions": [
                         {
                             'type': d['type'], 'id': d['id'],
                             'points_label': (
                                 [(p.x(), p.y()) for p in d['points_label']] if d['type'] == 'quad' else
                                 [(d['points_label'][0].x(), d['points_label'][0].y(), d['points_label'][0].width(), d['points_label'][0].height())]
-                            )
+                            ),
+                            'points_image': d.get('points_image'),
                         } for d in self.multi_lane_definitions
                     ],
                     "single_quad_points": [(p.x(), p.y()) for p in self.live_view_label.quad_points],
@@ -16006,7 +16153,16 @@ if __name__ == "__main__":
                         elif d['type'] == 'rectangle':
                             x, y, w, h = d['points_label'][0]
                             restored_def['points_label'] = [QRectF(x, y, w, h)]
+                        # Restore the image-space anchor too (may be None for older snapshots).
+                        pi = d.get('points_image')
+                        if pi:
+                            restored_def['points_image'] = pi
                         self.multi_lane_definitions.append(restored_def)
+                    # Reproject boxes from their image anchors onto the CURRENT geometry so the
+                    # displayed boxes and the "Analyze as Sample" region stay in lock-step after
+                    # undo/redo (both then derive from points_label rebuilt from the same anchor).
+                    self._multilane_reproject_pending = any(
+                        dd.get('points_image') for dd in self.multi_lane_definitions)
 
                     serialized_quad = state_dict.get("single_quad_points", [])
                     self.live_view_label.quad_points = [QPointF(x, y) for x, y in serialized_quad]
@@ -17099,7 +17255,9 @@ if __name__ == "__main__":
                         ).normalized()
 
                     lane_id = len(self.multi_lane_definitions) + 1
-                    self.multi_lane_definitions.append({'type': 'rectangle', 'points_label': [rect_ls], 'id': lane_id})
+                    _new_lane = {'type': 'rectangle', 'points_label': [rect_ls], 'id': lane_id}
+                    self._ensure_lane_image_anchor(_new_lane)
+                    self.multi_lane_definitions.append(_new_lane)
                     self.is_modified = True
                     self.live_view_label.current_preview_points = []
                     self._set_next_region_type(self.multi_lane_definition_type)
@@ -17146,6 +17304,7 @@ if __name__ == "__main__":
                         definition_to_store = {'type': 'quad', 'points_label': preview_points, 'id': lane_id}
 
                 if definition_to_store:
+                    self._ensure_lane_image_anchor(definition_to_store)
                     self.multi_lane_definitions.append(definition_to_store)
                     self.is_modified = True
                     # Immediately set up for the next shape of the same type
@@ -17338,12 +17497,14 @@ if __name__ == "__main__":
                     self.save_state()
                     
                     # --- START OF THE FIX: Correctly handle duplication on release ---
+                    _edited_lane = None
                     if self.is_duplicating_shape:
                         new_lane_id = len(self.multi_lane_definitions) + 1
                         new_def = {'type': 'quad', 'points_label': final_points, 'id': new_lane_id}
                         self.multi_lane_definitions.append(new_def)
+                        _edited_lane = new_def
                     # --- END OF THE FIX ---
-                    
+
                     elif self.moving_multi_lane_index >= 0:
                         lane = self.multi_lane_definitions[self.moving_multi_lane_index]
                         if self.current_selection_mode == "skewing_edge":
@@ -17354,7 +17515,19 @@ if __name__ == "__main__":
                         elif lane['type'] == 'rectangle':
                             new_rect = QPolygonF(final_points).boundingRect()
                             lane['points_label'] = [new_rect]
-                    
+                        _edited_lane = lane
+
+                    # Refresh the box's image-space anchor from its new on-screen position so
+                    # it survives later padding / viewer-resize reprojections (the anchor is
+                    # what those operations shift/reproject from).
+                    if _edited_lane is not None:
+                        geom = self._multilane_current_geometry()
+                        if geom:
+                            try:
+                                self._update_lane_def_image_anchor(_edited_lane, *geom)
+                            except Exception:
+                                log_traceback()
+
                     self.is_modified = True
                     self.live_view_label.drag_preview_quad_points = None
                     self.shape_points_at_drag_start_label = []; self.resizing_corner_index = -1
@@ -24963,14 +25136,26 @@ if __name__ == "__main__":
 
                     # Force sliders to the new adjusted values
                     for slider, value_to_set in [
-                        (self.left_padding_slider, self.left_marker_shift_added), 
-                        (self.right_padding_slider, self.right_marker_shift_added), 
+                        (self.left_padding_slider, self.left_marker_shift_added),
+                        (self.right_padding_slider, self.right_marker_shift_added),
                         (self.top_padding_slider, self.top_marker_shift_added)
                     ]:
                         if slider:
                             slider.blockSignals(True)
                             slider.setValue(value_to_set)
                             slider.blockSignals(False)
+
+                    # Re-anchor the densitometry boxes onto the content under the FINAL
+                    # padded geometry. adjust_elements_for_padding shifted each box's
+                    # image-space anchor (left/top padding move the content; right/bottom
+                    # only grow the canvas), but an intermediate render during this op may
+                    # have consumed the one-shot reproject flag before self.image reached
+                    # its final size — so force the reproject again here (and across the
+                    # next settle passes) so boxes track the content for padding on ANY side.
+                    if any(d.get('points_image') for d in getattr(self, 'multi_lane_definitions', [])):
+                        self._multilane_reproject_pending = True
+                        self._reproject_multilane_if_pending()
+                        self._reproject_multilane_after_layout_settle()
 
                 except Exception as e:
                     QMessageBox.critical(self, "Padding Error", f"Failed to apply padding: {e}")
@@ -25059,6 +25244,18 @@ if __name__ == "__main__":
                 self._update_overlay_slider_ranges
 
             # ----- Multi-lane (densitometry) box <-> image-space anchoring helpers -----
+            def _ensure_lane_image_anchor(self, lane_def):
+                """Give a densitometry box an image-space anchor from its current label
+                points under the current geometry. Call right after a box is created/edited
+                so it can be reprojected through later padding / viewer-resize instead of
+                being stranded at stale absolute label coordinates."""
+                geom = self._multilane_current_geometry()
+                if geom:
+                    try:
+                        self._update_lane_def_image_anchor(lane_def, *geom)
+                    except Exception:
+                        log_traceback()
+
             def _ml_scale_offsets(self, img_w, img_h, lbl_w, lbl_h):
                 """Return (scale, offset_x, offset_y) for the fit-to-label projection that
                 maps image pixels to live-view-label coordinates (matches
