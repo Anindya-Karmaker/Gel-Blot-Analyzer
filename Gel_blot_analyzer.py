@@ -10408,13 +10408,20 @@ if __name__ == "__main__":
             def _auto_set_padding_for_labels(self):
                 """Auto-compute white padding so the rotated top labels always fit.
 
-                The renderer draws each top label at (font_size * ui_scale) pixels in
-                *view* space, i.e. (font_size * ui_scale / view_scale) pixels in *image*
-                space — so on a large gel (view_scale < 1) the on-image text is much
-                bigger than the raw point size.  Padding is sized in image pixels, so we
-                must measure the rotated label bounding box at that effective size.
+                The renderer draws each top label at (font_size / view_scale) pixels in
+                *image* space — so on a large gel (view_scale < 1) the on-image text is
+                much bigger than the raw point size.  Padding is sized in image pixels, so
+                we must measure the rotated label bounding box at that effective size.
                 Because the padding itself changes the image size (and therefore the
-                view_scale), a short fixed-point iteration is used to converge."""
+                view_scale), a short fixed-point iteration is used to converge.
+
+                view_scale is taken against the FIXED 550x350 export reference — the same
+                one save_image/copy_to_clipboard use — NOT the live viewer and NOT the
+                Settings ▸ UI Scale. The old code used the live viewer size together with a
+                `* ui_scale` term that only cancelled while the viewer sat at its default
+                550*ui_scale size; once the viewer is user-resized or capped on a small
+                screen the cancellation broke and the padding came out scaled by the UI %.
+                See _label_padding_needed, which is the same calculation."""
                 import math
                 try:
                     H, W = self._gel_arr.shape[:2]
@@ -10425,7 +10432,7 @@ if __name__ == "__main__":
                 family     = str(getattr(app, 'font_family', 'Arial'))
                 rotation   = float(getattr(app, 'font_rotation', -45))
                 axis       = str(getattr(app, 'top_rotation_axis', 'left'))
-                ui_scale   = float(getattr(app, 'ui_scale_factor', 1.0)) or 1.0
+                # (Deliberately NO ui_scale here — see the docstring.)
 
                 if self._do_markers:
                     labels = self._collect_lane_labels()
@@ -10433,11 +10440,8 @@ if __name__ == "__main__":
                     labels = [f"L{i+1}" for i in range(len(self._lane_bounds))]
                 labels = [str(s).strip() for s in labels if s and str(s).strip()] or ["L1"]
 
-                try:
-                    lbl_w = float(app.live_view_label.width())
-                    lbl_h = float(app.live_view_label.height())
-                except Exception:
-                    lbl_w = lbl_h = 0.0
+                # FIXED export reference (same constants as save_image / _label_padding_needed).
+                lbl_w, lbl_h = 550.0, 350.0
 
                 def _extents_for(eff_px):
                     """Rotated-label extents (above/below anchor, half-width) in px."""
@@ -10486,7 +10490,7 @@ if __name__ == "__main__":
                     view_scale = max(view_scale, 1e-3)
                     # Effective on-image font size, matching the renderer; clamp to a
                     # sane range so it can't run away on extreme aspect ratios.
-                    eff_px = font_size * ui_scale / view_scale
+                    eff_px = font_size / view_scale
                     eff_px = min(max(eff_px, float(font_size)), font_size * 10.0)
                     top_e, bot_e, half = _extents_for(eff_px)
                     margin = max(6.0, eff_px / 3.0)
@@ -20752,11 +20756,20 @@ if __name__ == "__main__":
                 markers / custom shapes (lines, rectangles) that stick out past the canvas.
 
                 Labels are rendered at the *effective on-image* font size,
-                font_size * ui_scale / view_scale, which is much larger than the raw point
+                font_size / view_scale, which is much larger than the raw point
                 size on a big gel (view_scale < 1). Measuring at the raw size under-sizes the
                 padding so long/large labels overflow the image; this measures at the effective
                 size and includes the rotated bounding box of the top labels. A short
                 fixed-point loop converges because the padding itself changes view_scale.
+
+                NOTE: the Settings ▸ UI Scale (`ui_scale_factor`) must NOT appear anywhere in
+                this calculation. view_scale below is taken against the FIXED 550x350 export
+                reference, exactly like the exporters' `font_scale_factor`, which is explicitly
+                independent of UI Scale / viewer size / monitor DPI. An older version measured
+                the reference against the LIVE viewer (whose size is 550*ui_scale_factor), so a
+                `* ui_scale` term cancelled out; once the reference became fixed the term stopped
+                cancelling and simply multiplied every recommended value by the UI Scale % (125%
+                UI → 25% too much padding, 75% → 25% too little).
 
                 Custom markers/shapes are stored in IMAGE-pixel coordinates and are shifted by
                 (padding_left, padding_top) when padding is applied (see
@@ -20791,7 +20804,7 @@ if __name__ == "__main__":
                     family    = str(getattr(self, 'font_family', 'Arial'))
                     rotation  = float(getattr(self, 'font_rotation', -45))
                     axis      = str(getattr(self, 'top_rotation_axis', 'left'))
-                    ui_scale  = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
+                    # (Deliberately NO ui_scale here — see the note in the docstring.)
                     # Reference viewer size for the effective font scale. Use the FIXED 550x350
                     # export reference (same constants as save_image), NOT the live viewer size —
                     # the viewer is now user-resizable, and tying the recommendation to it would
@@ -20889,7 +20902,8 @@ if __name__ == "__main__":
                                 fam = str(md[4]); size = float(md[5])
                                 bold = bool(md[6]) if len(md) > 6 else False
                                 italic = bool(md[7]) if len(md) > 7 else False
-                                eff_c = size * ui_scale / max(view_scale, 1e-3)
+                                # Matches the exporters: size * font_scale_factor, no UI Scale.
+                                eff_c = size / max(view_scale, 1e-3)
                                 eff_c = min(max(eff_c, size), size * 10.0)
                                 f = QFont(fam); f.setPixelSize(max(4, int(round(eff_c))))
                                 f.setBold(bold); f.setItalic(italic)
@@ -20957,7 +20971,9 @@ if __name__ == "__main__":
                         else:
                             view_scale = 1.0
                         view_scale = max(view_scale, 1e-3)
-                        eff_px = font_size * ui_scale / view_scale
+                        # Effective on-image font size = exactly the exporters'
+                        # font_size * font_scale_factor at render_scale 1. No UI Scale term.
+                        eff_px = font_size / view_scale
                         eff_px = min(max(eff_px, float(font_size)), font_size * 10.0)
                         top_e, lw, rw, ep = _extents(eff_px)
                         margin = max(6.0, ep / 3.0)
