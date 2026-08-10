@@ -12021,7 +12021,22 @@ if __name__ == "__main__":
                 QCheckBox::indicator:hover { border-color: #5D98D4; }
                 QCheckBox::indicator:checked { background-color: #5D98D4; border-color: #4A78A9; image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABmklEQVR4nO2VzU7CUBCF57ZFE0hY+DAuDAvdqcjat9FnYekWiXHN3ldxBwFK+VwwE8ZafooVEtNJbuYmnc4583Nakdpq++8GxEA4FXjk7sclYeDADdA+KgltewTcsbI3G8Wfk3CVN4EJkDkSZ0Ds45OKwYP6WEReRORcRFIRmYlIX0QWVeL9AAcSPUOteqz+WWMqLThPoKF+kAMfAi2gUWr+WlG8O/IbeE9Bpw48tnylwN092hFr4F0gVfAlMHJq2JqjEBxoA9d6L5ydq64LLPSk6jvb3t0Ibq1X2QDc+kpdbKK+kwNeAF1PsAyBWLVq4POihNZWjR9py6dKwmIb27A2EbCkj8DMVZYCPUfSumRys6WzmPLgnoR6m6t1ApVYUEnltT74NbgjYZt9D3wqwEx9H3jS+0T9kPVHqJpvvZv3RUGrMyWUAa+s5Vbtj8aR8POeu5GMgabG7K/1kiRs4xPW6oDV5j/Y4h6af6+WAVEIYQm0RORKRC5F5COE8G7PDiWwtxXNt4q2l1oaJRHpWYYQst8SqK22k9sX0sGndlVHPPIAAAAASUVORK5CYII=); }
                 QCheckBox::indicator:disabled { background-color: #E0E0E0; }
-                
+
+                /* Checkable ITEMS inside list/tree/table views — e.g. the "Show labels"
+                   per-band checklist in the Molecular Weight Marker group. These are NOT
+                   QCheckBox widgets, so the QCheckBox rules above never reached them and the
+                   PLATFORM style drew them instead: fine on macOS, blank white boxes on
+                   Windows. Styling ::indicator here makes QStyleSheetStyle own the drawing on
+                   every platform (verified: the rule is honoured under both the Windows and
+                   Fusion base styles), so the tick looks the same everywhere.
+                   The url() below is a placeholder — _skin_stylesheet_indicators rewrites it
+                   to a real vector-rendered PNG file (QSS url() cannot load data: URIs). */
+                QAbstractItemView::indicator { width: 13px; height: 13px; border-radius: 3px; border: 1px solid #C0C5CB; background-color: #FFFFFF; }
+                QAbstractItemView::indicator:hover { border-color: #5D98D4; }
+                QAbstractItemView::indicator:checked { background-color: #5D98D4; border-color: #4A78A9; image: url(gba-vector-check.png); }
+                QAbstractItemView::indicator:indeterminate { background-color: #A8C6E4; border-color: #4A78A9; }
+                QAbstractItemView::indicator:disabled { background-color: #E0E0E0; border-color: #D0D5DB; }
+
                 QToolBar { background-color: #E4E7EB; border: none; padding: 1px; }
                 QToolBar QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 2px; }
                 QToolBar QToolButton:hover { background-color: #E6F0F9; border: 1px solid #5D98D4; }
@@ -12187,6 +12202,17 @@ if __name__ == "__main__":
                     background-color: #3A3A3D;
                     border-color: #4A4A4F;
                 }
+
+                /* Checkable ITEMS inside list/tree/table views (e.g. the MWM "Show labels"
+                   band checklist). See the light theme for why this must be styled explicitly:
+                   without it the platform style draws them and Windows shows blank white boxes.
+                   The url() is a placeholder rewritten by _skin_stylesheet_indicators. */
+                QAbstractItemView::indicator { width: 13px; height: 13px; border-radius: 3px; border: 1px solid #505055; background-color: #3C3C3F; }
+                QAbstractItemView::indicator:hover { border-color: #007ACC; }
+                QAbstractItemView::indicator:checked { background-color: #007ACC; border-color: #009AFF; image: url(gba-vector-check.png); }
+                QAbstractItemView::indicator:indeterminate { background-color: #005B99; border-color: #009AFF; }
+                QAbstractItemView::indicator:disabled { background-color: #3A3A3D; border-color: #4A4A4F; }
+
                 QToolBar { background-color: #4F4F54; border: none; padding: 1px; }
                 QToolBar QToolButton {
                     border: 1px solid transparent;
@@ -12996,6 +13022,10 @@ if __name__ == "__main__":
                     qss = swap(qss, "QComboBox::down-arrow", down)
                     qss = swap(qss, "QCheckBox::indicator:checked", chk)
                     qss = swap(qss, "QRadioButton::indicator:checked", dot)
+                    # Checkable items in list/tree/table views (the MWM per-band "Show labels"
+                    # checklist). Same white tick as QCheckBox — without this rule the platform
+                    # style draws these indicators, which is why they were invisible on Windows.
+                    qss = swap(qss, "QAbstractItemView::indicator:checked", chk)
                     return qss
                 except Exception:
                     return qss
