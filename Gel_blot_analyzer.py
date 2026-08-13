@@ -3,6 +3,7 @@ import re
 import os
 import math
 import json
+import time
 from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QVBoxLayout,
                              QHBoxLayout, QFrame, QProgressBar, QMessageBox)
 from PySide6.QtCore import Qt
@@ -27,7 +28,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "8.9"
+APP_VERSION = "9.0"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -46,6 +47,106 @@ APP_GLOBAL_WINDOW_WIDTH = 1000
 # user-chosen size/position (clamped to the current screen so it always fits) and
 # save it again when the dialog closes. Geometry is stored in the same shared
 # config file, under a "dialog_geometries" sub-dictionary keyed by a short name.
+
+def _atomic_write_text(path, text, retries=6, delay_s=0.15):
+    """Write a text file safely inside a cloud-synced folder (Box, Google Drive, OneDrive,
+    Dropbox, SharePoint...). Raises the last error if it truly cannot be written.
+
+    A plain `open(path, "w")` has two failure modes in those folders, both reported by users
+    as "the config file cannot be saved":
+
+      1. The sync client holds a SHORT-LIVED lock on files in the folder — very likely right
+         after we just wrote the image next to it, which is exactly what kicks the client
+         into action. The open() then fails with PermissionError (Windows) or OSError, and
+         the whole save is declared failed even though retrying 200 ms later would work.
+
+      2. `open(path, "w")` TRUNCATES the file before writing. If the write fails part-way
+         (lock, sync conflict, network drive hiccup) the user's existing config is left
+         truncated or half-written — silent data loss, worse than the error itself.
+
+    So: serialise into a temp file in the SAME directory (same filesystem, so the rename is
+    atomic), flush + fsync it, then os.replace() onto the target. The destination is only
+    ever swapped for a COMPLETE file, and on any failure the original is still intact.
+    Both the write and the replace are retried, because these locks clear in milliseconds.
+    """
+    import tempfile
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    last_err = None
+    for attempt in range(max(1, retries)):
+        tmp_path = None
+        try:
+            # delete=False: we rename it into place ourselves.
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=os.path.basename(path) + ".", suffix=".tmp", dir=directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except Exception:
+                try: os.close(fd)
+                except Exception: pass
+                raise
+            os.replace(tmp_path, path)   # atomic on POSIX and Windows
+            return True
+        except Exception as e:
+            last_err = e
+            if tmp_path:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+            if attempt < retries - 1:
+                # Give the sync client a moment to release the handle. Back off a little
+                # each time; total worst-case wait stays around a second.
+                time.sleep(delay_s * (attempt + 1))
+
+    # LAST RESORT: a plain in-place write, retried. Some virtual cloud filesystems (Box
+    # Drive, Drive File Stream) and network shares refuse rename-over-an-existing-file even
+    # though a direct write succeeds — without this fallback the "safe" path above would
+    # REGRESS saves that used to work. Only reached after every atomic attempt failed, and
+    # it is the exact behaviour the app had before, so it can be no worse.
+    for attempt in range(max(1, retries)):
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            return True
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(delay_s * (attempt + 1))
+    raise last_err if last_err else OSError("Could not write %s" % path)
+
+
+def _retry_file_op(fn, retries=6, delay_s=0.15):
+    """Run a file-writing callable, retrying briefly while it fails.
+
+    Same reason as _atomic_write_text: in a cloud-synced folder (Box / Google Drive /
+    OneDrive) — and in Downloads, where antivirus and Windows' Controlled Folder Access
+    scan every new file — a write can fail simply because something else has the file open
+    for a few hundred milliseconds. `fn` should return truthy on success (QImage.save does);
+    exceptions are treated as failure. Returns the last result."""
+    result = False
+    for attempt in range(max(1, retries)):
+        try:
+            result = fn()
+            if result:
+                return result
+        except Exception:
+            result = False
+        if attempt < retries - 1:
+            time.sleep(delay_s * (attempt + 1))
+    return result
+
+
+def _atomic_write_json(path, data, indent=4, cls=None):
+    """JSON convenience wrapper around _atomic_write_text. Serialising BEFORE touching the
+    file also means a json.dump failure (e.g. a non-serialisable value) can no longer leave
+    a half-written config behind."""
+    return _atomic_write_text(path, json.dumps(data, indent=indent, cls=cls))
+
 
 def _gba_settings_filepath():
     """Path to the shared global-settings/preset config file (see
@@ -108,8 +209,7 @@ def save_dialog_geometry(key, dialog):
     geos[key] = {"x": x, "y": y, "width": w, "height": h}
     data["dialog_geometries"] = geos
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
+        _atomic_write_json(path, data)
     except Exception:
         pass
 
@@ -653,7 +753,8 @@ if __name__ == "__main__":
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
         )
         from PySide6.QtCore import (
-            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop, QEvent
+            Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop, QEvent,
+            QElapsedTimer
         )
         import json
         import os
@@ -868,6 +969,17 @@ if __name__ == "__main__":
                         '<line x1="6" y1="18" x2="18" y2="6" stroke="%s" stroke-width="2"/>'
                         '<circle cx="6" cy="18" r="2" fill="%s"/><circle cx="18" cy="6" r="2" fill="%s"/>'
                         % (c, c, c))
+            if name == "move_resize":
+                # A selected object: dashed bounds + solid corner handles, i.e. exactly what
+                # the tool puts on screen when an item is picked up.
+                return ("0 0 24 24",
+                        '<rect x="5.5" y="5.5" width="13" height="13" fill="none" '
+                        'stroke="%s" stroke-width="1.4" stroke-dasharray="3 2"/>'
+                        '<rect x="3.6" y="3.6" width="3.8" height="3.8" fill="%s"/>'
+                        '<rect x="16.6" y="3.6" width="3.8" height="3.8" fill="%s"/>'
+                        '<rect x="3.6" y="16.6" width="3.8" height="3.8" fill="%s"/>'
+                        '<rect x="16.6" y="16.6" width="3.8" height="3.8" fill="%s"/>'
+                        % (c, c, c, c, c))
             if name in ("layout_top", "layout_bottom", "layout_left", "layout_right"):
                 base = '<rect x="4" y="5" width="16" height="14" rx="1.5" fill="none" stroke="%s" stroke-width="%s"/>' % (c, sw)
                 reg = {
@@ -2999,8 +3111,8 @@ if __name__ == "__main__":
 
                 history_file_path = os.path.join(self._get_config_dir(), self.HISTORY_FILE_NAME)
                 try:
-                    with open(history_file_path, "w", encoding='utf-8') as f:
-                        json.dump(self.analysis_history, f, indent=4, cls=_NumpyEncoder)
+                    _atomic_write_json(history_file_path, self.analysis_history,
+                                       cls=_NumpyEncoder)
                 except IOError as e:
                     QMessageBox.critical(self, "Save History Error",
                                         f"Could not save analysis history to {history_file_path}: {e}")
@@ -13205,8 +13317,37 @@ if __name__ == "__main__":
                         _scale_layout(lay)
 
                     self._ui_scale_tree_applied = True
+                    # Pin the small numeric readouts once the theme/scale is settled.
+                    QTimer.singleShot(0, self._fit_value_label_widths)
                 except Exception:
                     self._ui_scale_tree_applied = True
+
+            def _fit_value_label_widths(self):
+                """Pin the small numeric readouts to the width of their WIDEST value, measured
+                against the effective (themed) font.
+
+                Sizing these with QFontMetrics(label.font()) at construction time is wrong:
+                the theme stylesheet sets the font afterwards, and a QSS font change is not
+                reflected in widget.font() — so the label came out too narrow and clipped
+                ("123.45%" rendered as "123.4", "50%" as "0%"). sizeHint() IS evaluated
+                against the effective style, so set the widest string, take the hint, then
+                put the live text back. Fixed width keeps the layout from reflowing as the
+                digits change."""
+                for lbl, widest in ((getattr(self, 'image1_resize_label', None), "300.00%"),
+                                    (getattr(self, 'image2_resize_label', None), "300.00%"),
+                                    (getattr(self, 'blend_value_label', None), "100%")):
+                    if lbl is None:
+                        continue
+                    try:
+                        cur = lbl.text()
+                        lbl.setMinimumWidth(0)
+                        lbl.setMaximumWidth(16777215)
+                        lbl.setText(widest)
+                        w = lbl.sizeHint().width() + 6
+                        lbl.setText(cur)
+                        lbl.setFixedWidth(w)
+                    except Exception:
+                        pass
 
             def _apply_initial_theme(self, current_theme):
                 """Applies the theme stylesheet based on the loaded preference."""
@@ -13350,8 +13491,7 @@ if __name__ == "__main__":
                     config_data["presets"] = self.presets_data
 
                 try:
-                    with open(config_filepath, "w", encoding='utf-8') as f:
-                        json.dump(config_data, f, indent=4)
+                    _atomic_write_json(config_filepath, config_data)
                 except Exception as e:
                     pass # print(f"Warning: Could not save global app settings: {e}")
 
@@ -13691,6 +13831,10 @@ if __name__ == "__main__":
                 self.info_action = QAction("&Info/GitHub", self)
                 self.draw_bounding_box_action = QAction("Draw &Bounding Box", self)
                 self.draw_line_action = QAction("Draw &a line", self)
+                # Toolbar twin of the Markers-tab "Move/Resize" button. Checkable, and kept in
+                # sync with that button both ways (see _set_move_resize_checked).
+                self.move_resize_action = QAction("&Move/Resize Items", self)
+                self.move_resize_action.setCheckable(True)
                 self.copy_custom_items_action = QAction("Copy Custom Markers/Shapes", self)
                 self.paste_custom_items_action = QAction("Paste Custom Markers/Shapes", self)
 
@@ -13731,6 +13875,15 @@ if __name__ == "__main__":
                 self.draw_line_action.setToolTip("Draw a line on the image. Use the marker tab, custom marker options for color and size")
                 self.copy_custom_items_action.setToolTip("Copy all custom markers and shapes to the clipboard.")
                 self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
+                self.move_resize_action.setToolTip(
+                    "Move/Resize items (same tool as the Markers tab button).\n"
+                    "- Drag body to move.\n"
+                    "- Rectangle: drag a corner to resize, or the handle above the top edge "
+                    "to change border thickness.\n"
+                    "- Line/Arrow: drag an end to re-aim, or a side handle to change thickness.\n"
+                    "- Text: drag the lower-right handle to resize the font.\n"
+                    "Resizing updates the 'Size:' box in Custom Markers, Shapes and Grid.\n"
+                    "\nHOLD this button for 2 seconds to open Marker Options.")
                 
                 self.load_action.setShortcut(QKeySequence.Open)
                 self.save_action.setShortcut(QKeySequence.Save)
@@ -13766,6 +13919,9 @@ if __name__ == "__main__":
                 self.pan_up_action.triggered.connect(self.update_live_view)
                 self.copy_custom_items_action.triggered.connect(self.copy_custom_items)
                 self.paste_custom_items_action.triggered.connect(self.paste_custom_items)
+                # Drives the same handler as the tab button; that handler mirrors the state
+                # back onto both controls so they can never disagree.
+                self.move_resize_action.toggled.connect(self.toggle_custom_item_interaction_mode)
                 self.layout_top_action.triggered.connect(lambda: self._transition_layout_change("Top"))
                 self.layout_bottom_action.triggered.connect(lambda: self._transition_layout_change("Bottom"))
                 self.layout_left_action.triggered.connect(lambda: self._transition_layout_change("Left"))
@@ -14210,8 +14366,7 @@ if __name__ == "__main__":
                     config_data["presets"] = self.presets_data
                 
                 try: 
-                    with open(config_filepath, "w", encoding='utf-8') as f:
-                        json.dump(config_data, f, indent=4)
+                    _atomic_write_json(config_filepath, config_data)
                 except Exception as e:
                     pass # print(f"Warning: Could not save global config: {e}")
 
@@ -15103,6 +15258,7 @@ if __name__ == "__main__":
                 self.info_action.setIcon(create_vector_icon("github", icon_size, text_color))
                 self.draw_bounding_box_action.setIcon(create_vector_icon("bounding_box", icon_size, text_color))
                 self.draw_line_action.setIcon(create_vector_icon("line", icon_size, text_color))
+                self.move_resize_action.setIcon(create_vector_icon("move_resize", icon_size, text_color))
                 self.copy_custom_items_action.setIcon(create_vector_icon("copy_items", icon_size, text_color))
                 self.paste_custom_items_action.setIcon(create_vector_icon("paste_items", icon_size, text_color))
             
@@ -15134,9 +15290,10 @@ if __name__ == "__main__":
                 self.tool_bar.addAction(self.auto_lane_action)
                 self.tool_bar.addAction(self.auto_analyze_gel_action)
                 self.tool_bar.addSeparator()
-                self.tool_bar.addAction(self.draw_line_action) 
-                self.tool_bar.addAction(self.draw_bounding_box_action) 
-                self.tool_bar.addSeparator() 
+                self.tool_bar.addAction(self.draw_line_action)
+                self.tool_bar.addAction(self.draw_bounding_box_action)
+                self.tool_bar.addAction(self.move_resize_action)
+                self.tool_bar.addSeparator()
                 self.tool_bar.addAction(self.copy_custom_items_action)
                 self.tool_bar.addAction(self.paste_custom_items_action)
                 self.tool_bar.addSeparator()
@@ -15157,6 +15314,9 @@ if __name__ == "__main__":
 
                 self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
                 self.tool_bar.setContextMenuPolicy(Qt.PreventContextMenu)
+
+                # Must come after addAction: widgetForAction() has no button before that.
+                self._install_move_resize_longpress()
 
                 
             # ──────────────────────────────────────────────────────────────
@@ -15401,6 +15561,19 @@ if __name__ == "__main__":
                 region_layout.addWidget(radio_quad)
                 layout.addWidget(region_group)
 
+                # --- Finishing options ---
+                # Freshly placed MW markers sit right on the gel edge, so their labels hang off
+                # the canvas until padding is added. Doing the Set Recommended Values → Apply
+                # Padding step automatically is what makes the placed markers look right
+                # straight away; same convenience the Auto Gel wizard already offers.
+                auto_pad_check = QCheckBox("Add recommended padding so the marker labels fit")
+                auto_pad_check.setChecked(bool(getattr(self, '_auto_lane_apply_padding', True)))
+                auto_pad_check.setToolTip(
+                    "After the markers are placed, run 'Set Recommended Values' and apply that "
+                    "padding, so the marker labels are not clipped by the edge of the image.\n"
+                    "Un-check to place the markers only and pad manually later.")
+                layout.addWidget(auto_pad_check)
+
                 # --- OK/Cancel Buttons ---
                 button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 button_box.accepted.connect(dialog.accept)
@@ -15413,6 +15586,7 @@ if __name__ == "__main__":
                     side = "left" if radio_left.isChecked() else "right"
                     region_type = "rectangle" if radio_rect.isChecked() else "quadrilateral"
                     self.auto_marker_side = side
+                    self._auto_lane_apply_padding = auto_pad_check.isChecked()
                 else:
                     return # User cancelled
                 # --- END: On-the-fly dialog logic ---
@@ -15703,12 +15877,62 @@ if __name__ == "__main__":
                             dialog_image_width,
                             is_quad_warp
                         )
+                        # Markers are placed, and their offset anchors are now set — which is
+                        # what Set Recommended Values measures against. Run the padding pass
+                        # AFTER this modal dialog has closed and the viewer geometry has
+                        # settled (same reason as the Auto Gel wizard: padding reprojects the
+                        # densitometry boxes and must see the FINAL viewer size, not the
+                        # transient one from while the dialog was up).
+                        if getattr(self, '_auto_lane_apply_padding', True):
+                            QTimer.singleShot(0, self._auto_lane_settle_and_pad)
                     else:
                         QMessageBox.information(self, "Auto Lane", "No peaks were detected with the current settings.")
 
                 self.live_view_label.bounding_box_preview = None
                 self.live_view_label.quad_points = []
                 self.update_live_view()
+
+            def _auto_lane_settle_and_pad(self):
+                """Finish Auto Lane by applying the recommended padding, so the MW labels that
+                were just placed against the gel edge are not clipped.
+
+                Mirrors _auto_gel_settle_and_pad, with two differences: the recommendation is
+                computed here (Auto Lane has no wizard to pre-fill the padding fields), and the
+                'nothing to do' case is detected up front — calling finalize_image() when the
+                requested margins already match pops up an "Padding already matches these
+                values" box, which would be noise at the end of an automated step."""
+                try:
+                    if not (self.image and not self.image.isNull()):
+                        return
+                    self.recommended_values()
+                    want = (max(0, int(self.left_padding_input.text())),
+                            max(0, int(self.right_padding_input.text())),
+                            max(0, int(self.top_padding_input.text())),
+                            max(0, int(self.bottom_padding_input.text())))
+                    have = self._measure_transparent_margins()
+                    if want == tuple(have):
+                        return   # already correctly padded — stay silent
+                    # Preserve the authoritative image-space anchors of any densitometry boxes
+                    # across the padding, exactly like the Auto Gel path.
+                    saved = [d.get('points_image') for d in getattr(self, 'multi_lane_definitions', [])]
+                    cl, ct = have[0], have[2]
+                    self.finalize_image()
+                    nl, nr, nt, nb = self._measure_transparent_margins()
+                    dxl, dyt = (nl - cl), (nt - ct)
+                    for d, pi in zip(getattr(self, 'multi_lane_definitions', []), saved):
+                        if not pi:
+                            continue
+                        if pi[0] == 'rectangle':
+                            _, x0, y0, x1, y1 = pi
+                            d['points_image'] = ('rectangle', x0 + dxl, y0 + dyt,
+                                                 x1 + dxl, y1 + dyt)
+                        else:
+                            d['points_image'] = ('quad', [(ix + dxl, iy + dyt)
+                                                          for (ix, iy) in pi[1]])
+                    self._reproject_multilane_after_layout_settle()
+                    self.update_live_view()
+                except Exception:
+                    log_traceback()
 
 
             def place_markers_from_dialog(self, original_region_definition, peak_coords_in_dialog, side,
@@ -16121,6 +16345,15 @@ if __name__ == "__main__":
                     # --- Padding State ---
                     "image_padded": self.image_padded,
 
+                    # --- Overlay layer placement ---
+                    # Padding and Crop shift image1/2_position along with the content
+                    # (_shift_overlay_positions), so undo has to put them back or the layers
+                    # end up offset from the picture they were aligned to. Only the cheap
+                    # placement is snapshotted — not the layer images themselves, which would
+                    # multiply the memory of a 20-deep undo stack.
+                    "image1_position": tuple(self.image1_position) if hasattr(self, 'image1_position') else None,
+                    "image2_position": tuple(self.image2_position) if hasattr(self, 'image2_position') else None,
+
                     # --- ANALYSIS REGIONS (THE FIX) ---
                     # Refresh each densitometry box's image-space anchor from its current
                     # (on-screen-correct) label points BEFORE snapshotting, so undo can
@@ -16176,6 +16409,18 @@ if __name__ == "__main__":
                     self.unsharp_mask_data = state_dict['unsharp_mask_data']
                     self.clahe_data = state_dict['clahe_data']
                     self.image_padded = state_dict['image_padded']
+
+                    # Overlay layer placement (see save_state). Only restored for layers that
+                    # still exist — the snapshot deliberately carries no layer pixels, so a
+                    # position is meaningless once the buffer has been removed.
+                    for _idx in (1, 2):
+                        _pos = state_dict.get(f'image{_idx}_position')
+                        _src = getattr(self, f'image{_idx}_original', None)
+                        if _pos is not None and _src is not None and not _src.isNull():
+                            setattr(self, f'image{_idx}_position', tuple(_pos))
+                        elif _pos is None and hasattr(self, f'image{_idx}_position'):
+                            # The layer was not placed in this snapshot.
+                            delattr(self, f'image{_idx}_position')
 
                     # Restore Analysis Regions
                     serialized_defs = state_dict.get("multi_lane_definitions", [])
@@ -16688,8 +16933,7 @@ if __name__ == "__main__":
                 # --- END OF THE FIX ---
 
                 try:
-                    with open(config_save_path, "w", encoding='utf-8') as config_file:
-                        json.dump(config_data_to_save, config_file, indent=4)
+                    _atomic_write_json(config_save_path, config_data_to_save)
                     
                     self.is_modified = False # Mark as saved
                     self._analysis_dirty_since_load = False  # file now matches the screen
@@ -16698,7 +16942,8 @@ if __name__ == "__main__":
                     QMessageBox.information(self, "Analysis Saved", f"Analysis configuration saved successfully to:\n{os.path.basename(config_save_path)}")
                 
                 except Exception as e:
-                    QMessageBox.critical(self, "Save Analysis Error", f"Could not save the analysis config file: {e}")
+                    QMessageBox.critical(self, "Save Analysis Error", self._file_write_error_text(
+                        config_save_path, "the analysis configuration file", err=e))
                     log_traceback()
 
             def _apply_analysis_extras(self, config_data):
@@ -18070,6 +18315,9 @@ if __name__ == "__main__":
                 image1_layout.addWidget(place_image1_button, 0, 1, 1, 1)
                 image1_layout.addWidget(remove_image1_button, 1, 0, 1, 1)
                 image1_layout.addWidget(reset_overlay1_button, 1, 1, 1, 1)
+                # Size info lives in the group-box TOOLTIP (see _update_overlay_size_labels)
+                # rather than an inline label, to keep the panel uncluttered.
+                self.image1_group = image1_group
 
                 image1_layout.addWidget(QLabel("X:"), 2, 0)
                 self.image1_left_slider = QSlider(Qt.Horizontal); self.image1_left_slider.valueChanged.connect(lambda: self._update_overlay_position_from_sliders()); self.image1_left_slider.valueChanged.connect(lambda: self.image1_left_slider.setFocus())
@@ -18086,10 +18334,14 @@ if __name__ == "__main__":
                 image1_layout.addWidget(self.image1_pos_y_label, 3, 2)
 
                 image1_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image1_resize_slider = QSlider(Qt.Horizontal); self.image1_resize_slider.setRange(10, 300); self.image1_resize_slider.setValue(100); self.image1_resize_slider.valueChanged.connect(lambda: self.update_live_view()); self.image1_resize_slider.valueChanged.connect(lambda:  self.image1_resize_slider.setFocus())
+                self.image1_resize_slider = QSlider(Qt.Horizontal)
+                self._init_overlay_resize_slider(self.image1_resize_slider)
+                self.image1_resize_slider.valueChanged.connect(lambda: self.update_live_view()); self.image1_resize_slider.valueChanged.connect(lambda:  self.image1_resize_slider.setFocus())
                 image1_layout.addWidget(self.image1_resize_slider, 4, 1)
-                self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(40)
-                self.image1_resize_slider.valueChanged.connect(lambda val, lbl=self.image1_resize_label: lbl.setText(f"{val}%"))
+                self.image1_resize_label = QLabel("100%"); self.image1_resize_label.setFixedWidth(52)
+                self.image1_resize_slider.valueChanged.connect(
+                    lambda val, lbl=self.image1_resize_label: lbl.setText(self._fmt_resize_percent(val)))
+                self.image1_resize_slider.valueChanged.connect(lambda: self._update_overlay_size_labels())
                 image1_layout.addWidget(self.image1_resize_label, 4, 2)
 
                 image1_layout.addWidget(QLabel("Rotate:"), 5, 0)
@@ -18101,7 +18353,11 @@ if __name__ == "__main__":
 
                 image1_layout.addWidget(QLabel("Mixing %:"), 6, 0)
                 self.image1_blend_slider = QSlider(Qt.Horizontal); self.image1_blend_slider.setRange(0, 100); self.image1_blend_slider.setValue(100)
-                self.image1_blend_slider.setToolTip("Individual mixing for Image 1 (Base).\nThe Global Mixing % below is applied on top of this value.")
+                self.image1_blend_slider.setToolTip(
+                    "Opacity of Image 1 (Base).\n"
+                    "Image 1 is the bottom layer once placed — it replaces the main image in "
+                    "the composite — so the Global Mixing % (which mixes the OVERLAY on top) "
+                    "does not apply to it.\nLower this to fade the base itself.")
                 self.image1_blend_slider.valueChanged.connect(lambda: self.update_live_view()); self.image1_blend_slider.valueChanged.connect(lambda: self.image1_blend_slider.setFocus())
                 image1_layout.addWidget(self.image1_blend_slider, 6, 1)
                 self.image1_blend_label = QLabel("100%"); self.image1_blend_label.setFixedWidth(40)
@@ -18125,6 +18381,7 @@ if __name__ == "__main__":
                 image2_layout.addWidget(place_image2_button, 0, 1, 1, 1)
                 image2_layout.addWidget(remove_image2_button, 1, 0, 1, 1)
                 image2_layout.addWidget(reset_overlay2_button, 1, 1, 1, 1)
+                self.image2_group = image2_group
 
                 image2_layout.addWidget(QLabel("X:"), 2, 0)
                 self.image2_left_slider = QSlider(Qt.Horizontal); self.image2_left_slider.valueChanged.connect(lambda: self._update_overlay_position_from_sliders()); self.image2_left_slider.valueChanged.connect(lambda: self.image2_left_slider.setFocus())
@@ -18141,10 +18398,14 @@ if __name__ == "__main__":
                 image2_layout.addWidget(self.image2_pos_y_label, 3, 2)
                 
                 image2_layout.addWidget(QLabel("Resize:"), 4, 0)
-                self.image2_resize_slider = QSlider(Qt.Horizontal); self.image2_resize_slider.setRange(10, 300); self.image2_resize_slider.setValue(100); self.image2_resize_slider.valueChanged.connect(lambda: self.update_live_view()); self.image2_resize_slider.valueChanged.connect(lambda: self.image2_resize_slider.setFocus())
+                self.image2_resize_slider = QSlider(Qt.Horizontal)
+                self._init_overlay_resize_slider(self.image2_resize_slider)
+                self.image2_resize_slider.valueChanged.connect(lambda: self.update_live_view()); self.image2_resize_slider.valueChanged.connect(lambda: self.image2_resize_slider.setFocus())
                 image2_layout.addWidget(self.image2_resize_slider, 4, 1)
-                self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(40)
-                self.image2_resize_slider.valueChanged.connect(lambda val, lbl=self.image2_resize_label: lbl.setText(f"{val}%"))
+                self.image2_resize_label = QLabel("100%"); self.image2_resize_label.setFixedWidth(52)
+                self.image2_resize_slider.valueChanged.connect(
+                    lambda val, lbl=self.image2_resize_label: lbl.setText(self._fmt_resize_percent(val)))
+                self.image2_resize_slider.valueChanged.connect(lambda: self._update_overlay_size_labels())
                 image2_layout.addWidget(self.image2_resize_label, 4, 2)
 
                 image2_layout.addWidget(QLabel("Rotate:"), 5, 0)
@@ -18191,14 +18452,19 @@ if __name__ == "__main__":
                 self.blend_slider.setRange(0, 100)
                 self.blend_slider.setValue(50)
                 self.blend_slider.setToolTip(
-                    "Global mixing for the combined overlay (Image 1 + Image 2) onto the final image.\n"
-                    "This is stacked on top of each image's individual Mixing %.\n"
-                    "Effective opacity of an image = its individual Mixing % × this Global Mixing %.\n"
-                    "0% = overlays invisible, 100% = overlays at full individual strength."
+                    "Global mixing for the OVERLAY layer onto the image below it.\n"
+                    "Effective opacity of Image 2 = its individual Mixing % × this value.\n"
+                    "0% = overlay invisible, 100% = overlay at full individual strength.\n"
+                    "Does not apply to Image 1 (Base): once placed, that layer IS the base "
+                    "the overlay is mixed onto — use its own Mixing % to fade it."
                 )
 
                 self.blend_value_label = QLabel("50%")
-                self.blend_value_label.setFixedWidth(38)          # fixed width — never reflows layout
+                # Fixed width so the layout never reflows as the number changes, but sized
+                # from the FONT for the widest value ("100%") — the old hard-coded 38 px
+                # clipped the text once the UI font/scale grew ("50%" rendered as "0%").
+                self.blend_value_label.setFixedWidth(
+                    QFontMetrics(self.blend_value_label.font()).horizontalAdvance("100%") + 10)
                 self.blend_value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
                 self.blend_slider.valueChanged.connect(lambda v: self.blend_value_label.setText(f"{v}%"))
@@ -18288,40 +18554,53 @@ if __name__ == "__main__":
                         QMessageBox.warning(self, "Error", f"Failed to load overlay image: {e}")
                         return
                 
-                # --- Handle main image transparency setup (existing code) ---
-                if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull():
-                    # Save current main-image adjustments before touching anything
-                    if self.adjustment_context == "Main Image":
-                        self._save_current_ui_adjustments()
+                # NOTE: this used to REPLACE self.image / image_contrasted /
+                # image_before_contrast with a fully transparent canvas so the base showed
+                # only via Image 1. That was destructive and unstable — any later
+                # apply_all_adjustments() in the Main Image context regenerated self.image
+                # from image_master and silently brought the base back — and it desynced the
+                # preview from every other compositing path (Rasterize/Save/Copy/export all
+                # kept painting the master, so the exported figure never matched the screen).
+                # The base is now suppressed at DRAW time by _overlay_base_layer_active()
+                # instead, which every path consults, and the real image buffers are left
+                # untouched.
+                if self.adjustment_context == "Main Image":
+                    self._save_current_ui_adjustments()
 
-                    width = self.image_master.width()
-                    height = self.image_master.height()
-                    transparent_canvas = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
-                    transparent_canvas.fill(Qt.transparent)
-
-                    self.image = transparent_canvas
-                    self.image_contrasted = self.image.copy()
-                    self.image_before_contrast = self.image.copy()
-
-                    if self.adjustment_context == "Main Image":
-                        self._load_adjustments_to_ui("Main Image")
-
-                    pass # print("INFO: Main image display replaced with a transparent canvas for overlay-only view.")
-
-                self.image2_adjustments = self._get_default_adjustments()
                 self.image2_original = overlay_image
+                # Defaults must be sized to the OVERLAY's bit depth, not the main image's
+                # (see _get_default_adjustments) — otherwise a 16-bit overlay loaded next to
+                # an 8-bit main image is blown out to pure white.
+                self.image2_adjustments = self._get_default_adjustments(for_image=overlay_image)
 
                 # --- ADDED: Auto-invert 16-bit overlay ---
+                # Mirrors open_image_from_path's handling of the main image, so a 16-bit
+                # overlay isn't composited as a negative of an auto-inverted 16-bit base.
                 if self.image2_original.format() == QImage.Format_Grayscale16:
                     self.image2_adjustments['is_inverted'] = True
                 # -----------------------------------------
 
-                self._update_overlay_preview(2)
+                # Lands the overlay centred on the main image rather than in its top-left
+                # corner (a no-op when the two are the same size) — see
+                # reset_overlay2_transform / _center_overlay_on_main.
                 self.reset_overlay2_transform()
                 self.place_image2()
                 self.adjustment_context_combo.model().item(2).setEnabled(True)
                 self.adjustment_context_combo.setCurrentText("Overlay 2 (Overlay)")
-                self.reset_all_adjustments()
+
+                # Re-assert the context explicitly: setCurrentText emits nothing when the
+                # combo already sat on "Overlay 2" (loading a second overlay), which would
+                # leave the Levels range and the UI showing the previous image's settings.
+                # NOTE: do NOT call reset_all_adjustments() here. It rebuilds
+                # image2_adjustments from scratch and wipes the auto-invert set above — that
+                # is what made 16-bit overlays render with the opposite polarity to the base.
+                self.adjustment_context = "Overlay 2 (Overlay)"
+                self.is_in_dedicated_edit_mode = True
+                self._update_level_slider_ranges_and_defaults()
+                self._load_adjustments_to_ui("Overlay 2 (Overlay)")
+                self._update_overlay_preview(2)
+                self._update_levels_histogram()
+                self.update_live_view()
                 QMessageBox.information(self, "Success", "Overlay image loaded (Image 2). Use 'Interactive Alignment' to position it.")
 
             def _update_region_label(self):
@@ -18493,6 +18772,154 @@ if __name__ == "__main__":
                     ))
                 return path
 
+            def _update_overlay_size_labels(self):
+                """Refresh the Image 1 / Image 2 size info.
+
+                Shown as the group box's TOOLTIP, not an inline label — the sizes are useful
+                when checking that a layer is at the scale you expect, but a permanent
+                readout cluttered the panel."""
+                ref = self.image if (self.image and not self.image.isNull()) else self.image_master
+                ref_txt = f"{ref.width()}×{ref.height()}" if (ref and not ref.isNull()) else "—"
+                names = {1: "Image 1 (Base)", 2: "Image 2 (Overlay)"}
+                for idx in (1, 2):
+                    box = getattr(self, f'image{idx}_group', None)
+                    if box is None:
+                        continue
+                    src = getattr(self, f'image{idx}_original', None)
+                    if src is None or src.isNull():
+                        box.setToolTip(f"{names[idx]}: empty.  Main image: {ref_txt} px")
+                        continue
+                    f = self._overlay_scale_factor(idx)
+                    pos = getattr(self, f'image{idx}_position', None)
+                    pos_txt = f"  at ({pos[0]}, {pos[1]})" if pos else "  not placed"
+                    box.setToolTip(
+                        f"{names[idx]}: {src.width()}×{src.height()} px → "
+                        f"{int(round(src.width()*f))}×{int(round(src.height()*f))} on canvas"
+                        f"{pos_txt}.  Main image: {ref_txt} px")
+
+            # Overlay "Resize:" slider precision — slider units per PERCENT.
+            # 100 => one slider step is 0.01%, so a layer can be scaled to essentially any
+            # size instead of snapping to whole percents. Everything that reads the slider
+            # must go through _overlay_scale_factor / _overlay_resize_percent so the units
+            # stay in one place.
+            OVERLAY_RESIZE_STEPS_PER_PERCENT = 100
+            OVERLAY_RESIZE_MIN_PERCENT = 10
+            OVERLAY_RESIZE_MAX_PERCENT = 300
+
+            def _init_overlay_resize_slider(self, slider):
+                """Range/step setup for an overlay 'Resize:' slider, in slider units.
+
+                The slider used to be a plain 10..300 integer, i.e. 1% per step, so a layer
+                could only ever land on whole percents and could not be matched exactly to
+                the image underneath. Now one step is 0.01%.
+
+                Dragging a ~200 px wide slider obviously cannot resolve 29 000 steps, so:
+                singleStep (arrow keys) = 0.01% for exact fine tuning, and pageStep
+                (PgUp/PgDn, clicking the groove) = 1% to keep coarse travel usable. Click the
+                slider first so it has focus, then use the arrow keys."""
+                p = self.OVERLAY_RESIZE_STEPS_PER_PERCENT
+                slider.setRange(self.OVERLAY_RESIZE_MIN_PERCENT * p,
+                                self.OVERLAY_RESIZE_MAX_PERCENT * p)
+                slider.setValue(100 * p)
+                slider.setSingleStep(1)      # 0.01 %
+                slider.setPageStep(p)        # 1 %
+                slider.setToolTip(
+                    f"Scale of this layer: {self.OVERLAY_RESIZE_MIN_PERCENT}–"
+                    f"{self.OVERLAY_RESIZE_MAX_PERCENT}%.\n"
+                    "Arrow keys step by 0.01% for exact matching; PgUp/PgDn step by 1%.")
+
+            def _fmt_resize_percent(self, slider_value):
+                """Readout text for a Resize slider value, trimmed so whole percents stay
+                short ('100%') and fine adjustments show their decimals ('102.35%')."""
+                pct = slider_value / float(self.OVERLAY_RESIZE_STEPS_PER_PERCENT)
+                return f"{pct:.0f}%" if abs(pct - round(pct)) < 1e-9 else f"{pct:.2f}%"
+
+            def _overlay_scale_factor(self, overlay_index):
+                """Resize % of an overlay layer as a plain multiplier (1.0 == 100%)."""
+                sl = getattr(self, f'image{overlay_index}_resize_slider', None)
+                if sl is None:
+                    return 1.0
+                return sl.value() / (100.0 * self.OVERLAY_RESIZE_STEPS_PER_PERCENT)
+
+            def _overlay_resize_percent(self, overlay_index):
+                """Resize value of an overlay layer in percent (100.0 == original size)."""
+                return self._overlay_scale_factor(overlay_index) * 100.0
+
+            def _shift_overlay_positions(self, dx, dy):
+                """Translate the placed overlay layers by (dx, dy) IMAGE pixels and sync their
+                X/Y sliders.
+
+                image1_position / image2_position are native image-pixel coordinates, exactly
+                like marker and custom-shape positions, so any operation that moves the
+                content inside the canvas (Apply Padding, Crop) must shift them too or the
+                layers detach from the picture they were aligned to."""
+                for idx in (1, 2):
+                    if not hasattr(self, f'image{idx}_position'):
+                        continue
+                    try:
+                        px, py = getattr(self, f'image{idx}_position')
+                        new = (int(round(px + dx)), int(round(py + dy)))
+                        setattr(self, f'image{idx}_position', new)
+                        # Move the sliders WITHOUT re-emitting: _update_overlay_position_from_sliders
+                        # would clamp the position back to the slider's current (pre-resize)
+                        # range and undo the shift. _update_overlay_slider_ranges() re-syncs
+                        # them against the new canvas right after this.
+                        for name, val in ((f'image{idx}_left_slider', new[0]),
+                                          (f'image{idx}_top_slider', new[1])):
+                            sl = getattr(self, name, None)
+                            if sl is not None:
+                                sl.blockSignals(True)
+                                sl.setValue(max(sl.minimum(), min(val, sl.maximum())))
+                                sl.blockSignals(False)
+                    except Exception:
+                        continue
+
+            def _center_overlay_on_main(self, overlay_index):
+                """Position an overlay so it sits CENTRED on the main image.
+
+                A freshly loaded overlay used to land at (0, 0) — the main image's top-left
+                CORNER — so an overlay smaller than the gel appeared tucked up in the corner,
+                nowhere near the content it is meant to line up with, and the X/Y sliders
+                gave no hint that the two were in the same coordinate space.
+
+                Centring degenerates to exactly (0, 0) when the overlay and the main image
+                are the same size (the 'Set Current as Base' case and any same-camera pair),
+                so already-aligned workflows are completely unchanged."""
+                src = getattr(self, f'image{overlay_index}_original', None)
+                ref = self.image if (self.image and not self.image.isNull()) else self.image_master
+                if src is None or src.isNull() or ref is None or ref.isNull():
+                    return
+                f = self._overlay_scale_factor(overlay_index)
+                x = int(round((ref.width() - src.width() * f) / 2.0))
+                y = int(round((ref.height() - src.height() * f) / 2.0))
+                # Signals left connected on purpose: they refresh the X/Y readouts, the
+                # stored position and the live view.
+                for name, val in ((f'image{overlay_index}_left_slider', x),
+                                  (f'image{overlay_index}_top_slider', y)):
+                    sl = getattr(self, name, None)
+                    if sl is not None:
+                        sl.setValue(max(sl.minimum(), min(val, sl.maximum())))
+
+            def _overlay_base_layer_active(self):
+                """True when Image 1 (Base) is placed, so IT is the bottom layer of the
+                composite and the main image must NOT also be painted underneath.
+
+                The tab stacks [main image] + Image 1 + Image 2. Image 1 is normally a COPY
+                of the main image ('Set Current as Base' / 'Copy Current'), so painting the
+                master underneath it composited the same picture twice — and because that
+                bottom copy is never clipped, 'Select Regions to Keep' looked like it did
+                nothing: whatever a region clipped out of Image 1 was still fully visible in
+                the un-clipped master below it.
+
+                This one predicate is consulted by EVERY compositing path (live preview,
+                Rasterize, Save/Copy, and the SVG/PPTX export) so all four agree — before,
+                the preview dropped the base (load_overlay_image blanked self.image) while
+                the other three always re-painted the master at full opacity, so the
+                rasterized/saved figure did not match what was on screen."""
+                img1 = getattr(self, 'image1_original', None)
+                return bool(hasattr(self, 'image1_position')
+                            and img1 is not None and not img1.isNull())
+
             def remove_image1(self):
                 """Hides Image 1 and resets its sliders, without triggering a redraw."""
                 if hasattr(self, 'image1_position'):
@@ -18502,6 +18929,7 @@ if __name__ == "__main__":
 
                 self.image1_adjusted_preview = None
                 self.image1_adjustments = {}
+                self._update_overlay_size_labels()
 
                 if hasattr(self, 'load_overlay_button'):
                     self.load_overlay_button.setEnabled(False)
@@ -18522,6 +18950,7 @@ if __name__ == "__main__":
                 
                 self.image2_adjusted_preview = None
                 self.image2_adjustments = {}
+                self._update_overlay_size_labels()
                 
                 if hasattr(self, 'adjustment_context_combo'):
                     self.adjustment_context_combo.model().item(2).setEnabled(False)
@@ -18550,6 +18979,7 @@ if __name__ == "__main__":
                     self.image1_adjustments = current_main_image_adjustments
                     
                     self.image1_original = self.image_master.copy()
+                    self._update_overlay_size_labels()
                     self._update_overlay_preview(1)
                     self.reset_overlay1_transform()
                     self.update_live_view() 
@@ -18576,6 +19006,7 @@ if __name__ == "__main__":
                     self.image2_adjustments = current_main_image_adjustments
                     
                     self.image2_original = self.image_master.copy()
+                    self._update_overlay_size_labels()
                     self._update_overlay_preview(2)
                     self.reset_overlay2_transform()
                     self.update_live_view()
@@ -18586,13 +19017,15 @@ if __name__ == "__main__":
             def place_image1(self):
                 if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull():
                     self.image1_position = (self.image1_left_slider.value(), self.image1_top_slider.value())
+                    self._update_overlay_size_labels()
                     self.update_live_view()
                 else:
                     QMessageBox.warning(self, "Info", "No image copied to Image 1 buffer yet.")
-            
+
             def place_image2(self):
                 if hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull():
                     self.image2_position = (self.image2_left_slider.value(), self.image2_top_slider.value())
+                    self._update_overlay_size_labels()
                     self.update_live_view()
                 else:
                     QMessageBox.warning(self, "Info", "No image copied or loaded to Image 2 buffer yet.")
@@ -18600,14 +19033,25 @@ if __name__ == "__main__":
             def _overlay_effective_opacities(self):
                 """
                 Returns (op1, op2): the final opacities used to paint Image 1 and Image 2.
-                Each image has its own individual Mixing % (image1/2_blend_slider) and the
-                Global Mixing % (blend_slider) is stacked on top of both, so:
-                    effective opacity = individual % x global %.
+
+                Image 2 (Overlay) = its individual Mixing % x the Global Mixing %.
+                Image 1 (Base), when placed, is the BOTTOM layer — it is what the overlay is
+                mixed ONTO — so it uses its own Mixing % only and ignores the global slider
+                (whose label is literally "Global Mixing % (Overlay)").
+
+                Why: the base used to be painted twice — once as the opaque main image and
+                again as Image 1 at (individual x global) — which hid the fact that Image 1
+                was being faded. Now that the main image is suppressed whenever Image 1 is
+                placed (see _overlay_base_layer_active), applying the 50% global default to
+                the base as well would render it washed out over white the moment you press
+                'Set Current as Base'. Drop Image 1 to e.g. 40% with its own slider if you
+                genuinely want a faded base.
                 """
                 g = (self.blend_slider.value() / 100.0) if hasattr(self, 'blend_slider') else 0.5
                 a1 = (self.image1_blend_slider.value() / 100.0) if hasattr(self, 'image1_blend_slider') else 1.0
                 a2 = (self.image2_blend_slider.value() / 100.0) if hasattr(self, 'image2_blend_slider') else 1.0
-                op1 = max(0.0, min(1.0, a1 * g))
+                op1 = a1 if self._overlay_base_layer_active() else a1 * g
+                op1 = max(0.0, min(1.0, op1))
                 op2 = max(0.0, min(1.0, a2 * g))
                 return op1, op2
 
@@ -18618,7 +19062,7 @@ if __name__ == "__main__":
                 if hasattr(self, 'image1_top_slider'):
                     self.image1_top_slider.setValue(0)
                 if hasattr(self, 'image1_resize_slider'):
-                    self.image1_resize_slider.setValue(100)
+                    self.image1_resize_slider.setValue(100 * self.OVERLAY_RESIZE_STEPS_PER_PERCENT)
                 if hasattr(self, 'image1_rotation_slider'):
                     self.image1_rotation_slider.setValue(0)
                 if hasattr(self, 'image1_blend_slider'):
@@ -18632,11 +19076,16 @@ if __name__ == "__main__":
                 if hasattr(self, 'image2_top_slider'):
                     self.image2_top_slider.setValue(0)
                 if hasattr(self, 'image2_resize_slider'):
-                    self.image2_resize_slider.setValue(100)
+                    self.image2_resize_slider.setValue(100 * self.OVERLAY_RESIZE_STEPS_PER_PERCENT)
                 if hasattr(self, 'image2_rotation_slider'):
                     self.image2_rotation_slider.setValue(0)
                 if hasattr(self, 'image2_blend_slider'):
                     self.image2_blend_slider.setValue(100)
+                # Reset parks the overlay CENTRED on the main image, not in its top-left
+                # corner — same default as loading one. Must run after the Resize reset
+                # above, since the centred position depends on the scaled size. Equals
+                # (0, 0) whenever the overlay matches the main image's dimensions.
+                self._center_overlay_on_main(2)
                 self.update_live_view()
             
             
@@ -18688,9 +19137,13 @@ if __name__ == "__main__":
                 canvas_h = self.image_master.height()
                 
                 final_canvas = QImage(canvas_w, canvas_h, canvas_format)
-                # Fill with white (standard for gels) or transparent. 
-                # Transparent allows checking if alignment leaves gaps.
-                final_canvas.fill(Qt.transparent) 
+                # Transparent when the opaque master is painted underneath (it covers the
+                # canvas anyway, and this preserves an image's transparent padding margins).
+                # WHITE when Image 1 (Base) replaces the master: with nothing opaque below,
+                # layers drawn at a partial Mixing % would bake out semi-transparent, whereas
+                # the live view shows them composited over the white viewer background.
+                # Filling white here is what makes Rasterize match the preview.
+                final_canvas.fill(Qt.transparent if not self._overlay_base_layer_active() else Qt.white)
 
                 painter = QPainter(final_canvas)
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False) # Preserves pixel data better
@@ -18699,8 +19152,12 @@ if __name__ == "__main__":
                 # Effective opacities = individual Mixing % x Global Mixing % for each image.
                 op1_blend, op2_blend = self._overlay_effective_opacities()
 
-                # --- 2. Draw Base Master Image (Always Background) ---
-                if self.image_master and not self.image_master.isNull():
+                # --- 2. Draw Base Master Image (background, unless Image 1 replaces it) ---
+                # Skipped when Image 1 (Base) is placed: that layer is the bottom of the
+                # stack, so painting the master here as well double-composited the base and
+                # made region clips on Image 1 invisible. Matches the live preview exactly.
+                if (self.image_master and not self.image_master.isNull()
+                        and not self._overlay_base_layer_active()):
                     # Determine Main Image Settings (Saved or Current)
                     main_settings = {}
                     if hasattr(self, 'main_levels_gamma'):
@@ -18730,8 +19187,8 @@ if __name__ == "__main__":
 
                     rect1_native = QRectF(
                         QPointF(*self.image1_position),
-                        QSizeF(adjusted_img1.width() * (self.image1_resize_slider.value()/100.0),
-                               adjusted_img1.height() * (self.image1_resize_slider.value()/100.0))
+                        QSizeF(adjusted_img1.width() * (self._overlay_scale_factor(1)),
+                               adjusted_img1.height() * (self._overlay_scale_factor(1)))
                     )
                     rotation1 = self.image1_rotation_slider.value() / 10.0
 
@@ -18754,8 +19211,8 @@ if __name__ == "__main__":
 
                     rect2_native = QRectF(
                         QPointF(*self.image2_position),
-                        QSizeF(adjusted_img2.width()  * (self.image2_resize_slider.value() / 100.0),
-                            adjusted_img2.height() * (self.image2_resize_slider.value() / 100.0))
+                        QSizeF(adjusted_img2.width()  * (self._overlay_scale_factor(2)),
+                            adjusted_img2.height() * (self._overlay_scale_factor(2)))
                     )
                     rotation2 = self.image2_rotation_slider.value() / 10.0
 
@@ -18860,7 +19317,7 @@ if __name__ == "__main__":
                 if not overlay_image_orig or not overlay_resize_slider: return None
 
                 # Calculate scaled overlay dimensions in native pixels
-                scale_factor = overlay_resize_slider.value() / 100.0
+                scale_factor = self._overlay_scale_factor(overlay_index)
                 overlay_w_native = overlay_image_orig.width() * scale_factor
                 overlay_h_native = overlay_image_orig.height() * scale_factor
                 
@@ -18977,7 +19434,8 @@ if __name__ == "__main__":
                     # Update sliders
                     getattr(self, f'image{self.selected_overlay_index}_left_slider').setValue(int(new_topleft_native_x))
                     getattr(self, f'image{self.selected_overlay_index}_top_slider').setValue(int(new_topleft_native_y))
-                    getattr(self, f'image{self.selected_overlay_index}_resize_slider').setValue(int(new_size_perc))
+                    getattr(self, f'image{self.selected_overlay_index}_resize_slider').setValue(
+                        int(round(new_size_perc * self.OVERLAY_RESIZE_STEPS_PER_PERCENT)))
 
             def _handle_overlay_mouse_release(self, event):
                 if event.button() == Qt.LeftButton and self.overlay_interaction_mode:
@@ -19257,11 +19715,39 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.warning(self, "Error", "Conversion failed.")
 
-            def _get_default_adjustments(self):
-                """Returns a dictionary with default adjustment settings."""
+            def _level_max_for_image(self, img):
+                """Full-scale value of the Levels sliders for `img`: 255 for 8-bit,
+                65535 for 16-bit. apply_levels_gamma treats the UI numbers as RAW pixel
+                values (no rescaling), so this must track the image's actual bit depth."""
+                try:
+                    if img is not None and not img.isNull():
+                        if img.format() in (QImage.Format_Grayscale16,
+                                            QImage.Format_RGBA64,
+                                            QImage.Format_RGBX64):
+                            return 65535
+                        return 255
+                except Exception:
+                    pass
+                return 65535
+
+            def _get_default_adjustments(self, for_image=None):
+                """Returns a dictionary with default adjustment settings.
+
+                `for_image` sizes the default WHITE POINT to that image's bit depth. This
+                matters because apply_levels_gamma uses the UI numbers as raw pixel values:
+                a 255 white point on a 16-bit image maps every pixel >= 255 to full scale
+                (the image turns pure WHITE), and a 65535 white point on an 8-bit image
+                crushes everything to black. Always pass the buffer the settings belong to
+                when creating defaults for an overlay. The no-arg form keeps the historical
+                65535 default and is still fine for pulling out a sub-dict fallback."""
                 return {
                     'is_inverted': False, # <-- ADD THIS LINE
-                    'levels_gamma': {'black_point': 0, 'white_point': 65535, 'gamma': 100},
+                    'levels_gamma': {
+                        'black_point': 0,
+                        'white_point': (self._level_max_for_image(for_image)
+                                        if for_image is not None else 65535),
+                        'gamma': 100
+                    },
                     'channel_mixer': {'r': 100, 'g': 100, 'b': 100, 'mono': False},
                     'unsharp_mask': {'amount': 0, 'radius': 1.0, 'threshold': 0},
                     'clahe': {'clip_limit': 1.0, 'tile_size': 2}
@@ -19367,16 +19853,27 @@ if __name__ == "__main__":
             def _on_adjustment_context_changed(self, new_context):
                 # 1. Save UI state from the old context before switching
                 self._save_current_ui_adjustments()
-                
+
                 # 2. Update the internal context tracker
                 self.adjustment_context = new_context
-                
+
                 # 3. Set the flag that tells the rendering engine if we are in an isolated editor view
                 if new_context in ["Overlay 1 (Base)", "Overlay 2 (Overlay)"]:
                     self.is_in_dedicated_edit_mode = True
                 else: # "Main Image"
                     self.is_in_dedicated_edit_mode = False
-                    
+
+                # 3b. Re-derive the Black/White slider RANGE for the newly selected image.
+                # Without this the sliders keep the previous context's range, so switching
+                # from an 8-bit main image to a 16-bit overlay left the range at 0..255:
+                # _load_adjustments_to_ui then clamped the overlay's 65535 white point down
+                # to 255, _save_current_ui_adjustments persisted that, and apply_levels_gamma
+                # mapped the whole 16-bit overlay to full scale — the overlay rendered as a
+                # BLANK WHITE rectangle and every contrast control (levels, gamma, CLAHE,
+                # channel mixer, invert) then appeared to do nothing because the preview was
+                # already saturated. Must run BEFORE the values are loaded below.
+                self._update_level_slider_ranges_and_defaults()
+
                 # 4. Load the new context's settings into the UI sliders
                 self._load_adjustments_to_ui(new_context)
                 
@@ -19418,17 +19915,34 @@ if __name__ == "__main__":
                 if save_history and not self._is_restoring_state:
                     self.save_state()
 
-                if self.adjustment_context == "Main Image":
-                    if self.image_master and not self.image_master.isNull():
-                        base_image = self.image_master.copy()
-                        self.image = self._apply_all_adjustments_to_image(base_image, {
-                            'is_inverted': self.main_image_is_inverted,
-                            'levels_gamma': {'black_point': self.black_point_slider.value(), 'white_point': self.white_point_slider.value(), 'gamma': self.gamma_slider.value()},
-                            'channel_mixer': self.channel_mixer_data,
-                            'unsharp_mask': self.unsharp_mask_data,
-                            'clahe': self.clahe_data
-                        })
-                elif self.adjustment_context == "Overlay 1 (Base)":
+                # `self.image` is the MAIN display buffer and must ALWAYS track image_master,
+                # no matter which context the sliders happen to be editing. Rebuilding it
+                # only inside the "Main Image" branch meant that after 'Set Current as Base'
+                # — which switches the context to "Overlay 1 (Base)" — every permanent
+                # operation updated image_master while self.image kept its old size and
+                # pixels. Consequences seen by the user: Apply Padding grew the canvas but
+                # the magenta image-boundary (drawn from self.image) never moved, and undo /
+                # redo restored image_master but left the view completely unchanged.
+                if self.image_master and not self.image_master.isNull():
+                    # In an overlay context the Levels sliders belong to the OVERLAY, so the
+                    # main image's own levels must come from main_levels_gamma instead.
+                    if self.adjustment_context == "Main Image":
+                        main_lg = {'black_point': self.black_point_slider.value(),
+                                   'white_point': self.white_point_slider.value(),
+                                   'gamma': self.gamma_slider.value()}
+                    else:
+                        main_lg = getattr(self, 'main_levels_gamma',
+                                          self._get_default_adjustments(for_image=self.image_master)['levels_gamma'])
+                    self.image = self._apply_all_adjustments_to_image(self.image_master.copy(), {
+                        'is_inverted': self.main_image_is_inverted,
+                        'levels_gamma': main_lg,
+                        'channel_mixer': self.channel_mixer_data,
+                        'unsharp_mask': self.unsharp_mask_data,
+                        'clahe': self.clahe_data
+                    })
+
+                # Then refresh whichever overlay preview the sliders are currently editing.
+                if self.adjustment_context == "Overlay 1 (Base)":
                     self._update_overlay_preview(1)
                 elif self.adjustment_context == "Overlay 2 (Overlay)":
                     self._update_overlay_preview(2)
@@ -19867,11 +20381,21 @@ if __name__ == "__main__":
 
                     if hasattr(self, 'gamma_slider'): self.gamma_slider.setValue(100)
                     
-                elif self.adjustment_context == "Overlay 1 (Base)":
-                    self.image1_adjustments = self._get_default_adjustments()
-                elif self.adjustment_context == "Overlay 2 (Overlay)":
-                    self.image2_adjustments = self._get_default_adjustments()
-                
+                elif self.adjustment_context in ("Overlay 1 (Base)", "Overlay 2 (Overlay)"):
+                    # Defaults sized to THIS overlay's bit depth, and the slider range
+                    # re-derived to match, so a reset can't blow a 16-bit overlay out to
+                    # white via an 8-bit (255) white point.
+                    idx = 1 if self.adjustment_context == "Overlay 1 (Base)" else 2
+                    src = getattr(self, f'image{idx}_original', None)
+                    prev = getattr(self, f'image{idx}_adjustments', None) or {}
+                    fresh = self._get_default_adjustments(for_image=src)
+                    # Keep the inversion, exactly like the Main Image branch above leaves
+                    # main_image_is_inverted alone — resetting it would flip a 16-bit
+                    # overlay to the opposite polarity of the base it sits on.
+                    fresh['is_inverted'] = bool(prev.get('is_inverted', False))
+                    setattr(self, f'image{idx}_adjustments', fresh)
+                    self._update_level_slider_ranges_and_defaults()
+
                 # Load these newly reset default settings into the UI sliders
                 self._load_adjustments_to_ui(self.adjustment_context)
 
@@ -20843,14 +21367,82 @@ if __name__ == "__main__":
                     # (which is what the padding must actually fit).
                     lbl_w, lbl_h = 550.0, 350.0
 
-                    top_texts = [str(t) for t in (getattr(self, 'top_label', []) or []) if str(t).strip()]
-                    left_texts, right_texts = [], []
-                    for v in (getattr(self, 'marker_values', []) or []):
-                        try:
-                            left_texts.append(self.marker_label_text(v, 'left'))
-                            right_texts.append(self.marker_label_text(v, 'right'))
-                        except Exception:
-                            left_texts.append(str(v)); right_texts.append(str(v))
+                    # Measure the text that is ACTUALLY DRAWN. The renderers draw
+                    # self.top_markers / self.left_markers / self.right_markers; self.top_label
+                    # and self.marker_values are only the source lists the user types into, and
+                    # the two can diverge — clearing the "Top Label" box empties top_label while
+                    # the placed markers keep drawing their old text. Measuring the source list
+                    # then collapsed the top padding to the bare 15% floor and long rotated
+                    # labels were clipped straight off the canvas.
+                    # Fall back to the source list when nothing has been placed yet, so Set
+                    # Recommended still returns a sensible size before the markers go down.
+                    top_texts = [str(t) for _x, t in (getattr(self, 'top_markers', []) or [])
+                                 if str(t).strip()]
+                    if not top_texts:
+                        top_texts = [str(t) for t in (getattr(self, 'top_label', []) or [])
+                                     if str(t).strip()]
+
+                    def _side_texts(side):
+                        out = []
+                        for _entry in (getattr(self, f'{side}_markers', []) or []):
+                            try:
+                                out.append(self.marker_label_text(_entry[1], side))
+                            except Exception:
+                                try:
+                                    out.append(str(_entry[1]))
+                                except Exception:
+                                    continue
+                        if not out:
+                            for v in (getattr(self, 'marker_values', []) or []):
+                                try:
+                                    out.append(self.marker_label_text(v, side))
+                                except Exception:
+                                    out.append(str(v))
+                        return [t for t in out if str(t).strip()]
+
+                    left_texts = _side_texts('left')
+                    right_texts = _side_texts('right')
+
+                    def _top_h_bounds(eff_px):
+                        """Content-relative x-range actually covered by the ROTATED top-label
+                        ink, or None when no top markers are placed.
+
+                        A rotated label does not just grow upwards — it also reaches sideways,
+                        and the outermost lane's label runs past the edge of the gel. Only the
+                        vertical extent used to be measured, so a long label rotated -30deg off
+                        the last lane was clipped by the right edge no matter what Set
+                        Recommended returned (its right padding was sized purely from the
+                        right-hand MW label width). Each marker is measured with its own text at
+                        its own x."""
+                        marks = getattr(self, 'top_markers', []) or []
+                        if not marks:
+                            return None   # nothing placed: positions unknown, skip
+                        eff_px = max(4, int(round(eff_px)))
+                        font = QFont(family); font.setPixelSize(eff_px)
+                        fm = QFontMetrics(font)
+                        tf = QTransform(); tf.rotate(rotation)
+                        lo = float('inf'); hi = float('-inf')
+                        for _x, _s in marks:
+                            s = str(_s)
+                            if not s.strip():
+                                continue
+                            try:
+                                x_rel = float(_x) - cl
+                            except Exception:
+                                continue
+                            tr = fm.boundingRect(s).adjusted(-4, -4, 4, 4)
+                            adv = fm.horizontalAdvance(s)
+                            xoff = -adv / 2.0 if axis == 'center' else (-adv if axis == 'right' else 0.0)
+                            corners = [QPointF(tr.left() + xoff, tr.top()),
+                                       QPointF(tr.right() + xoff, tr.top()),
+                                       QPointF(tr.right() + xoff, tr.bottom()),
+                                       QPointF(tr.left() + xoff, tr.bottom())]
+                            xs = [tf.map(p).x() for p in corners]
+                            lo = min(lo, x_rel + min(xs))
+                            hi = max(hi, x_rel + max(xs))
+                        if lo == float('inf'):
+                            return None
+                        return lo, hi
 
                     def _extents(eff_px):
                         eff_px = max(4, int(round(eff_px)))
@@ -21014,21 +21606,43 @@ if __name__ == "__main__":
                         # With the anchors at their defaults (left 0, right = content edge,
                         # top 0) these collapse to the previous lw/rw/top_e + margin values.
                         #
-                        # CLAMP the anchors to the content box first. A crop shifts every anchor
-                        # by -crop_start (see update_crop), which can leave a label anchored far
-                        # OUTSIDE the cropped image (e.g. a ladder cropped out of a 2750px-wide
-                        # gel leaves left_marker_shift_added ≈ -1100). Without clamping, the
-                        # formula then demands ~1100px of padding to "reveal" a label the user
-                        # can no longer see, ballooning the canvas. Clamping means an off-canvas
-                        # anchor is treated as sitting on the nearest content edge, so the label
-                        # only ever asks for its own width + margin. Anchors already inside the
-                        # content are unchanged, so normal gels behave exactly as before.
-                        clamp_t = min(max(shift_t_rel, 0.0), float(content_h))
-                        clamp_l = min(max(shift_l_rel, 0.0), float(content_w))
-                        clamp_r = min(max(shift_r_rel, 0.0), float(content_w))
+                        # CLAMP the anchors to the CANVAS (content box + the margins already on
+                        # the image), NOT to the content box itself.
+                        #
+                        # Why clamp at all: a crop shifts every anchor by -crop_start (see
+                        # update_crop) and can leave a label anchored far OUTSIDE the cropped
+                        # image (a ladder cropped out of a 2750px-wide gel leaves
+                        # left_marker_shift_added ≈ -1100). Unclamped, the formula demands
+                        # ~1100px of padding to "reveal" a label the user can no longer see.
+                        #
+                        # Why the CANVAS and not the content box: labels are normally parked in
+                        # the existing margin, i.e. ABOVE/OUTSIDE the content — the top labels
+                        # of a gel sit above the gel itself. Clamping those to 0 discarded the
+                        # offset entirely, so the recommendation ignored the anchor completely:
+                        # moving the top labels 140px further up changed the recommended top
+                        # padding by 0px instead of +140, and the labels were clipped. An anchor
+                        # `d` px above the content needs `d` px MORE padding, not less, which is
+                        # exactly what the `- clamp_t` term below produces once clamp_t is
+                        # allowed to go negative down to -ct.
+                        #
+                        # Anchors inside the content are unaffected (normal gels unchanged), and
+                        # the crop case is still bounded — it can only ever ask for the margins
+                        # the image actually has.
+                        clamp_t = min(max(shift_t_rel, -float(ct)), float(content_h + cb))
+                        clamp_l = min(max(shift_l_rel, -float(cl)), float(content_w + cr))
+                        clamp_r = min(max(shift_r_rel, -float(cl)), float(content_w + cr))
                         pad_top = max(0.0, math.ceil(top_e) + margin + 0.4 * ep - clamp_t)
                         pad_l = max(0.0, lw + margin - clamp_l)
                         pad_r = max(0.0, clamp_r + rw + margin - content_w)
+
+                        # Rotated top labels also reach SIDEWAYS past the outermost lanes —
+                        # fold that in, capped to the content size like the custom-item
+                        # overflow so a stray marker can't balloon the canvas.
+                        _hb = _top_h_bounds(ep)
+                        if _hb is not None:
+                            _lo, _hi = _hb
+                            pad_l = max(pad_l, min(max(0.0, margin - _lo), float(content_w)))
+                            pad_r = max(pad_r, min(max(0.0, _hi + margin - content_w), float(content_w)))
                         # Fold in custom markers/shapes (and the vertical extent of the
                         # standard L/R marker labels) that spill past the canvas edges.
                         cust_l, cust_r, cust_t, cust_b = _custom_overflow(view_scale, ep)
@@ -21475,6 +22089,32 @@ if __name__ == "__main__":
 
                 main_layout.addStretch()
                 return tab
+
+            def _file_write_error_text(self, path, what, err=None, extra=None):
+                """Actionable message for a file that could not be written.
+
+                The app already retries these writes for about a second, so reaching here
+                means the block persisted. In practice that is nearly always a cloud-synced
+                folder (Box, Google Drive, OneDrive, Dropbox) or a scanner-watched folder
+                like Downloads holding the file, or a folder the app is not permitted to
+                write to — so say that instead of only echoing the raw exception."""
+                lines = [f"Could not save {what}:", f"{path}", ""]
+                if err is not None:
+                    lines += [f"Reason: {err}", ""]
+                lines += [
+                    "This folder is usually the cause. Cloud-sync folders (Box, Google "
+                    "Drive, OneDrive, Dropbox) and scanner-watched folders such as "
+                    "Downloads can keep a file locked while they upload or scan it.",
+                    "",
+                    "Try one of these:",
+                    "  • Wait a moment and save again.",
+                    "  • Pause syncing, save, then resume.",
+                    "  • Save to a local folder (e.g. Documents) and copy it across "
+                    "afterwards.",
+                ]
+                if extra:
+                    lines += ["", extra]
+                return "\n".join(lines)
 
             def open_modify_markers_dialog(self):
                 self._backup_custom_markers_before_modify_dialog = [list(m) for m in self.custom_markers]
@@ -21951,8 +22591,7 @@ if __name__ == "__main__":
                         if preserved_presets:
                             if not os.path.exists(app_path):
                                 os.makedirs(app_path)
-                            with open(config_filepath, "w", encoding='utf-8') as f:
-                                json.dump({"presets": preserved_presets}, f, indent=4)
+                            _atomic_write_json(config_filepath, {"presets": preserved_presets})
                         elif os.path.exists(config_filepath):
                             os.remove(config_filepath)
                     except Exception:
@@ -22272,6 +22911,12 @@ if __name__ == "__main__":
                 except Exception:
                     pass
                 try:
+                    if obj is getattr(self, '_mr_longpress_btn', None):
+                        if self._handle_move_resize_longpress_event(event):
+                            return True
+                except Exception:
+                    pass
+                try:
                     if (event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride)
                             and event.key() == Qt.Key_Escape
                             # `None` covers a transient no-active-window state (seen on macOS
@@ -22451,14 +23096,97 @@ if __name__ == "__main__":
 
                 super().keyPressEvent(event)
                 
+            # Press-and-hold duration on the toolbar Move/Resize button that opens the
+            # Marker Options dialog instead of toggling the tool.
+            MOVE_RESIZE_LONGPRESS_MS = 2000
+
+            def _install_move_resize_longpress(self):
+                """Give the toolbar Move/Resize button a press-and-hold shortcut to Marker
+                Options. A normal click still toggles the tool; holding the left button for
+                MOVE_RESIZE_LONGPRESS_MS opens the dialog instead.
+
+                The toolbar has no Marker Options button of its own (it lives in the Markers
+                tab next to the other Move/Resize button), so this is the only way to reach it
+                without switching tabs. Must run AFTER the action is added to the toolbar —
+                widgetForAction() returns None before that."""
+                btn = self.tool_bar.widgetForAction(self.move_resize_action)
+                if btn is None:
+                    return
+                self._mr_longpress_btn = btn
+                self._mr_press_started = None
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.setInterval(self.MOVE_RESIZE_LONGPRESS_MS)
+                timer.timeout.connect(self._on_move_resize_longpress)
+                self._mr_longpress_timer = timer
+                btn.installEventFilter(self)
+
+            def _on_move_resize_longpress(self):
+                """Hold satisfied — open Marker Options instead of toggling the tool."""
+                btn = getattr(self, '_mr_longpress_btn', None)
+                if btn is not None:
+                    # Drop the sunken look now: the dialog is modal, so the button would
+                    # otherwise sit visibly pressed until the user came back and released.
+                    btn.setDown(False)
+                try:
+                    self.open_modify_markers_dialog()
+                except Exception:
+                    log_traceback()
+
+            def _handle_move_resize_longpress_event(self, event):
+                """Filter hook for the toolbar Move/Resize button. Returns True to swallow.
+
+                The swallow decision is made from the ELAPSED HOLD TIME rather than a
+                "dialog was opened" flag: the modal dialog steals the mouse release, so a flag
+                could stay set and eat the next legitimate click. Timing the press has no such
+                state to leak."""
+                et = event.type()
+                timer = getattr(self, '_mr_longpress_timer', None)
+                if timer is None:
+                    return False
+                if et == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                    self._mr_press_started = QElapsedTimer()
+                    self._mr_press_started.start()
+                    timer.start()
+                elif et == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                    timer.stop()
+                    started = self._mr_press_started
+                    self._mr_press_started = None
+                    if started is not None and started.elapsed() >= self.MOVE_RESIZE_LONGPRESS_MS:
+                        # The hold already opened Marker Options — don't ALSO toggle the tool.
+                        btn = getattr(self, '_mr_longpress_btn', None)
+                        if btn is not None:
+                            btn.setDown(False)
+                        return True
+                elif et in (QEvent.Leave, QEvent.MouseButtonDblClick):
+                    # Dragging off the button cancels the hold, like any other button.
+                    timer.stop()
+                    self._mr_press_started = None
+                return False
+
+            def _set_move_resize_checked(self, checked):
+                """Mirror the Move/Resize state onto BOTH controls that drive it — the
+                Markers-tab button and the toolbar action — without re-emitting, so the two
+                can never disagree no matter which one the user clicked (or whether the mode
+                was ended by Esc / another tool taking over)."""
+                for w in (getattr(self, 'move_resize_button', None),
+                          getattr(self, 'move_resize_action', None)):
+                    if w is None or w.isChecked() == checked:
+                        continue
+                    w.blockSignals(True)
+                    w.setChecked(checked)
+                    w.blockSignals(False)
+
             def toggle_custom_item_interaction_mode(self, checked):
                 if checked:
                     if not self._require_image("Move/Resize"):
-                        if hasattr(self, 'move_resize_button'):
-                            self.move_resize_button.setChecked(False)
+                        self._set_move_resize_checked(False)
                         return
-                    # Turn off every other active tool/mode (mutual exclusion).
+                    # Turn off every other active tool/mode (mutual exclusion). This can call
+                    # cancel_custom_item_interaction_mode(), which un-checks both controls —
+                    # so re-assert the checked state AFTER it, below.
                     self._cancel_all_interaction_modes()
+                    self._set_move_resize_checked(True)
 
                     self.current_selection_mode = "select_custom_item"
                     self.live_view_label.mode = "select_custom_item"
@@ -22488,15 +23216,12 @@ if __name__ == "__main__":
                     self.cancel_custom_item_interaction_mode()
 
             def cancel_custom_item_interaction_mode(self):
-                # Always drop the button's checked state first — the global
-                # `QPushButton:checked` stylesheet renders it green, so if it were left
-                # checked (e.g. this is reached after the mode was already cleared by another
-                # path) the button would stay green after Esc/cancel. setChecked doesn't emit
-                # `clicked`, so this won't re-trigger the toggle handler.
-                if hasattr(self, 'move_resize_button') and self.move_resize_button.isChecked():
-                    self.move_resize_button.blockSignals(True)
-                    self.move_resize_button.setChecked(False)
-                    self.move_resize_button.blockSignals(False)
+                # Always drop the checked state first — the global `QPushButton:checked`
+                # stylesheet renders the button green, so if it were left checked (e.g. this
+                # is reached after the mode was already cleared by another path) it would stay
+                # green after Esc/cancel. Signals are blocked, so this won't re-trigger the
+                # toggle handler. Covers the toolbar action too.
+                self._set_move_resize_checked(False)
 
                 if self.current_selection_mode not in ["select_custom_item", "dragging_custom_item", "resizing_custom_item"]:
                     self.clear_mode_status()   # ensure the green highlight is cleared too
@@ -22887,8 +23612,9 @@ if __name__ == "__main__":
                         # Border-thickness handle (floats above the top edge): only vertical
                         # travel counts, and it is applied RELATIVE to the thickness captured
                         # on grab, so there is no jump when the handle is picked up.
-                        shape_data['thickness'] = self._thickness_from_perp_drag(
-                            shape_data, current_mouse_pos_ls, 0.0, -1.0, scale)
+                        shape_data['thickness'] = self._sync_size_spin_from_thickness(
+                            self._thickness_from_perp_drag(
+                                shape_data, current_mouse_pos_ls, 0.0, -1.0, scale))
                     elif stype == 'rectangle':
                         fixed_corner_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 2) % 4]
 
@@ -22937,10 +23663,41 @@ if __name__ == "__main__":
                             # Handle 2 sits on the +perpendicular side, handle 3 on the -side;
                             # dragging either one AWAY from the shaft thickens the shape.
                             sign = 1.0 if self.resizing_corner_index == 2 else -1.0
-                            shape_data['thickness'] = self._thickness_from_perp_drag(
-                                shape_data, current_mouse_pos_ls, -uy * sign, ux * sign, scale)
+                            shape_data['thickness'] = self._sync_size_spin_from_thickness(
+                                self._thickness_from_perp_drag(
+                                    shape_data, current_mouse_pos_ls, -uy * sign, ux * sign, scale))
 
                 self.update_live_view()
+
+            def _sync_size_spin_from_thickness(self, thickness):
+                """Mirror a live thickness change into the shared "Size:" spin box of the
+                Custom Markers, Shapes and Grid group, and return the thickness to store.
+
+                That one spin box seeds BOTH the custom-marker font size and the thickness of
+                newly drawn shapes (the shape-creation path reads custom_font_size_spinbox
+                .value() as the thickness). Text resizes already wrote back to it; shape
+                thickness did not, so dragging a line/rectangle/arrow thicker left the box
+                showing a stale number and the next shape came out at the old thickness.
+
+                The returned value is CLAMPED to the spin box's range for the same reason
+                _resize_text_item_from_drag clamps font size: without it a drag could set a
+                0.5px or 422px thickness that the 1..150 spinner cannot show, and the number
+                on screen would silently disagree with what is drawn. Sub-pixel rounding in
+                the readout is fine; being out of range is not."""
+                try:
+                    th = float(thickness)
+                except (TypeError, ValueError):
+                    return thickness
+                sp = getattr(self, 'custom_font_size_spinbox', None)
+                if sp is None:
+                    return th
+                th = max(float(sp.minimum()), min(th, float(sp.maximum())))
+                v = int(round(th))
+                if v != sp.value():
+                    sp.blockSignals(True)
+                    sp.setValue(v)
+                    sp.blockSignals(False)
+                return th
 
             def _thickness_from_perp_drag(self, shape_data, current_mouse_ls, perp_x, perp_y, scale):
                 """New thickness (image space) for a thickness-handle drag.
@@ -23495,8 +24252,7 @@ if __name__ == "__main__":
                     except Exception:
                         config_data = {}
                     config_data["presets"] = self.presets_data
-                    with open(config_filepath, "w", encoding='utf-8') as f:
-                        json.dump(config_data, f, indent=4)
+                    _atomic_write_json(config_filepath, config_data)
 
                     # Update ComboBox
                     self.combo_box.blockSignals(True)
@@ -23560,8 +24316,7 @@ if __name__ == "__main__":
                     pass
 
                 try:
-                    with open(config_filepath, "w", encoding='utf-8') as f:
-                        json.dump(config_data, f, indent=4)
+                    _atomic_write_json(config_filepath, config_data)
                 except Exception as e:
                     pass # print(f"ERROR: Could not save config: {e}")
                     QMessageBox.warning(self, "Config Save Error", f"Could not save settings:\n{e}")
@@ -25287,7 +26042,18 @@ if __name__ == "__main__":
                 self.left_marker_shift_added += padding_left
                 self.right_marker_shift_added += padding_left
                 self.top_marker_shift_added += padding_top
-                self._update_overlay_slider_ranges
+
+                # Overlay layers live in the SAME image-pixel space, so they have to move with
+                # the content like every other element above. Without this, applying padding
+                # after 'Set Current as Base' looked like the image refused to pad: the canvas
+                # and the markers moved, but Image 1 — which is the layer actually on screen —
+                # stayed at its old coordinates, so the picture never shifted and no margin
+                # appeared to drop the overlay into.
+                self._shift_overlay_positions(padding_left, padding_top)
+                # NOTE: this used to read `self._update_overlay_slider_ranges` with no call
+                # parentheses, so it was a no-op expression and the X/Y slider ranges were
+                # never re-derived for the new canvas size after padding.
+                self._update_overlay_slider_ranges()
 
             # ----- Multi-lane (densitometry) box <-> image-space anchoring helpers -----
             def _ensure_lane_image_anchor(self, lane_def):
@@ -25584,16 +26350,50 @@ if __name__ == "__main__":
 
                 
 
+            def _compose_overlay_edit_view(self, overlay_index):
+                """Isolated-editor view of one overlay: the layer's adjusted preview painted
+                at its REAL size, resize % and position onto a canvas the size of the main
+                image. Returns None if that overlay isn't available.
+
+                This is what makes Main Image / Overlay 1 / Overlay 2 all display at the same
+                scale. Previously each context handed its raw buffer to the renderer, which
+                stretched it to fill the viewer, so a 400px overlay next to a 2000px gel
+                looked exactly the same size and its placement was invisible while editing."""
+                prev = getattr(self, f'image{overlay_index}_adjusted_preview', None)
+                if prev is None or prev.isNull():
+                    return None
+                ref = self.image if (self.image and not self.image.isNull()) else self.image_master
+                if ref is None or ref.isNull():
+                    return prev
+                canvas = QImage(ref.width(), ref.height(), QImage.Format_ARGB32_Premultiplied)
+                canvas.fill(Qt.transparent)
+                pos = getattr(self, f'image{overlay_index}_position', (0, 0))
+                factor = self._overlay_scale_factor(overlay_index)
+                rot_slider = getattr(self, f'image{overlay_index}_rotation_slider', None)
+                rot = (rot_slider.value() / 10.0) if rot_slider else 0.0
+                rect = QRectF(float(pos[0]), float(pos[1]),
+                              prev.width() * factor, prev.height() * factor)
+                p = QPainter(canvas)
+                p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                if abs(rot) > 0.01:
+                    c = rect.center()
+                    p.translate(c); p.rotate(rot); p.translate(-c)
+                p.drawImage(rect, prev)
+                p.end()
+                return canvas
+
             def update_live_view(self):
                 # --- START FIX: Context-aware rendering ---
                 image_for_view = None
-                
+
                 if self.is_in_dedicated_edit_mode:
-                    # In an isolated editor view, get the specific pre-calculated overlay preview
+                    # In an isolated editor view, show ONLY the selected overlay — but placed
+                    # and sized exactly as it appears in the combined view, so switching
+                    # contexts never changes the zoom or the apparent size of a layer.
                     if self.adjustment_context == "Overlay 1 (Base)":
-                        image_for_view = getattr(self, 'image1_adjusted_preview', None)
+                        image_for_view = self._compose_overlay_edit_view(1)
                     elif self.adjustment_context == "Overlay 2 (Overlay)":
-                        image_for_view = getattr(self, 'image2_adjusted_preview', None)
+                        image_for_view = self._compose_overlay_edit_view(2)
                     else: # Should not happen
                         image_for_view = self.image
 
@@ -25826,6 +26626,13 @@ if __name__ == "__main__":
                         clamped_val = max(min_val, min(current_pos_val, max_val))
                         slider.setValue(clamped_val)
                         slider.blockSignals(False)
+
+                # Keep the Image 1 / Image 2 size readouts in step with the buffers. This
+                # helper is already called after every load / crop / pad / rasterize.
+                try:
+                    self._update_overlay_size_labels()
+                except Exception:
+                    pass
             
             def _draw_arrow_on_painter(self, painter, start_pt, end_pt, line_width):
                 """Draws an arrow (shaft + filled triangular head at `end_pt`) between two
@@ -25878,24 +26685,23 @@ if __name__ == "__main__":
                 # --- 1. Logic for Isolated Edit Mode ---
                 # (Viewing just one overlay while adjusting its settings)
                 if self.is_in_dedicated_edit_mode:
-                    image_to_draw = None
-                    if self.adjustment_context == "Overlay 1 (Base)":
-                        image_to_draw = getattr(self, 'image1_adjusted_preview', None)
-                    elif self.adjustment_context == "Overlay 2 (Overlay)":
-                        image_to_draw = getattr(self, 'image2_adjusted_preview', None)
-                    else:
-                        image_to_draw = scaled_image
-
-                    if not image_to_draw or image_to_draw.isNull():
-                         painter.end(); return
-
-                    # Draw the single image centered and scaled to fit the view
-                    scaled_overlay_for_view = image_to_draw.scaled(canvas.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    x_offset = (canvas.width() - scaled_overlay_for_view.width()) // 2
-                    y_offset = (canvas.height() - scaled_overlay_for_view.height()) // 2
+                    # `scaled_image` here is the isolated-layer view built by
+                    # _compose_overlay_edit_view(): the selected overlay drawn at its TRUE
+                    # size, scale and position on a canvas the size of the main image. So it
+                    # is drawn exactly like the base — one shared fit for Main Image,
+                    # Overlay 1 and Overlay 2.
+                    #
+                    # It used to call image_to_draw.scaled(canvas.size(), KeepAspectRatio),
+                    # which blew every layer up to fill the viewer: a half-size overlay
+                    # looked identical in size to the main image, so you could not judge
+                    # scale or placement while adjusting it.
+                    if not scaled_image or scaled_image.isNull():
+                        painter.end(); return
+                    x_offset = (canvas.width() - scaled_image.width()) // 2
+                    y_offset = (canvas.height() - scaled_image.height()) // 2
                     self.x_offset_s = x_offset
                     self.y_offset_s = y_offset
-                    painter.drawImage(x_offset, y_offset, scaled_overlay_for_view)
+                    painter.drawImage(x_offset, y_offset, scaled_image)
                 
                 # --- 2. Logic for Main View (Combined) ---
                 else:
@@ -25904,7 +26710,12 @@ if __name__ == "__main__":
                     y_offset = (canvas.height() - scaled_image.height()) // 2
                     self.x_offset_s = x_offset
                     self.y_offset_s = y_offset
-                    painter.drawImage(x_offset, y_offset, scaled_image)
+                    # Image 1 (Base), when placed, IS the bottom layer — painting the main
+                    # image underneath it would composite the same picture twice and hide
+                    # the effect of any region clip applied to Image 1. Its geometry is
+                    # still used above for the layout/offsets and for the region span.
+                    if not self._overlay_base_layer_active():
+                        painter.drawImage(x_offset, y_offset, scaled_image)
 
                     # Check which overlays are active
                     has_img1 = hasattr(self, 'image1_adjusted_preview') and self.image1_adjusted_preview and hasattr(self, 'image1_position')
@@ -26347,6 +27158,10 @@ if __name__ == "__main__":
                     self.left_marker_shift_added -= crop_x_start
                     self.right_marker_shift_added -= crop_x_start
                     self.top_marker_shift_added -= crop_y_start
+
+                    # Overlay layers are in the same image-pixel space — move them with the
+                    # content, exactly like the markers and custom shapes above.
+                    self._shift_overlay_positions(-crop_x_start, -crop_y_start)
 
                     # --- Perform Image Crop ---
                     cropped_qimage = self.image_master.copy(crop_x_start, crop_y_start, crop_width, crop_height)
@@ -27207,19 +28022,31 @@ if __name__ == "__main__":
                     quality = 95 if save_format in ["JPG", "JPEG"] else -1
                     # JPEG has no alpha channel — flatten transparent areas onto white
                     # (Qt would otherwise composite them to black).
-                    if save_format in ["JPG", "JPEG"] and self.image_master.hasAlphaChannel():
-                        if not self._flatten_qimage_on_white(self.image_master).save(original_save_path, format=save_format, quality=quality):
-                            QMessageBox.warning(self, "Error", f"Failed to save original image.")
-                    # For a transparent TIFF, write it ourselves first (straight alpha);
-                    # Qt's plugin produces premultiplied alpha that pastes opaque in Word.
-                    elif save_format == "TIFF" and self.image_master.hasAlphaChannel():
-                        if not self._save_qimage_as_tiff(self.image_master, original_save_path):
-                            if not self.image_master.save(original_save_path, format="TIFF", quality=quality):
-                                QMessageBox.warning(self, "Error", f"Failed to save original image.")
-                    elif not self.image_master.save(original_save_path, format=save_format if save_format else None, quality=quality):
+                    # Same fallback order as before, wrapped so a transient lock from a cloud
+                    # sync client / antivirus scanner is retried instead of failing the save.
+                    def _write_original_image():
+                        if save_format in ["JPG", "JPEG"] and self.image_master.hasAlphaChannel():
+                            # JPEG has no alpha channel — flatten transparent areas onto white
+                            # (Qt would otherwise composite them to black).
+                            return self._flatten_qimage_on_white(self.image_master).save(
+                                original_save_path, format=save_format, quality=quality)
+                        # For a transparent TIFF, write it ourselves first (straight alpha);
+                        # Qt's plugin produces premultiplied alpha that pastes opaque in Word.
+                        if save_format == "TIFF" and self.image_master.hasAlphaChannel():
+                            return (self._save_qimage_as_tiff(self.image_master, original_save_path)
+                                    or self.image_master.save(original_save_path, format="TIFF",
+                                                              quality=quality))
                         # TIFF plugin missing / can't write this depth: write it ourselves.
-                        if not (save_format == "TIFF" and self._save_qimage_as_tiff(self.image_master, original_save_path)):
-                            QMessageBox.warning(self, "Error", f"Failed to save original image.")
+                        return (self.image_master.save(
+                                    original_save_path,
+                                    format=save_format if save_format else None, quality=quality)
+                                or (save_format == "TIFF"
+                                    and self._save_qimage_as_tiff(self.image_master,
+                                                                  original_save_path)))
+
+                    if not _retry_file_op(_write_original_image):
+                        QMessageBox.warning(self, "Error", self._file_write_error_text(
+                            original_save_path, "the original image"))
 
                 # --- Create and save _modified image ---
                 render_scale = 3
@@ -27270,7 +28097,10 @@ if __name__ == "__main__":
                     canvas_format = QImage.Format_ARGB32_Premultiplied
 
                 modified_canvas = QImage(canvas_width, canvas_height, canvas_format)
-                modified_canvas.fill(Qt.transparent)
+                # White when Image 1 (Base) replaces the master — see finalize_combined_image:
+                # without something opaque below, partially-mixed layers would save out
+                # semi-transparent instead of blended over the viewer's white background.
+                modified_canvas.fill(Qt.transparent if not self._overlay_base_layer_active() else Qt.white)
 
                 painter = QPainter(modified_canvas)
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
@@ -27280,8 +28110,11 @@ if __name__ == "__main__":
 
                 # --- DRAWING LOGIC WITH OVERLAYS ---
 
-                # 0. Draw Background (Master)
-                if True: # Always draw master background to prevent data loss
+                # 0. Draw Background (Master) — unless Image 1 (Base) replaces it.
+                # Image 1 is the bottom layer when placed; painting the master under it too
+                # double-composites the base and defeats region clipping on Image 1. Same
+                # rule as the live preview and Rasterize, so save/copy matches the screen.
+                if not self._overlay_base_layer_active():
                     # Determine Main Image Settings
                     main_settings = {}
                     if hasattr(self, 'main_levels_gamma'):
@@ -27313,21 +28146,28 @@ if __name__ == "__main__":
                     # Draw Image 1
                     painter.setOpacity(op1_blend)
 
-                    w_scaled = adjusted_img1.width() * (self.image1_resize_slider.value()/100.0) * render_scale
-                    h_scaled = adjusted_img1.height() * (self.image1_resize_slider.value()/100.0) * render_scale
+                    w_scaled = adjusted_img1.width() * (self._overlay_scale_factor(1)) * render_scale
+                    h_scaled = adjusted_img1.height() * (self._overlay_scale_factor(1)) * render_scale
                     x_scaled = self.image1_position[0] * render_scale
                     y_scaled = self.image1_position[1] * render_scale
 
                     rect1_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
 
                     rotation1 = self.image1_rotation_slider.value() / 10.0
+                    # 'Select Regions to Keep' was previously honoured ONLY by the live
+                    # preview and Rasterize, so saving/copying a figure without rasterizing
+                    # first silently ignored the regions and blended the layer over the whole
+                    # image. Clip here too so the saved file matches the screen.
+                    clip_path1 = (self._build_region_clip_path(canvas_width, canvas_height)
+                                  if self._region_target_includes(1) else None)
+                    painter.save()
+                    if clip_path1 is not None:
+                        painter.setClipPath(clip_path1)
                     if abs(rotation1) > 0.01:
                         center_point = rect1_draw.center()
-                        painter.save(); painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
-                        painter.drawImage(rect1_draw, adjusted_img1)
-                        painter.restore()
-                    else:
-                        painter.drawImage(rect1_draw, adjusted_img1)
+                        painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
+                    painter.drawImage(rect1_draw, adjusted_img1)
+                    painter.restore()
                 # Note: removed the 'else draw Standard Master' block since we draw Master at step 0 now.
 
 
@@ -27335,21 +28175,26 @@ if __name__ == "__main__":
                 if has_img2 and adjusted_img2:
                     painter.setOpacity(op2_blend)
 
-                    w_scaled = adjusted_img2.width() * (self.image2_resize_slider.value()/100.0) * render_scale
-                    h_scaled = adjusted_img2.height() * (self.image2_resize_slider.value()/100.0) * render_scale
+                    w_scaled = adjusted_img2.width() * (self._overlay_scale_factor(2)) * render_scale
+                    h_scaled = adjusted_img2.height() * (self._overlay_scale_factor(2)) * render_scale
                     x_scaled = self.image2_position[0] * render_scale
                     y_scaled = self.image2_position[1] * render_scale
 
                     rect2_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
 
                     rotation2 = self.image2_rotation_slider.value() / 10.0
+                    # Union clip so Image 2 is composited exactly once through all regions
+                    # (no double-blending where they overlap) — same as the live preview.
+                    clip_path2 = (self._build_region_clip_path(canvas_width, canvas_height)
+                                  if self._region_target_includes(2) else None)
+                    painter.save()
+                    if clip_path2 is not None:
+                        painter.setClipPath(clip_path2)
                     if abs(rotation2) > 0.01:
                         center_point = rect2_draw.center()
-                        painter.save(); painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
-                        painter.drawImage(rect2_draw, adjusted_img2)
-                        painter.restore()
-                    else:
-                        painter.drawImage(rect2_draw, adjusted_img2)
+                        painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
+                    painter.drawImage(rect2_draw, adjusted_img2)
+                    painter.restore()
 
                     # Reset opacity for markers
                     painter.setOpacity(1.0)
@@ -27440,9 +28285,11 @@ if __name__ == "__main__":
                     # straight (UNASSALPHA). Qt's plugin writes premultiplied/associated
                     # alpha (or is missing), which Word/PowerPoint render incorrectly —
                     # the transparency appears lost. Fall back to Qt only if that fails.
-                    saved_ok = self._save_qimage_as_tiff(modified_canvas, modified_save_path, dpi=effective_dpi)
-                    if not saved_ok:
-                        saved_ok = modified_canvas.save(modified_save_path, format="TIFF", quality=-1)
+                    def _write_modified_image():
+                        return (self._save_qimage_as_tiff(modified_canvas, modified_save_path,
+                                                          dpi=effective_dpi)
+                                or modified_canvas.save(modified_save_path, format="TIFF",
+                                                        quality=-1))
                 else:
                     # Match the _original image's quality for JPEG (Qt's default for -1 is ~75,
                     # which visibly over-compresses the annotated output). Lossless formats ignore this.
@@ -27455,18 +28302,31 @@ if __name__ == "__main__":
                         if dpm_mod > 0:
                             canvas_to_save.setDotsPerMeterX(dpm_mod)
                             canvas_to_save.setDotsPerMeterY(dpm_mod)
-                    saved_ok = canvas_to_save.save(modified_save_path, format=save_format_mod if save_format_mod else None, quality=quality_mod)
-                if not saved_ok:
-                    QMessageBox.warning(self, "Error", f"Failed to save modified image.")
+
+                    def _write_modified_image():
+                        return canvas_to_save.save(
+                            modified_save_path,
+                            format=save_format_mod if save_format_mod else None,
+                            quality=quality_mod)
+
+                # Retried: a cloud sync client or antivirus scanner can hold the file open
+                # for a few hundred ms right after we wrote the _original next to it.
+                if not _retry_file_op(_write_modified_image):
+                    QMessageBox.warning(self, "Error", self._file_write_error_text(
+                        modified_save_path, "the annotated image"))
                     return False
 
                 # --- Save Config File ---
                 config_data = self.get_current_config()
                 try:
-                    with open(config_save_path, "w", encoding='utf-8') as config_file:
-                        json.dump(config_data, config_file, indent=4)
+                    _atomic_write_json(config_save_path, config_data)
                 except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to save config file: {e}")
+                    # The images ARE saved at this point — say so, or the user re-runs the
+                    # whole save chasing a file that is already on disk.
+                    QMessageBox.warning(self, "Error", self._file_write_error_text(
+                        config_save_path, "the configuration file", err=e,
+                        extra="The image files were saved successfully — only the "
+                              "configuration (.txt) could not be written."))
                     return False
 
                 self.is_modified = False
@@ -29093,35 +29953,47 @@ if __name__ == "__main__":
                 adjusted_img2 = getattr(self, 'image2_adjusted_preview', None) if has_img2 else None
 
                 base_canvas = QImage(cw, ch, QImage.Format_ARGB32_Premultiplied)
-                base_canvas.fill(Qt.transparent)
+                # See finalize_combined_image for why this is white when Image 1 is the base.
+                base_canvas.fill(Qt.transparent if not self._overlay_base_layer_active() else Qt.white)
                 bp = QPainter(base_canvas)
                 bp.setRenderHint(QPainter.SmoothPixmapTransform, False)
                 bp.setOpacity(1.0)
-                bp.drawImage(QRectF(0.0, 0.0, float(cw), float(ch)), base_bg_img, QRectF(base_bg_img.rect()))
+                # Skip the master when Image 1 (Base) is the bottom layer — same rule as the
+                # preview / Rasterize / save, so every export matches the screen.
+                if not self._overlay_base_layer_active():
+                    bp.drawImage(QRectF(0.0, 0.0, float(cw), float(ch)), base_bg_img, QRectF(base_bg_img.rect()))
 
                 op1_blend, op2_blend = self._overlay_effective_opacities()
+                # 'Select Regions to Keep' now applies to the editable exports too; it was
+                # previously honoured only by the live preview and Rasterize.
                 if has_img1 and adjusted_img1:
                     bp.setOpacity(op1_blend)
-                    w_s = adjusted_img1.width() * (self.image1_resize_slider.value() / 100.0) * render_scale
-                    h_s = adjusted_img1.height() * (self.image1_resize_slider.value() / 100.0) * render_scale
+                    w_s = adjusted_img1.width() * (self._overlay_scale_factor(1)) * render_scale
+                    h_s = adjusted_img1.height() * (self._overlay_scale_factor(1)) * render_scale
                     rect1 = QRectF(self.image1_position[0] * render_scale, self.image1_position[1] * render_scale, w_s, h_s)
                     rot1 = self.image1_rotation_slider.value() / 10.0
+                    clip1 = self._build_region_clip_path(cw, ch) if self._region_target_includes(1) else None
+                    bp.save()
+                    if clip1 is not None:
+                        bp.setClipPath(clip1)
                     if abs(rot1) > 0.01:
-                        c = rect1.center(); bp.save(); bp.translate(c); bp.rotate(rot1); bp.translate(-c)
-                        bp.drawImage(rect1, adjusted_img1); bp.restore()
-                    else:
-                        bp.drawImage(rect1, adjusted_img1)
+                        c = rect1.center(); bp.translate(c); bp.rotate(rot1); bp.translate(-c)
+                    bp.drawImage(rect1, adjusted_img1)
+                    bp.restore()
                 if has_img2 and adjusted_img2:
                     bp.setOpacity(op2_blend)
-                    w_s = adjusted_img2.width() * (self.image2_resize_slider.value() / 100.0) * render_scale
-                    h_s = adjusted_img2.height() * (self.image2_resize_slider.value() / 100.0) * render_scale
+                    w_s = adjusted_img2.width() * (self._overlay_scale_factor(2)) * render_scale
+                    h_s = adjusted_img2.height() * (self._overlay_scale_factor(2)) * render_scale
                     rect2 = QRectF(self.image2_position[0] * render_scale, self.image2_position[1] * render_scale, w_s, h_s)
                     rot2 = self.image2_rotation_slider.value() / 10.0
+                    clip2 = self._build_region_clip_path(cw, ch) if self._region_target_includes(2) else None
+                    bp.save()
+                    if clip2 is not None:
+                        bp.setClipPath(clip2)
                     if abs(rot2) > 0.01:
-                        c = rect2.center(); bp.save(); bp.translate(c); bp.rotate(rot2); bp.translate(-c)
-                        bp.drawImage(rect2, adjusted_img2); bp.restore()
-                    else:
-                        bp.drawImage(rect2, adjusted_img2)
+                        c = rect2.center(); bp.translate(c); bp.rotate(rot2); bp.translate(-c)
+                    bp.drawImage(rect2, adjusted_img2)
+                    bp.restore()
                 bp.end()
                 return base_canvas
 
