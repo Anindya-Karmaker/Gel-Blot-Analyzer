@@ -12683,6 +12683,11 @@ if __name__ == "__main__":
                 # label / highlight) and how to cancel it. Lives in the status bar.
                 self.mode_status_label = QLabel("")
                 self.mode_status_label.setObjectName("ModeStatusLabel")
+                # Standing reminder that the densitometry lane boxes are hidden. Without it
+                # the only clue is the Show/Hide Markers button's text, which is easy to miss
+                # — so regions could be drawn (and analysed) while nothing appeared on screen.
+                self.markers_hidden_label = QLabel("")
+                self.markers_hidden_label.setObjectName("MarkersHiddenLabel")
                 self._notified_keys = set()  # keys of one-shot info popups already shown
                 self.shape_points_at_drag_start_label = []
                 self.initial_mouse_pos_for_shape_drag_label = QPointF()
@@ -12716,6 +12721,9 @@ if __name__ == "__main__":
                 statusbar.addWidget(self.depth_label)
                 statusbar.addWidget(self.mouse_coord_label) # Add new label here
                 statusbar.addWidget(self.location_label, 1) # location_label remains stretched
+                # Sits immediately left of the mode message so it is in the same place the
+                # user already looks for tool state.
+                statusbar.addPermanentWidget(self.markers_hidden_label, 0)
                 # The mode/help message sits on the right of the status bar and is given
                 # the bulk of the stretch so long instructions remain readable.
                 statusbar.addPermanentWidget(self.mode_status_label, 4)
@@ -17345,6 +17353,38 @@ if __name__ == "__main__":
                 except (ValueError, ZeroDivisionError, RuntimeError):
                     return None
                 
+            def _ensure_markers_visible_for_regions(self):
+                """Called before a lane-region tool starts. If the densitometry boxes are
+                hidden, say so and offer to show them.
+
+                Hiding only suppresses drawing, so a region tool used while hidden draws
+                nothing at all — the exact "the software is broken" report this guards
+                against. Returns False only if the user cancels outright."""
+                if getattr(self, 'markers_visible', True):
+                    return True
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Warning)
+                box.setWindowTitle("Lane boxes are hidden")
+                box.setText("The densitometry lane boxes are currently hidden.")
+                box.setInformativeText(
+                    "If you continue, the regions you draw will not appear on the image "
+                    "(they are still created and can still be analysed).\n\n"
+                    "Show them now?")
+                show_btn = box.addButton("Show Markers", QMessageBox.AcceptRole)
+                keep_btn = box.addButton("Continue Hidden", QMessageBox.DestructiveRole)
+                box.addButton(QMessageBox.Cancel)
+                box.setDefaultButton(show_btn)
+                box.exec()
+                clicked = box.clickedButton()
+                if clicked is show_btn:
+                    self.markers_visible = True
+                    self._update_toggle_markers_button_style()
+                    self.update_live_view()
+                    return True
+                if clicked is keep_btn:
+                    return True
+                return False   # Cancel
+
             def start_region_definition_session(self, region_type):
                 """
                 Unified entry point to start or continue a multi-lane definition session.
@@ -17353,6 +17393,11 @@ if __name__ == "__main__":
                 """
                 self._reset_live_view_label_custom_handlers()
                 if not self._require_image("lane definition"):
+                    return
+
+                # Drawing regions you cannot see is never what the user wants: offer to turn
+                # the boxes back on before the session starts.
+                if not self._ensure_markers_visible_for_regions():
                     return
 
                 # If a multi-lane session is NOT already active, (re)enter it.
@@ -26407,6 +26452,13 @@ if __name__ == "__main__":
                     image_for_view = self.image
                 # --- END FIX ---
 
+                # Keep the "regions hidden" status-bar warning in step with the region count
+                # (self-guarded: it returns immediately unless the state changed).
+                try:
+                    self._update_markers_hidden_indicator()
+                except Exception:
+                    pass
+
                 if hasattr(self, 'live_view_label') and hasattr(self, 'pan_left_action'):
                     enable_pan_actions = self.live_view_label.is_view_transformed()
                     self.pan_left_action.setEnabled(enable_pan_actions)
@@ -29012,11 +29064,52 @@ if __name__ == "__main__":
                 """Update the Show/Hide Markers button LABEL to reflect the current state.
                 Per user request the button no longer changes colour — only its text toggles
                 between 'Hide Markers' and 'Show Markers'."""
-                if not hasattr(self, 'toggle_markers_button'):
+                if hasattr(self, 'toggle_markers_button'):
+                    self.toggle_markers_button.setText(
+                        "Hide Markers" if self.markers_visible else "Show Markers")
+                    self.toggle_markers_button.setStyleSheet("")
+                self._update_markers_hidden_indicator()
+
+            def _update_markers_hidden_indicator(self):
+                """Show a standing status-bar warning while the densitometry lane boxes are
+                hidden.
+
+                Hiding them only suppresses the DRAWING — regions can still be created, moved
+                and analysed while invisible, and the sole indication was the toggle button's
+                text at the bottom of the Analysis tab. Users drew regions, saw nothing, and
+                assumed the tool was broken. The warning names the button that brings them
+                back and says the regions still exist.
+
+                Only shown when regions actually EXIST: with none defined there is nothing
+                being hidden, so the badge would just be permanent clutter."""
+                lbl = getattr(self, 'markers_hidden_label', None)
+                if lbl is None:
                     return
-                self.toggle_markers_button.setText(
-                    "Hide Markers" if self.markers_visible else "Show Markers")
-                self.toggle_markers_button.setStyleSheet("")
+                # Called from update_live_view, so do nothing unless the state actually
+                # changed — the region count is part of the message.
+                n_regions = len(getattr(self, 'multi_lane_definitions', []) or [])
+                sig = (bool(getattr(self, 'markers_visible', True)), n_regions)
+                if getattr(self, '_markers_hidden_sig', None) == sig:
+                    return
+                self._markers_hidden_sig = sig
+                if getattr(self, 'markers_visible', True) or n_regions == 0:
+                    lbl.setText("")
+                    lbl.setToolTip("")
+                    lbl.setStyleSheet("")
+                    lbl.setVisible(False)
+                    return
+                count = f"{n_regions} region{'s' if n_regions != 1 else ''}"
+                lbl.setText(f"  ⚠ {count} hidden — use 'Show Markers'  ")
+                lbl.setToolTip(
+                    "The densitometry lane boxes are currently hidden.\n"
+                    "Regions you draw still exist and can still be analysed — they are just "
+                    "not drawn on the image.\n"
+                    "Click 'Show Markers' (bottom of the Analysis tab) to see them again.")
+                # Amber on both themes; readable without relying on the theme's palette.
+                lbl.setStyleSheet(
+                    "QLabel { color: #7a4b00; background-color: #ffe08a; border: 1px solid "
+                    "#d9a400; border-radius: 3px; font-weight: bold; padding: 1px 4px; }")
+                lbl.setVisible(True)
 
             def predict_molecular_weight(self):
                 # --- Step 1: Check for available valid marker sets ---
