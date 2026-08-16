@@ -211,7 +211,7 @@ The authors gratefully acknowledge financial support from the National Science F
 
 If you are using this software for poster/paper publication, please cite it using the Zenode ID:
 
-[![DOI](https://zenodo.org/badge/908003915.svg)](https://doi.org/10.5281/zenodo.21963676)
+[[DOI](https://zenodo.org/badge/908003915.svg)](https://doi.org/10.5281/zenodo.21963676)
 
 ---
 
