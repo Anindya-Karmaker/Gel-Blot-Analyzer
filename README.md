@@ -213,6 +213,15 @@ If you are using this software for poster/paper publication, please cite it usin
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21963676.svg)](https://doi.org/10.5281/zenodo.21963676)
 
+OR (APA Style)
+
+Karmaker, A., McDonald, K.& Nandi, S. (2026). Gel-Blot-Analyzer v9.0 (Version GBA_v9.0) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.21963677
+
+OR (IEEE Style)
+
+A. Karmaker, K. McDonald and S. Nandi, Gel-Blot-Analyzer v9.0. (Aug. 16, 2026). Zenodo. doi: 10.5281/zenodo.21963677.
+
+
 ---
 
 ## Acknowledgement
