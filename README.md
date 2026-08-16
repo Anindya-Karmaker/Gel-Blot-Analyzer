@@ -201,6 +201,18 @@ If you wish to compile the application yourself, you will need `pyinstaller`.
 
 ---
 
+## Limitations
+
+Despite my every attempt to fix all the bugs, sometimes some minor commands can crash the program due to the user changing parameters beyond the scope. If you want to revert the changes and set the software to the default settings, please open the Run Command (Windows key + R) and copy the following code and click ok.
+
+ ```bash
+cmd /c if exist "%USERPROFILE%\.gel_blot_analyzer\Gel_Blot_Analyzer_preset_config.txt" del /f /q "%USERPROFILE%\.gel_blot_analyzer\Gel_Blot_Analyzer_preset_config.txt"
+```
+
+If you notice any crashes or problems, feel free to send me the error_log.txt file, which will be in the same folder as the application.
+
+---
+
 ## Grant Information
 
 The authors gratefully acknowledge financial support from the National Science Foundation (NSF grant # IIP-2016563) and McDonald-Nandi lab at UC Davis. This grant funded the Alpha-1 antitrypsin project, which served as a case study for demonstrating the utility of the software.
