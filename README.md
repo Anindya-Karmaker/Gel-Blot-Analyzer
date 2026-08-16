@@ -226,6 +226,12 @@ A. Karmaker, K. McDonald and S. Nandi, Gel-Blot-Analyzer v9.0. (Aug. 16, 2026). 
 
 ## Acknowledgement
 
-I am grateful to the McDonald-Nandi and Zhao lab for their input and continuous support.
+I am grateful to the McDonald-Nandi and Zhao lab at UC Davis for their input and continuous support.
+
+---
+
+## SourceForge Link
+
+https://sourceforge.net/projects/gel-blot-analyzer/
 
 ---
