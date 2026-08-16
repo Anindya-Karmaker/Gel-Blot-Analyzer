@@ -38,6 +38,6 @@ dependencies:
   # to ensure maximum compatibility and prevent unexpected breakages.
   - pip
   - pip:
-    - svgwrite       # For exporting images to the scalable SVG format
+    - python-pptx    # For exporting an editable PowerPoint (.pptx) with native text boxes
     - opencv-python  # For core computer vision functionality (used for transforms)
     - opencv-contrib-python # For core computer vision functionality (used for transforms)

@@ -10,7 +10,7 @@
 # =============================================================================
 
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
@@ -26,6 +26,9 @@ datas = []
 datas.append((os.path.join(SPECPATH, "Icon.png"), "."))
 datas.extend(collect_data_files('PySide6'))
 datas.extend(collect_data_files('matplotlib'))
+# python-pptx ships its default .pptx template + XML part files as package data;
+# they must be bundled or PowerPoint export (save_image_pptx) fails at runtime.
+datas.extend(collect_data_files('pptx'))
 
 # --- Hidden Imports ---
 # This list is crucial for modules that PyInstaller's static analysis might miss.
@@ -55,6 +58,9 @@ hiddenimports = [
     'scipy.linalg.cython_blas',
     'scipy.linalg.cython_lapack',
 ]
+# python-pptx imports several oxml submodules dynamically; collect them all so the
+# lazy `from pptx import ...` in save_image_pptx resolves in the frozen app.
+hiddenimports.extend(collect_submodules('pptx'))
 
 # --- Excluded Modules ---
 # Explicitly exclude other Qt bindings to prevent accidental bundling.

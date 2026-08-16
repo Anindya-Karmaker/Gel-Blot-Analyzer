@@ -3,95 +3,61 @@
 import os
 import sys
 import subprocess
+from PySide6 import QtCore
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
 SCRIPT_FILE = "Gel_blot_analyzer.py"
-ICON_FILE = "Icon.ico"          # correct casing — icon.ico does not exist
-VERSION_FILE = None             # version_file.txt is not present; set a path here if you create one
+ICON_FILE = "icon.ico"
+VERSION_FILE = "version_file.txt" # You must create this file for version info
 
-# --- Code Signing Configuration (Optional) ---
-# Set ENABLE_SIGNING = True and fill in CERT_PATH / CERT_PASS to sign after build.
+# --- Code Signing Configuration (Optional - Edit for your needs) ---
+# Set to True to enable code signing. If False, the signing step will be skipped.
 ENABLE_SIGNING = False
+# Full path to your .pfx certificate file.
 CERT_PATH = "C:\\path\\to\\your\\certificate.pfx"
-CERT_PASS = os.environ.get("CERT_PASS", "")  # prefer env-var; fallback to empty string
+# The password for your certificate. It's safer to load this from an environment variable.
+# In CMD: set CERT_PASS=your_password
+# In PowerShell: $env:CERT_PASS="your_password"
+CERT_PASS = os.environ.get("CERT_PASS")
+# URL of the timestamp server. This is a common, free one.
 TIMESTAMP_URL = "http://timestamp.sectigo.com"
 
-# --- Helper: locate signtool.exe from the Windows SDK ---
+# --- Helper function to find signtool.exe ---
 def find_signtool():
-    """Return path to signtool.exe from the highest-versioned Windows SDK found."""
+    """Finds the path to signtool.exe from the Windows SDK."""
     base_paths = [
         os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Windows Kits", "10", "bin"),
         os.path.join(os.environ.get("ProgramFiles", ""), "Windows Kits", "10", "bin"),
     ]
     for base in base_paths:
-        if not os.path.isdir(base):
-            continue
-        versions = sorted([d for d in os.listdir(base) if d.startswith("10.")], reverse=True)
-        for v in versions:
-            for arch in ("x64", "x86"):
-                tool = os.path.join(base, v, arch, "signtool.exe")
-                if os.path.isfile(tool):
-                    print(f"Found signtool.exe at: {tool}")
-                    return tool
+        if os.path.isdir(base):
+            versions = sorted([d for d in os.listdir(base) if d.startswith("10.")], reverse=True)
+            for v in versions:
+                tool_path = os.path.join(base, v, "x64", "signtool.exe")
+                if os.path.exists(tool_path):
+                    print(f"Found signtool.exe at: {tool_path}")
+                    return tool_path
     return None
 
 # --- Data File Paths ---
-# PySide6 plugins location differs between pip and conda-forge installations:
-#   pip layout  : <site-packages>/PySide6/plugins/
-#   conda layout: <env>/Library/lib/qt6/plugins/
-#
-# We probe both and use whichever actually contains qwindows.dll.
+# Get the directory where PySide6 stores its plugins
+pyside_library = os.path.join(os.path.dirname(QtCore.__file__), "plugins")
 
-import PySide6 as _pyside6_pkg
-
-_pip_plugins   = os.path.join(os.path.dirname(_pyside6_pkg.__file__), "plugins")
-_conda_plugins = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_pyside6_pkg.__file__)))),
-    "Library", "lib", "qt6", "plugins",
-)
-
-def _find_qt_plugins_dir():
-    """Return the Qt plugins directory, searching pip and conda layouts."""
-    for candidate in (_pip_plugins, _conda_plugins):
-        if os.path.isfile(os.path.join(candidate, "platforms", "qwindows.dll")):
-            print(f"INFO: Qt plugins found at: {candidate}")
-            return candidate
-    raise FileNotFoundError(
-        "Could not locate Qt plugins (qwindows.dll) in either pip or conda layout.\n"
-        f"  Tried:\n    {_pip_plugins}\n    {_conda_plugins}"
-    )
-
-_qt_plugins = _find_qt_plugins_dir()
-
-def _add_plugin(rel_path, dest):
-    """Add a plugin DLL only if it actually exists (warn otherwise)."""
-    full = os.path.join(_qt_plugins, rel_path)
-    if os.path.isfile(full):
-        return [(full, dest)]
-    print(f"WARNING: Optional plugin not found, skipping: {full}")
-    return []
-
-datas = []
-# -- Essential platform plugin (required — build fails without it) --
-datas += _add_plugin(os.path.join("platforms", "qwindows.dll"),
-                     "_internal\\PySide6\\plugins\\platforms")
-
-# -- Style plugins (optional — whichever is present) --
-for _style_dll in ("qwindowsvistastyle.dll", "qmodernwindowsstyle.dll"):
-    _added = _add_plugin(os.path.join("styles", _style_dll),
-                         "_internal\\PySide6\\plugins\\styles")
-    datas += _added
-    if _added:
-        break  # only need one style plugin
-
-# -- App icon --
-datas += [(os.path.join(SPECPATH, "Icon.png"), ".")]
-
-
+datas = [
+    # Manually bundle essential PySide6 Qt platform plugins for Windows
+    (os.path.join(pyside_library, "platforms", "qwindows.dll"), "_internal\\PySide6\\plugins\\platforms"),
+    (os.path.join(pyside_library, "styles", "qwindowsvistastyle.dll"), "_internal\\PySide6\\plugins\\styles"),
+    # Bundle the splash-screen / app icon. Ship it both at the bundle root and in
+    # _internal so it is found at runtime via sys._MEIPASS (see _resource_candidates).
+    (os.path.join(SPECPATH, "Icon.png"), "."),
+]
 # Automatically collect all necessary data files for matplotlib
 datas.extend(collect_data_files('matplotlib'))
+# python-pptx ships its default .pptx template + XML part files as package data;
+# they must be bundled or PowerPoint export (save_image_pptx) fails at runtime.
+datas.extend(collect_data_files('pptx'))
 
 # --- Hidden Imports ---
 # This list is crucial for libraries that PyInstaller's static analysis might miss.
@@ -112,12 +78,12 @@ hiddenimports = [
     'scipy.linalg.cython_lapack',
     'scipy.sparse.csgraph._validation',
 ]
-# Automatically collect submodules; exclude scipy's optional torch bridge to
-# prevent the spurious "No module named 'torch'" warning during analysis.
-_scipy_mods = collect_submodules('scipy')
-_scipy_mods = [m for m in _scipy_mods if 'torch' not in m]
+# Automatically collect all submodules from key libraries to be safe
 hiddenimports.extend(collect_submodules('skimage'))
-hiddenimports.extend(_scipy_mods)
+hiddenimports.extend(collect_submodules('scipy'))
+# python-pptx imports several oxml submodules dynamically; collect them all so the
+# lazy `from pptx import ...` in save_image_pptx resolves in the frozen app.
+hiddenimports.extend(collect_submodules('pptx'))
 
 
 # --- PyInstaller Analysis ---
@@ -129,7 +95,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=['PyQt5', 'PyQt6', 'torch', 'scipy._lib.array_api_compat.torch'],
+    excludes=['PyQt5', 'PyQt6'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
@@ -154,7 +120,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON_FILE,
-    **({'version': VERSION_FILE} if VERSION_FILE else {}),  # omit when None
+    version=VERSION_FILE, # Embed version info from our file
 )
 
 coll = COLLECT(

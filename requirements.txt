@@ -16,8 +16,8 @@ lmfit
 # Excel File Handling
 openpyxl
 
-# SVG File Handling
-svgwrite
+# Editable PowerPoint export (native text boxes per marker/label)
+python-pptx
 
 # Build Tool (Needed to run pyinstaller)
 pyinstaller
