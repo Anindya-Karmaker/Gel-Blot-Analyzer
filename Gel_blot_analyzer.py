@@ -28,7 +28,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.0"
+APP_VERSION = "9.1"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -769,6 +769,7 @@ if __name__ == "__main__":
         import openpyxl
         from openpyxl.styles import Font
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure as MplFigure
         from matplotlib.gridspec import GridSpec
         _splash("Loading image analysis modules (scikit-image)...", 78)
         from skimage.restoration import rolling_ball
@@ -1059,7 +1060,73 @@ if __name__ == "__main__":
         # Set Style (can be done after app exists)
 
 
-        class PredictionResultDialog(QDialog):
+        def dispose_dialog(dlg):
+            """Destroy a finished dialog instead of leaving it parented to its owner.
+
+            A `QDialog(parent=main_window)` is owned by that parent in C++, so when the
+            local Python variable goes out of scope after `exec()` the widget is NOT
+            freed — it stays a child of the main window for the rest of the session,
+            along with everything it holds (matplotlib figures/canvases, lane images,
+            result tables). Repeated densitometry / table / wizard runs therefore grew
+            the process without bound; a single PeakAreaDialog measured ~5.7 MB and
+            ~120 child QObjects that never came back.
+
+            The teardown is QUEUED, never immediate: `finished` is emitted from inside
+            `exec()`, and the caller still reads results off the dialog (`get_all_lanes
+            _peak_info()`, `_store_mwm_state_from_dialog()`, …) on the lines right after
+            exec returns. Deferring to the event loop lets all of that run first, then
+            frees the dialog once the call stack has unwound.
+            """
+            if dlg is None:
+                return
+
+            def _destroy():
+                try:
+                    # pyplot keeps a global reference to every figure made with
+                    # plt.figure()/plt.subplots(), so deleting the widget alone would
+                    # leave the Figure (and its Agg canvas buffer) alive forever.
+                    for _fig in list(getattr(dlg, '_managed_figures', ()) or ()):
+                        try:
+                            plt.close(_fig)
+                        except Exception:
+                            pass
+                    dlg.setParent(None)
+                    dlg.deleteLater()
+                except RuntimeError:
+                    # Already destroyed by Qt — nothing left to release.
+                    pass
+
+            QTimer.singleShot(0, _destroy)
+
+
+        class ManagedDialog(QDialog):
+            """QDialog that releases itself (and its matplotlib figures) once closed.
+
+            Every dialog in this app is parented to the main window so it centres and
+            stacks correctly — which also means Qt, not Python, owns it. Without this
+            base class each dialog opened during a session stayed alive until the app
+            quit. Subclasses need no extra code: closing via accept/reject, the window
+            close button, or Esc all emit `finished`.
+            """
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.finished.connect(lambda _result: dispose_dialog(self))
+
+            @property
+            def _managed_figures(self):
+                """The pyplot-registered Figures this dialog owns, found by attribute."""
+                figs = []
+                try:
+                    for _v in list(vars(self).values()):
+                        if isinstance(_v, MplFigure):
+                            figs.append(_v)
+                except Exception:
+                    pass
+                return figs
+
+
+        class PredictionResultDialog(ManagedDialog):
             """
             A dialog to display the molecular weight prediction, allowing for
             interactive changing of the regression model and internal standard calibration.
@@ -1389,7 +1456,7 @@ if __name__ == "__main__":
             def get_final_predicted_mw(self):
                 return self.final_predicted_mw
 
-        class GlycosylationMapperDialog(QDialog):
+        class GlycosylationMapperDialog(ManagedDialog):
             """
             A dialog for analyzing a protein sequence for N-glycosylation sites
             and calculating potential molecular weights of glycosylated and oligomeric fragments.
@@ -1923,7 +1990,7 @@ if __name__ == "__main__":
             # --- restored: process_sequence ---
             def process_sequence(self): self._analyze_sequence()
 
-        class ScaleDialog(QDialog):
+        class ScaleDialog(ManagedDialog):
             """A simple dialog to get a known length and its unit for image calibration."""
             def __init__(self, parent=None):
                 super().__init__(parent)
@@ -1969,7 +2036,7 @@ if __name__ == "__main__":
                 return self.length_spinbox.value(), short_unit
                 # --- END MODIFICATION ---
             
-        class MeasurementToolWindow(QDialog):
+        class MeasurementToolWindow(ManagedDialog):
             """A non-modal window to house all measurement tools and display results."""
             # Signal emitted when a tool button is toggled. The string is the mode name or None.
             tool_selected = Signal(str)
@@ -2066,7 +2133,7 @@ if __name__ == "__main__":
                 self.tool_selected.emit(None)
                 super().closeEvent(event)
     
-        class ModifyMarkersDialog(QDialog):
+        class ModifyMarkersDialog(ManagedDialog):
             """
             A dialog for modifying custom markers and shapes with global adjustments and
             individual item editing. This implementation uses a robust "repopulate-on-change"
@@ -2523,7 +2590,7 @@ if __name__ == "__main__":
                 """Returns the final state of the data model."""
                 return [tuple(m) for m in self.markers], self.shapes
 
-        class TableWindow(QDialog):
+        class TableWindow(ManagedDialog):
             HISTORY_FILE_NAME = "analysis_history.json"
             current_lane_pil_images = {} 
 
@@ -4567,7 +4634,7 @@ if __name__ == "__main__":
                         except OSError: pass
 
 
-        class PeakAreaDialog(QDialog):
+        class PeakAreaDialog(ManagedDialog):
             """
             Advanced Densitometry Dialog.
             Features state-of-the-art Asymmetric Least Squares (AsLS) baseline correction
@@ -8648,7 +8715,7 @@ if __name__ == "__main__":
         # ─────────────────────────────────────────────────────────────────────
         # Automated Gel Analysis wizard — v3 (one-step)
         # ─────────────────────────────────────────────────────────────────────
-        class AutoGelAnalysisDialog(QDialog):
+        class AutoGelAnalysisDialog(ManagedDialog):
             """
             Five-phase one-stop gel/blot analysis wizard.
 
@@ -13031,8 +13098,11 @@ if __name__ == "__main__":
                 self.setStyleSheet('light_stylesheet')
                 self._update_toolbar_icons()
                 self._update_levels_histogram()
-                
-                
+
+                # Make the WHOLE window one drop target and let an elevated instance
+                # receive drops at all (see the helpers for why each is needed).
+                self._claim_window_wide_file_drops()
+                self._allow_drops_when_elevated()
 
             def resizeEvent(self, event):
                 """Trigger auto-save 1 second after the user stops resizing."""
@@ -15341,7 +15411,7 @@ if __name__ == "__main__":
                 self._cancel_all_interaction_modes()
 
                 # Ask region type (rect or quad)
-                dlg = QDialog(self)
+                dlg = ManagedDialog(self)
                 dlg.setWindowTitle("Auto Analyze Gel — Draw Gel Boundary")
                 dlg.setMinimumWidth(340)
                 lay = QVBoxLayout(dlg)
@@ -15543,7 +15613,7 @@ if __name__ == "__main__":
                 self._cancel_all_interaction_modes()
 
                 # --- START: Create a simple dialog on-the-fly without a new class ---
-                dialog = QDialog(self)
+                dialog = ManagedDialog(self)
                 dialog.setWindowTitle("Automatic Lane Setup")
                 dialog.setMinimumWidth(350)
                 layout = QVBoxLayout(dialog)
@@ -16387,6 +16457,56 @@ if __name__ == "__main__":
                 
                 self.undo_stack.append(state)
                 self.redo_stack.clear()
+                self._trim_undo_memory()
+
+            # --- Undo-history memory budget -------------------------------------- #
+            # Each undo entry carries a FULL-RESOLUTION copy of image_master, so a plain
+            # 20-deep history is 20x the image. For a 2500x3100 16-bit RGBA64 gel that is
+            # ~1.2 GB — enough on its own to push an 8 GB machine into swap/allocation
+            # failures after a couple of files. The count limit alone can't see that, so
+            # the stack is also capped by BYTES: oldest snapshots are dropped until the
+            # history fits the budget, while always keeping the most recent few so undo
+            # still works on very large images.
+            UNDO_MEMORY_BUDGET_BYTES = 384 * 1024 * 1024
+            UNDO_MIN_STATES = 3
+
+            def _undo_state_bytes(self, state):
+                """Approximate memory held by one undo snapshot (its image copy dominates)."""
+                try:
+                    img = state.get("image_master")
+                    if img is not None and not img.isNull():
+                        return int(img.sizeInBytes())
+                except Exception:
+                    pass
+                return 0
+
+            def _trim_undo_memory(self):
+                """Drop the oldest undo/redo snapshots until the history fits the byte budget."""
+                try:
+                    budget = self.UNDO_MEMORY_BUDGET_BYTES
+                    # The redo stack is the more expendable half: it only survives until the
+                    # next edit anyway, so it gives its memory back first.
+                    total = (sum(self._undo_state_bytes(s) for s in self.undo_stack)
+                             + sum(self._undo_state_bytes(s) for s in self.redo_stack))
+                    while total > budget and self.redo_stack:
+                        total -= self._undo_state_bytes(self.redo_stack.pop(0))
+                    while total > budget and len(self.undo_stack) > self.UNDO_MIN_STATES:
+                        total -= self._undo_state_bytes(self.undo_stack.pop(0))
+                except Exception:
+                    pass
+
+            def _clear_undo_history(self):
+                """Forget all undo/redo history and release the image copies it holds.
+
+                Called when a NEW image is opened: the old file's snapshots are pure waste
+                once its image is gone, and leaving them in place also let Undo walk the
+                view back into the *previous* file's picture.
+                """
+                try:
+                    self.undo_stack.clear()
+                    self.redo_stack.clear()
+                except Exception:
+                    pass
 
             def _restore_state_from_dict(self, state_dict):
                 self._is_restoring_state = True # LOCK state saving
@@ -24927,29 +25047,130 @@ if __name__ == "__main__":
                     self.update_font()
                 self._update_color_button_style(self.font_color_button, self.font_color)
 
+            # --- Drag & drop --------------------------------------------------- #
+            # Windows is much stricter about drag & drop than macOS, which is why
+            # dropping an image "sometimes did nothing" there. Four separate causes:
+            #
+            #  1. Only dragEnterEvent was implemented. Qt on Windows drives drops
+            #     through OLE, where every mouse move calls IDropTarget::DragOver ->
+            #     QDragMoveEvent. The default QWidget handler leaves that event
+            #     UNACCEPTED, so Windows keeps showing the "no drop" cursor and never
+            #     delivers the drop. macOS does not need the move event, so the same
+            #     build worked there.
+            #  2. Thirteen QLineEdits and a QTextEdit accept drops by DEFAULT. Dropping
+            #     on one pasted the file PATH AS TEXT into that box instead of opening
+            #     the image — so whether a drop worked depended on where in the window
+            #     the user let go.
+            #  3. dropEvent never accepted the action, so the shell was told the drop
+            #     failed and animated the icon back even when the image had loaded.
+            #  4. An elevated (Run as administrator) instance is blocked by Windows UIPI
+            #     from receiving drags out of a normal Explorer — see
+            #     _allow_drops_when_elevated().
+
+            IMAGE_DROP_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+
+            def _first_droppable_image(self, mime_data):
+                """Return the first local image path in a drag payload, else None.
+
+                Scans EVERY url rather than just the first: dragging a multi-file
+                selection out of Explorer can lead with a non-image, and some shell
+                sources put a non-local url first. Falls back to the plain-text payload,
+                which is all certain Windows shell extensions and file managers provide.
+                """
+                try:
+                    if mime_data.hasUrls():
+                        for url in mime_data.urls():
+                            if not url.isLocalFile():
+                                continue
+                            path = url.toLocalFile()
+                            if path.lower().endswith(self.IMAGE_DROP_EXTENSIONS):
+                                return path
+                    if mime_data.hasText():
+                        candidate = mime_data.text().strip().strip('"').strip()
+                        if (candidate.lower().endswith(self.IMAGE_DROP_EXTENSIONS)
+                                and os.path.isfile(candidate)):
+                            return candidate
+                except Exception:
+                    log_traceback()
+                return None
+
+            def _claim_window_wide_file_drops(self):
+                """Stop child widgets swallowing dropped files.
+
+                QLineEdit / QTextEdit / QComboBox accept drops on their own and insert
+                the dragged path as TEXT, which silently consumed the drop before this
+                window ever saw it. Nothing in this app wants a file dropped into a text
+                box, so the main window becomes the single drop target and a drop works
+                anywhere over it. Safe to call repeatedly.
+                """
+                try:
+                    for child in self.findChildren(QWidget):
+                        if child.acceptDrops():
+                            child.setAcceptDrops(False)
+                    self.setAcceptDrops(True)
+                except Exception:
+                    log_traceback()
+
+            def _allow_drops_when_elevated(self):
+                """Let an elevated instance still accept drags from a normal Explorer.
+
+                Windows UIPI blocks messages from a lower-integrity process (Explorer) to
+                a higher-integrity one, so running the app "as administrator" kills drag
+                & drop with no error at all — the classic reason it works on one Windows
+                machine and not the next. Re-allowing the three drop messages is the
+                documented workaround. No-op on macOS/Linux and on a normal launch.
+                """
+                if sys.platform != "win32":
+                    return
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    WM_DROPFILES = 0x0233
+                    WM_COPYDATA = 0x004A
+                    WM_COPYGLOBALDATA = 0x0049
+                    MSGFLT_ALLOW = 1
+                    user32 = ctypes.windll.user32
+                    change_filter = getattr(user32, "ChangeWindowMessageFilterEx", None)
+                    if change_filter is None:
+                        return
+                    hwnd = wintypes.HWND(int(self.winId()))
+                    for message in (WM_DROPFILES, WM_COPYDATA, WM_COPYGLOBALDATA):
+                        change_filter(hwnd, wintypes.UINT(message),
+                                      wintypes.DWORD(MSGFLT_ALLOW), None)
+                except Exception:
+                    # Never let a drag-and-drop nicety stop the app from starting.
+                    log_traceback()
+
             def dragEnterEvent(self, event):
                 """Handle file dragging into the window."""
-                if event.mimeData().hasUrls():
-                    urls = event.mimeData().urls()
-                    if urls and urls[0].isLocalFile():
-                        file_path = urls[0].toLocalFile().lower()
-                        # Check if the file has a valid image extension
-                        if file_path.endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
-                            event.acceptProposedAction()
-                            return
-                event.ignore()
+                if self._first_droppable_image(event.mimeData()):
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
+
+            def dragMoveEvent(self, event):
+                """Keep accepting the drag as it moves — required for the drop on Windows."""
+                if self._first_droppable_image(event.mimeData()):
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
 
             def dropEvent(self, event):
                 """Handle dropping the file."""
-                urls = event.mimeData().urls()
-                if urls and urls[0].isLocalFile():
-                    file_path = urls[0].toLocalFile()
-                    
-                    # Check for unsaved changes before loading the new file
-                    if not self.prompt_save_if_needed():
-                        return 
-                        
-                    self.open_image_from_path(file_path)
+                file_path = self._first_droppable_image(event.mimeData())
+                if not file_path:
+                    event.ignore()
+                    return
+
+                # Tell the shell the drop succeeded BEFORE opening: loading a large gel
+                # can take seconds, and Explorer treats an unanswered drop as a failure.
+                event.acceptProposedAction()
+
+                # Check for unsaved changes before loading the new file
+                if not self.prompt_save_if_needed():
+                    return
+
+                self.open_image_from_path(file_path)
                     
             def load_image(self):
                 """Opens file dialog to select an image."""
@@ -25127,6 +25348,13 @@ if __name__ == "__main__":
                 if hasattr(self, 'pan_down_action'): self.pan_down_action.setEnabled(enable_pan)
                 QTimer.singleShot(0, self.update_live_view)
                 self._update_levels_histogram()
+                # Drop everything the LOAD itself pushed onto the history, plus whatever the
+                # previously-open file left behind. Those snapshots each hold a full-resolution
+                # image copy, so keeping them was the main reason opening file after file crept
+                # towards the RAM ceiling on 8 GB machines — and it also let Undo jump the view
+                # back into the previous file. The save_state() below is the one baseline
+                # snapshot the freshly opened image should start from.
+                self._clear_undo_history()
                 self.save_state()
                 # That save_state is just the baseline undo snapshot for the freshly opened
                 # image, not a user edit — the on-screen state still matches the analysis
