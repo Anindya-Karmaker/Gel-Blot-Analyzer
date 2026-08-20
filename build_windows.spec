@@ -47,8 +47,6 @@ pyside_library = os.path.join(os.path.dirname(QtCore.__file__), "plugins")
 
 datas = [
     # Manually bundle essential PySide6 Qt platform plugins for Windows
-    (os.path.join(pyside_library, "platforms", "qwindows.dll"), "_internal\\PySide6\\plugins\\platforms"),
-    (os.path.join(pyside_library, "styles", "qwindowsvistastyle.dll"), "_internal\\PySide6\\plugins\\styles"),
     # Bundle the splash-screen / app icon. Ship it both at the bundle root and in
     # _internal so it is found at runtime via sys._MEIPASS (see _resource_candidates).
     (os.path.join(SPECPATH, "Icon.png"), "."),
