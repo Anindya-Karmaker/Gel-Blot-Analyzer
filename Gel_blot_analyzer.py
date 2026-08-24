@@ -28,7 +28,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.1"
+APP_VERSION = "9.2"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -2596,7 +2596,8 @@ if __name__ == "__main__":
 
             def __init__(self, current_peak_areas_data, current_standard_dictionary,
                          current_is_standard_mode, current_calculated_quantities_data,
-                         parent_app_instance=None, peak_details_data=None):
+                         parent_app_instance=None, peak_details_data=None,
+                         peak_settings_data=None):
                 super().__init__(parent_app_instance)
                 self.setWindowTitle("Analysis Results and History")
 
@@ -2616,6 +2617,9 @@ if __name__ == "__main__":
                 self.is_current_data_multi_lane = isinstance(current_peak_areas_data, dict)
                 self.current_lane_pil_images = {}
                 self.current_peak_details_data = peak_details_data if peak_details_data else {}
+                # Per-lane analysis settings, so the report can show where lanes differ
+                # instead of printing one global table that is wrong for some of them.
+                self.current_peak_settings_data = peak_settings_data if peak_settings_data else {}
                 
                 self.current_model_name = "Linear"
                 self.current_fit_params = None
@@ -2628,7 +2632,8 @@ if __name__ == "__main__":
                         self.current_results_data[lane_id_key] = {
                             'areas': current_peak_areas_data.get(lane_id_key, []),
                             'quantities': current_calculated_quantities_data.get(lane_id_key, []) if current_calculated_quantities_data else [],
-                            'details': self.current_peak_details_data.get(lane_id_key, []) if peak_details_data else []
+                            'details': self.current_peak_details_data.get(lane_id_key, []) if peak_details_data else [],
+                            'settings': self.current_peak_settings_data.get(lane_id_key, {}) or {}
                         }
                         if self.parent_app and hasattr(self.parent_app, 'multi_lane_definitions'):
                             for lane_def in self.parent_app.multi_lane_definitions:
@@ -2646,7 +2651,8 @@ if __name__ == "__main__":
                      self.current_results_data[1] = {
                             'areas': current_peak_areas_data,
                             'quantities': current_calculated_quantities_data if current_calculated_quantities_data is not None else [],
-                            'details': self.current_peak_details_data.get(1, []) if peak_details_data else [] 
+                            'details': self.current_peak_details_data.get(1, []) if peak_details_data else [],
+                            'settings': self.current_peak_settings_data.get(1, {}) or {}
                      }
                      if self.parent_app and self.parent_app.image: 
                         extracted_qimage_single = None
@@ -4027,7 +4033,8 @@ if __name__ == "__main__":
                         clip_on=False))
 
                 def _para_left(fig, x, y, text, fontsize=10, width_chars=None, **kw):
-                    """Fallback: left-aligned, character-wrapped paragraph (ragged right)."""
+                    """Fallback: left-aligned, character-wrapped paragraph (ragged right).
+                    Returns the y just below the block."""
                     if width_chars is None:
                         width_chars = max(30, int((CONTENT_W * A4[0]) / (fontsize * 0.0092)))
                     blocks = []
@@ -4035,17 +4042,35 @@ if __name__ == "__main__":
                         para = " ".join(para.split())
                         if para:
                             blocks.append(textwrap.fill(para, width=width_chars))
-                    fig.text(x, y, "\n\n".join(blocks), fontsize=fontsize,
-                             va="top", ha="left", **kw)
+                    body = "\n\n".join(blocks)
+                    fig.text(x, y, body, fontsize=fontsize, va="top", ha="left", **kw)
+                    n_lines = body.count("\n") + 1
+                    return y - n_lines * (fontsize * 1.42 / 72.0) / float(fig.get_figheight())
 
-                def _para(fig, x, y, text, fontsize=10, width_chars=None, justify=True, **kw):
+                # Bottom of the printable area: the page frame sits at inset 0.014, so text
+                # must stop above it. Paragraphs used to flow from a hard-coded y with no
+                # awareness of the page edge or of whatever was placed below them, which is
+                # how report text ended up running past the frame and over the next block.
+                PAGE_FLOOR = 0.055
+
+                def _para(fig, x, y, text, fontsize=10, width_chars=None, justify=True,
+                          min_y=None, **kw):
                     """Place a fully-JUSTIFIED paragraph block with equal left/right margins.
+
+                    Returns the y coordinate just BELOW the block so the caller can flow the
+                    next element from there instead of guessing a fixed position.
+
+                    If the block would run past `min_y` (default: the page floor) the font is
+                    stepped down until it fits, so a long narrative shrinks a little rather
+                    than spilling over the page frame or the element beneath it.
 
                     matplotlib has no native justification, so each line's words are measured
                     with an Agg renderer and the inter-word space is stretched so every line
                     (except the last of a paragraph) fills the content width exactly. On any
                     failure it falls back to the previous left-aligned wrapping so older
                     matplotlib versions still render a report."""
+                    if min_y is None:
+                        min_y = PAGE_FLOOR
                     if not justify:
                         return _para_left(fig, x, y, text, fontsize, width_chars, **kw)
                     try:
@@ -4055,40 +4080,65 @@ if __name__ == "__main__":
                         right = 1.0 - MARGIN_R
                         width_frac = max(0.1, right - x)
                         figh_in = float(fig.get_figheight())
-                        line_h = (fontsize * 1.42 / 72.0) / figh_in    # one line, in fig-fraction
-                        para_gap = line_h * 0.6
 
-                        _wcache = {}
-                        def _w(s):
-                            if s not in _wcache:
-                                t = fig.text(0, 0, s, fontsize=fontsize, **kw)
-                                _wcache[s] = t.get_window_extent(renderer).width / fig_w_px
-                                t.remove()
-                            return _wcache[s]
+                        def _layout(fs):
+                            """Measure the block at font size `fs` WITHOUT drawing it.
+                            Returns (paragraphs, line_h, para_gap, space_w, total_height)."""
+                            line_h = (fs * 1.42 / 72.0) / figh_in     # one line, fig-fraction
+                            para_gap = line_h * 0.6
+                            _wcache = {}
 
-                        # A bare " " often measures as ~0; derive it from a difference instead.
-                        try:
-                            space_w = max(1e-4, _w("x x") - _w("xx"))
-                        except Exception:
-                            space_w = fontsize * 0.0009
+                            def _w(sv):
+                                if sv not in _wcache:
+                                    t = fig.text(0, 0, sv, fontsize=fs, **kw)
+                                    _wcache[sv] = t.get_window_extent(renderer).width / fig_w_px
+                                    t.remove()
+                                return _wcache[sv]
+
+                            # A bare " " often measures as ~0; derive it from a difference.
+                            try:
+                                space_w = max(1e-4, _w("x x") - _w("xx"))
+                            except Exception:
+                                space_w = fs * 0.0009
+
+                            paras, total = [], 0.0
+                            for para in str(text).split("\n\n"):
+                                words = para.split()
+                                if not words:
+                                    paras.append((None, None, []))
+                                    total += para_gap
+                                    continue
+                                ww = [_w(w) for w in words]
+                                lines, cur, cur_w = [], [], 0.0
+                                for k in range(len(words)):
+                                    add = ww[k] + (space_w if cur else 0.0)
+                                    if cur and cur_w + add > width_frac:
+                                        lines.append(cur); cur, cur_w = [k], ww[k]
+                                    else:
+                                        cur.append(k); cur_w += add
+                                if cur:
+                                    lines.append(cur)
+                                paras.append((words, ww, lines))
+                                total += len(lines) * line_h + para_gap
+                            return paras, line_h, para_gap, space_w, total
+
+                        # Shrink until the block fits between y and min_y. A report page is
+                        # fixed-height, so the alternative to shrinking is spilling over the
+                        # frame — which is the bug this guards against.
+                        fs = float(fontsize)
+                        paras, line_h, para_gap, space_w, total = _layout(fs)
+                        avail = max(0.02, y - min_y)
+                        guard = 0
+                        while total > avail and fs > 5.5 and guard < 12:
+                            fs = max(5.5, fs * min(0.94, (avail / total) ** 0.5))
+                            paras, line_h, para_gap, space_w, total = _layout(fs)
+                            guard += 1
 
                         cy = y
-                        for para in str(text).split("\n\n"):
-                            words = para.split()
-                            if not words:
+                        for words, ww, lines in paras:
+                            if words is None:
                                 cy -= para_gap
                                 continue
-                            ww = [_w(w) for w in words]
-                            # Greedily pack words into lines that fit width_frac.
-                            lines, cur, cur_w = [], [], 0.0
-                            for k in range(len(words)):
-                                add = ww[k] + (space_w if cur else 0.0)
-                                if cur and cur_w + add > width_frac:
-                                    lines.append(cur); cur, cur_w = [k], ww[k]
-                                else:
-                                    cur.append(k); cur_w += add
-                            if cur:
-                                lines.append(cur)
                             for li, idxs in enumerate(lines):
                                 is_last = (li == len(lines) - 1)
                                 gaps = len(idxs) - 1
@@ -4096,14 +4146,15 @@ if __name__ == "__main__":
                                 gap = space_w if (is_last or gaps == 0) else (width_frac - natural) / gaps
                                 cx = x
                                 for k in idxs:
-                                    fig.text(cx, cy, words[k], fontsize=fontsize,
+                                    fig.text(cx, cy, words[k], fontsize=fs,
                                              va="top", ha="left", **kw)
                                     cx += ww[k] + gap
                                 cy -= line_h
                             cy -= para_gap
+                        return cy
                     except Exception:
                         log_traceback()
-                        _para_left(fig, x, y, text, fontsize, width_chars, **kw)
+                        return _para_left(fig, x, y, text, fontsize, width_chars, **kw)
 
                 def _finish_page(fig, pdf):
                     """Add the border and save the page at report DPI (sharp raster)."""
@@ -4118,6 +4169,32 @@ if __name__ == "__main__":
                     so its axes can be sized to the content — no big empty gaps below it."""
                     return (n_data_rows + 1) * ROW_IN / A4[1]
 
+                def _text_w_frac(fig_obj, txt, fs, bold=False):
+                    """Width of `txt` at font size `fs` as a fraction of the figure width."""
+                    try:
+                        from matplotlib.backends.backend_agg import FigureCanvasAgg
+                        r = FigureCanvasAgg(fig_obj).get_renderer()
+                        t = fig_obj.text(0, 0, str(txt), fontsize=fs,
+                                         fontweight=("bold" if bold else "normal"))
+                        w = t.get_window_extent(r).width / float(fig_obj.bbox.width)
+                        t.remove()
+                        return w
+                    except Exception:
+                        return len(str(txt)) * fs * 0.0009      # rough fallback
+
+                def _fit_text(fig_obj, x, y, txt, max_w, fontsize, min_size=5.5, **kw):
+                    """Draw text shrunk just enough to fit `max_w` (figure fraction).
+
+                    The coloured verdict bars are a fixed width, so a long sentence — "5 of 28
+                    band(s) across 3 lane(s)" — ran straight out through the right-hand edge.
+                    """
+                    fs = float(fontsize)
+                    bold = str(kw.get("fontweight", "")) == "bold"
+                    w = _text_w_frac(fig_obj, txt, fs, bold)
+                    if w > max_w > 0:
+                        fs = max(min_size, fs * (max_w / w) * 0.98)
+                    return fig_obj.text(x, y, txt, fontsize=fs, **kw)
+
                 def _add_table(ax, col_labels, rows, col_widths=None, header_color="#4472C4",
                                font_size=8, highlight_rows=None):
                     # highlight_rows: set of 0-based DATA row indices to flag (saturated
@@ -4128,6 +4205,36 @@ if __name__ == "__main__":
                     if not rows:
                         return
                     highlight_rows = set(highlight_rows or ())
+
+                    # --- Fit the content to the columns ------------------------------- #
+                    # matplotlib tables neither size columns to their content nor clip text,
+                    # so equal-width columns let a long value ("224701029.33") and a long
+                    # header ("Band range (px)") spill straight over their neighbours. Measure
+                    # every cell, give each column the width it actually needs, and shrink the
+                    # font if the natural widths still do not fit the axes.
+                    n_col = len(col_labels)
+                    try:
+                        fig_obj = ax.get_figure()
+                        ax_w = float(ax.get_position().width)        # axes width, fig fraction
+                        pad = _text_w_frac(fig_obj, "nn", font_size) # breathing room per cell
+                        natural = []
+                        for c in range(n_col):
+                            w = _text_w_frac(fig_obj, col_labels[c], font_size, bold=True)
+                            for row in rows:
+                                if c < len(row):
+                                    w = max(w, _text_w_frac(fig_obj, row[c], font_size, bold=True))
+                            natural.append(w + pad)
+                        total = sum(natural)
+                        if total > 0:
+                            if total > ax_w:
+                                # Too wide even at natural size: shrink the font to suit.
+                                font_size = max(5.0, font_size * (ax_w / total) * 0.98)
+                                natural = [w * (ax_w / total) for w in natural]
+                                total = sum(natural)
+                            col_widths = [w / total for w in natural]   # normalised to the axes
+                    except Exception:
+                        log_traceback()
+
                     tbl = ax.table(cellText=rows, colLabels=col_labels, cellLoc='center',
                                    loc='upper center', colWidths=col_widths)
                     tbl.auto_set_font_size(False)
@@ -4249,11 +4356,92 @@ if __name__ == "__main__":
                         _add_table(ax_param, ["Parameter", "Value"], param_rows,
                                    col_widths=[0.62, 0.38], font_size=9)
 
-                        fig.text(0.5, 0.03,
-                                 f"Generated by Gel Blot Analyzer v{APP_VERSION} — the parameters above fully describe the "
-                                 "analysis and allow replication.",
-                                 fontsize=7, color="#666666", ha="center")
+                        # Do the lanes actually share these settings? The rolling-ball radius
+                        # is per-lane by design, and a lane whose bands were hand-edited can
+                        # diverge further — so a single global table can be quietly wrong for
+                        # some lanes. Detect any disagreement and say so.
+                        _per_lane_settings = {}
+                        for _lid in lane_ids:
+                            _st = (results_data_for_export.get(_lid, {}) or {}).get('settings') or {}
+                            if _st:
+                                _per_lane_settings[_lid] = _st
+                        _setting_labels = [
+                            ('area_subtraction_method', 'Area method'),
+                            ('rolling_ball_radius',     'Rolling-ball radius (px)'),
+                            ('auto_adjust_rb_radius',   'Auto RB radius'),
+                            ('peak_prominence_factor',  'Min prominence'),
+                            ('peak_height_factor',      'Min height'),
+                            ('peak_distance',           'Min distance (px)'),
+                            ('min_band_width',          'Min band width (px)'),
+                            ('smoothing_sigma',         'Smoothing sigma'),
+                            ('denoise_sigma',           'Denoise sigma'),
+                            ('speck_min_size',          'Speck min size'),
+                            ('is_inverted',             'Profile inverted'),
+                            ('regions_are_manual',      'Boundaries hand-adjusted'),
+                        ]
+
+                        def _fmt_setting(v):
+                            if isinstance(v, bool):
+                                return "Yes" if v else "No"
+                            if isinstance(v, float):
+                                return f"{v:g}"
+                            return "—" if v is None else str(v)
+
+                        _varying = []
+                        if len(_per_lane_settings) > 1:
+                            for _k, _label in _setting_labels:
+                                _vals = {_fmt_setting(_st.get(_k))
+                                         for _st in _per_lane_settings.values()}
+                                if len(_vals) > 1:
+                                    _varying.append((_k, _label))
+
+                        if _varying:
+                            _fit_text(fig, 0.5, 0.055,
+                                      "Lanes were NOT all analysed with identical settings — "
+                                      "see the per-lane parameters page.",
+                                      CONTENT_W, 8, color="#B36B00", ha="center",
+                                      fontweight="bold")
+                        _fit_text(fig, 0.5, 0.03,
+                                  f"Generated by Gel Blot Analyzer v{APP_VERSION} — the parameters above fully describe the "
+                                  "analysis and allow replication.",
+                                  CONTENT_W, 7, color="#666666", ha="center")
                         _finish_page(fig, pdf)
+
+                        # =============== PAGE: PER-LANE PARAMETERS (only when they differ) ===============
+                        if _varying:
+                            fig = plt.figure(figsize=A4)
+                            fig.suptitle("Per-lane analysis parameters",
+                                         fontsize=14, fontweight="bold", y=0.97)
+                            _y_pl = _para(
+                                fig, MARGIN_L, 0.90,
+                                "These lanes were not all analysed with the same settings, so the single "
+                                "parameter table on the previous page does not describe every lane. Only the "
+                                "parameters that DIFFER between lanes are listed here; everything else is as "
+                                "given on that table.\n\n"
+                                "Differences are legitimate — the rolling-ball radius is held per lane, and a "
+                                "lane whose band boundaries were adjusted by hand keeps its own settings — but "
+                                "areas are only strictly comparable between lanes that share a background "
+                                "model. Use the densitometry window's \u201cAll lanes\u201d option to force one "
+                                "radius everywhere if you need that.",
+                                fontsize=9.5, min_y=0.40)
+
+                            _pl_cols = ["Lane"] + [lbl for _k, lbl in _varying]
+                            _pl_rows = []
+                            for _lid in lane_ids:
+                                _st = _per_lane_settings.get(_lid, {})
+                                _pl_rows.append([str(_lid)] +
+                                                [_fmt_setting(_st.get(_k)) for _k, _lbl in _varying])
+                            _head_y = min(0.62, _y_pl - 0.02)
+                            fig.text(MARGIN_L, _head_y, "Parameters that differ between lanes",
+                                     fontsize=11, fontweight="bold")
+                            _top = _head_y - 0.03
+                            _h_pl = min(_table_h(len(_pl_rows)), max(0.06, _top - PAGE_FLOOR))
+                            _ncol = len(_pl_cols)
+                            ax_pl = fig.add_axes([MARGIN_L, _top - _h_pl, CONTENT_W, _h_pl])
+                            _add_table(ax_pl, _pl_cols, _pl_rows,
+                                       col_widths=[1.0 / _ncol] * _ncol,
+                                       header_color="#B36B00", font_size=8)
+                            _finish_page(fig, pdf)
 
                         # =============== PAGE: METHOD SUMMARY (how the area was calculated) ===============
                         area_method = str(analysis_settings.get('area_subtraction_method', 'Rolling-valley'))
@@ -4310,7 +4498,7 @@ if __name__ == "__main__":
                         fig = plt.figure(figsize=A4)
                         fig.suptitle("Method summary — how band areas were calculated",
                                      fontsize=14, fontweight="bold", y=0.97)
-                        _para(fig, MARGIN_L, 0.88, narrative, fontsize=10)
+                        _para(fig, MARGIN_L, 0.88, narrative, fontsize=10, min_y=0.10)
                         _finish_page(fig, pdf)
 
                         # =============== PAGE: DATA QUALITY & SATURATION ===============
@@ -4339,8 +4527,8 @@ if __name__ == "__main__":
                                            transform=fig.transFigure,
                                            facecolor=("#FBE4E4" if total_saturated_bands else "#E5F5E5"),
                                            edgecolor=verdict_color, linewidth=1.2, zorder=0))
-                        fig.text(0.08, 0.872, verdict, fontsize=11, fontweight="bold",
-                                 color=verdict_color, va="center")
+                        _fit_text(fig, 0.08, 0.872, verdict, 0.84, 11, fontweight="bold",
+                                  color=verdict_color, va="center")
 
                         explain = (
                             "Saturation (clipping) occurs when a band is so intense that pixels hit the "
@@ -4353,7 +4541,9 @@ if __name__ == "__main__":
                             f"(≥{PeakAreaDialog.SATURATION_LEVEL_FRACTION*100:.0f}% of full scale). "
                             "If bands are flagged, re-acquire the image with a shorter exposure / lower gain "
                             "(or use unsaturated technical replicates) before trusting absolute quantities.")
-                        _para(fig, MARGIN_L, 0.82, explain, fontsize=9.5)
+                        # Flow the table from where the paragraph actually ended rather than
+                        # a fixed y — that mismatch is what let the text run into the heading.
+                        _y = _para(fig, MARGIN_L, 0.82, explain, fontsize=9.5, min_y=0.20)
 
                         # Per-flagged-band table (only the clipped bands, most useful first).
                         sat_rows, sat_hl = [], []
@@ -4366,14 +4556,95 @@ if __name__ == "__main__":
                                                  f"{sat_frac.get(i, 0.0)*100:.0f}% clipped"])
                         if sat_rows:
                             sat_hl = list(range(len(sat_rows)))  # every listed band is saturated
-                            fig.text(MARGIN_L, 0.66, "Flagged bands (areas under-estimated)",
+                            _head_y = min(0.66, _y - 0.02)
+                            fig.text(MARGIN_L, _head_y, "Flagged bands (areas under-estimated)",
                                      fontsize=11, fontweight="bold")
-                            _h_sat = min(0.56, _table_h(len(sat_rows)))
-                            ax_sat = fig.add_axes([MARGIN_L, 0.63 - _h_sat, CONTENT_W, _h_sat])
+                            _top = _head_y - 0.03
+                            _h_sat = min(_table_h(len(sat_rows)), max(0.06, _top - PAGE_FLOOR))
+                            ax_sat = fig.add_axes([MARGIN_L, _top - _h_sat, CONTENT_W, _h_sat])
                             _add_table(ax_sat, ["Lane", "Band", "Peak area", "Clipping"],
                                        sat_rows, col_widths=[0.2, 0.2, 0.35, 0.25],
                                        header_color="#B30000", font_size=9,
                                        highlight_rows=sat_hl)
+                        _finish_page(fig, pdf)
+
+                        # =============== PAGE: REGION FIT ===============
+                        # A band's area is only trustworthy if the integration region actually
+                        # spans the band. Nothing in the numbers reveals a region drawn too
+                        # short (area under-estimated) or far too long (background and often a
+                        # neighbouring band folded in), so it is called out explicitly here.
+                        fit_rows, fit_hl = [], []
+                        for lid in lane_ids:
+                            details = results_data_for_export[lid].get('details', []) or []
+                            areas = results_data_for_export[lid].get('areas', []) or []
+                            for i, det in enumerate(details):
+                                if not isinstance(det, dict):
+                                    continue
+                                verdict = str(det.get('region_fit', 'ok'))
+                                if verdict == 'ok':
+                                    continue
+                                cov = float(det.get('region_coverage', 1.0))
+                                wr = float(det.get('region_width_ratio', 1.0))
+                                area_v = areas[i] if i < len(areas) else 0.0
+                                if verdict == 'narrow':
+                                    issue = f"Region SHORTER than band — {(1.0-cov)*100:.0f}% of the band excluded"
+                                    effect = "Area under-estimated"
+                                else:
+                                    issue = f"Region {wr:.1f}x the band's own width"
+                                    effect = "Area inflated by background"
+                                fit_rows.append([str(lid), f"{i+1}", f"{area_v:.3f}", issue, effect])
+                        n_fit_bands = sum(len(results_data_for_export[lid].get('details', []) or [])
+                                          for lid in lane_ids)
+
+                        fig = plt.figure(figsize=A4)
+                        fig.suptitle("Region fit — do the drawn regions match the bands?",
+                                     fontsize=14, fontweight="bold", y=0.97)
+                        if fit_rows:
+                            fit_verdict = (f"⚠  {len(fit_rows)} of {n_fit_bands} band(s) have an "
+                                           f"integration region that does not match the band.")
+                            fit_color = "#B36B00"
+                            fit_bg = "#FFF3E0"
+                        else:
+                            fit_verdict = (f"✓  All {n_fit_bands} band(s) are fully contained by "
+                                           f"a well-matched integration region.")
+                            fit_color = "#1a7a1a"
+                            fit_bg = "#E5F5E5"
+                        fig.patches.append(plt.Rectangle((0.06, 0.85), 0.88, 0.045,
+                                           transform=fig.transFigure, facecolor=fit_bg,
+                                           edgecolor=fit_color, linewidth=1.2, zorder=0))
+                        _fit_text(fig, 0.08, 0.872, fit_verdict, 0.84, 11, fontweight="bold",
+                                  color=fit_color, va="center")
+
+                        fit_explain = (
+                            "The integration region is the span of the lane profile that is summed to give "
+                            "a band's area. It is set by the detector, or by hand when regions are dragged "
+                            "or pasted. Because the area is simply the signal inside that span, a region "
+                            "that does not match the band silently biases the result — and the number "
+                            "itself gives no hint that anything is wrong.\n\n"
+                            "A band is flagged as SHORTER when less than "
+                            f"{PeakAreaDialog.REGION_COVERAGE_MIN*100:.0f}% of its signal falls inside the "
+                            "region: the band's tails are cut off and the area under-estimates the real "
+                            "amount. It is flagged as WIDER when the region spans more than "
+                            f"{PeakAreaDialog.REGION_WIDTH_MAX_RATIO:.1f}x the band's own width, which folds "
+                            "background — and often part of a neighbouring band — into the total. The "
+                            "band's own width is measured out to where its signal falls below "
+                            f"{PeakAreaDialog.REGION_EDGE_FRACTION*100:.0f}% of the peak.\n\n"
+                            "Fix a flagged band by dragging its integration handles in the densitometry "
+                            "window so the region starts and ends at the band's baseline, then re-export.")
+                        _yf = _para(fig, MARGIN_L, 0.82, fit_explain, fontsize=9.5, min_y=0.22)
+
+                        if fit_rows:
+                            fit_hl = list(range(len(fit_rows)))
+                            _head_y = min(0.60, _yf - 0.02)
+                            fig.text(MARGIN_L, _head_y, "Bands whose region does not match",
+                                     fontsize=11, fontweight="bold")
+                            _top = _head_y - 0.03
+                            _h_fit = min(_table_h(len(fit_rows)), max(0.06, _top - PAGE_FLOOR))
+                            ax_fit = fig.add_axes([MARGIN_L, _top - _h_fit, CONTENT_W, _h_fit])
+                            _add_table(ax_fit, ["Lane", "Band", "Peak area", "Region vs band", "Effect"],
+                                       fit_rows, col_widths=[0.09, 0.09, 0.16, 0.42, 0.24],
+                                       header_color="#B36B00", font_size=8,
+                                       highlight_rows=fit_hl)
                         _finish_page(fig, pdf)
 
                         # =============== PAGE 2: ANNOTATED GEL IMAGE ===============
@@ -4387,11 +4658,11 @@ if __name__ == "__main__":
                                 ax_img = fig.add_axes([0.05, 0.06, 0.90, 0.86])
                                 ax_img.imshow(gel_arr)
                                 ax_img.axis('off')
-                                fig.text(0.5, 0.025,
-                                         "Yellow outlines mark the densitometry lane bounding boxes; "
-                                         "numbered badges identify each lane. MW markers and labels are "
-                                         "rendered as displayed.",
-                                         fontsize=8, color="#444444", ha="center", wrap=True)
+                                _fit_text(fig, 0.5, 0.025,
+                                          "Yellow outlines mark the densitometry lane bounding boxes; "
+                                          "numbered badges identify each lane. MW markers and labels are "
+                                          "rendered as displayed.",
+                                          CONTENT_W, 8, color="#444444", ha="center")
                                 _finish_page(fig, pdf)
                             except Exception:
                                 log_traceback()
@@ -4576,11 +4847,33 @@ if __name__ == "__main__":
 
                             lane_sat_idx, lane_sat_frac = saturation_by_lane.get(lid, (set(), {}))
                             show_clip_col = bool(lane_sat_idx)
+                            # Per-band region verdicts for this lane, so a mis-drawn region is
+                            # visible right next to the area it distorts — not only on the
+                            # Region fit page.
+                            lane_fit = {}
+                            for i, det in enumerate(details):
+                                if isinstance(det, dict) and str(det.get('region_fit', 'ok')) != 'ok':
+                                    lane_fit[i] = (str(det.get('region_fit')),
+                                                   float(det.get('region_coverage', 1.0)),
+                                                   float(det.get('region_width_ratio', 1.0)))
+                            show_fit_col = bool(lane_fit)
+                            # Show the integration span actually used for each band. When the
+                            # user has dragged boundaries the numbers depend on exactly where
+                            # those handles sit, so the report has to state them.
+                            _lane_manual = any(bool(d.get('regions_are_manual'))
+                                               for d in details if isinstance(d, dict))
+                            show_bounds_col = any(
+                                isinstance(d, dict) and int(d.get('region_start', -1)) >= 0
+                                for d in details)
                             col_labels = ["Band", "Peak area", "% of lane"]
                             if is_std_mode:
                                 col_labels.append("Quantity")
+                            if show_bounds_col:
+                                col_labels.append("Band range (px)")
                             if show_clip_col:
                                 col_labels.append("Clipping")
+                            if show_fit_col:
+                                col_labels.append("Region")
                             rows = []
                             row_flags = []
                             for i, area in enumerate(areas):
@@ -4592,15 +4885,30 @@ if __name__ == "__main__":
                                         try: qv = f"{float(qtys[i]):.3f}"
                                         except (ValueError, TypeError): qv = str(qtys[i])
                                     row.append(qv)
+                                if show_bounds_col:
+                                    _d = details[i] if i < len(details) and isinstance(details[i], dict) else {}
+                                    _rs, _re = int(_d.get('region_start', -1)), int(_d.get('region_end', -1))
+                                    row.append(f"{_rs} – {_re}" if _rs >= 0 and _re >= 0 else "")
                                 if show_clip_col:
                                     row.append(f"{lane_sat_frac.get(i, 0.0)*100:.0f}% clipped"
                                                if i in lane_sat_idx else "")
+                                if show_fit_col:
+                                    if i in lane_fit:
+                                        vk, cov, wr = lane_fit[i]
+                                        row.append(f"{(1.0-cov)*100:.0f}% cut off" if vk == 'narrow'
+                                                   else f"{wr:.1f}x too wide")
+                                    else:
+                                        row.append("")
                                 rows.append(row)
-                                row_flags.append(i in lane_sat_idx)
+                                row_flags.append(i in lane_sat_idx or i in lane_fit)
                             tot_row = ["Total", f"{total:.3f}", ""]
                             if is_std_mode:
                                 tot_row.append("")
+                            if show_bounds_col:
+                                tot_row.append("")
                             if show_clip_col:
+                                tot_row.append("")
+                            if show_fit_col:
                                 tot_row.append("")
                             rows.append(tot_row)
                             row_flags.append(False)
@@ -4610,11 +4918,21 @@ if __name__ == "__main__":
                             _add_table(ax_tbl, col_labels, rows,
                                        col_widths=[1.0 / ncol] * ncol, font_size=8,
                                        highlight_rows=[j for j, f in enumerate(row_flags) if f])
+                            _notes = []
+                            if _lane_manual:
+                                _fit_text(fig, 0.5, 0.085,
+                                          "Band boundaries for this lane were adjusted by hand — "
+                                          "the ranges above are the spans that were integrated.",
+                                          CONTENT_W, 8, color="#1a4d8f", ha="center")
                             if show_clip_col:
-                                fig.text(0.5, 0.06,
-                                         "Red bands are saturated/clipped — their areas and quantities "
-                                         "under-estimate the true amount (see the Data quality page).",
-                                         fontsize=8, color="#B30000", ha="center", wrap=True)
+                                _notes.append("saturated/clipped (see the Data quality page)")
+                            if show_fit_col:
+                                _notes.append("an ill-fitting integration region (see the Region fit page)")
+                            if _notes:
+                                _fit_text(fig, 0.5, 0.055,
+                                          "Highlighted bands have " + " and ".join(_notes) +
+                                          " — treat their areas and quantities with caution.",
+                                          CONTENT_W, 8, color="#B30000", ha="center")
                             _finish_page(fig, pdf)
 
                         # PDF document metadata
@@ -4668,9 +4986,21 @@ if __name__ == "__main__":
             SATURATION_APEX_FRACTION  = 0.05   # ...OR the most-clipped row is >=5% clipped
             SATURATION_MIN_PIXELS     = 4      # ...and at least this many clipped pixels
 
-            def __init__(self, cropped_data, current_settings, persist_checked, parent=None):
+            # --- Region fit -------------------------------------------------------- #
+            # A band's area is only meaningful if the integration region actually spans the
+            # band. Draw the region too SHORT and the band's tails fall outside it, so the
+            # area is an under-estimate; draw it far too LONG and it swallows background
+            # (and often a neighbouring band), inflating the area. Neither shows up anywhere
+            # in the numbers, so the report has to say it explicitly.
+            REGION_EDGE_FRACTION   = 0.05   # band extends until the signal drops below 5% of its apex
+            REGION_COVERAGE_MIN    = 0.95   # <95% of the band inside the region -> "narrower than band"
+            REGION_WIDTH_MAX_RATIO = 2.5    # region >2.5x the band's own width -> "wider than band"
+
+            def __init__(self, cropped_data, current_settings, persist_checked, parent=None,
+                         initial_band_state=None):
                 super().__init__(parent)
                 self.parent_app = parent
+                self._initial_band_state = initial_band_state or {}
                 self.setWindowTitle("Advanced Densitometry & Band Analysis")
 
                 # First open: size similar to the main UI window (tracked in the global
@@ -4730,11 +5060,29 @@ if __name__ == "__main__":
                 for lane in self.lanes_data:
                     self.lanes_state[lane['id']] = self._init_lane_state(lane['id'], lane['pil'], current_settings)
 
-                # Pre-calculate profiles and peaks for all lanes
+                # Pre-calculate profiles, peaks AND areas for every lane.
+                # regenerate_profile_and_detect() only finds the peaks; the per-method area
+                # lists are filled by _recalculate_all_regions(), which otherwise runs only
+                # for the lane currently on screen. Any lane the user never clicked in the
+                # lane selector therefore ended up with peaks but an EMPTY area list — and
+                # get_all_lanes_peak_info() gates on min(len(peaks), len(areas)), so those
+                # lanes exported as if they had no bands at all: no areas, no saturation
+                # flags, no region-fit verdicts in the PDF report.
                 for lane in self.lanes_data:
                     self._load_lane_state(lane['id'])
                     self.regenerate_profile_and_detect()
+                    try:
+                        self._recalculate_all_regions()
+                    except Exception:
+                        log_traceback()
                     self._save_current_lane_state()
+
+                # Put back any band boundaries the user hand-adjusted last time this image
+                # was analysed (see _restore_band_state for the invalidation rule).
+                try:
+                    self._restore_band_state(self._initial_band_state)
+                except Exception:
+                    log_traceback()
 
                 # Load the first lane as active
                 self.current_lane_id = self.lanes_data[0]['id']
@@ -4934,11 +5282,26 @@ if __name__ == "__main__":
                 self.rolling_ball_slider.valueChanged.connect(self._on_rb_slider_changed)
                 self.rolling_ball_spinbox.valueChanged.connect(self._on_rb_spinbox_changed)
 
+                # Manual radius is stored PER LANE (see _SHARED_SETTINGS, which deliberately
+                # omits rolling_ball_radius). Tuning one lane and wanting the same background
+                # treatment everywhere used to mean repeating the adjustment lane by lane —
+                # and any difference makes the lanes' areas not strictly comparable. This
+                # broadcasts the radius to every lane as you drag.
+                self.rb_apply_all_checkbox = QCheckBox("All lanes")
+                self.rb_apply_all_checkbox.setToolTip(
+                    "Apply this rolling-ball radius to EVERY lane, so all lanes share one "
+                    "background model and their areas stay comparable.\n"
+                    "Off: each lane keeps its own radius."
+                )
+                self.rb_apply_all_checkbox.setChecked(bool(getattr(self, 'rb_apply_all_lanes', False)))
+                self.rb_apply_all_checkbox.toggled.connect(self._on_rb_apply_all_toggled)
+
                 rb_row = QHBoxLayout()
                 rb_row.setContentsMargins(0, 0, 0, 0)
                 rb_row.setSpacing(6)
                 rb_row.addWidget(self.rolling_ball_slider, 1)
                 rb_row.addWidget(self.rolling_ball_spinbox, 0)
+                rb_row.addWidget(self.rb_apply_all_checkbox, 0)
 
                 self.auto_adjust_checkbox = QCheckBox("Auto")
                 self.auto_adjust_checkbox.setToolTip("Estimate the rolling-ball radius automatically from detected band widths.")
@@ -5222,6 +5585,72 @@ if __name__ == "__main__":
                     self.rolling_ball_radius = float(radius)
                     self._recalculate_all_regions()
                     self.update_plot()
+                    if self._rb_apply_all_active():
+                        self._schedule_rb_broadcast()
+
+            def _rb_apply_all_active(self):
+                """True when the radius should be mirrored onto every other lane."""
+                cb = getattr(self, 'rb_apply_all_checkbox', None)
+                if cb is None or not cb.isChecked():
+                    return False
+                if getattr(self, 'auto_adjust_checkbox', None) is not None and self.auto_adjust_checkbox.isChecked():
+                    return False   # Auto already forces one shared radius
+                if not hasattr(self, 'method_combobox'):
+                    return False
+                return self.method_combobox.currentText() in ["Rolling Ball", "Rolling-valley"]
+
+            def _schedule_rb_broadcast(self):
+                """Debounce the broadcast — the slider fires continuously while dragging and
+                recomputing every lane on each tick would make it crawl."""
+                t = getattr(self, '_rb_broadcast_timer', None)
+                if t is None:
+                    t = QTimer(self)
+                    t.setSingleShot(True)
+                    t.setInterval(180)
+                    t.timeout.connect(self._broadcast_rb_radius_to_all_lanes)
+                    self._rb_broadcast_timer = t
+                t.start()
+
+            def _broadcast_rb_radius_to_all_lanes(self):
+                """Give every lane the active lane's rolling-ball radius and re-integrate.
+
+                Uses _recalculate_all_regions rather than a full re-detection so hand-edited
+                / pasted regions survive: only the background model changes, the bands stay
+                exactly where the user put them.
+                """
+                if not self._rb_apply_all_active():
+                    return
+                radius = float(self.rolling_ball_radius)
+                saved_id = getattr(self, 'current_lane_id', None)
+                if saved_id is None:
+                    return
+                try:
+                    self._save_current_lane_state()
+                    for lane in getattr(self, 'lanes_data', []):
+                        lid = lane['id']
+                        if lid == saved_id or lid not in self.lanes_state:
+                            continue
+                        self._load_lane_state(lid)
+                        self.rolling_ball_radius = radius
+                        try:
+                            self._recalculate_all_regions()
+                        except Exception:
+                            log_traceback()
+                        self._save_current_lane_state()
+                    self._load_lane_state(saved_id)
+                except Exception:
+                    log_traceback()
+                    try:
+                        self._load_lane_state(saved_id)
+                    except Exception:
+                        pass
+
+            def _on_rb_apply_all_toggled(self, checked):
+                """Broadcast immediately when the option is switched on."""
+                self.rb_apply_all_lanes = bool(checked)
+                if checked:
+                    self._broadcast_rb_radius_to_all_lanes()
+                    self.update_plot()
 
             def _on_rb_slider_changed(self, value):
                 radius = value / float(getattr(self, '_RB_SCALE', 100))
@@ -5244,6 +5673,11 @@ if __name__ == "__main__":
                 self.rolling_ball_slider.setEnabled(manual_rb_enabled)
                 if hasattr(self, 'rolling_ball_spinbox'):
                     self.rolling_ball_spinbox.setEnabled(manual_rb_enabled)
+                if hasattr(self, 'rb_apply_all_checkbox'):
+                    # Meaningless under Auto (which already uses one averaged radius for
+                    # every lane) or with a single lane loaded.
+                    self.rb_apply_all_checkbox.setEnabled(
+                        manual_rb_enabled and len(getattr(self, 'lanes_data', []) or []) > 1)
                 self.auto_adjust_checkbox.setEnabled(is_rb_dependent_method)
                 self.rolling_ball_label.setEnabled(is_rb_dependent_method)
 
@@ -5321,6 +5755,230 @@ if __name__ == "__main__":
                 if store:
                     self.peak_saturation = result
                 return result
+
+            def _compute_region_fit(self, profile=None, background=None, peaks=None, regions=None):
+                """Measure how well each integration region matches the band it is meant to cover.
+
+                Returns a list aligned with `peaks`; each entry is
+                {'coverage': fraction of the band's signal that falls INSIDE the region,
+                 'width_ratio': region width / the band's own width,
+                 'verdict': 'ok' | 'narrow' | 'wide'}.
+
+                'narrow' means the region cuts the band off, so the reported area is an
+                UNDER-estimate. 'wide' means the region extends well past the band and is
+                integrating background (or a neighbour), so the area is an OVER-estimate.
+                The band's own extent is found by walking out from the apex until the
+                baseline-subtracted signal falls below REGION_EDGE_FRACTION of the apex, or
+                until it turns back up (the valley into the next band).
+
+                Called with no arguments it reads the CURRENT lane; other lanes pass their
+                stored profile/background/peaks/peak_regions, exactly like
+                _compute_peak_saturation.
+                """
+                if profile is None:
+                    profile = getattr(self, 'profile', None)
+                if background is None:
+                    background = getattr(self, 'background', None)
+                if peaks is None:
+                    peaks = getattr(self, 'peaks', None)
+                if regions is None:
+                    regions = getattr(self, 'peak_regions', None)
+
+                if profile is None or peaks is None or len(peaks) == 0:
+                    return []
+                try:
+                    sig = np.asarray(profile, dtype=float)
+                    if background is not None:
+                        bg = np.asarray(background, dtype=float)
+                        if bg.shape == sig.shape:
+                            sig = sig - bg
+                    sig = np.clip(sig, 0.0, None)
+                except Exception:
+                    return []
+
+                n = len(sig)
+                if n == 0:
+                    return []
+                out = []
+                for i, pk in enumerate(peaks):
+                    entry = {'coverage': 1.0, 'width_ratio': 1.0, 'verdict': 'ok'}
+                    try:
+                        pk = int(np.clip(int(pk), 0, n - 1))
+                        apex = float(sig[pk])
+                        if apex <= 0:
+                            out.append(entry); continue
+                        thresh = apex * self.REGION_EDGE_FRACTION
+
+                        # Walk out to the band's own edges: stop at the threshold, at the
+                        # array end, or where the trace turns back up into the next band.
+                        lo = pk
+                        while lo > 0:
+                            if sig[lo - 1] <= thresh or sig[lo - 1] > sig[lo]:
+                                break
+                            lo -= 1
+                        hi = pk
+                        while hi < n - 1:
+                            if sig[hi + 1] <= thresh or sig[hi + 1] > sig[hi]:
+                                break
+                            hi += 1
+
+                        if regions is not None and i < len(regions) and regions[i] is not None:
+                            rs, re_ = int(regions[i][0]), int(regions[i][1])
+                        else:
+                            rs, re_ = lo, hi
+                        if re_ < rs:
+                            rs, re_ = re_, rs
+                        rs = int(np.clip(rs, 0, n - 1)); re_ = int(np.clip(re_, 0, n - 1))
+
+                        band_total = float(sig[lo:hi + 1].sum())
+                        if band_total <= 0:
+                            out.append(entry); continue
+                        cs, ce = max(rs, lo), min(re_, hi)
+                        captured = float(sig[cs:ce + 1].sum()) if ce >= cs else 0.0
+                        coverage = float(np.clip(captured / band_total, 0.0, 1.0))
+
+                        band_w = max(1, hi - lo + 1)
+                        region_w = max(1, re_ - rs + 1)
+                        width_ratio = region_w / float(band_w)
+
+                        if coverage < self.REGION_COVERAGE_MIN:
+                            verdict = 'narrow'
+                        elif width_ratio > self.REGION_WIDTH_MAX_RATIO:
+                            verdict = 'wide'
+                        else:
+                            verdict = 'ok'
+                        entry = {'coverage': coverage, 'width_ratio': width_ratio,
+                                 'verdict': verdict}
+                    except Exception:
+                        pass
+                    out.append(entry)
+                return out
+
+            # --- Persisting hand-adjusted band boundaries -------------------------- #
+            # "Analyze as Sample" re-extracts the lanes and builds a BRAND NEW dialog, so
+            # every dragged boundary, added peak and deleted peak used to be thrown away and
+            # re-detected from scratch. The boundaries are the user's work; they are kept and
+            # restored, and only discarded when a setting that legitimately redefines the
+            # bands has changed.
+
+            # Settings whose change means the previous bands no longer describe this lane.
+            # Deliberately EXCLUDES rolling_ball_radius and area_subtraction_method: those
+            # change the baseline/integration, not where the bands are.
+            _BAND_STATE_KEYS = ('peak_height_factor', 'peak_distance', 'peak_prominence_factor',
+                                'min_band_width', 'smoothing_sigma', 'denoise_sigma',
+                                'speck_min_size', 'is_inverted')
+
+            def _band_state_fingerprint(self, lane_id):
+                """Identity of a lane's detection inputs; boundaries are reused only when
+                this is unchanged. Includes a cheap signature of the lane's own profile, so
+                moving or resizing the lane box also invalidates the saved boundaries."""
+                st = self.lanes_state.get(lane_id, {}) or {}
+                parts = [f"{k}={st.get(k)!r}" for k in self._BAND_STATE_KEYS]
+                prof = st.get('profile_original_inverted')
+                try:
+                    if prof is not None and len(prof):
+                        parts.append(f"n={len(prof)}")
+                        parts.append(f"s={float(np.sum(prof)):.6g}")
+                except Exception:
+                    pass
+                return "|".join(parts)
+
+            def get_all_lanes_band_state(self):
+                """Per-lane band boundaries + the fingerprint they were valid for."""
+                self._save_current_lane_state()
+                out = {}
+                for lane in getattr(self, 'lanes_data', []):
+                    lid = lane['id']
+                    st = self.lanes_state.get(lid)
+                    if not st:
+                        continue
+                    try:
+                        peaks = [int(p) for p in (st.get('peaks') if st.get('peaks') is not None else [])]
+                        regions = [[int(a), int(b)] for (a, b) in (st.get('peak_regions') or [])]
+                    except Exception:
+                        continue
+                    if not peaks:
+                        continue
+                    out[lid] = {
+                        'peaks': peaks,
+                        'peak_regions': regions,
+                        'regions_are_manual': bool(st.get('regions_are_manual', False)),
+                        'fingerprint': self._band_state_fingerprint(lid),
+                    }
+                return out
+
+            # Parameters worth reporting per lane. Most runs share one set, but the radius
+            # is per-lane by design (and detection settings can diverge on a lane whose
+            # regions were hand-edited), so the report has to be able to show the difference
+            # rather than print one global table that is quietly wrong for some lanes.
+            _REPORTED_LANE_SETTINGS = (
+                ('area_subtraction_method', 'Area method'),
+                ('rolling_ball_radius',     'Rolling-ball radius (px)'),
+                ('auto_adjust_rb_radius',   'Auto-adjust rolling-ball radius'),
+                ('peak_prominence_factor',  'Min prominence'),
+                ('peak_height_factor',      'Min height'),
+                ('peak_distance',           'Min distance (px)'),
+                ('min_band_width',          'Min band width (px)'),
+                ('smoothing_sigma',         'Smoothing sigma'),
+                ('denoise_sigma',           'Denoise sigma'),
+                ('speck_min_size',          'Speck min size'),
+                ('is_inverted',             'Profile inverted'),
+                ('regions_are_manual',      'Boundaries hand-adjusted'),
+            )
+
+            def get_all_lanes_settings(self):
+                """The reportable analysis settings actually used for each lane."""
+                self._save_current_lane_state()
+                out = {}
+                for lane in getattr(self, 'lanes_data', []):
+                    lid = lane['id']
+                    st = self.lanes_state.get(lid)
+                    if not st:
+                        continue
+                    out[lid] = {k: st.get(k) for k, _label in self._REPORTED_LANE_SETTINGS}
+                return out
+
+            def _restore_band_state(self, saved):
+                """Reinstate saved boundaries for every lane whose fingerprint still matches."""
+                if not saved:
+                    return
+                saved_id = getattr(self, 'current_lane_id', None)
+                restored = 0
+                for lane in getattr(self, 'lanes_data', []):
+                    lid = lane['id']
+                    entry = saved.get(lid)
+                    if entry is None:
+                        entry = saved.get(str(lid))
+                    if not isinstance(entry, dict):
+                        continue
+                    if str(entry.get('fingerprint', '')) != self._band_state_fingerprint(lid):
+                        continue          # detection inputs changed -> re-detect, as intended
+                    peaks = entry.get('peaks') or []
+                    regions = entry.get('peak_regions') or []
+                    if not peaks or len(regions) != len(peaks):
+                        continue
+                    try:
+                        self._load_lane_state(lid)
+                        self.peaks = np.array([int(p) for p in peaks], dtype=int)
+                        self.peak_regions = [(int(a), int(b)) for a, b in regions]
+                        self.regions_are_manual = bool(entry.get('regions_are_manual', True))
+                        # The stored areas were integrated for the DETECTED bands; drop them
+                        # so they are recomputed for the restored ones (update_plot when the
+                        # lane is shown, or the repair pass in get_all_lanes_peak_info).
+                        self.peak_areas_rolling_ball = []
+                        self.peak_areas_straight_line = []
+                        self.peak_areas_valley = []
+                        self.peak_areas_deconv = []
+                        self._save_current_lane_state()
+                        restored += 1
+                    except Exception:
+                        log_traceback()
+                if saved_id is not None:
+                    try:
+                        self._load_lane_state(saved_id)
+                    except Exception:
+                        pass
+                return restored
 
             def _update_quality_readout(self):
                 """Refresh the diagnostics line under the plot."""
@@ -5634,6 +6292,18 @@ if __name__ == "__main__":
                 profile_len   = len(profile_float)
                 n_peaks       = len(self.peaks)
 
+                # Hand-placed boundaries are the user's data, not a derived value. Changing
+                # the baseline model (rolling-ball radius, area method) must re-integrate the
+                # SAME spans, not silently re-derive them — otherwise dragging a handle and
+                # then nudging the radius threw the adjustment away. Detection settings
+                # (prominence/height/distance/...) still rebuild them, because those go
+                # through detect_peaks(), which clears regions_are_manual first.
+                _keep_manual = (getattr(self, 'regions_are_manual', False)
+                                and self.peak_regions is not None
+                                and len(self.peak_regions) == n_peaks
+                                and n_peaks > 0)
+                _manual_regions = list(self.peak_regions) if _keep_manual else None
+
                 def _fences():
                     left_fences  = []
                     right_fences = []
@@ -5756,6 +6426,10 @@ if __name__ == "__main__":
                 # here (not only in update_plot, which is skipped when the canvas isn't built yet
                 # — e.g. the dialog's per-lane pre-calc loop) so EVERY analysed lane's state
                 # carries its saturation, which is what the PDF report reads back per lane.
+                # Put the user's spans back over whatever the baseline pass re-derived.
+                if _manual_regions is not None:
+                    self.peak_regions = _manual_regions
+
                 try:
                     self._compute_peak_saturation()
                 except Exception:
@@ -6279,6 +6953,39 @@ if __name__ == "__main__":
                     elif method == "Rolling-valley": current_area_list = state['peak_areas_valley']
                     else: current_area_list = []
                     peaks = state['peaks']
+                    # Integrate any lane whose areas are still missing.
+                    #
+                    # The per-band areas are produced inside update_plot() — the same pass
+                    # that draws the trace — so they only exist for lanes that have actually
+                    # been rendered. The dialog's start-up loop cannot render (no canvas
+                    # yet), so any lane the user never selected in the lane dropdown reached
+                    # this point with peaks but an EMPTY area list. min(peaks, areas) then
+                    # made it export as a lane with no bands at all: no areas, no saturation
+                    # flags, no region-fit verdicts. That is why saturated bands visible in
+                    # the app were missing from the PDF report.
+                    #
+                    # update_plot() is reused rather than duplicating the integration maths,
+                    # so the exported numbers are produced by exactly the same code path as
+                    # the on-screen ones. It only runs for lanes that need it.
+                    if len(peaks) and len(current_area_list) < len(peaks):
+                        saved_id = self.current_lane_id
+                        try:
+                            self._load_lane_state(lane_id)
+                            self.update_plot()
+                            self._save_current_lane_state()
+                        except Exception:
+                            log_traceback()
+                        finally:
+                            try:
+                                self._load_lane_state(saved_id)
+                            except Exception:
+                                pass
+                        state = self.lanes_state[lane_id]
+                        peaks = state['peaks']
+                        if method == "Gaussian Deconvolution": current_area_list = state['peak_areas_deconv']
+                        elif method == "Rolling Ball": current_area_list = state['peak_areas_rolling_ball']
+                        elif method == "Straight Line": current_area_list = state['peak_areas_straight_line']
+                        elif method == "Rolling-valley": current_area_list = state['peak_areas_valley']
                     num_valid_peaks = len(peaks)
                     num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
                     # Per-band saturation for THIS lane, computed from its stored clipping map +
@@ -6291,16 +6998,35 @@ if __name__ == "__main__":
                         peaks=peaks,
                         regions=state.get('peak_regions'),
                     )
+                    # How well each region matches its band — same per-lane pattern as
+                    # saturation, so the report can flag truncated / over-wide regions.
+                    lane_fit = self._compute_region_fit(
+                        profile=state.get('profile'),
+                        background=state.get('background'),
+                        peaks=peaks,
+                        regions=state.get('peak_regions'),
+                    )
                     for i in range(num_peaks_to_process):
                         try:
                             original_peak_x_in_profile = int(peaks[i])
                             s = lane_sat[i] if i < len(lane_sat) else {}
+                            rf = lane_fit[i] if i < len(lane_fit) else {}
+                            _regs = state.get('peak_regions') or []
+                            _rs, _re = (int(_regs[i][0]), int(_regs[i][1])) if i < len(_regs) else (-1, -1)
                             peak_info_list.append({
                                 'area': current_area_list[i],
                                 'y_coord_in_lane_image': original_peak_x_in_profile,
                                 'original_peak_index': original_peak_x_in_profile,
                                 'is_saturated': bool(s.get('saturated', False)),
                                 'saturation_fraction': float(s.get('frac', 0.0)),
+                                'region_coverage': float(rf.get('coverage', 1.0)),
+                                'region_width_ratio': float(rf.get('width_ratio', 1.0)),
+                                'region_fit': str(rf.get('verdict', 'ok')),
+                                # The integration span actually used — including any the user
+                                # dragged — so the report can show the real boundaries.
+                                'region_start': _rs,
+                                'region_end': _re,
+                                'regions_are_manual': bool(state.get('regions_are_manual', False)),
                             })
                         except IndexError:
                             peak_info_list.append({
@@ -6308,7 +7034,13 @@ if __name__ == "__main__":
                                 'y_coord_in_lane_image': 0,
                                 'original_peak_index': -1,
                                 'is_saturated': False,
-                                'saturation_fraction': 0.0
+                                'saturation_fraction': 0.0,
+                                'region_coverage': 1.0,
+                                'region_width_ratio': 1.0,
+                                'region_fit': 'ok',
+                                'region_start': -1,
+                                'region_end': -1,
+                                'regions_are_manual': False,
                             })
                     results[lane_id] = peak_info_list
                 return results
@@ -7024,20 +7756,33 @@ if __name__ == "__main__":
                 num_peaks_to_process = min(num_valid_peaks, len(current_area_list))
 
                 sat_info = self._compute_peak_saturation()
+                fit_info = self._compute_region_fit()
                 for i in range(num_peaks_to_process):
                     try:
                         original_peak_x_in_profile = int(self.peaks[i])
                         s = sat_info[i] if i < len(sat_info) else {}
+                        rf = fit_info[i] if i < len(fit_info) else {}
+                        _regs = self.peak_regions or []
+                        _rs, _re = (int(_regs[i][0]), int(_regs[i][1])) if i < len(_regs) else (-1, -1)
                         peak_info_list.append({
                             'area': current_area_list[i],
                             'y_coord_in_lane_image': original_peak_x_in_profile,
                             'original_peak_index': original_peak_x_in_profile,
                             'is_saturated': bool(s.get('saturated', False)),
                             'saturation_fraction': float(s.get('frac', 0.0)),
+                            'region_coverage': float(rf.get('coverage', 1.0)),
+                            'region_width_ratio': float(rf.get('width_ratio', 1.0)),
+                            'region_fit': str(rf.get('verdict', 'ok')),
+                            'region_start': _rs,
+                            'region_end': _re,
+                            'regions_are_manual': bool(getattr(self, 'regions_are_manual', False)),
                         })
                     except IndexError:
                         peak_info_list.append({'area': 0.0, 'y_coord_in_lane_image': 0, 'original_peak_index': -1,
-                                               'is_saturated': False, 'saturation_fraction': 0.0})
+                                               'is_saturated': False, 'saturation_fraction': 0.0,
+                                               'region_coverage': 1.0, 'region_width_ratio': 1.0,
+                                               'region_fit': 'ok', 'region_start': -1,
+                                               'region_end': -1, 'regions_are_manual': False})
                 return peak_info_list
 
             def toggle_manual_select_mode(self, checked):
@@ -12767,6 +13512,10 @@ if __name__ == "__main__":
                 self.current_multi_lane_rect_start = None # For defining current rect
                 self.latest_multi_lane_peak_areas = {} # Key: lane_id (int), Value: list of areas
                 self.latest_multi_lane_peak_details = {} # Key: lane_id, Value: list of dicts with area & y_coord
+                # Hand-adjusted band boundaries and the per-lane settings they were made
+                # under; survives re-analysis and round-trips through the image's save file.
+                self.latest_multi_lane_band_state = {}
+                self.latest_multi_lane_settings = {}
                 self.latest_multi_lane_calculated_quantities = {} # Key: lane_id (int), Value: list of quantities
                 self.multi_lane_processing_finished = False # Flag
                 self.moving_multi_lane_index = -1 
@@ -16181,6 +16930,21 @@ if __name__ == "__main__":
                 else:
                     self.persist_peak_settings_enabled = False
 
+            def _store_band_state_from_dialog(self, dialog):
+                """Remember each lane's band boundaries (and its per-lane settings) so the
+                next "Analyze as Sample" reuses them instead of re-detecting from scratch,
+                and so they can be written into the image's save file."""
+                try:
+                    self.latest_multi_lane_band_state = dialog.get_all_lanes_band_state()
+                except Exception:
+                    log_traceback()
+                    self.latest_multi_lane_band_state = {}
+                try:
+                    self.latest_multi_lane_settings = dialog.get_all_lanes_settings()
+                except Exception:
+                    log_traceback()
+                    self.latest_multi_lane_settings = {}
+
             def calculate_peak_area(self, pil_image_for_dialog, force_manual_rb=False):
                 if pil_image_for_dialog is None:
                     return None
@@ -16197,11 +16961,13 @@ if __name__ == "__main__":
                         cropped_data=pil_image_for_dialog,
                         current_settings=settings_to_use,
                         persist_checked=self.persist_peak_settings_enabled,
-                        parent=self
+                        parent=self,
+                        initial_band_state=getattr(self, 'latest_multi_lane_band_state', None)
                     )
                     if dialog.exec() == QDialog.Accepted:
                         all_lanes_info = dialog.get_all_lanes_peak_info()
                         self._persist_peak_dialog_settings(dialog, force_manual_rb)
+                        self._store_band_state_from_dialog(dialog)
                         return all_lanes_info
                     else:
                         return None
@@ -16214,13 +16980,15 @@ if __name__ == "__main__":
                         cropped_data=pil_image_for_dialog,
                         current_settings=settings_to_use,
                         persist_checked=self.persist_peak_settings_enabled,
-                        parent=self
+                        parent=self,
+                        initial_band_state=getattr(self, 'latest_multi_lane_band_state', None)
                     )
 
                     peak_info_list = None
                     if dialog.exec() == QDialog.Accepted:
                         peak_info_list = dialog.get_final_peak_info()
                         self._persist_peak_dialog_settings(dialog, force_manual_rb)
+                        self._store_band_state_from_dialog(dialog)
                     else:
                         pass
 
@@ -16985,6 +17753,21 @@ if __name__ == "__main__":
                 
                 self.update_live_view()
 
+            def _modal_dialog_parent(self):
+                """Owner window to use for a modal dialog so it cannot be buried.
+
+                Any always-on-top palette (currently the Measurement Tools window) outranks
+                a dialog owned by the main window on Windows. Owning the dialog to the
+                palette instead puts it in the same stacking group, in front.
+                """
+                w = getattr(self, 'measurement_tool_window', None)
+                try:
+                    if w is not None and w.isVisible():
+                        return w
+                except RuntimeError:
+                    pass          # already destroyed by Qt
+                return self
+
             def finalize_measurement(self):
                 """Performs calculations, sets the final shape for display, and exits the tool's interaction mode."""
                 # This method's logic remains largely the same, but it's now called at the right time.
@@ -16999,7 +17782,15 @@ if __name__ == "__main__":
                     return
 
                 if self.measurement_mode == 'set_scale':
-                    dialog = ScaleDialog(self)
+                    # Parent to the Measurement Tools palette when it is open, not to the
+                    # main window. That palette is created with WindowStaysOnTopHint, so on
+                    # Windows it floats ABOVE any dialog owned by the main window — "Set
+                    # Image Scale" opened behind it and could not be seen or edited. A dialog
+                    # owned by the palette shares its stacking level and lands in front.
+                    # Application-modal + raise on show makes that certain on every platform.
+                    dialog = ScaleDialog(self._modal_dialog_parent())
+                    dialog.setWindowModality(Qt.ApplicationModal)
+                    QTimer.singleShot(0, lambda d=dialog: (d.raise_(), d.activateWindow()))
                     if dialog.exec() == QDialog.Accepted:
                         known_length, unit = dialog.get_values()
                         pixel_dist = np.linalg.norm(np.array(points_img[0].toTuple()) - np.array(points_img[-1].toTuple()))
@@ -17150,6 +17941,12 @@ if __name__ == "__main__":
                     self.multi_lane_processing_finished = bool(
                         dens.get("multi_lane_processing_finished", False))
                     self.latest_standard_curve_model = str(dens.get("standard_curve_model", "Linear"))
+                    # Band boundaries + per-lane settings (absent in files written before
+                    # these keys existed, which simply load as empty and re-detect).
+                    self.latest_multi_lane_band_state = _to_int_keyed(
+                        dens.get("multi_lane_band_state"), lambda v: dict(v or {}))
+                    self.latest_multi_lane_settings = _to_int_keyed(
+                        dens.get("multi_lane_settings"), lambda v: dict(v or {}))
                 else:
                     # Legacy config (or one saved before any analysis): it carries no
                     # results, so clear rather than leave whatever the previously-open image
@@ -17161,6 +17958,8 @@ if __name__ == "__main__":
                     self.latest_peak_details = []
                     self.latest_calculated_quantities = []
                     self.latest_standard_curve_model = "Linear"
+                    self.latest_multi_lane_band_state = {}
+                    self.latest_multi_lane_settings = {}
                     # Only the flag was ever stored at the top level.
                     self.multi_lane_processing_finished = config_data.get(
                         "multi_lane_processing_finished", False)
@@ -18036,7 +18835,8 @@ if __name__ == "__main__":
                     is_standard_mode_current,
                     quantities_data_for_table,
                     self,
-                    peak_details_data=peak_details_for_table
+                    peak_details_data=peak_details_for_table,
+                    peak_settings_data=getattr(self, 'latest_multi_lane_settings', None)
                 )
 
                 self.table_window_instance.finished.connect(self._on_table_window_closed)
@@ -21911,31 +22711,41 @@ if __name__ == "__main__":
                 presets_layout.addWidget(self.remove_config_button, 0, 4)
                 
                 # Checkbox Row
+                # Both default to OFF: switching the molecular-weight ladder should change
+                # the L/R values and NOTHING else. Previously a preset switch silently wiped
+                # the user's typed Top Labels (most ladder presets carry no top_labels, so
+                # they were overwritten with an empty list) and replaced their custom
+                # markers/shapes.
                 self.load_custom_from_preset_checkbox = QCheckBox("Load Custom Markers/Shapes from Preset")
-                self.load_custom_from_preset_checkbox.setToolTip("If checked, loading a preset will also restore saved lines, rectangles, and custom text markers.")
-                self.load_custom_from_preset_checkbox.setChecked(True)
+                self.load_custom_from_preset_checkbox.setToolTip("If checked, loading a preset also replaces your lines, rectangles and custom text markers with the ones saved in that preset.\nOff by default so switching ladder does not disturb your annotations.")
+                self.load_custom_from_preset_checkbox.setChecked(False)
                 presets_layout.addWidget(self.load_custom_from_preset_checkbox, 1, 1, 1, 4)
+
+                self.load_top_labels_from_preset_checkbox = QCheckBox("Load Top Labels from Preset")
+                self.load_top_labels_from_preset_checkbox.setToolTip("If checked, loading a preset also replaces the Top Labels box with the labels saved in that preset.\nOff by default so changing the molecular-weight ladder keeps your lane names.")
+                self.load_top_labels_from_preset_checkbox.setChecked(False)
+                presets_layout.addWidget(self.load_top_labels_from_preset_checkbox, 2, 1, 1, 4)
                 
                 # Values Row
-                presets_layout.addWidget(QLabel("L/R Values:"), 2, 0)
+                presets_layout.addWidget(QLabel("L/R Values:"), 3, 0)
                 self.marker_values_textbox = QLineEdit(self)
                 self.marker_values_textbox.setPlaceholderText("Custom L/R values (comma-separated)")
                 self.marker_values_textbox.setToolTip("Comma-separated molecular weights (e.g., 250, 150, 100) for Left/Right markers.")
                 self.marker_values_textbox.setEnabled(False)
-                presets_layout.addWidget(self.marker_values_textbox, 2, 1, 1, 4)
+                presets_layout.addWidget(self.marker_values_textbox, 3, 1, 1, 4)
                 
                 # Labels Row
-                presets_layout.addWidget(QLabel("Top Labels:"), 3, 0, Qt.AlignTop)
+                presets_layout.addWidget(QLabel("Top Labels:"), 4, 0, Qt.AlignTop)
                 self.top_marker_input = QTextEdit(self)
                 self.top_marker_input.setText(", ".join(map(str, getattr(self, 'top_label', []))))
                 self.top_marker_input.setToolTip("Comma-separated labels (e.g., Lane 1, Lane 2, Ctrl) for Top markers.")
                 self.top_marker_input.setFixedHeight(50)
-                presets_layout.addWidget(self.top_marker_input, 3, 1, 1, 3)
+                presets_layout.addWidget(self.top_marker_input, 4, 1, 1, 3)
                 
                 self.update_labels_button = QPushButton("Update Labels")
                 self.update_labels_button.setToolTip("Apply changes made to the text boxes above to the image immediately.")
                 self.update_labels_button.clicked.connect(self.update_all_labels)
-                presets_layout.addWidget(self.update_labels_button, 3, 4)
+                presets_layout.addWidget(self.update_labels_button, 4, 4)
                 
                 main_layout.addWidget(presets_group)
 
@@ -24281,7 +25091,22 @@ if __name__ == "__main__":
 
                 # Call update live view after duplicating markers and updating offsets/sliders
                 self.update_live_view()
-                
+
+                # The duplicated ladder now sits against the opposite content border, where
+                # there is usually no margin for its labels — so they render clipped or off
+                # canvas. Run the same "Set Recommended Values -> Apply Padding" pass Auto
+                # Lane uses, deferred one turn so the recommendation measures the settled
+                # viewer geometry. The helper stays silent when the padding already matches.
+                QTimer.singleShot(0, self._auto_lane_settle_and_pad)
+
+            def _should_load_top_labels_from_preset(self):
+                """Whether a preset switch may overwrite the Top Labels box.
+
+                Defaults to False when the checkbox does not exist yet (presets are applied
+                during start-up before the Markers tab is built)."""
+                cb = getattr(self, 'load_top_labels_from_preset_checkbox', None)
+                return bool(cb is not None and cb.isChecked())
+
             def on_combobox_changed(self):
                 preset_name = self.combo_box.currentText()
 
@@ -24315,8 +25140,14 @@ if __name__ == "__main__":
                     display_marker_values = [str(v) for v in self.marker_values]
                     self.marker_values_textbox.setText(", ".join(display_marker_values))
 
-                    self.top_label = list(preset_config.get("top_labels", []))
-                    self.top_marker_input.setText(", ".join(map(str, self.top_label)))
+                    # Top Labels are the user's lane names — they have nothing to do with
+                    # which molecular-weight ladder is selected. Overwriting them here is
+                    # what made them "disappear" on every preset change: nearly all ladder
+                    # presets carry no top_labels, so this replaced the typed names with an
+                    # empty list. Now opt-in via the checkbox.
+                    if self._should_load_top_labels_from_preset():
+                        self.top_label = list(preset_config.get("top_labels", []))
+                        self.top_marker_input.setText(", ".join(map(str, self.top_label)))
 
                     # --- START FIX: Make loading custom items conditional ---
                     if self.load_custom_from_preset_checkbox.isChecked():
@@ -24339,8 +25170,7 @@ if __name__ == "__main__":
                     self.marker_values_textbox.setEnabled(False)
                     self.rename_input.setEnabled(False)
                     self.marker_values_textbox.clear()
-                    self.top_marker_input.clear()
-                    
+
                     # --- START FIX: Make clearing custom items conditional ---
                     if self.load_custom_from_preset_checkbox.isChecked():
                         self.custom_markers.clear()
@@ -24348,7 +25178,11 @@ if __name__ == "__main__":
                     # --- END FIX ---
 
                     self.marker_values = []
-                    self.top_label = []
+                    # Same rule as above: an unknown/removed preset must not silently wipe
+                    # the user's lane names either.
+                    if self._should_load_top_labels_from_preset():
+                        self.top_marker_input.clear()
+                        self.top_label = []
                     self.update_live_view()
 
             
@@ -25842,6 +26676,22 @@ if __name__ == "__main__":
                     "multi_lane_processing_finished": bool(
                         getattr(self, 'multi_lane_processing_finished', False)),
                     "standard_curve_model": str(getattr(self, 'latest_standard_curve_model', 'Linear')),
+                    # Hand-adjusted band boundaries and the per-lane settings they were made
+                    # under. Saving these is what lets a reopened image resume with the
+                    # user's own integration spans instead of re-detecting them, and lets the
+                    # PDF report state the boundaries and per-lane parameters that were used.
+                    "multi_lane_band_state": {
+                        str(k): {
+                            'peaks': [int(p) for p in (v or {}).get('peaks', [])],
+                            'peak_regions': [[int(a), int(b)]
+                                             for a, b in (v or {}).get('peak_regions', [])],
+                            'regions_are_manual': bool((v or {}).get('regions_are_manual', False)),
+                            'fingerprint': str((v or {}).get('fingerprint', '')),
+                        }
+                        for k, v in (getattr(self, 'latest_multi_lane_band_state', {}) or {}).items()},
+                    "multi_lane_settings": {
+                        str(k): {kk: make_json_serializable(vv) for kk, vv in (v or {}).items()}
+                        for k, v in (getattr(self, 'latest_multi_lane_settings', {}) or {}).items()},
                 }
 
                 # Molecular-weight-marker labels: the FULL ladder plus the positions whose
@@ -29269,6 +30119,10 @@ if __name__ == "__main__":
                 self.latest_multi_lane_peak_areas = {}
                 self.latest_multi_lane_calculated_quantities = {}
                 self.latest_multi_lane_peak_details = {} # Also clear this
+                # The lane definitions are gone, so saved boundaries no longer refer to
+                # anything — drop them with the rest of the analysis.
+                self.latest_multi_lane_band_state = {}
+                self.latest_multi_lane_settings = {}
                 self.target_protein_areas_text.clear()
                 # REMOVED the check for the non-existent button here
                 self.multi_lane_processing_finished = False
@@ -30340,7 +31194,7 @@ if __name__ == "__main__":
                     from pptx import Presentation
                     from pptx.util import Emu, Pt
                     from pptx.dml.color import RGBColor
-                    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+                    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
                     from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
                 except Exception:
                     QMessageBox.critical(
@@ -30411,6 +31265,31 @@ if __name__ == "__main__":
                     hexs = name.lstrip('#').upper()
                     return RGBColor.from_string(hexs[:6] if len(hexs) >= 6 else "000000")
 
+                def _no_shadow(shape):
+                    """Strip the theme's drop shadow from an exported shape.
+
+                    add_connector()/add_shape() attach a <p:style> containing
+                    <a:effectRef idx="1">, which pulls the Office theme's outer shadow — so
+                    every molecular-weight tick and custom line came out of PowerPoint with a
+                    soft grey copy of itself offset down-right, while the app draws a clean
+                    line. Writing an empty <a:effectLst/> into spPr overrides the reference,
+                    and pointing effectRef at idx 0 means there is nothing left to inherit
+                    even if a viewer ignores the empty list.
+                    """
+                    try:
+                        shape.shadow.inherit = False       # emits <a:effectLst/>
+                    except Exception:
+                        pass
+                    try:
+                        from pptx.oxml.ns import qn as _qn
+                        style = shape._element.find(_qn('p:style'))
+                        if style is not None:
+                            ref = style.find(_qn('a:effectRef'))
+                            if ref is not None:
+                                ref.set('idx', '0')
+                    except Exception:
+                        pass
+
                 def _rot(dx, dy, deg):
                     """Rotate offset (dx,dy) by deg clockwise in screen (y-down) space —
                     matches Qt painter.rotate and PowerPoint's positive rotation."""
@@ -30427,14 +31306,63 @@ if __name__ == "__main__":
                     slide.shapes.add_picture(io.BytesIO(png_bytes), Emu(0), Emu(0),
                                              width=E(img_w), height=E(img_h))
 
-                    def _add_text(text, center_x, center_y, box_w, box_h, pt_size, family,
-                                  color, align, bold=False, italic=False, rotation=0.0):
-                        """Add a text box (in image px) centred at (center_x, center_y)."""
-                        tb = slide.shapes.add_textbox(E(center_x - box_w / 2.0),
-                                                      E(center_y - box_h / 2.0),
-                                                      E(box_w), E(box_h))
+                    # --- Placement model -------------------------------------------- #
+                    # Qt draws text from its BASELINE and centres Left/Right markers on the
+                    # band using INK metrics (marker_baseline_offset -> tightBoundingRect).
+                    # PowerPoint instead centres the LINE BOX (ascent+descent) inside the
+                    # shape when the anchor is MIDDLE. Positioning a box centre at the band Y
+                    # therefore lands the glyphs high by (ascent-descent)/2 — the systematic
+                    # "markers shifted a bit" seen when comparing the .pptx with the PNG.
+                    # Everything below is placed by converting the exact Qt BASELINE the
+                    # raster renderer uses into the equivalent PowerPoint box centre.
+                    def _box_cy(fm, baseline_y):
+                        """Box centre Y that puts the text's baseline at baseline_y."""
+                        return baseline_y + (fm.descent() - fm.ascent()) / 2.0
+
+                    def _add_text(text, pin_x, baseline_y, adv, fm, pt_size, family,
+                                  color, pin='center', bold=False, italic=False,
+                                  rotation=0.0):
+                        """Add a text box whose glyphs land exactly where Qt drew them.
+
+                        `pin_x` is the x that must be exact and `pin` says which edge of the
+                        text it is ('left', 'right' or 'center'); `baseline_y` is the Qt text
+                        baseline. The box is deliberately made much wider than the string so
+                        PowerPoint's own (slightly different) text metrics can never wrap,
+                        clip or auto-shrink it — the paragraph alignment keeps the pinned
+                        edge exact no matter how wide the box is. Rotated labels are padded
+                        symmetrically so the box centre, which PowerPoint rotates about, is
+                        unchanged.
+                        """
+                        adv = max(1.0, float(adv))
+                        box_h = max(1.0, float(fm.height()))
+                        slack = max(adv * 1.0, box_h * 2.0)   # generous, never clips
+
+                        if pin == 'right':
+                            align = PP_ALIGN.RIGHT
+                            left = pin_x - adv - slack
+                            box_w = adv + slack
+                        elif pin == 'left':
+                            align = PP_ALIGN.LEFT
+                            left = pin_x
+                            box_w = adv + slack
+                        else:
+                            align = PP_ALIGN.CENTER
+                            box_w = adv + 2.0 * slack
+                            left = pin_x - box_w / 2.0
+
+                        # Vertical slack too, so a taller PowerPoint line box stays centred
+                        # rather than being pushed down by the top of the frame.
+                        box_h_padded = box_h * 3.0
+                        cy = _box_cy(fm, baseline_y)
+
+                        tb = slide.shapes.add_textbox(E(left), E(cy - box_h_padded / 2.0),
+                                                      E(box_w), E(box_h_padded))
                         tf = tb.text_frame
                         tf.word_wrap = False
+                        try:
+                            tf.auto_size = MSO_AUTO_SIZE.NONE   # never resize/shrink the text
+                        except Exception:
+                            pass
                         tf.margin_left = 0; tf.margin_right = 0
                         tf.margin_top = 0; tf.margin_bottom = 0
                         try:
@@ -30515,10 +31443,143 @@ if __name__ == "__main__":
                         try:
                             shp.fill.solid(); shp.fill.fore_color.rgb = _rgb(color)
                             shp.line.fill.background()   # solid arrow, no outline
-                            shp.shadow.inherit = False
                         except Exception:
                             pass
+                        _no_shadow(shp)
                         return shp
+
+                    # --- Native line symbol (PPTX only) ------------------------------
+                    # The default Left/Right marker symbol is "⎯" (U+23AF HORIZONTAL LINE
+                    # EXTENSION). Arial — and most fonts PowerPoint falls back to — has no
+                    # glyph for it, so Qt and PowerPoint substitute DIFFERENT fonts with
+                    # DIFFERENT advance widths. The tick then rendered at the wrong width (or
+                    # as a missing-glyph box) and, because it shares the label's text box, it
+                    # dragged the molecular-weight NUMBER out of position too. Exporting the
+                    # symbol as a real PowerPoint line removes the font dependency entirely.
+                    _LINE_SYMBOLS = {"⎯", "-", "–", "—", "_", "‒", "―"}
+
+                    _ink_cache = {}
+
+                    def _glyph_ink(glyph, qfont):
+                        """The glyph's REAL ink box (left, top, w, h) relative to the pen origin.
+
+                        QFontMetrics.tightBoundingRect() cannot be trusted for the marker
+                        symbols: for "⎯" (U+23AF) at 48 px it reports a height of 16 px when
+                        the bar actually drawn is 3 px, and "-" reports 15 px for a 5 px bar.
+                        Using that as the line weight produced the thick black slabs seen in
+                        PowerPoint instead of the app's hairlines, and put the bar's centre
+                        several pixels low. So the glyph is rasterised once and measured —
+                        exactly the pixels Qt paints, whatever font it substitutes. Cached per
+                        (font, size, style, glyph), so a ladder of markers measures once.
+                        """
+                        key = (qfont.family(), qfont.pixelSize(), qfont.bold(),
+                               qfont.italic(), glyph)
+                        if key in _ink_cache:
+                            return _ink_cache[key]
+                        result = None
+                        try:
+                            fmx = QFontMetrics(qfont)
+                            adv = max(1, fmx.horizontalAdvance(glyph))
+                            px = max(1, qfont.pixelSize())
+                            pad = px * 2
+                            w = adv + 2 * pad
+                            h = px * 4
+                            img = QImage(w, h, QImage.Format_ARGB32)
+                            img.fill(Qt.transparent)
+                            pt = QPainter(img)
+                            pt.setFont(qfont)
+                            pt.setPen(QColor(0, 0, 0))
+                            ox, oy = pad, h // 2          # pen origin == baseline-left
+                            pt.drawText(QPointF(float(ox), float(oy)), glyph)
+                            pt.end()
+                            arr = np.frombuffer(bytes(img.constBits()),
+                                                dtype=np.uint8).reshape(h, w, 4)
+                            # Threshold at half opacity: the SOLID core of the stroke, not its
+                            # antialiased fringe, which would over-report the bar's thickness.
+                            ys, xs = np.where(arr[:, :, 3] >= 128)
+                            if len(xs):
+                                result = (float(xs.min() - ox), float(ys.min() - oy),
+                                          float(xs.max() - xs.min() + 1),
+                                          float(ys.max() - ys.min() + 1))
+                        except Exception:
+                            log_traceback()
+                        _ink_cache[key] = result
+                        return result
+
+                    def _add_line_symbol(x_left, baseline_y, glyph, qfont, color):
+                        """Native straight line reproducing a dash/line glyph's actual ink."""
+                        ink = _glyph_ink(glyph, qfont)
+                        if not ink or ink[2] <= 0 or ink[3] <= 0:
+                            return None
+                        il, it, iw, ih = ink
+                        y = baseline_y + it + ih / 2.0    # centre of the drawn bar
+                        x0 = x_left + il
+                        conn = slide.shapes.add_connector(
+                            MSO_CONNECTOR.STRAIGHT, E(x0), E(y), E(x0 + iw), E(y))
+                        try:
+                            conn.line.color.rgb = _rgb(color)
+                            conn.line.width = E(max(1.0, ih))
+                        except Exception:
+                            pass
+                        _no_shadow(conn)
+                        return conn
+
+                    def _emit_marker_label(full, origin_x, baseline_y, fm, pt_size, family, color,
+                                           qfont=None):
+                        """Emit one Left/Right marker label as font-independent pieces.
+
+                        `origin_x` is Qt's drawText x (the pen start) and `baseline_y` its
+                        baseline, so every piece is placed at the exact position the raster
+                        renderer draws it: each segment's x comes from the PREFIX advance of
+                        the full string, which also carries kerning and the separating space.
+                        Number runs stay editable text; line and arrow glyphs become native
+                        shapes so no font substitution can move or mangle them.
+                        """
+                        segs = []          # (kind, text, start_index)
+                        buf = ""; buf_start = 0
+                        for i, ch in enumerate(str(full)):
+                            adir = _char_arrow_dir(ch)
+                            if ch in _LINE_SYMBOLS or adir is not None:
+                                if buf:
+                                    segs.append(('text', buf, buf_start)); buf = ""
+                                segs.append(('line' if adir is None else 'arrow', ch, i))
+                                buf_start = i + 1
+                            else:
+                                if not buf:
+                                    buf_start = i
+                                buf += ch
+                        if buf:
+                            segs.append(('text', buf, buf_start))
+
+                        for kind, seg_text, start_i in segs:
+                            if kind == 'text':
+                                # Drop the separator space from the run and step the start
+                                # index past it, so the box is pinned to the first VISIBLE
+                                # character. Leaving a leading space in made the run's
+                                # position depend on whether PowerPoint renders that space —
+                                # the number then sat one space-width off.
+                                lead = len(seg_text) - len(seg_text.lstrip())
+                                start_i += lead
+                                seg_text = seg_text.strip()
+                                if not seg_text:
+                                    continue
+                            x_left = origin_x + fm.horizontalAdvance(str(full)[:start_i])
+                            seg_adv = fm.horizontalAdvance(seg_text)
+                            if kind == 'line':
+                                _add_line_symbol(x_left, baseline_y, seg_text,
+                                                 qfont if qfont is not None else std_qfont, color)
+                            elif kind == 'arrow':
+                                ink = _glyph_ink(seg_text,
+                                                 qfont if qfont is not None else std_qfont)
+                                if ink and ink[2] > 0 and ink[3] > 0:
+                                    il, it, iw, ih = ink
+                                    _add_arrow(_char_arrow_dir(seg_text),
+                                               x_left + il + iw / 2.0,
+                                               baseline_y + it + ih / 2.0,
+                                               iw, ih, color)
+                            else:
+                                _add_text(seg_text, x_left, baseline_y, seg_adv, fm,
+                                          pt_size, family, color, pin='left')
 
                     # Standard marker font metrics at on-image size.
                     std_px = on_img_px(self.font_size)
@@ -30527,27 +31588,36 @@ if __name__ == "__main__":
                     std_h = fm_std.height()
                     main_color = self.font_color if getattr(self, 'font_color', None) else QColor("#000000")
 
-                    # --- Left markers: text ends at left_marker_shift_added, centred on band y ---
+                    # --- Left markers -------------------------------------------------
+                    # Raster renderer: drawText(x = shift - advance,
+                    #                           y = band_y + marker_baseline_offset(...)).
+                    # So the RIGHT edge is pinned at left_marker_shift_added and the baseline
+                    # carries the ink-centring offset. Mirror both exactly.
                     for y_img, text in getattr(self, "left_markers", []):
                         full = self.marker_label_text(text, 'left')
                         if not full:
                             continue
                         adv = fm_std.horizontalAdvance(full)
-                        _add_text(full, self.left_marker_shift_added - adv / 2.0, y_img,
-                                  adv, std_h, self.font_size, self.font_family, main_color,
-                                  PP_ALIGN.RIGHT)
+                        baseline = y_img + self.marker_baseline_offset(fm_std, full)
+                        # Qt's pen start for a right-aligned label.
+                        _emit_marker_label(full, self.left_marker_shift_added - adv, baseline,
+                                           fm_std, self.font_size, self.font_family, main_color,
+                                           qfont=std_qfont)
 
-                    # --- Right markers: text starts at right_marker_shift_added ---
+                    # --- Right markers: LEFT edge pinned at right_marker_shift_added ---
                     for y_img, text in getattr(self, "right_markers", []):
                         full = self.marker_label_text(text, 'right')
                         if not full:
                             continue
-                        adv = fm_std.horizontalAdvance(full)
-                        _add_text(full, self.right_marker_shift_added + adv / 2.0, y_img,
-                                  adv, std_h, self.font_size, self.font_family, main_color,
-                                  PP_ALIGN.LEFT)
+                        baseline = y_img + self.marker_baseline_offset(fm_std, full)
+                        _emit_marker_label(full, self.right_marker_shift_added, baseline,
+                                           fm_std, self.font_size, self.font_family, main_color,
+                                           qfont=std_qfont)
 
-                    # --- Top markers: rotated about their anchor (baked into the box centre) ---
+                    # --- Top markers: rotated about their anchor ---
+                    # Raster renderer: translate(x_img, top_shift + height*0.3), rotate(theta),
+                    # drawText(x_off, 0) — so the baseline sits on the anchor and the text is
+                    # offset horizontally by the rotation-axis rule.
                     top_axis = getattr(self, 'top_rotation_axis', 'left')
                     theta = float(getattr(self, 'font_rotation', 0.0))
                     anchor_y = self.top_marker_shift_added + std_h * 0.3   # baseline, per save_image
@@ -30556,15 +31626,19 @@ if __name__ == "__main__":
                             continue
                         adv = fm_std.horizontalAdvance(str(text))
                         x_off = -adv / 2.0 if top_axis == 'center' else (-adv if top_axis == 'right' else 0.0)
-                        # Unrotated box centre (C0) around the baseline-left anchor A=(x_img, anchor_y).
+                        # Unrotated centre of the text's own advance box, and the box centre
+                        # that puts its baseline on the anchor.
                         c0x = x_img + x_off + adv / 2.0
-                        c0y = anchor_y - fm_std.ascent() + std_h / 2.0
-                        # PowerPoint rotates about the box centre; place that centre so the result
-                        # matches Qt rotating the text about the anchor A.
+                        c0y = _box_cy(fm_std, anchor_y)
+                        # PowerPoint rotates about the shape centre; place that centre so the
+                        # result matches Qt rotating the text about the anchor A=(x_img, anchor_y).
                         rdx, rdy = _rot(c0x - x_img, c0y - anchor_y, theta)
                         cbx, cby = x_img + rdx, anchor_y + rdy
-                        _add_text(str(text), cbx, cby, adv, std_h, self.font_size,
-                                  self.font_family, main_color, PP_ALIGN.CENTER, rotation=theta)
+                        # _add_text re-applies the baseline->centre conversion, so hand it the
+                        # baseline that reproduces the rotated centre we just computed.
+                        _add_text(str(text), cbx, cby - (fm_std.descent() - fm_std.ascent()) / 2.0,
+                                  adv, fm_std, self.font_size,
+                                  self.font_family, main_color, pin='center', rotation=theta)
 
                     # --- Custom markers (own font/size/weight/style/colour), centred on (x,y) ---
                     for marker_tuple in getattr(self, "custom_markers", []):
@@ -30584,30 +31658,53 @@ if __name__ == "__main__":
                             fm_c = QFontMetrics(cqf)
                             adv = fm_c.horizontalAdvance(str(mtext))
                             box_h = fm_c.height()
+                            # Raster renderer centres a custom marker by its boundingRect:
+                            #   origin = (x - rect.center().x(), y - rect.center().y())
+                            # where origin is the Qt baseline-left point. Reproduce that exact
+                            # origin here instead of assuming the glyphs sit centred in their
+                            # line box — that assumption is what drifted custom markers.
+                            brect = fm_c.boundingRect(str(mtext))
+                            base_y = y_pos - brect.center().y()
+                            origin_x = x_pos - brect.center().x()
+                            adv_cx = origin_x + adv / 2.0     # centre of the advance box
                             segments = _split_arrow_segments(mtext)
                             n_arrows = sum(1 for k, _t, _d in segments if k == 'arrow')
                             if n_arrows == 0:
                                 # No arrow glyphs → single editable text box.
-                                _add_text(str(mtext), x_pos, y_pos, adv, box_h, fsize,
-                                          fam, color, PP_ALIGN.CENTER, bold=is_bold, italic=is_italic)
+                                _add_text(str(mtext), adv_cx, base_y, adv, fm_c, fsize,
+                                          fam, color, pin='center', bold=is_bold, italic=is_italic)
                             elif len(segments) == 1:
                                 # Standalone arrow glyph → native PowerPoint block arrow.
-                                _add_arrow(segments[0][2], x_pos, y_pos, adv, box_h, color)
+                                # A block arrow is a SHAPE, not text, so it is placed by its ink
+                                # box — measured from the rendered glyph, because Qt's tight
+                                # metrics are unreliable for these characters.
+                                _ai = _glyph_ink(str(mtext), cqf)
+                                _aw = max(1.0, _ai[2] if _ai else brect.width())
+                                _ah = max(1.0, _ai[3] if _ai else brect.height())
+                                _add_arrow(segments[0][2], x_pos, y_pos, _aw, _ah, color)
                             else:
                                 # Mixed 'arrow + text' label (e.g. '→A'): lay the segments out
-                                # left-to-right while keeping the whole run centred on
-                                # (x_pos, y_pos) exactly as the app draws the combined string.
-                                # Each arrow glyph becomes a native block arrow; letter runs stay
-                                # editable text boxes, so nothing depends on a host arrow font.
-                                cursor = x_pos - adv / 2.0
+                                # left-to-right from the SAME origin the raster renderer uses, so
+                                # the run as a whole lands where the app draws it. Each arrow
+                                # glyph becomes a native block arrow; letter runs stay editable
+                                # text boxes, so nothing depends on a host arrow font.
+                                cursor = origin_x
                                 for kind, seg_text, seg_dir in segments:
                                     seg_adv = fm_c.horizontalAdvance(seg_text)
                                     seg_cx = cursor + seg_adv / 2.0
                                     if kind == 'arrow':
-                                        _add_arrow(seg_dir, seg_cx, y_pos, seg_adv, box_h, color)
+                                        _si = _glyph_ink(seg_text, cqf)
+                                        if _si and _si[2] > 0 and _si[3] > 0:
+                                            _add_arrow(seg_dir, cursor + _si[0] + _si[2] / 2.0,
+                                                       base_y + _si[1] + _si[3] / 2.0,
+                                                       _si[2], _si[3], color)
+                                        else:
+                                            sbr = fm_c.boundingRect(seg_text)
+                                            _add_arrow(seg_dir, seg_cx, y_pos,
+                                                       max(1.0, sbr.width()), max(1.0, sbr.height()), color)
                                     else:
-                                        _add_text(seg_text, seg_cx, y_pos, seg_adv, box_h, fsize,
-                                                  fam, color, PP_ALIGN.CENTER, bold=is_bold, italic=is_italic)
+                                        _add_text(seg_text, seg_cx, base_y, seg_adv, fm_c, fsize,
+                                                  fam, color, pin='center', bold=is_bold, italic=is_italic)
                                     cursor += seg_adv
                         except Exception:
                             continue
@@ -30626,6 +31723,7 @@ if __name__ == "__main__":
                                         E(start[0]), E(start[1]), E(end[0]), E(end[1]))
                                     conn.line.color.rgb = _rgb(color)
                                     conn.line.width = E(thickness)
+                                    _no_shadow(conn)
                             elif stype == 'arrow':
                                 start = shape_data.get('start'); end = shape_data.get('end')
                                 if start and end:
@@ -30644,6 +31742,7 @@ if __name__ == "__main__":
                                         ln.append(tail)
                                     except Exception:
                                         pass
+                                    _no_shadow(conn)
                             elif stype == 'rectangle':
                                 rect = shape_data.get('rect')
                                 if rect:
@@ -30651,9 +31750,9 @@ if __name__ == "__main__":
                                     shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
                                                                  E(x), E(y), E(w), E(h))
                                     shp.fill.background()      # no fill (outline only)
-                                    shp.shadow.inherit = False
                                     shp.line.color.rgb = _rgb(color)
                                     shp.line.width = E(thickness)
+                                    _no_shadow(shp)
                         except Exception:
                             continue
 
