@@ -17,8 +17,9 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 
 [<img src="https://img.shields.io/badge/⬇%20Download%20Latest%20Release-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release">](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases/latest)
 
-or Download from SourceForge (https://sourceforge.net/projects/gel-blot-analyzer/)
+</div>
 
+[![Download from SourceForge](https://img.shields.io/badge/Download%20from-SourceForge-FF6600?logo=sourceforge&logoColor=white)](https://sourceforge.net/projects/gel-blot-analyzer/)
 </div>
 
 <img src="https://github.com/user-attachments/assets/2d9501fc-91f8-481f-a8b2-956a1f11cd45" width="1148" height="1128" alt="Gel Blot Analyzer main interface showing an annotated gel image">
