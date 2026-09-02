@@ -11,9 +11,12 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 <br>
 
 <!-- Download Button -->
+**DOWNLOAD SIGNED PACKAGE FROM MICROSOFT STORE
 [![Get it from Microsoft](https://get.microsoft.com/images/en-us%20dark.svg)](https://apps.microsoft.com/detail/9MZPMZ7LLR5R)
 
 </div>
+
+**DOWNLOAD LATEST UNSIGNED PACKAGE 
 
 [<img src="https://img.shields.io/badge/⬇%20Download%20Latest%20Release-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release">](https://github.com/Anindya-Karmaker/Gel-Blot-Analyzer/releases/latest)
 
