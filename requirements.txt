@@ -1,23 +1,77 @@
+# Gel Blot Analyzer — pip requirements (v9.3)
+#
+#   python -m pip install -r requirements.txt
+#
+# Requires Python 3.9–3.12.
+# This file is the SINGLE source of truth for library versions; environment.yml
+# installs it rather than repeating the list, so the two cannot drift apart.
+
+# =============================================================================
+# Never build these from source — install pre-built wheels only.
+# =============================================================================
+# This one line prevents the "numpy error on Windows" that users worked around
+# with `pip install --force-reinstall --no-cache-dir numpy scikit-image`.
+#
+# The failure is a NumPy 2.x ABI mismatch:
+#     "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x"
+#     (or: ImportError: numpy.core.multiarray failed to import)
+# It happens when a C-extension package (scikit-image, scipy, opencv) is compiled
+# against one NumPy major version and then imported under the other. On Windows
+# pip is far more likely to fall back to building from an sdist — and it will
+# happily compile against whatever NumPy is installed *at build time*, then cache
+# that wheel and reuse it forever, which is why the workaround needed BOTH
+# --force-reinstall and --no-cache-dir.
+#
+# Refusing source builds outright means every C-extension comes from a wheel the
+# upstream project built against a known NumPy, so the ABI always matches. If a
+# wheel genuinely is unavailable for a platform, pip now fails immediately with a
+# clear message instead of silently producing a broken install.
+--only-binary=:all:
+
+# =============================================================================
+# NumPy ABI set — these versions must stay mutually consistent
+# =============================================================================
+# Every package below ships compiled code linked against NumPy's C API, so they
+# are pinned as a GROUP to the NumPy 2.x ABI. Each floor is that project's first
+# release with NumPy 2 support; mixing in anything older reintroduces the crash
+# above. If you ever need to move back to NumPy 1.x, all five must move together.
+numpy>=2.0,<3
+# scipy is also CAPPED, for an unrelated reason: the app imports `cwt` and
+# `ricker` from scipy.signal, both REMOVED in SciPy 1.15, so a newer SciPy makes
+# the app fail to start with an ImportError before any window appears.
+# (Both names are currently imported but never used — removing that single
+# import would lift the upper cap; the NumPy floor would still apply.)
+scipy>=1.13.1,<1.15
+scikit-image>=0.24          # rolling-ball background estimation
+# The app uses no contrib-only cv2 APIs and no cv2 GUI calls (imshow/namedWindow),
+# so the plain package is correct. Do NOT also install opencv-contrib-python: the
+# two ship the same `cv2` package and overwrite each other, making an install
+# order-dependent.
+opencv-python>=4.10.0.84
+matplotlib>=3.9
+
+# =============================================================================
+# Everything else
+# =============================================================================
 # Core GUI Framework
-PySide6
+PySide6>=6.5
 
-# Image Processing & Manipulation
-Pillow
-opencv-python
-scikit-image
-tifffile
+# Image I/O
+Pillow>=10.3
+tifffile>=2024.5.22         # 16-bit TIFF read/write (Qt cannot read 16-bit RGBA TIFF)
 
-# Numerical & Scientific Computing
-numpy
-scipy
-matplotlib
-lmfit
+# Curve fitting for densitometry — REQUIRED, not optional.
+# lmfit drives the multi-Gaussian -> EMG refinement and the AIC-based shoulder
+# selection behind "Gaussian Deconvolution". Without it the app falls back to a
+# plain SciPy Gaussian fit with no shoulder detection, so band areas for
+# overlapping bands differ. The build specs now refuse to build without it.
+lmfit>=1.3
 
 # Excel File Handling
-openpyxl
+openpyxl>=3.1
 
 # Editable PowerPoint export (native text boxes per marker/label)
-python-pptx
+python-pptx>=0.6.21
 
-# Build Tool (Needed to run pyinstaller)
-pyinstaller
+# Build Tool (only needed to produce a standalone app)
+pyinstaller>=5.13
