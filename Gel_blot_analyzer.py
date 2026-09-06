@@ -13958,6 +13958,10 @@ if __name__ == "__main__":
                 self.image_path = None
                 self.image = None
                 self.image_master= None
+                # True only while Image 1 (Base) holds a DUPLICATE of the current master --
+                # i.e. it was produced by 'Copy Current' / 'Set Current as Base' and no
+                # different image has been loaded since. See _overlay_base_layer_active().
+                self._image1_shadows_master = False
                 self.channel_mixer_data = {'r': 100, 'g': 100, 'b': 100, 'mono': False}
                 self.unsharp_mask_data = {'amount': 0, 'radius': 1.0, 'threshold': 0}
                 self.clahe_data = {'clip_limit': 1.0, 'tile_size': 2}
@@ -16254,9 +16258,35 @@ if __name__ == "__main__":
                 # to provide, so a caller mutating the result cannot reach back into its input.
                 return QImage(qimage)
 
+            # Qt formats whose colour channels are stored ALREADY MULTIPLIED by alpha, mapped
+            # to their straight-alpha equivalent.
+            _PREMULTIPLIED_EQUIVALENTS = {
+                QImage.Format_ARGB32_Premultiplied:   QImage.Format_ARGB32,
+                QImage.Format_RGBA8888_Premultiplied: QImage.Format_RGBA8888,
+                QImage.Format_RGBA64_Premultiplied:   QImage.Format_RGBA64,
+            }
+
             def qimage_to_numpy(self, qimage: QImage) -> np.ndarray:
-                """Converts QImage to NumPy array, preserving format and handling row padding."""
+                """Converts QImage to NumPy array, preserving format and handling row padding.
+
+                A PREMULTIPLIED source is un-premultiplied first. Every caller of this function
+                treats the result as STRAIGHT (non-premultiplied) RGBA -- numpy_to_qimage
+                labels 4-channel uint8 output as Format_ARGB32, the adjustment pipeline applies
+                tone curves per channel, and the padding path re-emits the array as a new image.
+                Reading premultiplied bytes and handing them on unchanged therefore silently
+                darkened every pixel with alpha < 255 by its own alpha factor: a 50%-opaque mid
+                grey came back as (100,100,100) instead of (201,201,201), a 2x brightness error.
+                That is what made Apply Padding shift the contrast after a Rasterize -- rasterize
+                produces an ARGB32_Premultiplied master, and padding round-trips it through here.
+                Qt's convertToFormat does the division correctly, including the alpha==0 case.
+                """
                 if qimage.isNull(): return None
+
+                _straight = self._PREMULTIPLIED_EQUIVALENTS.get(qimage.format())
+                if _straight is not None:
+                    converted = qimage.convertToFormat(_straight)
+                    if not converted.isNull():
+                        qimage = converted
 
                 img_format = qimage.format()
                 height = qimage.height()
@@ -17609,6 +17639,15 @@ if __name__ == "__main__":
                 if not self.image_master or self.image_master.isNull():
                     return
 
+                # A single user action can fan out into several internal helpers that each
+                # call save_state (Rasterize -> reset_all_adjustments -> apply_all_adjustments).
+                # That pushed FOUR undo entries for one Rasterize, three of them recorded AFTER
+                # the layers had been unplaced -- so one Ctrl+Z landed on a state with no
+                # overlays and the tab looked like it had forgotten them. Operations that want
+                # to be one undo step raise this flag after taking their own snapshot.
+                if getattr(self, '_suppress_state_save', False):
+                    return
+
                 # Every edit funnels through here, so it's the natural place to notice that
                 # the on-screen state has diverged from the analysis file — that's what makes
                 # Load Analysis ask before it overwrites the user's work. Restoring an undo
@@ -17767,6 +17806,38 @@ if __name__ == "__main__":
                     self.left_marker_shift_added = state_dict['left_marker_shift_added']
                     self.right_marker_shift_added = state_dict['right_marker_shift_added']
                     self.top_marker_shift_added = state_dict['top_marker_shift_added']
+
+                    # --- Overlay placement ---
+                    # save_state has always recorded image1/2_position, but nothing here ever
+                    # put them back, so undo silently lost the fact that a layer was PLACED.
+                    # It shows up most clearly after Rasterize, which deletes both positions
+                    # before baking: undoing the rasterize restored the pre-merge image but
+                    # left the layers unplaced, so the app "forgot" there were two images and
+                    # Rasterize / Activate Interactive Alignment both went dead (each of them
+                    # gates on hasattr(self, 'imageN_position')).
+                    # A snapshot value of None means "was not placed", which has to DELETE the
+                    # attribute rather than set it, because that is what those checks test.
+                    for _idx in (1, 2):
+                        _attr = f'image{_idx}_position'
+                        _saved = state_dict.get(_attr, None)
+                        if _saved is None:
+                            if hasattr(self, _attr):
+                                delattr(self, _attr)
+                        else:
+                            setattr(self, _attr, tuple(_saved))
+                    # Keep the position sliders in step with what was just restored, without
+                    # letting them fire back into _update_overlay_position_from_sliders.
+                    for _idx, _sl_x, _sl_y in ((1, 'image1_left_slider', 'image1_top_slider'),
+                                               (2, 'image2_left_slider', 'image2_top_slider')):
+                        _pos = getattr(self, f'image{_idx}_position', None)
+                        if _pos is None:
+                            continue
+                        for _name, _val in ((_sl_x, _pos[0]), (_sl_y, _pos[1])):
+                            _sl = getattr(self, _name, None)
+                            if _sl is not None:
+                                _sl.blockSignals(True)
+                                _sl.setValue(int(_val))
+                                _sl.blockSignals(False)
                     
                     self.font_family = state_dict['font_family']
                     self.font_size = state_dict['font_size']
@@ -19749,8 +19820,15 @@ if __name__ == "__main__":
 
                 copy_image1_button = QPushButton("Copy Current"); copy_image1_button.clicked.connect(self.save_image1)
                 place_image1_button = QPushButton("Place"); place_image1_button.clicked.connect(self.place_image1)
-                remove_image1_button = QPushButton("Remove"); remove_image1_button.clicked.connect(lambda: (self.remove_image1(), self.update_live_view()))
-                reset_overlay1_button = QPushButton("Reset"); reset_overlay1_button.clicked.connect(self.reset_overlay1_transform)
+                remove_image1_button = QPushButton("Remove")
+                remove_image1_button.setToolTip("Take Image 1 off the canvas but keep it loaded, so Place puts it back.\n"
+                                                "Use Reset to clear the slot entirely.")
+                remove_image1_button.clicked.connect(lambda: (self.remove_image1(), self.update_live_view()))
+                # Reset is the ONLY control that empties the slot; Remove merely unplaces.
+                reset_overlay1_button = QPushButton("Reset")
+                reset_overlay1_button.setToolTip("Clear Image 1 completely (removes the loaded/copied image itself).\n"
+                                                 "Use Remove to just take it off the canvas and keep it for re-Placing.")
+                reset_overlay1_button.clicked.connect(lambda: (self.clear_image1(), self.update_live_view()))
 
                 image1_layout.addWidget(copy_image1_button, 0, 0, 1, 1)
                 image1_layout.addWidget(place_image1_button, 0, 1, 1, 1)
@@ -19815,8 +19893,15 @@ if __name__ == "__main__":
 
                 copy_image2_button = QPushButton("Copy Current"); copy_image2_button.clicked.connect(self.save_image2)
                 place_image2_button = QPushButton("Place"); place_image2_button.clicked.connect(self.place_image2)
-                remove_image2_button = QPushButton("Remove"); remove_image2_button.clicked.connect(lambda: (self.remove_image2(), self.update_live_view()))
-                reset_overlay2_button = QPushButton("Reset"); reset_overlay2_button.clicked.connect(self.reset_overlay2_transform)
+                remove_image2_button = QPushButton("Remove")
+                remove_image2_button.setToolTip("Take Image 2 off the canvas but keep it loaded, so Place puts it back.\n"
+                                                "Use Reset to clear the slot entirely.")
+                remove_image2_button.clicked.connect(lambda: (self.remove_image2(), self.update_live_view()))
+                # Reset is the ONLY control that empties the slot; Remove merely unplaces.
+                reset_overlay2_button = QPushButton("Reset")
+                reset_overlay2_button.setToolTip("Clear Image 2 completely (removes the loaded/copied image itself).\n"
+                                                 "Use Remove to just take it off the canvas and keep it for re-Placing.")
+                reset_overlay2_button.clicked.connect(lambda: (self.clear_image2(), self.update_live_view()))
 
                 image2_layout.addWidget(copy_image2_button, 0, 0, 1, 1)
                 image2_layout.addWidget(place_image2_button, 0, 1, 1, 1)
@@ -19980,10 +20065,37 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.warning(self, "Error", "No image is loaded to set as base.")
 
+            def _image_dialog_start_dir(self):
+                """Folder a file dialog should open in: the one the current image came from.
+
+                Qt opens at the empty string (its own last-used location, or the working
+                directory) unless told otherwise, which is why Load Overlay started somewhere
+                unrelated instead of beside the gel that is already open. Mirrors the
+                convention the Save dialog already uses (dirname of self.image_path), and
+                falls back to the last folder an overlay was taken from, then to the user's
+                home, so it is never a dead path.
+                """
+                for candidate in (getattr(self, 'image_path', None),
+                                  getattr(self, '_last_overlay_dir', None)):
+                    if not candidate:
+                        continue
+                    d = candidate if os.path.isdir(candidate) else os.path.dirname(candidate)
+                    if d and os.path.isdir(d):
+                        return d
+                return os.path.expanduser("~")
+
             def load_overlay_image(self):
                 options = QFileDialog.Options()
-                file_path, _ = QFileDialog.getOpenFileName(self, "Open Overlay Image File", "", "Image Files (*.png *.jpg *.bmp *.tif *.tiff)", options=options)
+                file_path, _ = QFileDialog.getOpenFileName(
+                    self, "Open Overlay Image File", self._image_dialog_start_dir(),
+                    "Image Files (*.png *.jpg *.bmp *.tif *.tiff)", options=options)
                 if not file_path: return
+                # Remember where this one came from, so picking a second overlay from the same
+                # place does not send the user back to the main image's folder each time.
+                try:
+                    self._last_overlay_dir = os.path.dirname(file_path)
+                except Exception:
+                    pass
 
                 overlay_image = QImage(file_path)
                 if overlay_image.isNull():
@@ -20356,13 +20468,52 @@ if __name__ == "__main__":
                 Rasterize, Save/Copy, and the SVG/PPTX export) so all four agree — before,
                 the preview dropped the base (load_overlay_image blanked self.image) while
                 the other three always re-painted the master at full opacity, so the
-                rasterized/saved figure did not match what was on screen."""
+                rasterized/saved figure did not match what was on screen.
+
+                IT IS NOT ENOUGH THAT IMAGE 1 SIMPLY EXISTS. The double-compositing problem
+                only arises while Image 1 is a DUPLICATE of the current master. Suppressing
+                the master purely because something is in the Image 1 buffer broke the
+                multi-image workflow this tab exists for: Copy Current, open a second gel or
+                blot, then Place -- the newly opened image vanished, because it was being
+                skipped in favour of a copy of the PREVIOUS one. (Image 2 was unaffected,
+                which is why only the base misbehaved.)
+
+                `_image1_shadows_master` records the provenance: set when 'Copy Current' /
+                'Set Current as Base' captures the master into Image 1, and cleared as soon
+                as a different image is loaded or pasted. So the original de-duplication
+                still applies to the case it was written for, while an Image 1 that came
+                from some OTHER picture now composites on top of the current image instead
+                of replacing it."""
                 img1 = getattr(self, 'image1_original', None)
-                return bool(hasattr(self, 'image1_position')
-                            and img1 is not None and not img1.isNull())
+                if not (hasattr(self, 'image1_position')
+                        and img1 is not None and not img1.isNull()):
+                    return False
+                if not getattr(self, '_image1_shadows_master', False):
+                    return False
+                # A master that is gone cannot be double-composited either way.
+                master = getattr(self, 'image_master', None)
+                return bool(master is not None and not master.isNull())
 
             def remove_image1(self):
-                """Hides Image 1 and resets its sliders, without triggering a redraw."""
+                """UNPLACE Image 1: take it off the canvas but KEEP it loaded in the buffer.
+
+                'Remove' is about the composite, not the slot. Dropping the buffered picture
+                as well meant that taking a layer off to reposition or re-stack it forced you
+                to load or copy it all over again -- painful when assembling a gel and a blot,
+                which is the whole point of this tab. The image, its adjustments and its
+                transform all stay, so pressing Place puts it straight back.
+
+                'Reset' is the destructive one (clear_image1) -- it empties the slot.
+                """
+                if hasattr(self, 'image1_position'):
+                    del self.image1_position
+                # Image 1 is no longer the bottom layer, so the main image must be painted
+                # again (see _overlay_base_layer_active).
+                self._image1_shadows_master = False
+                self._update_overlay_size_labels()
+
+            def clear_image1(self):
+                """RESET Image 1: empty the slot completely (buffer, adjustments, transform)."""
                 if hasattr(self, 'image1_position'):
                     del self.image1_position
                 if hasattr(self, 'image1_original'):
@@ -20370,6 +20521,7 @@ if __name__ == "__main__":
 
                 self.image1_adjusted_preview = None
                 self.image1_adjustments = {}
+                self._image1_shadows_master = False
                 self._update_overlay_size_labels()
 
                 if hasattr(self, 'load_overlay_button'):
@@ -20383,7 +20535,14 @@ if __name__ == "__main__":
                 self.reset_overlay1_transform()
             
             def remove_image2(self):
-                """Hides Image 2 and resets its sliders, without triggering a redraw."""
+                """UNPLACE Image 2: take it off the canvas but KEEP it loaded in the buffer.
+                See remove_image1 -- 'Reset' (clear_image2) is the destructive one."""
+                if hasattr(self, 'image2_position'):
+                    del self.image2_position
+                self._update_overlay_size_labels()
+
+            def clear_image2(self):
+                """RESET Image 2: empty the slot completely (buffer, adjustments, transform)."""
                 if hasattr(self, 'image2_position'):
                     del self.image2_position
                 if hasattr(self, 'image2_original'):
@@ -20400,6 +20559,181 @@ if __name__ == "__main__":
 
                 self.reset_overlay2_transform()
             
+            def _displayed_image_size(self):
+                """(w, h) of the main image AS THE VIEWER DRAWS IT -- pending Rotation Angle
+                included. Rotation grows the bounding box, so this is NOT self.image.size()
+                whenever the rotation slider is off zero. Tapering Skew keeps the canvas size.
+
+                Anything that converts a mouse position into image pixels has to use these
+                numbers, because the user is clicking on the rotated picture.
+                """
+                if not self.image or self.image.isNull():
+                    return None
+                w = float(self.image.width()); h = float(self.image.height())
+                angle = 0.0
+                if hasattr(self, 'orientation_slider') and self.orientation_slider:
+                    angle = float(self.orientation_slider.value()) / 20.0
+                if abs(angle) > 0.01:
+                    t = QTransform()
+                    t.translate(w / 2.0, h / 2.0)
+                    t.rotate(angle)
+                    t.translate(-w / 2.0, -h / 2.0)
+                    r = t.mapRect(QRectF(0.0, 0.0, w, h))
+                    w, h = r.width(), r.height()
+                return w, h
+
+            def _commit_pending_view_geometry(self):
+                """Bake a pending Rotation Angle / Tapering Skew into image_master.
+
+                Called before Apply Crop. The crop rectangle is drawn on the ROTATED picture,
+                so the master has to be rotated too before the rectangle means anything --
+                otherwise the crop is taken out of the crooked original at coordinates that do
+                not correspond to what was on screen. Reuses align_image / update_skew so the
+                marker and shape bookkeeping stays in one place.
+                """
+                did = False
+                try:
+                    if (hasattr(self, 'orientation_slider') and self.orientation_slider
+                            and abs(self.orientation_slider.value() / 20.0) > 0.01):
+                        self.align_image()
+                        did = True
+                    if (hasattr(self, 'taper_skew_slider') and self.taper_skew_slider
+                            and abs(self.taper_skew_slider.value() / 100.0) > 0.005):
+                        self.update_skew()
+                        did = True
+                except Exception:
+                    log_traceback()
+                return did
+
+            def _trim_to_solid_content(self, source_image):
+                """Trim an overlay snapshot down to its largest fully-opaque rectangle.
+
+                Rotating an image leaves wedge-shaped EMPTY corners (align_image fills them
+                with transparency, which is also why a rotated image reports 32-bit (A)RGB).
+                On screen those wedges are invisible -- the viewer paints white behind them --
+                so the picture looks like a clean rectangle. Placed as a layer they are
+                see-through, and the diagonal boundary reappears as "the panel is tilted and
+                has a white triangle in one corner", which is exactly the artefact reported.
+
+                Trimming rows/columns from each edge until all four are solid removes the
+                wedges (and any transparent padding border) so the placed panel is a clean
+                opaque rectangle. Only the SNAPSHOT is trimmed -- the main image is untouched.
+                """
+                if not source_image or source_image.isNull() or not source_image.hasAlphaChannel():
+                    return source_image
+                try:
+                    arr = self.qimage_to_numpy(source_image)
+                    if arr is None or arr.ndim != 3 or arr.shape[2] != 4:
+                        return source_image
+                    opaque_at = 65535 if arr.dtype == np.uint16 else 255
+                    solid = arr[:, :, 3] >= int(opaque_at * 0.98)
+                    h, w = solid.shape
+                    top, bottom, left, right = 0, h, 0, w
+                    # Peel any edge that is not completely solid. Wedges sit in the corners, so
+                    # this converges in a few tens of iterations even on a large gel.
+                    for _ in range(max(h, w)):
+                        if right - left <= 1 or bottom - top <= 1:
+                            break
+                        moved = False
+                        if not solid[top, left:right].all():
+                            top += 1; moved = True
+                        if not solid[bottom - 1, left:right].all():
+                            bottom -= 1; moved = True
+                        if not solid[top:bottom, left].all():
+                            left += 1; moved = True
+                        if not solid[top:bottom, right - 1].all():
+                            right -= 1; moved = True
+                        if not moved:
+                            break
+                    if (left, top, right, bottom) == (0, 0, w, h):
+                        return source_image
+                    if right - left < 2 or bottom - top < 2:
+                        return source_image
+                    return source_image.copy(int(left), int(top),
+                                             int(right - left), int(bottom - top))
+                except Exception:
+                    log_traceback()
+                    return source_image
+
+            def _apply_pending_view_geometry(self, source_image):
+                """Return `source_image` with the PENDING preview geometry baked in -- the same
+                Rotation Angle and Tapering Skew that update_live_view is currently showing.
+
+                Rotation and skew are preview-only transforms: they change what is on screen but
+                are not written into image_master until Apply Rotation / Apply Skew commits them.
+                'Copy Current' snapshotted image_master, so it captured the image WITHOUT them --
+                i.e. the crooked original, not the straightened gel the user was looking at.
+                Placed onto another image, that copy then sat at a visibly different angle,
+                which is what "the copied image is rotated" was.
+
+                The expanded corners a rotation creates are filled TRANSPARENT, not white, so a
+                placed layer lets the image underneath show through at its corners instead of
+                stamping white boxes over it.
+
+                Returns the input unchanged when nothing is pending, so the common case costs
+                nothing.
+                """
+                if not source_image or source_image.isNull():
+                    return source_image
+
+                angle = 0.0
+                if hasattr(self, 'orientation_slider') and self.orientation_slider:
+                    angle = float(self.orientation_slider.value()) / 20.0
+                taper = 0.0
+                if hasattr(self, 'taper_skew_slider') and self.taper_skew_slider:
+                    taper = float(self.taper_skew_slider.value()) / 100.0
+
+                if abs(angle) <= 0.01 and abs(taper) <= 0.005:
+                    return source_image
+
+                result = source_image
+                try:
+                    # An alpha channel is required for the corners to come out transparent;
+                    # RGB888/RGB32 sources have none, so promote them first (16-bit keeps its
+                    # depth via RGBA64).
+                    if not result.hasAlphaChannel():
+                        deep = result.format() in (QImage.Format_Grayscale16,
+                                                   QImage.Format_RGBA64,
+                                                   QImage.Format_RGBX64)
+                        result = result.convertToFormat(
+                            QImage.Format_RGBA64 if deep else QImage.Format_ARGB32)
+
+                    if abs(angle) > 0.01:
+                        w_rot, h_rot = result.width(), result.height()
+                        t = QTransform()
+                        t.translate(w_rot / 2.0, h_rot / 2.0)
+                        t.rotate(angle)
+                        t.translate(-w_rot / 2.0, -h_rot / 2.0)
+                        rotated = result.transformed(t, Qt.SmoothTransformation)
+                        if not rotated.isNull():
+                            result = rotated
+
+                    if abs(taper) > 0.005:
+                        np_img = self.qimage_to_numpy(result)
+                        if np_img is not None:
+                            height, width = np_img.shape[:2]
+                            src = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
+                            dst = src.copy()
+                            if taper > 0:
+                                dst[0][0] = width * taper / 2.0
+                                dst[1][0] = width * (1 - taper / 2.0)
+                            else:
+                                dst[3][0] = width * (-taper) / 2.0
+                                dst[2][0] = width * (1 + taper / 2.0)
+                            matrix = cv2.getPerspectiveTransform(src, dst)
+                            warped = cv2.warpPerspective(
+                                np_img, matrix, (width, height),
+                                flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+                            skewed = self.numpy_to_qimage(warped)
+                            if skewed is not None and not skewed.isNull():
+                                result = skewed
+                except Exception:
+                    log_traceback()
+                    return source_image
+
+                return result
+
             def save_image1(self):
                 if self.image_master and not self.image_master.isNull():
                     if hasattr(self, 'image1_position'):
@@ -20419,7 +20753,17 @@ if __name__ == "__main__":
                     }
                     self.image1_adjustments = current_main_image_adjustments
                     
-                    self.image1_original = self.image_master.copy()
+                    # The snapshot is the master AS IT IS -- no rotation is applied here.
+                    # A pending Rotation Angle belongs to the main image's preview; baking it
+                    # into the copy put a tilt into the placed panel that the user never asked
+                    # for. Apply Crop already commits a pending rotation into the master
+                    # (see _commit_pending_view_geometry), so by the time a straightened image
+                    # is copied the master is genuinely straight and needs nothing further.
+                    # Only the transparent wedges a previous rotation left behind are trimmed.
+                    self.image1_original = self._trim_to_solid_content(self.image_master).copy()
+                    # Image 1 is now a duplicate of the master, so the master must not be
+                    # painted underneath it as well (see _overlay_base_layer_active).
+                    self._image1_shadows_master = True
                     self._update_overlay_size_labels()
                     self._update_overlay_preview(1)
                     self.reset_overlay1_transform()
@@ -20446,7 +20790,8 @@ if __name__ == "__main__":
                     }
                     self.image2_adjustments = current_main_image_adjustments
                     
-                    self.image2_original = self.image_master.copy()
+                    # Same as Image 1: the master as it is, with no rotation applied.
+                    self.image2_original = self._trim_to_solid_content(self.image_master).copy()
                     self._update_overlay_size_labels()
                     self._update_overlay_preview(2)
                     self.reset_overlay2_transform()
@@ -20491,8 +20836,17 @@ if __name__ == "__main__":
                 g = (self.blend_slider.value() / 100.0) if hasattr(self, 'blend_slider') else 0.5
                 a1 = (self.image1_blend_slider.value() / 100.0) if hasattr(self, 'image1_blend_slider') else 1.0
                 a2 = (self.image2_blend_slider.value() / 100.0) if hasattr(self, 'image2_blend_slider') else 1.0
-                op1 = a1 if self._overlay_base_layer_active() else a1 * g
-                op1 = max(0.0, min(1.0, op1))
+                # Image 1 uses its OWN Mixing % only -- never the Global Mixing %, whose label
+                # and tooltip both say "(Overlay)" and which is meant for Image 2 alone.
+                #
+                # This used to be conditional on _overlay_base_layer_active(). Once that
+                # predicate learned to tell a duplicate of the master from an independently
+                # placed picture, the conditional silently started multiplying Image 1 by the
+                # global slider whenever it was placed onto a DIFFERENT image -- and since the
+                # global default is 50%, a panel placed to build a figure came out half
+                # transparent. Placing must reproduce the copied image exactly; fading it is
+                # something the user asks for with Image 1's own Mixing % slider.
+                op1 = max(0.0, min(1.0, a1))
                 op2 = max(0.0, min(1.0, a2 * g))
                 return op1, op2
 
@@ -20544,6 +20898,9 @@ if __name__ == "__main__":
                     return
 
                 self.save_state()
+                # Everything from here on is part of THIS one operation: no nested snapshots,
+                # so a single undo returns to the composition exactly as it was placed.
+                self._suppress_state_save = True
 
                 # Get the adjusted previews (which contain the visual state including inversions)
                 adjusted_img1 = getattr(self, 'image1_adjusted_preview', None)
@@ -20684,10 +21041,50 @@ if __name__ == "__main__":
                 self.image = final_canvas.copy()
                 self.main_image_is_inverted = False 
 
+                # --- Clear the pending live-preview geometry -------------------------------
+                # Rotation Angle and Tapering Skew are PREVIEW transforms: update_live_view
+                # applies them to the image on screen, and they only become part of the file
+                # when Apply Rotation / Apply Skew bakes them in. The overlay composite above
+                # is built from the UNROTATED master, so leaving those sliders set meant the
+                # freshly rasterized image was immediately rotated/skewed all over again by
+                # the next repaint -- the image visibly span after pressing Rasterize.
+                #
+                # The sliders are therefore returned to neutral so the app's state matches
+                # what Rasterize actually produced. NOTE: this does not bake the angle in --
+                # the rasterized image is the unrotated composite. Use Apply Rotation (or
+                # Apply Skew) to commit an angle permanently, before or after rasterizing.
+                # Signals are blocked so this cannot trigger another render mid-operation.
+                for _slider in (getattr(self, 'orientation_slider', None),
+                                getattr(self, 'taper_skew_slider', None)):
+                    if _slider is not None and _slider.value() != 0:
+                        _slider.blockSignals(True)
+                        _slider.setValue(0)
+                        _slider.blockSignals(False)
+                # Keep the two readouts in step with the sliders we just reset.
+                if hasattr(self, 'orientation_label') and self.orientation_label:
+                    self.orientation_label.setText("Rotation Angle (0.00°)")
+                if hasattr(self, 'taper_skew_label') and self.taper_skew_label:
+                    self.taper_skew_label.setText("Tapering Skew (0.00) ")
+
+                # Rasterizing bakes the placed layers into the master, so they must come OFF
+                # the canvas or they would be composited a second time on top of themselves.
+                # They are only UNPLACED though -- the loaded images stay in their slots so
+                # the next one can be positioned against what was just baked in, which is how
+                # a multi-panel figure (gel + blot + blot...) gets built up. Only 'Reset'
+                # empties a slot.
                 self.remove_image1(); self.remove_image2()
                 self.clear_overlay_region()
-                self.adjustment_context_combo.model().item(1).setEnabled(False)
-                self.adjustment_context_combo.model().item(2).setEnabled(False)
+                # The master now CONTAINS Image 1's pixels, so Image 1 is no longer a
+                # duplicate of it and must not suppress it if it is placed again.
+                self._image1_shadows_master = False
+                # Leave a slot's adjustment context selectable while it still holds an image;
+                # disabling it would strand a retained layer with no way to adjust it.
+                _img1_kept = bool(getattr(self, 'image1_original', None)
+                                  and not self.image1_original.isNull())
+                _img2_kept = bool(getattr(self, 'image2_original', None)
+                                  and not self.image2_original.isNull())
+                self.adjustment_context_combo.model().item(1).setEnabled(_img1_kept)
+                self.adjustment_context_combo.model().item(2).setEnabled(_img2_kept)
                 self.adjustment_context_combo.setCurrentText("Main Image")
 
                 self._update_status_bar()
@@ -20695,6 +21092,7 @@ if __name__ == "__main__":
                 self._update_overlay_slider_ranges()
                 
                 self.reset_all_adjustments()
+                self._suppress_state_save = False
                 self.update_live_view()
                 
                 QMessageBox.information(self, "Success", "The overlay(s) have been rasterized onto the image.")
@@ -22807,8 +23205,13 @@ if __name__ == "__main__":
                     try:
                         # --- Coordinate Conversion (same as before) ---
                         if not self.image or self.image.isNull(): raise ValueError("Base image invalid.")
-                        img_w = float(self.image.width())
-                        img_h = float(self.image.height())
+                        # Map through the size the viewer is actually SHOWING. With a pending
+                        # Rotation Angle the displayed picture is its rotated bounding box
+                        # (e.g. 2125x1700 becomes 2158x1742 at -1.15 deg), and using the
+                        # unrotated size here put the crop tens of pixels out of place.
+                        _disp = self._displayed_image_size()
+                        img_w, img_h = _disp if _disp else (float(self.image.width()),
+                                                            float(self.image.height()))
                         label_w = float(self.live_view_label.width())
                         label_h = float(self.live_view_label.height())
 
@@ -26333,6 +26736,9 @@ if __name__ == "__main__":
                     # Initialize backups
                     self.image_master = self.image.copy()
                     self.original_image = self.image.copy()
+                    # A DIFFERENT picture is now the master, so any Image 1 still sitting in
+                    # the buffer is no longer a duplicate of it and must not suppress it.
+                    self._image1_shadows_master = False
                     self.image_before_padding = None
                     self.image_contrasted = self.image.copy()
                     self.image_before_contrast = self.image.copy()
@@ -26733,6 +27139,9 @@ if __name__ == "__main__":
 
                     self.original_image = self.image.copy() # Keep a pristine copy of the initially loaded image
                     self.image_master = self.image.copy()   # Master copy for resets
+                    # A DIFFERENT picture is now the master, so any Image 1 still sitting in
+                    # the buffer is no longer a duplicate of it and must not suppress it.
+                    self._image1_shadows_master = False
                     self.image_before_padding = None        # Reset padding state
                     self.image_contrasted = self.image.copy() # Backup for contrast
                     self.image_before_contrast = self.image.copy()
@@ -28613,6 +29022,20 @@ if __name__ == "__main__":
                     if not self._overlay_base_layer_active():
                         painter.drawImage(x_offset, y_offset, scaled_image)
 
+                    # Confine the placed layers to the IMAGE's rectangle on all four sides.
+                    # The render canvas is the VIEWPORT, not the image, so a tall image fitted
+                    # into a wide viewer leaves slack left and right: a layer hanging off the
+                    # sides landed in that slack and was drawn, while one hanging off the top
+                    # or bottom fell outside the canvas and was clipped. The preview therefore
+                    # showed content horizontally that Rasterize/Save would discard, since
+                    # those build a canvas that IS the image. Clipping to the image rectangle
+                    # makes all four sides behave alike and makes the preview honest about
+                    # what will survive.
+                    _img_clip_rect = QRectF(float(x_offset), float(y_offset),
+                                            float(scaled_image.width()), float(scaled_image.height()))
+                    painter.save()
+                    painter.setClipRect(_img_clip_rect)
+
                     # Check which overlays are active
                     has_img1 = hasattr(self, 'image1_adjusted_preview') and self.image1_adjusted_preview and hasattr(self, 'image1_position')
                     has_img2 = hasattr(self, 'image2_adjusted_preview') and self.image2_adjusted_preview and hasattr(self, 'image2_position')
@@ -28644,7 +29067,7 @@ if __name__ == "__main__":
 
                                 painter.save()
                                 if clip_path1 is not None:
-                                    painter.setClipPath(clip_path1)
+                                    painter.setClipPath(clip_path1, Qt.IntersectClip)
                                 if abs(rotation1) > 0.01:
                                     center_point_canvas = rect_in_canvas_space.center()
                                     painter.translate(center_point_canvas)
@@ -28677,13 +29100,18 @@ if __name__ == "__main__":
 
                                 painter.save()
                                 if clip_path2 is not None:
-                                    painter.setClipPath(clip_path2)
+                                    painter.setClipPath(clip_path2, Qt.IntersectClip)
                                 if abs(rotation2) > 0.01:
                                     cp = rect_in_canvas_space.center()
                                     painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
                                 painter.drawImage(rect_in_canvas_space, adjusted_img2)
                                 painter.restore()
-                
+
+                    # Release the image-bounds clip set before the layers. Guides, markers and
+                    # annotations below are deliberately allowed OUTSIDE the image rectangle,
+                    # because they legitimately live in the padding margins.
+                    painter.restore()
+
                 # --- 3. Draw Guide Lines ---
                 if draw_guides and hasattr(self, 'show_guides_checkbox') and self.show_guides_checkbox.isChecked():
                     pen_guides = QPen(Qt.red, 2 * render_scale)
@@ -28883,20 +29311,18 @@ if __name__ == "__main__":
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
                     
-                    # --- SYNC TRANSFORMATION TO OVERLAYS ---
-                    # Rotating the master image should also rotate any overlays to maintain alignment
-                    for i in [1, 2]:
-                        img_orig_attr = f'image{i}_original'
-                        if hasattr(self, img_orig_attr):
-                            img_orig = getattr(self, img_orig_attr)
-                            if img_orig and not img_orig.isNull():
-                                try:
-                                    rotated_overlay = img_orig.transformed(transform_marker, Qt.SmoothTransformation)
-                                    if not rotated_overlay.isNull():
-                                        setattr(self, img_orig_attr, rotated_overlay)
-                                        self._update_overlay_preview(i)
-                                except Exception as e:
-                                    pass # print(f"Error rotating overlay {i}: {e}")
+                    # --- OVERLAYS ARE DELIBERATELY LEFT ALONE ---
+                    # This used to rotate image1_original and image2_original in place too,
+                    # "to maintain alignment" with the master. That is wrong for the workflow
+                    # this tab exists for: the Overlap layers are INDEPENDENT panels (a blot
+                    # copied from one file, placed onto a gel from another) and rotating the
+                    # main image must not touch them. It permanently re-rendered the copied
+                    # panel at the master's angle, which is why a placed layer came out tilted
+                    # whenever the background image had been rotated -- and, being baked into
+                    # the buffer, it survived Remove/Place and could stack up over repeated
+                    # rotations.
+                    #
+                    # Each layer has its own Rotate slider for turning it deliberately.
 
                     self.image_before_padding = None
                     self.image_padded = False
@@ -28983,6 +29409,16 @@ if __name__ == "__main__":
                     return
 
                 try:
+                    # The crop rectangle was drawn on the picture AS DISPLAYED, so any pending
+                    # Rotation Angle / Tapering Skew has to be baked into the master before the
+                    # rectangle means anything. Without this the crop was taken out of the
+                    # CROOKED original at coordinates belonging to the straightened preview:
+                    # the rotation was silently discarded (the slider still read -1.15 deg
+                    # afterwards), the framing was tens of pixels out, and the cropped panel
+                    # kept its tilt -- which is what showed up later as a tilted, white-cornered
+                    # layer once it was copied into Image 1 and placed.
+                    self._commit_pending_view_geometry()
+
                     img_x_intent, img_y_intent, img_w_intent, img_h_intent = self.crop_rectangle_coords
                     original_image_width_before_crop = self.image_master.width()
                     original_image_height_before_crop = self.image_master.height()
