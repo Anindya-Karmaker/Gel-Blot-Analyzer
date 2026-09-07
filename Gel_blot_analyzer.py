@@ -9989,7 +9989,11 @@ if __name__ == "__main__":
                 # Rotation slider setup (±45 deg)
                 self._prep_lbl_rot = QLabel("Rotation: +0.0°")
                 self._prep_sl_rot = QSlider(Qt.Horizontal)
-                self._prep_sl_rot.setRange(-450, 450)
+                # -180.0 .. +180.0 degrees, still 0.1 deg per step. The rotate/skew
+                # maths below is angle-agnostic (it sizes the canvas from |cos|/|sin|),
+                # so a gel scanned sideways or upside down can be brought upright here
+                # instead of having to be fixed outside the app first.
+                self._prep_sl_rot.setRange(-1800, 1800)
                 self._prep_sl_rot.setValue(0)
                 self._prep_sl_rot.valueChanged.connect(self._on_prep_geometry_changed)
                 self._prep_rot_reset = QPushButton("Reset")
@@ -10226,14 +10230,50 @@ if __name__ == "__main__":
             # _lock_geometry_and_go_to_lanes still runs on the full-resolution array.
             PREP_PREVIEW_MAX_DIM = 1400
 
+            def _prep_preview_dim(self):
+                """Longest edge worth keeping in the preview, from its size ON SCREEN.
+
+                aspect='equal' letterboxes the gel inside the axes, so a 1830x1464 gel on a
+                1080x470 axes is actually painted about 590x470 -- feeding Matplotlib the
+                full 1400px proxy made it resample ~6x more pixels than the screen can show,
+                every single frame of a rotation drag. Sizing the proxy to the screen keeps
+                a 1.4x oversample (enough to stay crisp as the rotation wedge grows and the
+                fit shrinks) and throws the rest away.
+                """
+                # Measured from the CANVAS and the UNROTATED gel on purpose. The axes'
+                # own bbox would be the tighter measurement, but aspect='equal' makes
+                # Matplotlib adjust that box to the current image aspect -- so reading it
+                # would make the proxy's resolution a function of the rotation angle, and
+                # the preview would visibly change sharpness as the dial turned. This
+                # depends only on the window size, so it is stable for a whole drag; the
+                # 1.4x oversample covers the shrinking fit as the rotated canvas grows.
+                try:
+                    box_w, box_h = self._prep_canvas.get_width_height()
+                    h, w = self._gel_arr_raw.shape[:2]
+                    fit = min(float(box_w) / max(w, 1), float(box_h) / max(h, 1))
+                    target = int(max(w, h) * fit * 1.4)
+                except Exception:
+                    return self.PREP_PREVIEW_MAX_DIM
+                if target <= 0:
+                    return self.PREP_PREVIEW_MAX_DIM
+                # Quantised so nudging the window edge does not rebuild the proxy each pixel.
+                target = int(round(target / 64.0)) * 64
+                return max(512, min(self.PREP_PREVIEW_MAX_DIM, target))
+
             def _prep_preview_source(self):
-                """Downscaled float32 copy of the raw gel used for the prep preview, built once."""
+                """Downscaled float32 copy of the raw gel used for the prep preview.
+
+                Rebuilt only when the on-screen size changes bracket (see _prep_preview_dim);
+                the display window from _prep_display_range is deliberately NOT recomputed
+                with it, so resizing the dialog cannot shift the preview's brightness.
+                """
+                dim = self._prep_preview_dim()
                 cached = getattr(self, '_prep_preview_src', None)
-                if cached is not None:
+                if cached is not None and getattr(self, '_prep_preview_src_dim', None) == dim:
                     return cached
                 full = self._gel_arr_raw
                 h, w = full.shape[:2]
-                scale = min(1.0, self.PREP_PREVIEW_MAX_DIM / float(max(h, w) or 1))
+                scale = min(1.0, dim / float(max(h, w) or 1))
                 if scale < 1.0:
                     small = cv2.resize(full.astype(np.float32), (max(1, int(round(w * scale))),
                                                                  max(1, int(round(h * scale)))),
@@ -10241,6 +10281,7 @@ if __name__ == "__main__":
                 else:
                     small = full.astype(np.float32)
                 self._prep_preview_src = small
+                self._prep_preview_src_dim = dim
                 return small
 
             def _prep_display_range(self):
@@ -10330,14 +10371,64 @@ if __name__ == "__main__":
 
                 # Visualizing the changes
                 try:
-                    self._prep_ax.cla()
                     lo, hi = self._prep_display_range()
-                    dsp = np.clip((arr - lo) / max(hi - lo, 1e-9), 0, 1)
-                    # aspect='equal' keeps the image's true proportions no matter how the
-                    # GUI/canvas is resized (it letterboxes instead of stretching).
-                    self._prep_ax.imshow(dsp, cmap='gray', aspect='equal',
-                                         interpolation='nearest',
-                                         extent=[-0.5, w - 0.5, h - 0.5, -0.5])
+                    # float32 throughout: arr is already float32, but dividing by a Python
+                    # float promotes the result to float64 and doubles the bytes Matplotlib
+                    # has to normalise and resample on every frame of a drag.
+                    inv = np.float32(1.0 / max(hi - lo, 1e-9))
+                    dsp = np.clip((arr - np.float32(lo)) * inv, 0.0, 1.0, dtype=np.float32)
+                    extent = [-0.5, w - 0.5, h - 0.5, -0.5]
+
+                    # Build the artists ONCE and update their data thereafter. Clearing the
+                    # axes and re-adding an image, a grid, five patches and four markers on
+                    # every slider step meant Matplotlib rebuilt every transform, style and
+                    # clip path each frame -- that artist churn, not the warp (~1 ms), was
+                    # what was left of the cost here. Same idea as the main viewer, which
+                    # keeps its rendered base and repaints rather than rebuilding it.
+                    need_build = (getattr(self, '_prep_im', None) is None
+                                  or self._prep_im.axes is not self._prep_ax)
+                    if need_build:
+                        self._prep_ax.cla()
+                        # aspect='equal' keeps the image's true proportions no matter how the
+                        # GUI/canvas is resized (it letterboxes instead of stretching).
+                        self._prep_im = self._prep_ax.imshow(
+                            dsp, cmap='gray', aspect='equal', interpolation='nearest',
+                            extent=extent, vmin=0.0, vmax=1.0)
+                        self._prep_grid = mcollections.LineCollection(
+                            [], transform=self._prep_ax.transAxes, colors='red',
+                            linewidths=0.5, alpha=0.4, zorder=2)
+                        self._prep_ax.add_collection(self._prep_grid)
+                        self._prep_rect = plt.Rectangle(
+                            (0, 0), 1, 1, edgecolor='magenta', facecolor='none',
+                            linewidth=1.8, linestyle='--', zorder=7)
+                        self._prep_ax.add_patch(self._prep_rect)
+                        self._prep_dim = []
+                        for _ in range(4):
+                            _pt = plt.Rectangle((0, 0), 0, 0, facecolor='magenta',
+                                                edgecolor='none', alpha=0.18, zorder=6)
+                            self._prep_ax.add_patch(_pt)
+                            self._prep_dim.append(_pt)
+                        self._prep_handles, = self._prep_ax.plot(
+                            [], [], linestyle='none', marker='s', color='magenta',
+                            markersize=6, zorder=8)
+                        self._prep_ax.set_title(
+                            "Crop: drag box edge/corner to resize · inside to move · on image to draw new",
+                            fontsize=plot_font(self.parent_app, 9), pad=3, y=1.0)
+                        # No frame, no rulers. Two reasons:
+                        #  * aspect='equal' makes Matplotlib shrink the axes box onto the
+                        #    image, so the default black spines land exactly on the image
+                        #    border -- and once a rotation puts the light-grey fill behind
+                        #    them they read as a black line ruled across the top and bottom.
+                        #  * ticks and their labels are re-laid-out and re-rasterised on
+                        #    every frame, which is pure cost while dragging: the crop spin
+                        #    boxes already report the pixel numbers, so the rulers told the
+                        #    user nothing the panel above them did not.
+                        # Turning the axis off also hands the freed margin back to the
+                        # image, so the preview itself is drawn larger.
+                        self._prep_ax.set_axis_off()
+                    else:
+                        self._prep_im.set_data(dsp)
+                        self._prep_im.set_extent(extent)
 
                     # Clamp crop spinbox maxima to the (possibly resized) image
                     for sp, lim in ((self._prep_crop_l, w - 2), (self._prep_crop_r, w - 2),
@@ -10351,11 +10442,6 @@ if __name__ == "__main__":
                     # original gel width/height so it stays constant on screen.
                     _gsz = max(5, int(self._prep_grid_size))
                     ref_h, ref_w = self._gel_arr_raw.shape[:2]
-                    trans = self._prep_ax.transAxes
-                    # One LineCollection rather than an ax.plot() per gridline. A fine grid on
-                    # a wide gel is ~140 lines, and building that many Line2D artists (each
-                    # with its own transform and style resolution) every slider step was the
-                    # largest remaining cost on this page after the percentile fix.
                     grid_segs = []
                     if self._prep_show_grid_x:
                         step = _gsz / float(max(1, ref_w))
@@ -10371,10 +10457,8 @@ if __name__ == "__main__":
                             while f < 1.0:
                                 grid_segs.append([(0.0, f), (1.0, f)])
                                 f += step
-                    if grid_segs:
-                        self._prep_ax.add_collection(mcollections.LineCollection(
-                            grid_segs, transform=trans, colors='red',
-                            linewidths=0.5, alpha=0.4, zorder=2))
+                    self._prep_grid.set_segments(grid_segs)
+                    self._prep_grid.set_visible(bool(grid_segs))
 
                     # Crop boundary box (always drawn so it can be grabbed/dragged)
                     l = self._prep_crop_l.value()
@@ -10383,33 +10467,28 @@ if __name__ == "__main__":
                     b = self._prep_crop_b.value()
                     box_w = max(1, w - r - l)
                     box_h = max(1, h - b - t)
-                    rect = plt.Rectangle(
-                        (l, t), box_w, box_h,
-                        edgecolor='magenta', facecolor='none',
-                        linewidth=1.8, linestyle='--', zorder=7)
-                    self._prep_ax.add_patch(rect)
+                    self._prep_rect.set_xy((l, t))
+                    self._prep_rect.set_width(box_w)
+                    self._prep_rect.set_height(box_h)
                     # Dim the area outside the crop box
-                    for sx0, sy0, sx1, sy1 in (
+                    for _pt, (sx0, sy0, sx1, sy1) in zip(self._prep_dim, (
                             (-0.5, -0.5, w - 0.5, t),
                             (-0.5, h - b, w - 0.5, h - 0.5),
                             (-0.5, t, l, h - b),
-                            (w - r, t, w - 0.5, h - b)):
+                            (w - r, t, w - 0.5, h - b))):
                         if sx1 > sx0 and sy1 > sy0:
-                            self._prep_ax.add_patch(plt.Rectangle(
-                                (sx0, sy0), sx1 - sx0, sy1 - sy0,
-                                facecolor='magenta', edgecolor='none',
-                                alpha=0.18, zorder=6))
+                            _pt.set_xy((sx0, sy0))
+                            _pt.set_width(sx1 - sx0)
+                            _pt.set_height(sy1 - sy0)
+                            _pt.set_visible(True)
+                        else:
+                            _pt.set_visible(False)
                     # Corner grab handles
-                    for hx, hy in ((l, t), (w - r, t), (l, h - b), (w - r, h - b)):
-                        self._prep_ax.plot([hx], [hy], marker='s', color='magenta',
-                                           markersize=6, zorder=8)
+                    self._prep_handles.set_data(
+                        [l, w - r, l, w - r], [t, t, h - b, h - b])
 
                     self._prep_ax.set_xlim(-0.5, w - 0.5)
                     self._prep_ax.set_ylim(h - 0.5, -0.5)
-                    self._prep_ax.set_title(
-                        "Crop: drag box edge/corner to resize · inside to move · on image to draw new",
-                        fontsize=plot_font(self.parent_app, 9), pad=3)
-                    self._prep_ax.tick_params(labelsize=plot_font(self.parent_app, 7))
                     # tight_layout re-measures every tick label and the title to solve for the
                     # axes rectangle. Nothing that feeds that solve changes between slider
                     # steps (same font sizes, same tick formatter, same title), so the answer
@@ -11571,6 +11650,7 @@ if __name__ == "__main__":
                     if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
                     self._canvas1.setCursor(Qt.SizeHorCursor)
                     self._redraw_lanes_keep()
+                    self._arm_lane_drag_blit(best_lane, best_side)
                     return
 
                 # Click inside a lane (either axis) selects it. IMPORTANT: only redraw —
@@ -11582,6 +11662,41 @@ if __name__ == "__main__":
                         if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(True)
                         self._redraw_lanes_keep()
                         return
+
+            def _arm_lane_drag_blit(self, lane_idx, side):
+                """Cache the lane figure so a boundary drag only has to redraw the moving line.
+
+                draw_idle() re-renders the WHOLE figure -- the 10-megapixel gel image, every
+                lane rectangle and the intensity profile -- even though a drag moves one line.
+                That is why widening a lane felt sluggish (~36 ms a frame here, and Matplotlib's
+                Agg backend is slower still on Windows). Standard Matplotlib blitting: draw once
+                with the dragged line marked animated (so it is left out of the snapshot), keep
+                the rendered background, then per motion event restore it and draw just the line.
+                """
+                self._lane_blit_bg = None
+                self._lane_blit_line = None
+                try:
+                    line_idx = lane_idx * 2 + side
+                    if line_idx >= len(self._drag_lines):
+                        return
+                    line = self._drag_lines[line_idx]
+                    line.set_animated(True)
+                    self._canvas1.draw()
+                    self._lane_blit_bg = self._canvas1.copy_from_bbox(self._ax1_img.bbox)
+                    self._lane_blit_line = line
+                except Exception:
+                    # Any backend that cannot blit just keeps the old full-redraw path.
+                    self._lane_blit_bg = None
+                    self._lane_blit_line = None
+
+            def _finish_lane_drag_blit(self):
+                """Undo the animated flag so the line is painted normally again."""
+                line = getattr(self, '_lane_blit_line', None)
+                if line is not None:
+                    try: line.set_animated(False)
+                    except Exception: pass
+                self._lane_blit_bg = None
+                self._lane_blit_line = None
 
             def _p1_mpl_move(self, event):
                 if self._drag_info is None or event.xdata is None:
@@ -11606,7 +11721,16 @@ if __name__ == "__main__":
                     Hd = self._gel_arr.shape[0]
                     self._drag_lines[line_idx].set_data(
                         [nv + t + off_x, nv + b + off_x], [0, Hd])
-                self._canvas1.draw_idle()
+
+                bg = getattr(self, '_lane_blit_bg', None)
+                line = getattr(self, '_lane_blit_line', None)
+                if bg is not None and line is not None:
+                    # Restore the cached pixels and repaint only the boundary being dragged.
+                    self._canvas1.restore_region(bg)
+                    self._ax1_img.draw_artist(line)
+                    self._canvas1.blit(self._ax1_img.bbox)
+                else:
+                    self._canvas1.draw_idle()
 
             def _p1_mpl_release(self, event):
                 if self._drag_info is None:
@@ -11618,6 +11742,7 @@ if __name__ == "__main__":
                     self._lane_bounds[i] = [int(min(x0, x1)), int(max(x0, x1))]
                 self._drag_info = None
                 self._canvas1.setCursor(Qt.ArrowCursor)
+                self._finish_lane_drag_blit()
                 # Full redraw to update shading + profile markers (keep current lanes)
                 self._redraw_lanes_keep()
 
@@ -13309,7 +13434,16 @@ if __name__ == "__main__":
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
                 QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABt0lEQVR4nO2WPU7DMBiG38/GydQi6Bk6cgNEDtFYvUGOQZhBYoAjoGaxxJALwMIleocSIehAmuZjSfmRktZ2K3Wgr+Qhf5/9PIp/gEP+e2jL57bhHdXZfToJ0zQV0+n0dD6ff/Z6PS8Ts9kMg8EAk8nkHR0WWgtrrSUACeBRKXVelmXdXFuHiJiIqK7roizLszzP35v+/gxEdBUwxpQAbgEcE9GJlLIvhLBuzNwPw7DPzA95nn8kSaLaLHSq1VpLY8wyjuMnpVRUVdXSwQITETHzq1JqmGVZ0Ua/1sD3CImumo+tGzMvgyAgZr7Psqzoogc2TLOVhdFo9ByG4cVisbD5F5iIwMwFgKExpljdb3t5owEAEEKkzGw1E5i5aujvjDGvSZIcdXUOWCw0jhac6AFLA4CdBVd6wHKptbTgTA84GADWW/ChBxw2mw0WvOgBRwNAuwVfesBxu+2wIHzpAQ8DwF8L29ADHgeO3xaCIIiqqmIAXvSApwEAkFJeMnOtlIIvvXea8wLiOH4Zj8efWutj/GxGTvE2AICEEDd1XV8bY96iKJLYx9kvTdNtILbOXjs/5JCd5AvlTC7DFZrCJgAAAABJRU5ErkJggg==); width: 12px; height: 12px; }
-                QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; }
+                /* outline: 0 suppresses the FOCUS RECTANGLE the platform style draws around the
+                   current row of a drop-down. On Windows that is a hard black rectangle sitting
+                   tight against the text (it looked like a line cutting through the entry); on
+                   macOS it is invisible, which is why this only ever showed up on Windows. Qt
+                   only stops drawing it when the style sheet says so explicitly.
+                   The ::item rules give each row its own padding so the highlight is a clean
+                   band rather than a box hugging the glyphs. */
+                QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #FFFFFF; border: 1px solid #C0C5CB; selection-background-color: #5D98D4; outline: 0; }
+                QComboBox QAbstractItemView::item, QFontComboBox QAbstractItemView::item { border: 0; padding: 4px 6px; min-height: 20px; color: #333333; background-color: transparent; }
+                QComboBox QAbstractItemView::item:selected, QFontComboBox QAbstractItemView::item:selected { background-color: #5D98D4; color: #FFFFFF; }
                 
                 QSlider::groove:horizontal { border: 1px solid #C0C5CB; background: #FFFFFF; height: 4px; border-radius: 2px; }
                 QSlider::handle:horizontal { background: #5D98D4; border: 1px solid #4A78A9; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
@@ -13475,7 +13609,10 @@ if __name__ == "__main__":
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
                 QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACGElEQVR4nO2WsW7aUBSGz7HNUKU4CZGypaqiVgJEWVir5AG6ZPHzuFL3DMlTxEMfoSRDN48spBgwBdpCjEltNU2w/Xdo6YBsY7vQoeVf77XP9/2yri/RJv97OG4RQOx64iHMWMV71pJIQwBCczgs3HQ69/v7RSaaZJtQKNDzvT0nqoVQAE3TxHK5LD7K777d2nr80nGcgJnENHNBhJwk8cyb2d6d+6JUKjkAeBFECntYURRi5odW9+OpIAivBIFJEIQ088n3fezs7PJ4PDorFouurus5Zp4t7gsFYGZf0zTx2dODd03DvJRl+dh1XZ8ocQuQJIkty7LuHPuU+QAAvLCNkVqKohAxU475NUD8kytxfFneZiA4r1ar9i/70G8gEoCZfe3iQjw8fHLlOF+v8vm8AMBfqg5AFCVpOp1OvrvTcyLiWq0Wah8LsNCCGgTJzgRm9mRZZiA4q1QqE13XpbhzIBYgbQtp7ZcCEKVrIa19IoCkLWSxTwRAlKyFLPaJAZa1kNU+MQBRfAtZ7VMBRLXwJ/apA0AkZmq3e8fDkY1Wt++1uv0H6/YbWt2+SkSk63puLcPn0TRNJCJqGublp7ENwxwEhjm0Go1GgYh4VZeYyPxuoTc86n++8Ue2E1y3e3/Hfp55C9dG7705+HJvGMY2gPXbzwNABMAfOoMTwxy8ISKq1+uhv/a1R1XVdDeVf2b4JpusKj8AUsl45DVaq00AAAAASUVORK5CYII=); width: 12px; height: 12px; }
-                QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #3C3C3F; border: 1px solid #505055; selection-background-color: #007ACC; }
+                /* See the light theme for why outline: 0 is required (Windows focus rectangle). */
+                QComboBox QAbstractItemView, QFontComboBox QAbstractItemView { background-color: #3C3C3F; border: 1px solid #505055; selection-background-color: #007ACC; outline: 0; }
+                QComboBox QAbstractItemView::item, QFontComboBox QAbstractItemView::item { border: 0; padding: 4px 6px; min-height: 20px; color: #F1F1F1; background-color: transparent; }
+                QComboBox QAbstractItemView::item:selected, QFontComboBox QAbstractItemView::item:selected { background-color: #007ACC; color: #FFFFFF; }
                 
                 QSlider::groove:horizontal { border: 1px solid #505055; background: #3C3C3F; height: 4px; border-radius: 2px; }
                 QSlider::handle:horizontal { background: #007ACC; border: 1px solid #009AFF; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
@@ -22929,7 +23066,10 @@ if __name__ == "__main__":
                 crop_actions_layout.addWidget(self.draw_crop_rect_button, 1); crop_actions_layout.addStretch()
                 crop_actions_layout.addWidget(self.apply_crop_button)
                 cropping_layout.addLayout(crop_actions_layout)
-                cropping_layout.addWidget(self.create_separator())
+                # No separator here: the "Crop Image" group box already draws its own frame and
+                # title, so an extra rule under the Draw Crop Area row just added a stray line
+                # across the panel. (create_separator is still used where two genuinely distinct
+                # steps share one group -- see the Markers tab.)
                 crop_slider_layout = QGridLayout()
                 self.crop_slider_min, self.crop_slider_max, self.crop_slider_precision_factor = 0, 10000, 100.0
                 def create_value_label(initial_value=0.0):
