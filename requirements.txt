@@ -54,7 +54,24 @@ matplotlib>=3.9
 # Everything else
 # =============================================================================
 # Core GUI Framework
-PySide6>=6.5
+#
+# PySide6-Essentials, NOT the plain `PySide6` meta-package. `PySide6` is a shim that pulls in
+# BOTH PySide6-Essentials and PySide6-Addons; Addons is 865 MB of the 1,191 MB Qt payload and
+# the app imports not one line of it. QtWebEngineCore alone is a 603 MB Chromium build, and
+# there is also QML/Quick3D, Qt3D, Charts, DataVisualization, Multimedia, Designer, Pdf and a
+# bundled ffmpeg. This one change takes the conda environment from ~1.7 GB to ~0.9 GB.
+#
+# Essentials provides everything the app imports -- QtCore, QtGui, QtWidgets and QtSvg -- as
+# well as the runtime plugins the GUI needs (the cocoa/windows platform plugins, imageformats
+# and styles). Verified per-file against the wheel manifests: every one of those four
+# `.abi3.so` binaries and every Qt framework behind them ships in Essentials. Addons carries
+# only their `.pyi` type stubs, which are not used at runtime.
+#
+# If you ever add a module from Addons (a QtCharts plot, a QtMultimedia player, a web view),
+# swap this back to `PySide6>=6.5` and drop the matching entry from `excludes` in the build
+# specs. Upgrading an EXISTING environment does not shrink it on its own -- Addons is already
+# installed there, so remove it explicitly:  pip uninstall PySide6 PySide6-Addons
+PySide6-Essentials>=6.5
 
 # Image I/O
 Pillow>=10.3

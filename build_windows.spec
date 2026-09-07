@@ -133,10 +133,29 @@ hiddenimports.extend(collect_submodules('uncertainties'))
 hiddenimports.extend(collect_submodules('dill'))
 
 # --- Excluded Modules ---
-# Other Qt bindings, plus two modules the app genuinely does not use:
-# QtPrintSupport (no QPrinter/QPrintDialog anywhere, and matplotlib's qtagg backend
-# does not reference it either) and tkinter.
-excludes = ['PyQt5', 'PyQt6', 'PySide6.QtPrintSupport', 'tkinter']
+# Other Qt bindings, tkinter, and every Qt module the app does not import. The app uses
+# only QtCore, QtGui, QtWidgets and QtSvg -- all of which live in PySide6-Essentials.
+# Everything listed below is PySide6-Addons, which is 865 MB of the 1,191 MB Qt payload.
+# None of it is reachable from the four modules above, so this list is insurance against a
+# transitive import, not the primary defence: that is simply not calling
+# collect_data_files('PySide6') (see the note near the top of the macOS spec).
+# QtPrintSupport is here for the same reason as before -- no QPrinter/QPrintDialog anywhere,
+# and matplotlib's qtagg backend does not reference it either.
+excludes = [
+    'PyQt5', 'PyQt6', 'tkinter',
+    'PySide6.QtPrintSupport',
+    # --- PySide6-Addons: never imported ---
+    'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick',
+    'PySide6.QtWebChannel', 'PySide6.QtWebSockets',
+    'PySide6.QtQuick', 'PySide6.QtQuick3D', 'PySide6.QtQuickWidgets', 'PySide6.QtQuickControls2',
+    'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets',
+    'PySide6.QtCharts', 'PySide6.QtDataVisualization', 'PySide6.QtDesigner',
+    'PySide6.QtPdf', 'PySide6.QtPdfWidgets',
+    'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.Qt3DExtras', 'PySide6.Qt3DInput',
+    'PySide6.Qt3DLogic', 'PySide6.Qt3DAnimation',
+    'PySide6.QtBluetooth', 'PySide6.QtNfc', 'PySide6.QtPositioning', 'PySide6.QtSerialPort',
+    'PySide6.QtRemoteObjects', 'PySide6.QtScxml', 'PySide6.QtSensors', 'PySide6.QtSpatialAudio',
+]
 
 # =============================================================================
 # END SHARED LIBRARY DEPENDENCIES
