@@ -49,6 +49,10 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 ## Gallery
 
 <p align="center">
+  <em>Easily Edit Custom markers.</em><br>
+  <img src="https://github.com/user-attachments/assets/c0db8d20-4424-44c4-ba23-f75fd1f64e20" width="700" alt="Auto Lane Detection">
+</p>
+<p align="center">
   <em>Automatic lane and band detection for densitometry.</em><br>
   <img src="https://github.com/user-attachments/assets/0f565b93-16b4-4682-abf0-185e4bc631e2" width="700" alt="Auto Lane Detection">
 </p>
