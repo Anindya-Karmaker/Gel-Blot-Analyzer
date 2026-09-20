@@ -16,6 +16,13 @@ import traceback
 # deconvolution silently failed ("Fallback Gaussian fit failed").
 import warnings
 
+# Cap the thread pool of SciPy's bundled OpenBLAS BEFORE numpy/scipy are imported. The
+# band-deconvolution optimiser (TRF) runs one small SVD (~1500 x 50) per iteration; with
+# OpenBLAS's default of one thread per core, spinning up the pool costs more than the
+# maths (measured on a 10-core M1: 4.7 ms -> 1.9 ms per SVD with 4 threads, i.e. ~2x
+# faster fitting). setdefault: an explicit user/environment setting still wins.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", str(max(1, min(4, os.cpu_count() or 1))))
+
 # Platform-specific arrow glyphs for custom arrow markers / shortcuts. The heavy
 # "🡄🡆🡅🡇" glyphs render on Windows but not macOS, so use the standard arrows
 # there instead — otherwise the arrow shortcuts and placed arrow markers show as
@@ -33,7 +40,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.3"
+APP_VERSION = "9.4"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -751,7 +758,7 @@ if __name__ == "__main__":
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, QListWidgetItem,
-            QStackedWidget, QProgressDialog, QSplitter,
+            QStackedWidget, QProgressDialog, QSplitter, QToolTip, QFormLayout,
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
@@ -1183,6 +1190,63 @@ if __name__ == "__main__":
                     pass
 
             QTimer.singleShot(0, _destroy)
+
+
+        GAUSSIAN_DECONV_METHOD = "Gaussian Deconvolution"
+        AREA_METHOD_TOOLTIPS = {
+            GAUSSIAN_DECONV_METHOD:
+                "EXPERIMENTAL — must be enabled in Settings ▸ Experimental Features.\n"
+                "Best for overlapping bands and shoulders: fits curves to separate merged bands, "
+                "then integrates the REAL data using the fit only to split shared signal.\n"
+                "WARNING: computationally intensive. Each lane runs hundreds of curve fits and the "
+                "window can stop responding for seconds to minutes on a gel with many bands.",
+            "Rolling-valley":
+                "Rolling-valley: a local straight line is drawn under each band between its own "
+                "edges. Good general-purpose default for reasonably separated bands.",
+            "Rolling Ball":
+                "Rolling Ball: rolls a ball of the chosen radius beneath the trace to model a "
+                "curved background. Use for sloping or smeared backgrounds.",
+            "Straight Line":
+                "Straight Line: one global baseline across the band valleys. Fastest; assumes an "
+                "essentially flat background.",
+        }
+        DEFAULT_AREA_METHOD = "Rolling-valley"
+
+        def gaussian_deconv_enabled(app):
+            """True when the user has switched on Settings ▸ Experimental Features ▸ Gaussian
+            Deconvolution. Off by default: the fit is genuinely heavy (hundreds of bounded
+            least-squares fits per lane) and runs on the UI thread, so the window can appear
+            to hang while it works."""
+            return bool(getattr(app, 'experimental_gaussian_deconv', False))
+
+        def area_methods_for(app):
+            """The Area/Background methods offered right now (Gaussian Deconvolution only
+            when the experimental setting is on)."""
+            methods = ["Rolling-valley", "Rolling Ball", "Straight Line"]
+            if gaussian_deconv_enabled(app):
+                methods.insert(0, GAUSSIAN_DECONV_METHOD)
+            return methods
+
+        def populate_area_method_combo(combo, app, current=None):
+            """Fill an Area-method combo box and select `current` (falling back to the default
+            when it is not available -- e.g. a saved analysis that used Gaussian Deconvolution
+            while the experimental setting is off)."""
+            methods = area_methods_for(app)
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(methods)
+            for i, m in enumerate(methods):
+                combo.setItemData(i, AREA_METHOD_TOOLTIPS.get(m, m), Qt.ToolTipRole)
+            idx = combo.findText(str(current)) if current else -1
+            combo.setCurrentIndex(idx if idx >= 0 else max(0, combo.findText(DEFAULT_AREA_METHOD)))
+            combo.blockSignals(False)
+            return combo.currentText()
+
+        def resolve_area_method(app, method):
+            """Map a stored method onto one that is actually available."""
+            if str(method) == GAUSSIAN_DECONV_METHOD and not gaussian_deconv_enabled(app):
+                return DEFAULT_AREA_METHOD
+            return str(method) if method else DEFAULT_AREA_METHOD
 
 
         class ManagedDialog(QDialog):
@@ -4271,7 +4335,7 @@ if __name__ == "__main__":
                 def _fit_text(fig_obj, x, y, txt, max_w, fontsize, min_size=5.5, **kw):
                     """Draw text shrunk just enough to fit `max_w` (figure fraction).
 
-                    The coloured verdict bars are a fixed width, so a long sentence — "5 of 28
+                    The colored verdict bars are a fixed width, so a long sentence — "5 of 28
                     band(s) across 3 lane(s)" — ran straight out through the right-hand edge.
                     """
                     fs = float(fontsize)
@@ -4371,7 +4435,7 @@ if __name__ == "__main__":
                             ("Report generated", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                             ("Analysis timestamp", ts_display),
                             ("Layout", "Multi-lane" if is_multi_lane_data else "Single lane"),
-                            ("Lanes analysed", str(len(lane_ids))),
+                            ("Lanes analyzed", str(len(lane_ids))),
                             ("Quantification", "Standard-curve mode" if is_std_mode else "Relative (% area) only"),
                             ("Regression model", str(model_name) if is_std_mode else "N/A"),
                         ]
@@ -4483,7 +4547,7 @@ if __name__ == "__main__":
 
                         if _varying:
                             _fit_text(fig, 0.5, 0.055,
-                                      "Lanes were NOT all analysed with identical settings — "
+                                      "Lanes were NOT all analyzed with identical settings — "
                                       "see the per-lane parameters page.",
                                       CONTENT_W, 8, color="#B36B00", ha="center",
                                       fontweight="bold")
@@ -4500,7 +4564,7 @@ if __name__ == "__main__":
                                          fontsize=14, fontweight="bold", y=0.97)
                             _y_pl = _para(
                                 fig, MARGIN_L, 0.90,
-                                "These lanes were not all analysed with the same settings, so the single "
+                                "These lanes were not all analyzed with the same settings, so the single "
                                 "parameter table on the previous page does not describe every lane. Only the "
                                 "parameters that DIFFER between lanes are listed here; everything else is as "
                                 "given on that table.\n\n"
@@ -4607,7 +4671,7 @@ if __name__ == "__main__":
                             verdict = (f"✓  No saturation detected — all {total_bands} band(s) are within "
                                        f"the detector's linear range.")
                             verdict_color = "#1a7a1a"
-                        # ⚠/✓ may be missing from the PDF font; draw a coloured status bar so the
+                        # ⚠/✓ may be missing from the PDF font; draw a colored status bar so the
                         # verdict reads clearly regardless of glyph coverage.
                         fig.patches.append(plt.Rectangle((0.06, 0.85), 0.88, 0.045,
                                            transform=fig.transFigure,
@@ -4712,7 +4776,7 @@ if __name__ == "__main__":
                             "region: the band's tails are cut off and the area under-estimates the real "
                             "amount. It is flagged as WIDER when the region spans more than "
                             f"{PeakAreaDialog.REGION_WIDTH_MAX_RATIO:.1f}x the band's own width, which folds "
-                            "background — and often part of a neighbouring band — into the total. The "
+                            "background — and often part of a neighboring band — into the total. The "
                             "band's own width is measured out to where its signal falls below "
                             f"{PeakAreaDialog.REGION_EDGE_FRACTION*100:.0f}% of the peak.\n\n"
                             "Fix a flagged band by dragging its integration handles in the densitometry "
@@ -5143,6 +5207,7 @@ if __name__ == "__main__":
                         self.lane_mwm_preset[lid] = str(lane.get('mwm_preset') or _infer_preset(vals))
 
                 self.lanes_state = {}
+                self._lanes_needing_recompute = set()
                 for lane in self.lanes_data:
                     self.lanes_state[lane['id']] = self._init_lane_state(lane['id'], lane['pil'], current_settings)
 
@@ -5154,14 +5219,34 @@ if __name__ == "__main__":
                 # get_all_lanes_peak_info() gates on min(len(peaks), len(areas)), so those
                 # lanes exported as if they had no bands at all: no areas, no saturation
                 # flags, no region-fit verdicts in the PDF report.
-                for lane in self.lanes_data:
-                    self._load_lane_state(lane['id'])
-                    self.regenerate_profile_and_detect()
-                    try:
-                        self._recalculate_all_regions()
-                    except Exception:
-                        log_traceback()
-                    self._save_current_lane_state()
+                # With Gaussian Deconvolution this loop is the slowest part of opening the
+                # dialog (a band fit per lane), so show progress rather than a window that
+                # looks frozen.
+                _startup_progress = None
+                if len(self.lanes_data) > 1:
+                    _startup_progress = QProgressDialog("Analyzing lanes…", None, 0,
+                                                        len(self.lanes_data), self)
+                    _startup_progress.setWindowTitle("Analyzing")
+                    _startup_progress.setWindowModality(Qt.WindowModal)
+                    _startup_progress.setMinimumDuration(400)
+                try:
+                    for _i, lane in enumerate(self.lanes_data):
+                        if _startup_progress is not None:
+                            _startup_progress.setLabelText(
+                                f"Analyzing lane {lane['id']} of {len(self.lanes_data)}…")
+                            _startup_progress.setValue(_i)
+                            QApplication.processEvents()
+                        self._load_lane_state(lane['id'])
+                        self.regenerate_profile_and_detect()
+                        try:
+                            self._recalculate_all_regions()
+                        except Exception:
+                            log_traceback()
+                        self._save_current_lane_state()
+                finally:
+                    if _startup_progress is not None:
+                        _startup_progress.setValue(len(self.lanes_data))
+                        _startup_progress.close()
 
                 # Put back any band boundaries the user hand-adjusted last time this image
                 # was analysed (see _restore_band_state for the invalidation rule).
@@ -5307,28 +5392,14 @@ if __name__ == "__main__":
                 global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
 
                 self.method_combobox = QComboBox()
-                self.method_combobox.addItems(["Gaussian Deconvolution", "Rolling-valley", "Rolling Ball", "Straight Line"])
-                # Plain-language descriptions for each method (hover the dropdown items).
-                self.method_combobox.setItemData(
-                    0, "Best for overlapping bands and shoulders. Fits curves to separate merged "
-                    "bands, then integrates the REAL data using the fit only to split shared "
-                    "signal. Slowest; most accurate when bands touch.", Qt.ToolTipRole)
-                self.method_combobox.setItemData(
-                    1, "Rolling-valley: a local straight line is drawn under each band between its "
-                    "own edges. Good general-purpose default for reasonably separated bands.", Qt.ToolTipRole)
-                self.method_combobox.setItemData(
-                    2, "Rolling Ball: rolls a ball of the chosen radius beneath the trace to model a "
-                    "curved background. Use for sloping or smeared backgrounds.", Qt.ToolTipRole)
-                self.method_combobox.setItemData(
-                    3, "Straight Line: one global baseline across the band valleys. Fastest; assumes "
-                    "an essentially flat background.", Qt.ToolTipRole)
+                # Contents depend on Settings ▸ Experimental Features (Gaussian Deconvolution
+                # is hidden unless the user has switched it on); tooltips come with them.
+                self.area_subtraction_method = populate_area_method_combo(
+                    self.method_combobox, self.parent_app, self.area_subtraction_method)
                 self.method_combobox.setToolTip(
                     "How the background under each band is estimated before integration. "
                     "Hover each option for details."
                 )
-                idx = self.method_combobox.findText(self.area_subtraction_method)
-                if idx >= 0: self.method_combobox.setCurrentIndex(idx)
-                else: self.method_combobox.setCurrentIndex(0)
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
                 global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
 
@@ -5512,7 +5583,7 @@ if __name__ == "__main__":
                 self.smoothing_slider.setValue(int(self.smoothing_sigma * 10))
                 self.smoothing_slider.setToolTip(
                     "Smooths the 1D TRACE. Helps detection on noisy lanes; too high flattens shoulders "
-                    "and can shift peak centres."
+                    "and can shift peak centers."
                 )
                 self.smoothing_slider.valueChanged.connect(
                     lambda val, lbl=self.smoothing_label: (
@@ -6119,6 +6190,114 @@ if __name__ == "__main__":
                     y += self._gaussian(x, a, c, w)
                 return y
 
+            # ---------------------------------------------------------------- #
+            # Analytic Jacobians for the deconvolution fits                      #
+            # ---------------------------------------------------------------- #
+            # Why the fit was slow: every optimiser step estimated the Jacobian by finite
+            # differences -- one extra model evaluation per parameter (4 per EMG band), and
+            # the AIC shoulder search ran a full curve_fit per candidate per round with a
+            # Python-loop model. A 14-band lane needed ~28,000 model evaluations. These
+            # closed-form Jacobians cost about as much as ONE model evaluation, so each step
+            # is 20-60x cheaper. The model, bounds, start values, solver (TRF) and
+            # tolerances are unchanged -- only the derivative is exact instead of
+            # approximated -- so the optimiser converges to the same minimum.
+
+            @staticmethod
+            def _gauss_sum_and_jac(x, p, want_jac=True):
+                """Sum of Gaussians for flat params [amp, cen, sig] * k, and its (n, 3k)
+                Jacobian (columns ordered like the parameters)."""
+                P = np.asarray(p, dtype=np.float64).reshape(-1, 3)
+                a = P[:, 0:1]; c = P[:, 1:2]; s = np.maximum(P[:, 2:3], 1e-6)
+                d = x[None, :] - c
+                g = np.exp(-(d * d) / (2.0 * s * s))
+                model = (a * g).sum(axis=0)
+                if not want_jac:
+                    return model, None
+                J = np.empty((x.size, P.shape[0] * 3), dtype=np.float64)
+                ag = a * g
+                J[:, 0::3] = g.T
+                J[:, 1::3] = (ag * d / (s * s)).T
+                J[:, 2::3] = (ag * d * d / (s * s * s)).T
+                return model, J
+
+            def _emg_sum_jac(self, x, p):
+                """(n, 4k) Jacobian of _emg_sum for flat params [amp, cen, sig, tau] * k.
+
+                EMG: f = K * exp(E) * erfc(z) with K = a*s/t*sqrt(pi/2),
+                E = s^2/(2t^2) - (x-c)/t and z = (c-x)/(sqrt2 s) + s/(sqrt2 t).
+                d erfc(z)/dz = -2/sqrt(pi) exp(-z^2), and E - z^2 = -(x-c)^2/(2 s^2), so that
+                term is a plain Gaussian (no overflow). Mirrors _emg_sum's guards: the same
+                argument clipping, non-finite samples contribute 0, and components with
+                tau < 0.05*sig use the pure-Gaussian branch (d/dtau = 0)."""
+                P = np.asarray(p, dtype=np.float64).reshape(-1, 4)
+                amps, cens = P[:, 0], P[:, 1]
+                sigs = np.maximum(np.abs(P[:, 2]), 1e-6)
+                taus = np.maximum(np.abs(P[:, 3]), 1e-9)
+                k = P.shape[0]
+                J = np.zeros((x.size, 4 * k), dtype=np.float64)
+                gauss_mask = taus < sigs * 0.05
+                root2 = np.sqrt(2.0)
+
+                if np.any(gauss_mask):
+                    idx = np.nonzero(gauss_mask)[0]
+                    a = amps[idx][:, None]; c = cens[idx][:, None]; s = sigs[idx][:, None]
+                    d = x[None, :] - c
+                    g = np.exp(-(d * d) / (2.0 * s * s)); ag = a * g
+                    J[:, 4 * idx] = g.T
+                    J[:, 4 * idx + 1] = (ag * d / (s * s)).T
+                    J[:, 4 * idx + 2] = (ag * d * d / (s * s * s)).T
+
+                emg_mask = ~gauss_mask
+                if np.any(emg_mask):
+                    idx = np.nonzero(emg_mask)[0]
+                    a = amps[idx][:, None]; c = cens[idx][:, None]
+                    s = sigs[idx][:, None]; t = taus[idx][:, None]
+                    d = x[None, :] - c
+                    z = (c - x[None, :]) / (root2 * s) + s / (root2 * t)
+                    z_clipped = (z < -26.0) | (z > 26.0)
+                    np.clip(z, -26.0, 26.0, out=z)
+                    E = 0.5 * (s / t) ** 2 - d / t
+                    np.clip(E, -500.0, 500.0, out=E)
+                    Kc = (s / t) * np.sqrt(np.pi / 2.0)          # K / a
+                    Pz = np.exp(E) * erfc(z)                      # exp(E) erfc(z)
+                    Q = np.where(z_clipped, 0.0,
+                                 (-2.0 / np.sqrt(np.pi)) * np.exp(-(d * d) / (2.0 * s * s)))
+                    f = a * Kc * Pz
+                    aK = a * Kc
+                    dz_dc = 1.0 / (root2 * s)
+                    dz_ds = d / (root2 * s * s) + 1.0 / (root2 * t)
+                    dz_dt = -s / (root2 * t * t)
+                    dE_ds = s / (t * t)
+                    dE_dt = -(s * s) / (t * t * t) + d / (t * t)
+                    j_a = Kc * Pz
+                    j_c = aK * (Pz / t + Q * dz_dc)
+                    j_s = f / s + aK * (Pz * dE_ds + Q * dz_ds)
+                    j_t = -f / t + aK * (Pz * dE_dt + Q * dz_dt)
+                    bad = ~np.isfinite(f)
+                    for col, arr in ((0, j_a), (1, j_c), (2, j_s), (3, j_t)):
+                        arr = np.where(bad | ~np.isfinite(arr), 0.0, arr)
+                        J[:, 4 * idx + col] = arr.T
+                return J
+
+            def _multi_gaussian_vec(self, x, *params):
+                """Vectorised _multi_gaussian (same values, one NumPy pass)."""
+                return self._gauss_sum_and_jac(np.asarray(x, dtype=np.float64), params, False)[0]
+
+            def _multi_gaussian_jac(self, x, *params):
+                return self._gauss_sum_and_jac(np.asarray(x, dtype=np.float64), params, True)[1]
+
+            @staticmethod
+            def _lmfit_equivalent_least_squares(fun, jac, x0, lb, ub):
+                """scipy least_squares with EXACTLY the settings lmfit.minimize(...,
+                method='least_squares') used (TRF, ftol=xtol=gtol=1e-8, x_scale=1,
+                max_nfev=2*2000*(nvars+1)), but with an analytic Jacobian and without lmfit's
+                per-call Parameter bookkeeping."""
+                from scipy.optimize import least_squares
+                x0 = np.clip(np.asarray(x0, dtype=np.float64), lb, ub)
+                return least_squares(fun, x0, jac=jac, bounds=(lb, ub), method='trf',
+                                     ftol=1e-08, xtol=1e-08, gtol=1e-08, x_scale=1.0,
+                                     loss='linear', max_nfev=2 * 2000 * (len(x0) + 1))
+
             def _fit_gaussians_core(self, profile_subtracted, peaks, peak_distance=None):
                 """Pure deconvolution kernel: (profile, peaks) -> (fitted_params, tau_values).
 
@@ -6127,15 +6306,15 @@ if __name__ == "__main__":
                 into self.*: it reads only its arguments and writes nothing back to self.
 
                 Two-stage deconvolution:
-                Stage 1 — lmfit multi-Gaussian for robust initial convergence.
-                Stage 2 — lmfit multi-EMG initialized from Stage 1 to capture
+                Stage 1 — multi-Gaussian for robust initial convergence.
+                Stage 2 — multi-EMG initialized from Stage 1 to capture
                             asymmetric band tailing.
 
                 Component count is determined by AIC-based model selection
                 (_select_optimal_components) which auto-discovers undetected shoulders.
 
-                Falls back gracefully to scipy curve_fit + pure Gaussian if lmfit is
-                not installed.
+                Both stages use SciPy least_squares with analytic Jacobians (the same
+                TRF settings lmfit used, ~20-60x fewer model evaluations).
 
                 TAU INITIALISATION RULE: tau must always start at >= sig * 0.3.
                 Values smaller than sig * 0.05 cause _emg to collapse to zero
@@ -6144,15 +6323,11 @@ if __name__ == "__main__":
                 fitted_gaussian_params = []
                 tau_values = []
 
-                try:
-                    import lmfit
-                    HAS_LMFIT = True
-                except ImportError:
-                    HAS_LMFIT = False
-                    print(
-                        "Warning: lmfit not installed — using scipy fallback. "
-                        "Install with:  pip install lmfit"
-                    )
+                # The fits below call SciPy's least_squares directly, with the exact settings
+                # lmfit.minimize(method='least_squares') used plus ANALYTIC Jacobians (see
+                # _emg_sum_jac), so lmfit is no longer needed for identical results and a
+                # build without it no longer silently falls back to a different model.
+                HAS_LMFIT = True
 
                 optimal_peaks = self._select_optimal_components(profile_subtracted, peaks,
                                                                peak_distance)
@@ -6181,87 +6356,64 @@ if __name__ == "__main__":
 
                 if HAS_LMFIT:
                     # STAGE 1 — Multi-Gaussian fit (stable warm-start)
-                    params_g = lmfit.Parameters()
+                    x0_g, lb_g, ub_g = [], [], []
                     for i, p in enumerate(optimal_peaks):
                         p_int = int(np.clip(p, 0, n - 1))
                         amp   = max(0.01, float(y_norm[p_int]))
                         sig   = float(sigmas[i])
                         tol   = max(8.0, sig * 1.5)
-                        params_g.add(f'amp_{i}', value=amp,      min=0.0,            max=max(2.0, amp * 2.5))
-                        params_g.add(f'cen_{i}', value=float(p), min=float(p) - tol, max=float(p) + tol)
-                        params_g.add(f'sig_{i}', value=sig,      min=0.5,            max=n / 3.0)
+                        x0_g += [amp, float(p), sig]
+                        lb_g += [0.0, float(p) - tol, 0.5]
+                        ub_g += [max(2.0, amp * 2.5), float(p) + tol, n / 3.0]
+                    x0_g = np.array(x0_g); lb_g = np.array(lb_g); ub_g = np.array(ub_g)
 
-                    # Parameter NAMES are built once here rather than f-string-formatted
-                    # inside the residual: the residual runs tens of thousands of times per
-                    # lane, so formatting 3 names per component per call was millions of
-                    # throw-away string builds.
-                    _amp_k = [f'amp_{i}' for i in range(n_comp)]
-                    _cen_k = [f'cen_{i}' for i in range(n_comp)]
-                    _sig_k = [f'sig_{i}' for i in range(n_comp)]
-                    _tau_k = [f'tau_{i}' for i in range(n_comp)]
+                    def _res_g(q):
+                        return self._gauss_sum_and_jac(x, q, False)[0] - y_norm
 
-                    def _residual_gaussian(pars, x_data, y_data):
-                        amps = np.fromiter((pars[k].value for k in _amp_k), np.float64, n_comp)
-                        cens = np.fromiter((pars[k].value for k in _cen_k), np.float64, n_comp)
-                        sigs = np.maximum(
-                            np.fromiter((pars[k].value for k in _sig_k), np.float64, n_comp), 1e-6)
-                        model = (amps[:, None] *
-                                 np.exp(-(x_data[None, :] - cens[:, None]) ** 2
-                                        / (2.0 * sigs[:, None] ** 2))).sum(axis=0)
-                        return model - y_data
+                    def _jac_g(q):
+                        return self._gauss_sum_and_jac(x, q, True)[1]
 
-                    gauss_result_params = params_g
+                    gauss_vals = x0_g.copy()
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
-                            result_g = lmfit.minimize(
-                                _residual_gaussian, params_g,
-                                args=(x, y_norm),
-                                method='least_squares'
-                            )
-                        gauss_result_params = result_g.params
+                            gauss_vals = self._lmfit_equivalent_least_squares(
+                                _res_g, _jac_g, x0_g, lb_g, ub_g).x
                     except Exception as e:
                         print(f"Stage 1 Gaussian fit failed: {e}")
+                    gauss_vals = gauss_vals.reshape(-1, 3)
 
                     # STAGE 2 — Multi-EMG fit warm-started from Stage 1
-                    params_emg = lmfit.Parameters()
+                    x0_e, lb_e, ub_e = [], [], []
                     for i in range(n_comp):
-                        amp_init = float(gauss_result_params[f'amp_{i}'].value)
-                        cen_init = float(gauss_result_params[f'cen_{i}'].value)
-                        sig_init = max(float(gauss_result_params[f'sig_{i}'].value), 0.5)
+                        amp_init = float(gauss_vals[i, 0])
+                        cen_init = float(gauss_vals[i, 1])
+                        sig_init = max(float(gauss_vals[i, 2]), 0.5)
                         tau_init = sig_init * 0.3
                         tol      = max(8.0, sig_init * 1.5)
+                        x0_e += [amp_init, cen_init, sig_init, tau_init]
+                        lb_e += [0.0, cen_init - tol, 0.5, sig_init * 0.06]
+                        ub_e += [max(2.0, amp_init * 2.5), cen_init + tol, n / 3.0, sig_init * 5.0]
+                    x0_e = np.array(x0_e); lb_e = np.array(lb_e); ub_e = np.array(ub_e)
 
-                        params_emg.add(f'amp_{i}', value=amp_init, min=0.0,
-                                    max=max(2.0, amp_init * 2.5))
-                        params_emg.add(f'cen_{i}', value=cen_init,
-                                    min=cen_init - tol, max=cen_init + tol)
-                        params_emg.add(f'sig_{i}', value=sig_init, min=0.5, max=n / 3.0)
-                        params_emg.add(f'tau_{i}', value=tau_init,
-                                    min=sig_init * 0.06, max=sig_init * 5.0)
+                    def _res_e(q):
+                        Q = q.reshape(-1, 4)
+                        return self._emg_sum(x, Q[:, 0], Q[:, 1], Q[:, 2], Q[:, 3]) - y_norm
 
-                    def _residual_emg(pars, x_data, y_data):
-                        amps = np.fromiter((pars[k].value for k in _amp_k), np.float64, n_comp)
-                        cens = np.fromiter((pars[k].value for k in _cen_k), np.float64, n_comp)
-                        sigs = np.fromiter((pars[k].value for k in _sig_k), np.float64, n_comp)
-                        taus = np.fromiter((pars[k].value for k in _tau_k), np.float64, n_comp)
-                        return self._emg_sum(x_data, amps, cens, sigs, taus) - y_data
+                    def _jac_e(q):
+                        return self._emg_sum_jac(x, q)
 
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
-                            result_emg = lmfit.minimize(
-                                _residual_emg, params_emg,
-                                args=(x, y_norm),
-                                method='least_squares'
-                            )
-                        fp = result_emg.params
+                            fp = self._lmfit_equivalent_least_squares(
+                                _res_e, _jac_e, x0_e, lb_e, ub_e).x.reshape(-1, 4)
                         for i in range(n_comp):
-                            sig_i = max(float(fp[f'sig_{i}'].value), 0.5)
-                            tau_i = max(float(fp[f'tau_{i}'].value), sig_i * 0.06)
+                            sig_i = max(float(fp[i, 2]), 0.5)
+                            tau_i = max(float(fp[i, 3]), sig_i * 0.06)
                             fitted_gaussian_params.append((
-                                float(fp[f'amp_{i}'].value) * max_val,
-                                float(fp[f'cen_{i}'].value),
+                                float(fp[i, 0]) * max_val,
+                                float(fp[i, 1]),
                                 sig_i
                             ))
                             tau_values.append(tau_i)
@@ -6269,11 +6421,11 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"Stage 2 EMG fit failed — keeping Stage 1 Gaussian: {e}")
                         for i in range(n_comp):
-                            sig_i = max(float(gauss_result_params[f'sig_{i}'].value), 0.5)
+                            sig_i = max(float(gauss_vals[i, 2]), 0.5)
                             tau_i = sig_i * 0.3
                             fitted_gaussian_params.append((
-                                float(gauss_result_params[f'amp_{i}'].value) * max_val,
-                                float(gauss_result_params[f'cen_{i}'].value),
+                                float(gauss_vals[i, 0]) * max_val,
+                                float(gauss_vals[i, 1]),
                                 sig_i
                             ))
                             tau_values.append(tau_i)
@@ -6443,7 +6595,8 @@ if __name__ == "__main__":
                     self.method = self.method_combobox.currentText()
                     self.area_subtraction_method = self.method  # keep in sync with saved state
                 else:
-                    self.method = getattr(self, 'area_subtraction_method', 'Rolling Ball')
+                    self.method = resolve_area_method(
+                        self.parent_app, getattr(self, 'area_subtraction_method', None))
                 if self.profile_original_inverted is None:
                     return
 
@@ -6514,9 +6667,16 @@ if __name__ == "__main__":
                     # Step 2 — Initial tight handle placement
                     self.peak_regions = _tight_regions(self.background, threshold_fraction=0.02)
 
-                    # Step 3 — EMG fitting
+                    # Step 3 — EMG fitting.
+                    # This is the expensive step (hundreds of bounded least-squares fits per
+                    # lane) and it runs on the UI thread, so show a wait cursor instead of a
+                    # window that simply stops responding.
                     subtracted = np.maximum(profile_float - self.background, 0.0)
-                    self._fit_gaussians(subtracted)
+                    QApplication.setOverrideCursor(Qt.WaitCursor)
+                    try:
+                        self._fit_gaussians(subtracted)
+                    finally:
+                        QApplication.restoreOverrideCursor()
 
                     # Step 4 — Component ownership
                     self.component_ownership = {}
@@ -6677,7 +6837,7 @@ if __name__ == "__main__":
 
             def accept_and_close(self):
                 self._save_current_lane_state()
-                self._propagate_settings_to_all_lanes()
+                self._propagate_settings_to_all_lanes(recompute=True)
                 self._final_settings = {
                     'rolling_ball_radius': self.rolling_ball_radius,
                     'denoise_sigma': self.denoise_sigma,
@@ -6754,7 +6914,7 @@ if __name__ == "__main__":
                     'peak_distance': settings.get('peak_distance', 10),
                     'peak_prominence_factor': settings.get('peak_prominence_factor', 0.02),
                     'min_band_width': settings.get('min_band_width', 3),
-                    'area_subtraction_method': settings.get('area_subtraction_method', "Gaussian Deconvolution"),
+                    'area_subtraction_method': settings.get('area_subtraction_method', DEFAULT_AREA_METHOD),
                     'auto_adjust_rb_radius': settings.get('auto_adjust_rb_radius', False),
                     'denoise_sigma': settings.get('denoise_sigma', 0.0),
                     # Speck/noise rejection: drop bright connected components smaller than this
@@ -6873,7 +7033,8 @@ if __name__ == "__main__":
                 for c in controls:
                     if c is not None:
                         c.blockSignals(True)
-                idx = self.method_combobox.findText(self.area_subtraction_method)
+                idx = self.method_combobox.findText(
+                    resolve_area_method(self.parent_app, self.area_subtraction_method))
                 if idx >= 0: self.method_combobox.setCurrentIndex(idx)
                 self.rolling_ball_slider.setValue(self._rb_to_slider(self.rolling_ball_radius))
                 self.rolling_ball_spinbox.setValue(float(self.rolling_ball_radius))
@@ -6911,42 +7072,107 @@ if __name__ == "__main__":
                 'speck_min_size',
             )
 
-            def _propagate_settings_to_all_lanes(self):
-                """Copy current lane's detection settings to every other lane and
-                re-run detection so areas are always computed with the same parameters."""
+            def _propagate_settings_to_all_lanes(self, recompute=False):
+                """Copy the current lane's detection settings to every other lane.
+
+                Lanes whose settings actually CHANGED are marked as needing a recompute
+                rather than being recomputed here. Re-running detection for every other lane
+                means re-running the band fit for each of them, and with Gaussian
+                Deconvolution that is seconds per lane -- so the old behaviour made every
+                single lane switch re-fit the whole gel on the UI thread (an 8-lane gel =
+                7 fits + 7 off-screen redraws per switch). A lane is now recomputed when it
+                is actually opened, and any still-pending lanes are flushed before results
+                are read (export / OK), so the numbers are identical, just computed once.
+
+                `recompute=True` forces the pending work to happen now.
+                """
                 src_id = self.current_lane_id
                 if src_id not in self.lanes_state:
                     return
                 src = self.lanes_state[src_id]
+                if not hasattr(self, '_lanes_needing_recompute'):
+                    self._lanes_needing_recompute = set()
                 for lane in self.lanes_data:
                     lid = lane['id']
                     if lid == src_id:
                         continue
                     dst = self.lanes_state[lid]
+                    changed = False
                     for key in self._SHARED_SETTINGS:
                         if key in src:
+                            if dst.get(key) != src[key]:
+                                changed = True
                             dst[key] = src[key]
                     # Skip lanes whose regions were pasted/hand-edited: re-running detection
                     # would rebuild their integration regions and discard the user's work.
                     # Their per-method areas are already computed from the manual regions.
                     if dst.get('regions_are_manual'):
+                        self._lanes_needing_recompute.discard(lid)
                         continue
-                    # Re-run detection for the updated lane state
-                    saved_id = self.current_lane_id
-                    self._load_lane_state(lid)
-                    try:
-                        self.regenerate_profile_and_detect()
-                    except Exception:
-                        pass
+                    if changed:
+                        self._lanes_needing_recompute.add(lid)
+                if recompute:
+                    self._flush_pending_lane_recomputes()
+
+            def _recompute_lane(self, lane_id):
+                """Re-run detection + integration for ONE lane, leaving the current lane
+                selection as it was."""
+                saved_id = self.current_lane_id
+                try:
+                    self._load_lane_state(lane_id)
+                    self.regenerate_profile_and_detect()
                     self._save_current_lane_state()
-                    self._load_lane_state(saved_id)
+                except Exception:
+                    log_traceback()
+                finally:
+                    try:
+                        if saved_id is not None and saved_id != lane_id:
+                            self._load_lane_state(saved_id)
+                    except Exception:
+                        log_traceback()
+                if hasattr(self, '_lanes_needing_recompute'):
+                    self._lanes_needing_recompute.discard(lane_id)
+
+            def _flush_pending_lane_recomputes(self):
+                """Recompute every lane still waiting for a settings change to be applied.
+
+                Called before results are read (export, OK) so nothing is ever reported from
+                stale areas. With the slow band fit this can take a while, so it shows a
+                cancellable progress dialog when there is more than one lane to do."""
+                pending = [lane['id'] for lane in self.lanes_data
+                           if lane['id'] in getattr(self, '_lanes_needing_recompute', set())]
+                if not pending:
+                    return
+                progress = None
+                if len(pending) > 1:
+                    progress = QProgressDialog("Updating lanes with the new settings…",
+                                               None, 0, len(pending), self)
+                    progress.setWindowTitle("Recalculating")
+                    progress.setWindowModality(Qt.WindowModal)
+                    progress.setMinimumDuration(400)
+                    progress.setValue(0)
+                try:
+                    for i, lid in enumerate(pending):
+                        if progress is not None:
+                            progress.setLabelText(f"Updating lane {lid} of {len(self.lanes_data)}…")
+                            progress.setValue(i)
+                            QApplication.processEvents()
+                        self._recompute_lane(lid)
+                finally:
+                    if progress is not None:
+                        progress.setValue(len(pending))
+                        progress.close()
 
             def _on_lane_selection_changed(self, index):
                 if index < 0 or index >= len(self.lanes_data):
                     return
                 self._save_current_lane_state()
+                # Settings are copied to the other lanes, but their (expensive) recompute is
+                # deferred -- only the lane being opened is brought up to date here.
                 self._propagate_settings_to_all_lanes()
                 new_lane_id = self.lanes_data[index]['id']
+                if new_lane_id in getattr(self, '_lanes_needing_recompute', set()):
+                    self._recompute_lane(new_lane_id)
                 self._load_lane_state(new_lane_id)
                 self._update_gui_controls_from_loaded_state()
                 self._refresh_mwm_picker()
@@ -7100,6 +7326,12 @@ if __name__ == "__main__":
 
             def get_all_lanes_peak_info(self):
                 self._save_current_lane_state()
+                # Apply any settings change still pending on other lanes before their numbers
+                # are read, so a deferred recompute can never export stale areas.
+                try:
+                    self._flush_pending_lane_recomputes()
+                except Exception:
+                    log_traceback()
                 results = {}
                 for lane in self.lanes_data:
                     lane_id = lane['id']
@@ -8306,15 +8538,16 @@ if __name__ == "__main__":
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
                         popt, _ = curve_fit(
-                            self._multi_gaussian, x, y_norm,
+                            self._multi_gaussian_vec, x, y_norm,
                             p0=initial_guess,
                             bounds=(lower_bounds, upper_bounds),
-                            maxfev=2000
+                            maxfev=2000,
+                            jac=self._multi_gaussian_jac
                         )
-                    y_fit = self._multi_gaussian(x, *popt)
+                    y_fit = self._multi_gaussian_vec(x, *popt)
                     rss = float(np.sum((y_norm - y_fit) ** 2))
                 except Exception:
-                    y_init = self._multi_gaussian(x, *initial_guess)
+                    y_init = self._multi_gaussian_vec(x, *initial_guess)
                     rss = float(np.sum((y_norm - y_init) ** 2))
 
                 return max(rss, 1e-12)
@@ -8783,6 +9016,9 @@ if __name__ == "__main__":
                 
                 self.mouseMovedInLabel.emit(untransformed_label_pos, image_coords_actual if image_coords_actual else QPointF(), is_image_coord_valid)
 
+                if self.app_instance is not None and getattr(self.app_instance, 'current_selection_mode', None) == "select_custom_item":
+                    self.app_instance.update_move_resize_hover(event)
+
                 if self.is_panning and (event.buttons() & Qt.RightButton):
                     if self.pan_start_view_coords:
                         delta = event.position() - self.pan_start_view_coords
@@ -8855,6 +9091,21 @@ if __name__ == "__main__":
 
                 if not event.isAccepted():
                     super().mousePressEvent(event)
+
+            def mouseDoubleClickEvent(self, event: 'QMouseEvent'):
+                # Move/Resize mode: double-click a text item to edit it. Anything else falls
+                # through to Qt's default, which delivers it as a second press (the old
+                # behaviour every other tool relies on).
+                app = self.app_instance
+                if (app is not None and event.button() == Qt.LeftButton
+                        and hasattr(app, 'handle_text_item_double_click')):
+                    try:
+                        if app.handle_text_item_double_click(event):
+                            event.accept()
+                            return
+                    except Exception:
+                        log_traceback()
+                super().mouseDoubleClickEvent(event)
 
             def mouseReleaseEvent(self, event: 'QMouseEvent'):
                 if event.button() == Qt.RightButton and self.is_panning:
@@ -8958,7 +9209,11 @@ if __name__ == "__main__":
                 if iw <= 0 or ih <= 0 or lw <= 0 or lh <= 0:
                     return 1.0
                 fit = min(lw / iw, lh / ih)
-                export_ref = max(iw / self.EXPORT_REF_W, ih / self.EXPORT_REF_H)
+                try:
+                    rw, rh = app._font_reference_dims(iw, ih)   # pinned across padding
+                except Exception:
+                    rw, rh = iw, ih
+                export_ref = max(rw / self.EXPORT_REF_W, rh / self.EXPORT_REF_H)
                 scale = fit * export_ref
                 return scale if scale > 1e-6 else 1.0
 
@@ -9033,118 +9288,26 @@ if __name__ == "__main__":
                     x_ls = _offset_x_img_in_label + img_x * _scale_factor_img_to_label; y_ls = _offset_y_img_in_label + img_y * _scale_factor_img_to_label
                     return QPointF(x_ls, y_ls)
                 
-                # --- Draw standard markers, custom markers, custom shapes (from app instance) ---
+                # --- Draw standard markers, custom shapes and custom markers ---
+                # Drawn by the SAME routine the save/copy exporters use, in export-canvas
+                # units (image px * EXPORT_RENDER_SCALE, fonts at the export pixel size), and
+                # mapped onto the label with a painter transform. Text is therefore laid out
+                # at exactly the size, advance and baseline it will have in the file and only
+                # then scaled to the screen, so the preview can no longer drift from the
+                # saved/copied image (it used to re-implement every element at screen size).
                 if _image_to_label_space_valid and self.app_instance:
-                    # Apply UI Scale Preference to the Standard Marker Font
-                    # (current_ui_scale already includes the viewer-size factor computed above)
-                    scaled_pixel_size = int(self.app_instance.font_size * current_ui_scale)
-                    
-                    std_marker_font = QFont(self.app_instance.font_family)
-                    std_marker_font.setPixelSize(scaled_pixel_size)
-                    std_marker_color = self.app_instance.font_color if hasattr(self.app_instance, 'font_color') else QColor(Qt.black)
-                    painter.setFont(std_marker_font)
-                    painter.setPen(std_marker_color)
-                    
-                    font_metrics_std = QFontMetrics(std_marker_font)
-                    # Calculate baseline offset to center text vertically on the specific Y coord
-                    # Using CapHeight / 2 aligns numbers/caps nicely around the center line
-                    y_text_centering_offset = font_metrics_std.capHeight() / 2.0
-                    
-                    # Define dimensions for the connector line
-                    dash_len = font_metrics_std.horizontalAdvance("M") # Use width of 'M' as a standard dash length
-                    dash_gap = 6 # Pixel gap between line and text
-
-                    # --- LEFT MARKERS ---
-                    # The configurable marker symbol (e.g. "⎯") is drawn as text next to
-                    # the value and acts as the tick; the group's right edge sits at the
-                    # anchor so it points at the band.
-                    if hasattr(self.app_instance, 'left_markers'):
-                        left_marker_offset_x_label_space = self.app_instance.left_marker_shift_added * _scale_factor_img_to_label
-                        for y_pos_img, marker_text_val in self.app_instance.left_markers:
-                            # Exact center Y in label space (corresponds to band center)
-                            center_y = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
-                            anchor_x = _offset_x_img_in_label + left_marker_offset_x_label_space
-                            text_to_draw = self.app_instance.marker_label_text(marker_text_val, 'left')
-                            if not text_to_draw:
-                                continue
-                            text_width = font_metrics_std.horizontalAdvance(text_to_draw)
-                            text_baseline_y = center_y + self.app_instance.marker_baseline_offset(font_metrics_std, text_to_draw)
-                            painter.drawText(QPointF(anchor_x - text_width, text_baseline_y), text_to_draw)
-
-                    # --- RIGHT MARKERS ---
-                    if hasattr(self.app_instance, 'right_markers'):
-                            right_marker_start_x_label_space = _offset_x_img_in_label + (self.app_instance.right_marker_shift_added * _scale_factor_img_to_label)
-                            for y_pos_img, marker_text_val in self.app_instance.right_markers:
-                                center_y = _app_image_coords_to_unzoomed_label_space((0, y_pos_img)).y()
-                                text_to_draw = self.app_instance.marker_label_text(marker_text_val, 'right')
-                                if not text_to_draw:
-                                    continue
-                                text_baseline_y = center_y + self.app_instance.marker_baseline_offset(font_metrics_std, text_to_draw)
-                                painter.drawText(QPointF(right_marker_start_x_label_space, text_baseline_y), text_to_draw)
-
-                    # --- TOP MARKERS ---
-                    if hasattr(self.app_instance, 'top_markers'):
-                        top_marker_offset_y_label = self.app_instance.top_marker_shift_added * _scale_factor_img_to_label
-                        rotation_angle = self.app_instance.font_rotation
-                        rotation_axis = getattr(self.app_instance, 'top_rotation_axis', 'left')
-
-                        for x_pos_img, marker_text_val in self.app_instance.top_markers:
-                            anchor_x_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, 0)).x()
-                            text_to_draw = str(marker_text_val)
-
-                            painter.save()
-                            draw_baseline_y_ls = _offset_y_img_in_label + top_marker_offset_y_label + y_text_centering_offset
-                            painter.translate(anchor_x_label_space, draw_baseline_y_ls)
-                            painter.rotate(rotation_angle)
-                            # Offset text draw position based on rotation axis
-                            if rotation_axis == 'center':
-                                fm_top = QFontMetrics(painter.font())
-                                text_x_offset = -fm_top.horizontalAdvance(text_to_draw) / 2.0
-                            elif rotation_axis == 'right':
-                                fm_top = QFontMetrics(painter.font())
-                                text_x_offset = -fm_top.horizontalAdvance(text_to_draw)
-                            else:
-                                text_x_offset = 0.0
-                            painter.drawText(QPointF(text_x_offset, 0), text_to_draw)
-                            painter.restore()
-                if _image_to_label_space_valid and hasattr(self.app_instance, 'custom_shapes'):
-                    for shape_data in self.app_instance.custom_shapes:
-                        try:
-                            shape_type = shape_data.get('type'); color = QColor(shape_data.get('color', '#000000')); base_thickness = float(shape_data.get('thickness', 0.5)); thickness_on_label = base_thickness * _scale_factor_img_to_label
-                            # Pen width is locked to the IMAGE (label space), NOT divided by
-                            # zoom_level. The painter is already scaled by zoom_level, so the
-                            # shaft/rectangle grows and shrinks in lockstep with the gel image,
-                            # its markers, and the exported figure — identical proportions at
-                            # every zoom. (Dividing by zoom made shapes hold a constant on-screen
-                            # thickness while everything else scaled, so a shape edited while
-                            # zoomed looked wrong once you zoomed back out.)
-                            effective_pen_width = max(0.5, thickness_on_label); pen = QPen(color); pen.setWidthF(effective_pen_width); painter.setPen(pen)
-                            if shape_type == 'line':
-                                start_img = shape_data.get('start'); end_img = shape_data.get('end')
-                                if start_img and end_img: start_label_space = _app_image_coords_to_unzoomed_label_space(start_img); end_label_space = _app_image_coords_to_unzoomed_label_space(end_img); painter.drawLine(start_label_space, end_label_space)
-                            elif shape_type == 'arrow':
-                                start_img = shape_data.get('start'); end_img = shape_data.get('end')
-                                if start_img and end_img: self.app_instance._draw_arrow_on_painter(painter, _app_image_coords_to_unzoomed_label_space(start_img), _app_image_coords_to_unzoomed_label_space(end_img), effective_pen_width)
-                            elif shape_type == 'rectangle':
-                                rect_img = shape_data.get('rect')
-                                if rect_img: x_img, y_img, w_img, h_img = rect_img; top_left_label_space = _app_image_coords_to_unzoomed_label_space((x_img, y_img)); w_label_space = w_img * _scale_factor_img_to_label; h_label_space = h_img * _scale_factor_img_to_label; painter.drawRect(QRectF(top_left_label_space, QSizeF(w_label_space, h_label_space)))
-                        except Exception as e: pass # print(f"Error drawing custom shape in LiveViewLabel.paintEvent: {shape_data}, {e}")
-                if _image_to_label_space_valid and hasattr(self.app_instance, 'custom_markers'):
-                    for marker_data_list in self.app_instance.custom_markers:
-                        try:
-                            x_pos_img, y_pos_img, marker_text_str, qcolor_obj, font_family_str, font_size_int, is_bold, is_italic = marker_data_list
-                            anchor_label_space = _app_image_coords_to_unzoomed_label_space((x_pos_img, y_pos_img)); 
-                            current_marker_font = QFont(font_family_str); 
-                            current_marker_font.setPixelSize(int(font_size_int * current_ui_scale)); 
-                            current_marker_font.setBold(is_bold); 
-                            current_marker_font.setItalic(is_italic); 
-                            painter.setFont(current_marker_font)
-                            if not isinstance(qcolor_obj, QColor): qcolor_obj = QColor(qcolor_obj)
-                            if not qcolor_obj.isValid(): qcolor_obj = Qt.black
-                            painter.setPen(qcolor_obj); font_metrics_marker = QFontMetrics(current_marker_font); text_bounding_rect_marker = font_metrics_marker.boundingRect(marker_text_str)
-                            draw_x_marker = anchor_label_space.x() - (text_bounding_rect_marker.left() + text_bounding_rect_marker.width() / 2.0); draw_y_marker = anchor_label_space.y() - (text_bounding_rect_marker.top() + text_bounding_rect_marker.height() / 2.0)
-                            painter.drawText(QPointF(draw_x_marker, draw_y_marker), marker_text_str)
-                        except Exception as e: pass # print(f"Error drawing app_instance custom marker: {marker_data_list}, {e}")
+                    try:
+                        _rs = float(self.app_instance.EXPORT_RENDER_SCALE)
+                        _fsf = self.app_instance._export_font_scale_factor(
+                            _rs, _img_w_orig_from_app, _img_h_orig_from_app)
+                        painter.save()
+                        painter.translate(_offset_x_img_in_label, _offset_y_img_in_label)
+                        _k = _scale_factor_img_to_label / _rs
+                        painter.scale(_k, _k)
+                        self.app_instance._paint_annotations(painter, _rs, _fsf)
+                        painter.restore()
+                    except Exception:
+                        log_traceback()
                 
                 # --- Draw various previews (standard marker, custom marker, MW line) ---
                 if self.standard_marker_preview_enabled and self.standard_marker_preview_position:
@@ -9157,6 +9320,7 @@ if __name__ == "__main__":
                     scaled_preview_font_size = self.app_instance.font_size * current_ui_scale
                     
                     std_marker_font = QFont(self.app_instance.font_family); std_marker_font.setPixelSize(int(scaled_preview_font_size))
+                    std_marker_font.setBold(bool(getattr(self.app_instance, 'font_bold', False))); std_marker_font.setItalic(bool(getattr(self.app_instance, 'font_italic', False)))
                     painter.setFont(std_marker_font); painter.setPen(self.app_instance.font_color)
                     font_metrics_std = QFontMetrics(std_marker_font); y_offset_text_baseline_std = font_metrics_std.height() * 0.3
                     preview_text = self.standard_marker_preview_text; preview_pos = self.standard_marker_preview_position
@@ -9687,6 +9851,22 @@ if __name__ == "__main__":
         # ─────────────────────────────────────────────────────────────────────
         # Automated Gel Analysis wizard — v3 (one-step)
         # ─────────────────────────────────────────────────────────────────────
+        class _WizardCanvas(FigureCanvas):
+            """Matplotlib canvas for the Auto Gel wizard with a SMALL preferred size.
+
+            FigureCanvasQT reports its current figure size as its sizeHint, so a canvas that
+            once filled a big window insisted on staying that big: the page's layout (and the
+            scroll area around it) sized itself from that preferred height, the plot never
+            shrank, and the rest of the page was pushed out of view. A small hint lets the
+            canvas absorb whatever space is left over -- growing with the window, shrinking
+            first when it gets smaller -- while text and controls keep their natural size."""
+            def sizeHint(self):
+                return QSize(320, 160)
+
+            def minimumSizeHint(self):
+                return QSize(120, 80)
+
+
         class AutoGelAnalysisDialog(ManagedDialog):
             """
             Five-phase one-stop gel/blot analysis wizard.
@@ -9730,7 +9910,7 @@ if __name__ == "__main__":
                     self, self._geometry_key,
                     min(APP_GLOBAL_WINDOW_WIDTH, int(screen_geo.width() * 0.88)),
                     min(APP_GLOBAL_WINDOW_HEIGHT, int(screen_geo.height() * 0.92)),
-                    min_w=760, min_h=560)
+                    min_w=480, min_h=360)
 
                 self.gel_pil        = gel_pil_image
                 self.gel_region_def = gel_region_def
@@ -9886,8 +10066,48 @@ if __name__ == "__main__":
                 self._build_page3()   # Index 3: Labels & MWM
                 self._build_page4()   # Index 4: Band Detection Settings
 
+                # Every page's content scrolls; its Back / Cancel / Next row stays pinned below.
+                # Otherwise the pages' combined minimum height (preview + controls + buttons)
+                # could exceed the screen at high DPI / large fonts, and since a layout's
+                # minimum wins over the window size, the nav buttons were pushed off-screen.
+                for _i in range(self._stack.count()):
+                    self._make_page_scrollable(self._stack.widget(_i))
+
                 self._stack.setCurrentIndex(0)
                 self._step_label.setText("Step 1 — Select Analysis Tasks")
+
+            def _make_page_scrollable(self, page):
+                """Move everything on a wizard page except its LAST layout item (the nav
+                button row) into a scroll area, so the dialog can be shrunk freely: the
+                preview/canvas gives up space first, then the content scrolls, and the
+                buttons are always visible."""
+                lay = page.layout() if page is not None else None
+                if lay is None or lay.count() < 2:
+                    return
+                body = QWidget()
+                body_lay = QVBoxLayout(body)
+                m = lay.contentsMargins()
+                body_lay.setContentsMargins(m.left(), m.top(), m.right(), 0)
+                body_lay.setSpacing(lay.spacing())
+                while lay.count() > 1:
+                    stretch = lay.stretch(0)
+                    item = lay.takeAt(0)
+                    w = item.widget(); sub = item.layout()
+                    if w is not None:
+                        body_lay.addWidget(w, stretch)
+                    elif sub is not None:
+                        sub.setParent(None)
+                        body_lay.addLayout(sub, stretch)
+                    elif item.spacerItem() is not None:
+                        body_lay.addItem(item)
+                scroll = QScrollArea()
+                scroll.setWidgetResizable(True)
+                scroll.setFrameShape(QFrame.NoFrame)
+                scroll.setWidget(body)
+                lay.setContentsMargins(0, 0, 0, m.bottom())
+                lay.insertWidget(0, scroll, 1)
+                if lay.count() >= 2 and lay.itemAt(1).layout() is not None:
+                    lay.itemAt(1).layout().setContentsMargins(m.left(), 4, m.right(), 0)
 
             # ── Page 0: Task Selection ─────────────────────────────────
             def _build_page0(self):
@@ -9975,7 +10195,7 @@ if __name__ == "__main__":
 
                 self._prep_fig = plt.figure(figsize=(11, 5))
                 self._prep_ax = self._prep_fig.add_subplot(111)
-                self._prep_canvas = FigureCanvas(self._prep_fig)
+                self._prep_canvas = _WizardCanvas(self._prep_fig)
                 self._prep_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self._prep_canvas.mpl_connect('button_press_event',   self._on_prep_crop_press)
                 self._prep_canvas.mpl_connect('motion_notify_event',  self._on_prep_crop_motion)
@@ -10018,32 +10238,30 @@ if __name__ == "__main__":
 
                 # Manual edge crop inputs (synced with the draggable crop box)
                 H0, W0 = self._gel_arr_raw.shape[:2]
-                crop_row = QHBoxLayout()
-                crop_row.addWidget(QLabel("Crop box (px) — L:"))
+                # Two short lines (L/R, then T/B + Reset) instead of one long row, which
+                # alone was ~650 px wide at larger font/DPI settings and forced the whole page
+                # to scroll sideways, cutting off the text and pushing the image off-centre.
+                crop_grid = QGridLayout()
+                crop_grid.setHorizontalSpacing(6)
+                crop_grid.addWidget(QLabel("Crop box (px):"), 0, 0, 2, 1, Qt.AlignVCenter)
                 self._prep_crop_l = QSpinBox(); self._prep_crop_l.setRange(0, max(0, W0 - 2))
-                self._prep_crop_l.valueChanged.connect(self._on_prep_geometry_changed)
-                crop_row.addWidget(self._prep_crop_l)
-
-                crop_row.addWidget(QLabel("R:"))
                 self._prep_crop_r = QSpinBox(); self._prep_crop_r.setRange(0, max(0, W0 - 2))
-                self._prep_crop_r.valueChanged.connect(self._on_prep_geometry_changed)
-                crop_row.addWidget(self._prep_crop_r)
-
-                crop_row.addWidget(QLabel("T:"))
                 self._prep_crop_t = QSpinBox(); self._prep_crop_t.setRange(0, max(0, H0 - 2))
-                self._prep_crop_t.valueChanged.connect(self._on_prep_geometry_changed)
-                crop_row.addWidget(self._prep_crop_t)
-
-                crop_row.addWidget(QLabel("B:"))
                 self._prep_crop_b = QSpinBox(); self._prep_crop_b.setRange(0, max(0, H0 - 2))
-                self._prep_crop_b.valueChanged.connect(self._on_prep_geometry_changed)
-                crop_row.addWidget(self._prep_crop_b)
-
+                for _r, _c, _txt, _sp, _tip in ((0, 1, "L:", self._prep_crop_l, "Pixels cropped from the LEFT edge."),
+                                                (0, 3, "R:", self._prep_crop_r, "Pixels cropped from the RIGHT edge."),
+                                                (1, 1, "T:", self._prep_crop_t, "Pixels cropped from the TOP edge."),
+                                                (1, 3, "B:", self._prep_crop_b, "Pixels cropped from the BOTTOM edge.")):
+                    _sp.setToolTip(_tip)
+                    _sp.valueChanged.connect(self._on_prep_geometry_changed)
+                    crop_grid.addWidget(QLabel(_txt), _r, _c, Qt.AlignRight)
+                    crop_grid.addWidget(_sp, _r, _c + 1)
                 self._prep_crop_reset = QPushButton("Reset Crop")
+                self._prep_crop_reset.setToolTip("Remove the crop (use the whole image).")
                 self._prep_crop_reset.clicked.connect(self._reset_prep_crop)
-                crop_row.addWidget(self._prep_crop_reset)
-                crop_row.addStretch()
-                g.addLayout(crop_row, 2, 0, 1, 3)
+                crop_grid.addWidget(self._prep_crop_reset, 1, 5)
+                crop_grid.setColumnStretch(6, 1)
+                g.addLayout(crop_grid, 2, 0, 1, 3)
 
                 # Grid overlay controls (moved here to aid alignment)
                 grid_row = QHBoxLayout()
@@ -10413,7 +10631,7 @@ if __name__ == "__main__":
                             markersize=6, zorder=8)
                         self._prep_ax.set_title(
                             "Crop: drag box edge/corner to resize · inside to move · on image to draw new",
-                            fontsize=plot_font(self.parent_app, 9), pad=3, y=1.0)
+                            fontsize=plot_font(self.parent_app, 9), pad=3, y=1.0, wrap=True)
                         # No frame, no rulers. Two reasons:
                         #  * aspect='equal' makes Matplotlib shrink the axes box onto the
                         #    image, so the default black spines land exactly on the image
@@ -10611,12 +10829,12 @@ if __name__ == "__main__":
                 gs1 = self._fig1.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.06)
                 self._ax1_img  = self._fig1.add_subplot(gs1[0])
                 self._ax1_prof = self._fig1.add_subplot(gs1[1], sharex=self._ax1_img)
-                self._canvas1  = FigureCanvas(self._fig1)
+                self._canvas1  = _WizardCanvas(self._fig1)
                 self._canvas1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self._canvas1.mpl_connect('button_press_event',   self._p1_mpl_press)
                 self._canvas1.mpl_connect('motion_notify_event',  self._p1_mpl_move)
                 self._canvas1.mpl_connect('button_release_event', self._p1_mpl_release)
-                self._canvas1.setMinimumHeight(300)
+                self._canvas1.setMinimumHeight(140)
                 layout.addWidget(self._canvas1, stretch=2)
 
                 ctrl = QGroupBox("Lane Detection Parameters (acting on aligned workspace)")
@@ -10763,7 +10981,7 @@ if __name__ == "__main__":
                 self._mwm_preset_name = _seed_preset or "Custom"
                 self._mwm_custom_text = ", ".join(str(v) for v in _seed_vals) if _seed_vals else ""
 
-                # ── Top-label styling (font, size, colour, rotation, axis) ──
+                # ── Top-label styling (font, size, color, rotation, axis) ──
                 app = self.parent_app
                 style_grp = QGroupBox("Top Label Style")
                 sg = QGridLayout(style_grp)
@@ -10785,7 +11003,7 @@ if __name__ == "__main__":
 
                 sg.addWidget(QLabel("Color:"), 1, 2)
                 self._p3_font_color_btn = QPushButton("Color")
-                self._p3_font_color_btn.setToolTip("Top label text colour")
+                self._p3_font_color_btn.setToolTip("Top label text color")
                 self._p3_font_color_btn.clicked.connect(self._on_p3_pick_color)
                 sg.addWidget(self._p3_font_color_btn, 1, 3)
 
@@ -10847,7 +11065,7 @@ if __name__ == "__main__":
                 gs2 = self._fig2.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.12)
                 self._ax2_gel  = self._fig2.add_subplot(gs2[0])
                 self._ax2_prof = self._fig2.add_subplot(gs2[1])
-                self._canvas2  = FigureCanvas(self._fig2)
+                self._canvas2  = _WizardCanvas(self._fig2)
                 self._canvas2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 layout.addWidget(self._canvas2, stretch=3)
                 self._canvas2.mpl_connect('button_press_event',   self._on_p4_fence_press)
@@ -10860,9 +11078,9 @@ if __name__ == "__main__":
 
                 global_g.addWidget(QLabel("Method:"), 0, 0)
                 self._p2_method = QComboBox()
-                self._p2_method.addItems(["Gaussian Deconvolution", "Rolling-valley", "Rolling Ball", "Straight Line"])
-                idx = self._p2_method.findText(self._band_method)
-                if idx >= 0: self._p2_method.setCurrentIndex(idx)
+                # Gaussian Deconvolution appears only when the experimental setting is on.
+                self._band_method = populate_area_method_combo(
+                    self._p2_method, self.parent_app, self._band_method)
                 self._p2_method.currentTextChanged.connect(self._on_p2_method_changed)
                 global_g.addWidget(self._p2_method, 0, 1, 1, 2)
 
@@ -11466,7 +11684,7 @@ if __name__ == "__main__":
                 return f"padding:{pad}px; background:#eef4fb; color:#16314e; border-radius:4px;"
 
             def _mpl_theme(self):
-                """(figure_bg, axes_bg, foreground, spine) colours matching the app's
+                """(figure_bg, axes_bg, foreground, spine) colors matching the app's
                 light/dark theme, so the wizard's matplotlib canvases don't glare white in
                 dark mode."""
                 dark = bool(getattr(self.parent_app, 'current_theme', 'light') == 'dark')
@@ -11541,7 +11759,7 @@ if __name__ == "__main__":
                         extent=[-0.5, Wd - 0.5, Hd - 0.5, -0.5])
                     self._ax1_img.set_ylabel("Row", fontsize=plot_font(self.parent_app, 7))
                     self._ax1_img.tick_params(labelsize=plot_font(self.parent_app, 6))
-                    self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=plot_font(self.parent_app, 8), pad=3)
+                    self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=plot_font(self.parent_app, 8), pad=3, wrap=True)
 
                     colors = plt.cm.tab10.colors
                     self._sync_lane_skew_length()
@@ -11582,7 +11800,7 @@ if __name__ == "__main__":
                     self._ax1_prof.set_xlim(-0.5, Wd - 0.5)
                     self._ax1_prof.set_ylim(-0.02, 1.15)
                     self._ax1_prof.set_xlabel("Column (px)", fontsize=plot_font(self.parent_app, 7))
-                    self._ax1_prof.set_ylabel("Normalised profile", fontsize=plot_font(self.parent_app, 7))
+                    self._ax1_prof.set_ylabel("Normalized profile", fontsize=plot_font(self.parent_app, 7))
                     self._ax1_prof.tick_params(labelsize=plot_font(self.parent_app, 6))
                 except Exception:
                     pass
@@ -12023,7 +12241,7 @@ if __name__ == "__main__":
             def _on_p3_custom_changed(self, text):
                 self._mwm_custom_text = text
 
-            # ── Top-label style controls (font / size / colour / rotation / axis) ──
+            # ── Top-label style controls (font / size / color / rotation / axis) ──
             def _apply_label_style(self, *args):
                 """Push the Step 4 label-style widgets into the parent app so the
                 final top labels render with these settings (and padding auto-fits)."""
@@ -13463,7 +13681,7 @@ if __name__ == "__main__":
                    QCheckBox widgets, so the QCheckBox rules above never reached them and the
                    PLATFORM style drew them instead: fine on macOS, blank white boxes on
                    Windows. Styling ::indicator here makes QStyleSheetStyle own the drawing on
-                   every platform (verified: the rule is honoured under both the Windows and
+                   every platform (verified: the rule is honored under both the Windows and
                    Fusion base styles), so the tick looks the same everywhere.
                    The url() below is a placeholder — _skin_stylesheet_indicators rewrites it
                    to a real vector-rendered PNG file (QSS url() cannot load data: URIs). */
@@ -13697,8 +13915,8 @@ if __name__ == "__main__":
                     selection-color: white;
                 }
 
-                /* Text colour only — setting an item background here would paint over the
-                   alternating row colours (as the light theme's item rule does). */
+                /* Text color only — setting an item background here would paint over the
+                   alternating row colors (as the light theme's item rule does). */
                 QTableView::item, QTableWidget::item, QListView::item, QListWidget::item {
                     color: #F1F1F1;
                 }
@@ -14245,6 +14463,10 @@ if __name__ == "__main__":
                 self.tab_widget.addTab(self._scroll_wrap_tab(self.combine_image_tab()), "Overlap Images")
                 self.tab_widget.addTab(self._scroll_wrap_tab(self.analysis_tab()), "Analysis")
                 self.tab_widget.addTab(self._scroll_wrap_tab(self.create_settings_tab()), "Settings")
+                # Clicking the tab directly must show the live values too.
+                self.tab_widget.currentChanged.connect(
+                    lambda i: (self._sync_settings_tab_from_state(full=False)
+                               if self.tab_widget.tabText(i) == "Settings" else None))
 
                 
                 #self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
@@ -14365,6 +14587,12 @@ if __name__ == "__main__":
                 
                 self.viewer_position = "Top" # Default value before loading
                 self.load_config()
+                # The Settings tab was built above, before these values existed — refresh it
+                # so it shows the saved settings rather than the defaults.
+                try:
+                    self._sync_settings_tab_from_state()
+                except Exception:
+                    log_traceback()
                 self._update_main_layout(self.viewer_position)
                 # Scale the Python-set geometry (fixed sizes, layout margins/spacing, icons)
                 # once, now that every control exists and ui_scale_factor is known. The
@@ -14474,7 +14702,7 @@ if __name__ == "__main__":
             def _skin_stylesheet_indicators(self, qss, arrow_hex):
                 """Rewrite a theme stylesheet so its spinbox/combo arrows and checkbox/radio
                 indicators point at freshly vector-rendered PNG files (see
-                _render_indicator_png). `arrow_hex` is the arrow colour for this theme; the
+                _render_indicator_png). `arrow_hex` is the arrow color for this theme; the
                 check tick and radio dot are white (their checked background is the accent)."""
                 try:
                     import re
@@ -14916,7 +15144,7 @@ if __name__ == "__main__":
 
                 # --- Skip the replot when the curve provably cannot have changed ---------
                 # The histogram CURVE depends only on the source image's pixels, the
-                # inversion flag and the theme colours -- never on the black/white/gamma
+                # inversion flag and the theme colors -- never on the black/white/gamma
                 # slider positions, which are drawn separately as marker lines. This method
                 # is wired to 18 call sites including every adjustment commit, so dragging a
                 # Levels slider was re-reading the full master image, recomputing the
@@ -15280,6 +15508,10 @@ if __name__ == "__main__":
                     "to change border thickness.\n"
                     "- Line/Arrow: drag an end to re-aim, or a side handle to change thickness.\n"
                     "- Text: drag the lower-right handle to resize the font.\n"
+                    "- DOUBLE-CLICK any text (custom marker, left/right MW label or top label) "
+                    "to edit it, or any line/arrow/rectangle to set its color, thickness and "
+                    "coordinates. Changes preview live.\n"
+                    "Hover over an item to see what it is and what you can do with it.\n"
                     "Resizing updates the 'Size:' box in Custom Markers, Shapes and Grid.\n"
                     "\nHOLD this button for 2 seconds to open Marker Options.")
                 
@@ -15725,8 +15957,67 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
+            def _sync_settings_tab_from_state(self, full=True):
+                """Make the Settings tab show the settings that are actually in force.
+
+                The tab is BUILT during __init__, before load_config() has read the saved
+                configuration, so every control was created from the defaults. Anything the
+                config switched on therefore appeared off -- most visibly the experimental
+                Gaussian Deconvolution box, which showed unchecked while the feature was
+                enabled, so clicking it only ever tried to enable it again and there was no
+                way to turn it off. Signals are blocked so syncing cannot re-trigger the
+                confirmation dialog or any apply handler."""
+                def _set(widget, setter, value):
+                    if widget is None:
+                        return
+                    try:
+                        widget.blockSignals(True)
+                        setter(value)
+                    except Exception:
+                        log_traceback()
+                    finally:
+                        try:
+                            widget.blockSignals(False)
+                        except Exception:
+                            pass
+
+                cb = getattr(self, 'exp_gaussian_checkbox', None)
+                _set(cb, lambda v: cb.setChecked(v), bool(getattr(self, 'experimental_gaussian_deconv', False)))
+
+                # The rest are only re-synced on a full refresh (start-up). Doing it every
+                # time the tab is shown would throw away values the user typed but has not
+                # pressed "Apply and Save Settings" on yet.
+                if not full:
+                    return
+
+                use_gpu = bool(getattr(self, 'use_gpu', True))
+                gpu_r = getattr(self, 'gpu_radio', None); cpu_r = getattr(self, 'cpu_radio', None)
+                _set(gpu_r, lambda v: gpu_r.setChecked(v), use_gpu)
+                _set(cpu_r, lambda v: cpu_r.setChecked(v), not use_gpu)
+
+                for attr, value in (('spin_viewer_w', getattr(self, 'viewer_fixed_width', None)),
+                                    ('spin_viewer_h', getattr(self, 'viewer_fixed_height', None)),
+                                    ('spin_content_w', getattr(self, 'safe_content_width', None)),
+                                    ('spin_ui_font', getattr(self, 'ui_font_size', None)),
+                                    ('spin_plot_font', getattr(self, 'plot_font_size', None))):
+                    w = getattr(self, attr, None)
+                    if w is not None and value is not None:
+                        _set(w, lambda v, _w=w: _w.setValue(int(v)), value)
+
+                combo = getattr(self, 'ui_scale_combo', None)
+                if combo is not None:
+                    pref = getattr(self, 'ui_scale_preference', 1.0)
+                    idx = combo.findData(pref)
+                    if idx >= 0:
+                        _set(combo, lambda v: combo.setCurrentIndex(v), idx)
+
             def open_settings_tab(self):
                 """Switches to the Settings tab."""
+                # Show what is actually in force (the tab was built before the config loaded).
+                try:
+                    self._sync_settings_tab_from_state()
+                except Exception:
+                    log_traceback()
                 # Assuming Settings is the last tab as usually added
                 if hasattr(self, 'tab_widget'):
                     count = self.tab_widget.count()
@@ -15974,7 +16265,7 @@ if __name__ == "__main__":
             # ------------------------------------------------------------------
             def show_mode_status(self, message, active_button=None):
                 """Show a discreet, professional instruction in the status bar describing the
-                active interactive action and how to leave it. No coloured box — just a
+                active interactive action and how to leave it. No colored box — just a
                 subtly accented italic line so it reads as guidance, not an alert.
 
                 If `active_button` is given, that tool button is highlighted green (and any
@@ -16005,7 +16296,7 @@ if __name__ == "__main__":
                     pass
 
             def _active_tool_button_qss(self, is_dark=None):
-                """Per user request, tool buttons NEVER change colour when armed. This returns a
+                """Per user request, tool buttons NEVER change color when armed. This returns a
                 neutral stylesheet whose only job is to override the global
                 `QPushButton:checked { green }` rule for the checkable Move/Resize button, so a
                 checked (armed) button looks identical to a normal one — nothing can get 'stuck
@@ -16015,7 +16306,7 @@ if __name__ == "__main__":
 
             def _register_action_button(self, button, colorize=False):
                 """Tag a button as an interactive-tool trigger. Tool buttons no longer change
-                colour while active; for the colourised ones we permanently pin a neutral
+                color while active; for the colorised ones we permanently pin a neutral
                 stylesheet that cancels the global checked-green so they can never appear armed."""
                 try:
                     if not colorize:
@@ -16030,7 +16321,7 @@ if __name__ == "__main__":
                 return button
 
             def _activate_tool_button(self, button):
-                """Formerly highlighted the armed tool green; now a no-op for colour. We only
+                """Formerly highlighted the armed tool green; now a no-op for color. We only
                 record which button is 'armed' (used by the Esc filter) and keep the neutral
                 stylesheet applied so nothing ever turns green."""
                 try:
@@ -16112,7 +16403,7 @@ if __name__ == "__main__":
 
             def _refresh_action_button_styles(self):
                 """Re-apply the neutral checked-override after a theme switch (tool buttons
-                never colourise, so every registered button just keeps the override pinned)."""
+                never colorise, so every registered button just keeps the override pinned)."""
                 try:
                     qss = self._active_tool_button_qss()
                     for btn in getattr(self, '_action_buttons', []):
@@ -16395,7 +16686,7 @@ if __name__ == "__main__":
                 # to provide, so a caller mutating the result cannot reach back into its input.
                 return QImage(qimage)
 
-            # Qt formats whose colour channels are stored ALREADY MULTIPLIED by alpha, mapped
+            # Qt formats whose color channels are stored ALREADY MULTIPLIED by alpha, mapped
             # to their straight-alpha equivalent.
             _PREMULTIPLIED_EQUIVALENTS = {
                 QImage.Format_ARGB32_Premultiplied:   QImage.Format_ARGB32,
@@ -17808,6 +18099,7 @@ if __name__ == "__main__":
                     "selected_preset": self.combo_box.currentText() if hasattr(self, 'combo_box') else "Custom",
                     # --- Core Image ---
                     "image_master": self.image_master.copy(),
+                    "font_reference_size": getattr(self, 'font_reference_size', None),
 
                     # --- Annotations ---
                     "left_markers": [list(m) for m in self.left_markers],
@@ -17826,6 +18118,8 @@ if __name__ == "__main__":
                     "font_size": self.font_size,
                     "font_color": self.font_color.name(),
                     "font_rotation": self.font_rotation,
+                    "font_bold": bool(getattr(self, 'font_bold', False)),
+                    "font_italic": bool(getattr(self, 'font_italic', False)),
                     "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
                     "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
 
@@ -17943,6 +18237,7 @@ if __name__ == "__main__":
                     self.left_marker_shift_added = state_dict['left_marker_shift_added']
                     self.right_marker_shift_added = state_dict['right_marker_shift_added']
                     self.top_marker_shift_added = state_dict['top_marker_shift_added']
+                    self.font_reference_size = state_dict.get('font_reference_size', None)
 
                     # --- Overlay placement ---
                     # save_state has always recorded image1/2_position, but nothing here ever
@@ -17980,6 +18275,8 @@ if __name__ == "__main__":
                     self.font_size = state_dict['font_size']
                     self.font_color = QColor(state_dict['font_color'])
                     self.font_rotation = state_dict['font_rotation']
+                    self.font_bold = bool(state_dict.get('font_bold', False))
+                    self.font_italic = bool(state_dict.get('font_italic', False))
                     self.top_rotation_axis = state_dict.get('top_rotation_axis', 'left')
                     self.marker_symbol = state_dict.get('marker_symbol', '⎯')
                     self._sync_marker_symbol_ui_from_value()
@@ -18971,7 +19268,7 @@ if __name__ == "__main__":
                 box.setText("The densitometry lane boxes are currently hidden.")
                 box.setInformativeText(
                     "If you continue, the regions you draw will not appear on the image "
-                    "(they are still created and can still be analysed).\n\n"
+                    "(they are still created and can still be analyzed).\n\n"
                     "Show them now?")
                 show_btn = box.addButton("Show Markers", QMessageBox.AcceptRole)
                 keep_btn = box.addButton("Continue Hidden", QMessageBox.DestructiveRole)
@@ -19052,7 +19349,7 @@ if __name__ == "__main__":
                     if self.showonce == False:
                         QMessageBox.information(self, "Define Lane", f"Click the center of Lane {next_lane_id} to automatically mark it.\nPress ESC to finish the session.")
                         self.showonce = True
-                    self.show_mode_status(f"AUTO LANE {next_lane_id} — click the centre of the lane "
+                    self.show_mode_status(f"AUTO LANE {next_lane_id} — click the center of the lane "
                                           "to mark it automatically. Press Esc to finish.",
                                           active_button=getattr(self, 'btn_auto_lane_click', None))
                     self.live_view_label._custom_left_click_handler_from_app = self.handle_region_definition_click
@@ -21989,7 +22286,7 @@ if __name__ == "__main__":
                 GPU-Accelerated image adjustment pipeline.
                 FIXED: Correctly handles BGR (8-bit) vs RGB (16-bit) channel order.
                 FIXED: Channel Mixer Red/Blue sliders target the correct channels.
-                FIXED: CLAHE uses correct colour-space codes to prevent tinting.
+                FIXED: CLAHE uses correct color-space codes to prevent tinting.
                 FIXED: Alpha channel is preserved through all stages.
 
                 Supports uint8, uint16, and float32 (treated as [0,1]) inputs.
@@ -22214,7 +22511,7 @@ if __name__ == "__main__":
                     elif current_channels >= 3:
 
                         if is_16bit:
-                            # ---- 16-bit colour pipeline (RGB) ----
+                            # ---- 16-bit color pipeline (RGB) ----
                             scale_f = 1.0 / 65535.0
 
                             if isinstance(u_src, cv2.UMat):
@@ -22289,7 +22586,7 @@ if __name__ == "__main__":
                                 u_src = np.clip(u_float * 65535.0, 0, 65535).astype(np.uint16)
 
                         else:
-                            # ---- 8-bit colour pipeline ----
+                            # ---- 8-bit color pipeline ----
                             if is_bgr:
                                 code_strip_alpha = cv2.COLOR_BGRA2BGR
                                 code_to_lab      = cv2.COLOR_BGR2LAB
@@ -22525,7 +22822,7 @@ if __name__ == "__main__":
                      Full black/white range with gamma 1.0 is a mathematical identity -- the
                      old code still paid for two QImage<->NumPy conversions and four
                      full-array passes to compute `out = in`.
-                  2. The colour channels are no longer split away from alpha and concatenated
+                  2. The color channels are no longer split away from alpha and concatenated
                      back. For 8-bit we hand cv2.LUT a 4-CHANNEL lookup table whose alpha
                      row is the identity, so one pass over the buffer does the whole job with
                      alpha untouched. (cv2.LUT is 8-bit only, hence the NumPy take for 16-bit.)
@@ -22620,7 +22917,7 @@ if __name__ == "__main__":
                     if not is_16bit:
                         # cv2.LUT applies the table to every channel. With a 4-channel table
                         # we make the alpha channel's own curve the identity, so alpha passes
-                        # through verbatim in the SAME pass as the colour channels -- no
+                        # through verbatim in the SAME pass as the color channels -- no
                         # split, no concatenate, no alpha scratch copy.
                         if has_alpha:
                             identity = np.arange(256, dtype=np.uint8)
@@ -23443,33 +23740,28 @@ if __name__ == "__main__":
                 self.left_padding_input.setText("0")
                 
             def _label_padding_needed(self):
-                """Padding (left, right, top, bottom) in IMAGE pixels needed to fit the
-                current left/right marker labels, the rotated top labels, AND any custom
-                markers / custom shapes (lines, rectangles) that stick out past the canvas.
+                """Padding (left, right, top, bottom) in IMAGE pixels so that every annotation
+                that is actually drawn -- left/right MW labels (with the chosen marker symbol),
+                the top labels at their rotation and rotation axis, custom text markers and
+                custom lines / arrows / rectangles -- clears the canvas edge by a small margin.
 
-                Labels are rendered at the *effective on-image* font size,
-                font_size / view_scale, which is much larger than the raw point
-                size on a big gel (view_scale < 1). Measuring at the raw size under-sizes the
-                padding so long/large labels overflow the image; this measures at the effective
-                size and includes the rotated bounding box of the top labels. A short
-                fixed-point loop converges because the padding itself changes view_scale.
+                Measured, not estimated: each item's outline comes from _annotation_text_items,
+                the same layout the live view, Save and Copy draw with, at the font size the
+                labels will have AFTER padding. Apply Padding pins that font size
+                (_pin_font_reference), so the measurement does not feed back into itself and
+                the result is exact and idempotent -- the old fixed-point estimate grew the
+                fonts with the canvas, so every pass asked for more space (worst at the top).
 
-                NOTE: the Settings ▸ UI Scale (`ui_scale_factor`) must NOT appear anywhere in
-                this calculation. view_scale below is taken against the FIXED 550x350 export
-                reference, exactly like the exporters' `font_scale_factor`, which is explicitly
-                independent of UI Scale / viewer size / monitor DPI. An older version measured
-                the reference against the LIVE viewer (whose size is 550*ui_scale_factor), so a
-                `* ui_scale` term cancelled out; once the reference became fixed the term stopped
-                cancelling and simply multiplied every recommended value by the UI Scale % (125%
-                UI → 25% too much padding, 75% → 25% too little).
+                Positions are CONTENT-relative (minus the transparent margins already on the
+                image) because Apply Padding replaces those margins and moves everything with
+                the content, so repeated Set Recommended -> Apply converges immediately.
 
-                Custom markers/shapes are stored in IMAGE-pixel coordinates and are shifted by
-                (padding_left, padding_top) when padding is applied (see
-                adjust_elements_for_padding). So an item whose ink extends to x<0 needs that
-                much LEFT padding to be pulled back onto the canvas, one past the right edge
-                needs RIGHT padding, and likewise for top/bottom. Their effective on-image font
-                size scales with view_scale exactly like the standard labels, so they are folded
-                into the same fixed-point loop.
+                Labels that have not been placed yet are estimated from the typed label lists
+                as if anchored on the content edge, so padding can still be added first and the
+                markers placed afterwards.
+
+                Nothing here depends on the viewer size or the UI Scale -- only on the image
+                and the fixed export reference, exactly like the exporters.
 
                 Returns (0, 0, 0, 0) on failure."""
                 import math
@@ -23477,320 +23769,116 @@ if __name__ == "__main__":
                     if not self.image or self.image.isNull():
                         return 0, 0, 0, 0
                     cl, cr, ct, cb = self._measure_transparent_margins()
-                    content_w = max(1, self.image.width() - cl - cr)
-                    content_h = max(1, self.image.height() - ct - cb)
+                    W, H = self.image.width(), self.image.height()
+                    content_w = max(1, W - cl - cr)
+                    content_h = max(1, H - ct - cb)
 
-                    # Where the user has actually parked the label anchors, expressed
-                    # CONTENT-relative so the numbers survive padding (Apply Padding shifts the
-                    # content and the anchors together). These are the Markers-tab Left/Right/
-                    # Top offset sliders; ignoring them is what made the recommendation the same
-                    # no matter where the labels sat.
-                    #   left  : label text ENDS at   shift_l_rel (grows leftwards)
-                    #   right : label text STARTS at shift_r_rel (grows rightwards)
-                    #   top   : label baseline at    shift_t_rel (rotated text grows upwards)
-                    shift_l_rel = float(getattr(self, 'left_marker_shift_added', 0)) - cl
-                    shift_r_rel = float(getattr(self, 'right_marker_shift_added', 0)) - cl
-                    shift_t_rel = float(getattr(self, 'top_marker_shift_added', 0)) - ct
+                    rs = float(self.EXPORT_RENDER_SCALE)
+                    # The font scale the labels will keep after padding: the pinned reference,
+                    # or the current canvas (which Apply Padding is about to pin).
+                    fsf = self._export_font_scale_factor(rs, W, H)
+                    std_font = QFont(self.font_family)
+                    std_font.setPixelSize(max(1, int(self.font_size * fsf)))
+                    std_font.setBold(bool(getattr(self, 'font_bold', False)))
+                    std_font.setItalic(bool(getattr(self, 'font_italic', False)))
+                    fm_std = QFontMetrics(std_font)
+                    std_px_img = std_font.pixelSize() / rs
+                    margin = max(6.0, std_px_img / 3.0)
 
-                    font_size = max(1, int(getattr(self, 'font_size', 16)))
-                    family    = str(getattr(self, 'font_family', 'Arial'))
-                    rotation  = float(getattr(self, 'font_rotation', -45))
-                    axis      = str(getattr(self, 'top_rotation_axis', 'left'))
-                    # (Deliberately NO ui_scale here — see the note in the docstring.)
-                    # Reference viewer size for the effective font scale. Use the FIXED 550x350
-                    # export reference (same constants as save_image), NOT the live viewer size —
-                    # the viewer is now user-resizable, and tying the recommendation to it would
-                    # make the padding change every time the window/divider is dragged. A fixed
-                    # reference keeps Set-Recommended deterministic AND matches the exported figure
-                    # (which is what the padding must actually fit).
-                    lbl_w, lbl_h = 550.0, 350.0
+                    lo_x = lo_y = float('inf')
+                    hi_x = hi_y = float('-inf')
 
-                    # Measure the text that is ACTUALLY DRAWN. The renderers draw
-                    # self.top_markers / self.left_markers / self.right_markers; self.top_label
-                    # and self.marker_values are only the source lists the user types into, and
-                    # the two can diverge — clearing the "Top Label" box empties top_label while
-                    # the placed markers keep drawing their old text. Measuring the source list
-                    # then collapsed the top padding to the bare 15% floor and long rotated
-                    # labels were clipped straight off the canvas.
-                    # Fall back to the source list when nothing has been placed yet, so Set
-                    # Recommended still returns a sensible size before the markers go down.
-                    top_texts = [str(t) for _x, t in (getattr(self, 'top_markers', []) or [])
-                                 if str(t).strip()]
-                    if not top_texts:
-                        top_texts = [str(t) for t in (getattr(self, 'top_label', []) or [])
-                                     if str(t).strip()]
+                    def _add(x0, y0, x1, y1):
+                        nonlocal lo_x, lo_y, hi_x, hi_y
+                        lo_x = min(lo_x, x0 - cl); hi_x = max(hi_x, x1 - cl)
+                        lo_y = min(lo_y, y0 - ct); hi_y = max(hi_y, y1 - ct)
 
-                    def _side_texts(side):
+                    # 1. Every placed text item, exactly as drawn.
+                    placed_kinds = set()
+                    for it in self._annotation_text_items(rs, fsf):
+                        box = QRectF(QFontMetrics(it['font']).boundingRect(it['text']))
+                        r = it['transform'].map(QPolygonF(box)).boundingRect()
+                        _add(r.left() / rs, r.top() / rs, r.right() / rs, r.bottom() / rs)
+                        placed_kinds.add(it['kind'])
+
+                    # 2. Custom shapes (pen width and arrow heads included).
+                    for sd in getattr(self, 'custom_shapes', []) or []:
+                        try:
+                            th = float(sd.get('thickness', 1.0) or 1.0)
+                            pen_c = max(1.0, th * rs)
+                            half = pen_c / 2.0 / rs
+                            stype = sd.get('type')
+                            if stype in ('line', 'arrow'):
+                                (sx, sy), (ex, ey) = sd['start'], sd['end']
+                                sx, sy, ex, ey = float(sx), float(sy), float(ex), float(ey)
+                                ext = half
+                                if stype == 'arrow':
+                                    length_c = math.hypot(ex - sx, ey - sy) * rs
+                                    head_c = min(max(pen_c * 3.5, 7.0), length_c)
+                                    ext = max(ext, head_c * 0.5 / rs)
+                                _add(min(sx, ex) - ext, min(sy, ey) - ext,
+                                     max(sx, ex) + ext, max(sy, ey) + ext)
+                            elif stype == 'rectangle':
+                                x, y, w, h = [float(v) for v in sd['rect']]
+                                _add(min(x, x + w) - half, min(y, y + h) - half,
+                                     max(x, x + w) + half, max(y, y + h) + half)
+                        except Exception:
+                            continue
+
+                    need_l = need_r = need_t = need_b = 0.0
+                    if lo_x != float('inf'):
+                        need_l = margin - lo_x
+                        need_r = hi_x - content_w + margin
+                        need_t = margin - lo_y
+                        need_b = hi_y - content_h + margin
+
+                    # 3. Labels typed but not placed yet: estimate them anchored on the content
+                    #    edge (left labels end there, right labels start there, top labels sit
+                    #    on it), so "pad first, place markers after" still gets enough room.
+                    def _texts(side):
                         out = []
-                        for _entry in (getattr(self, f'{side}_markers', []) or []):
+                        for v in (getattr(self, 'marker_values', []) or []):
                             try:
-                                out.append(self.marker_label_text(_entry[1], side))
+                                t = self.marker_label_text(v, side)
                             except Exception:
-                                try:
-                                    out.append(str(_entry[1]))
-                                except Exception:
-                                    continue
-                        if not out:
-                            for v in (getattr(self, 'marker_values', []) or []):
-                                try:
-                                    out.append(self.marker_label_text(v, side))
-                                except Exception:
-                                    out.append(str(v))
-                        return [t for t in out if str(t).strip()]
-
-                    left_texts = _side_texts('left')
-                    right_texts = _side_texts('right')
-
-                    def _top_h_bounds(eff_px):
-                        """Content-relative x-range actually covered by the ROTATED top-label
-                        ink, or None when no top markers are placed.
-
-                        A rotated label does not just grow upwards — it also reaches sideways,
-                        and the outermost lane's label runs past the edge of the gel. Only the
-                        vertical extent used to be measured, so a long label rotated -30deg off
-                        the last lane was clipped by the right edge no matter what Set
-                        Recommended returned (its right padding was sized purely from the
-                        right-hand MW label width). Each marker is measured with its own text at
-                        its own x."""
-                        marks = getattr(self, 'top_markers', []) or []
-                        if not marks:
-                            return None   # nothing placed: positions unknown, skip
-                        eff_px = max(4, int(round(eff_px)))
-                        font = QFont(family); font.setPixelSize(eff_px)
-                        fm = QFontMetrics(font)
-                        tf = QTransform(); tf.rotate(rotation)
-                        lo = float('inf'); hi = float('-inf')
-                        for _x, _s in marks:
-                            s = str(_s)
+                                t = str(v)
+                            if str(t).strip():
+                                out.append(str(t))
+                        return out
+                    if 'left_marker' not in placed_kinds:
+                        lw = max([fm_std.horizontalAdvance(t) for t in _texts('left')], default=0)
+                        if lw:
+                            need_l = max(need_l, lw / rs + margin)
+                    if 'right_marker' not in placed_kinds:
+                        rw = max([fm_std.horizontalAdvance(t) for t in _texts('right')], default=0)
+                        if rw:
+                            need_r = max(need_r, rw / rs + margin)
+                    if 'top_marker' not in placed_kinds:
+                        axis = getattr(self, 'top_rotation_axis', 'left')
+                        tf = QTransform(); tf.rotate(float(getattr(self, 'font_rotation', 0)))
+                        up = 0.0
+                        for s in (getattr(self, 'top_label', []) or []):
+                            s = str(s)
                             if not s.strip():
                                 continue
-                            try:
-                                x_rel = float(_x) - cl
-                            except Exception:
-                                continue
-                            tr = fm.boundingRect(s).adjusted(-4, -4, 4, 4)
-                            adv = fm.horizontalAdvance(s)
-                            xoff = -adv / 2.0 if axis == 'center' else (-adv if axis == 'right' else 0.0)
-                            corners = [QPointF(tr.left() + xoff, tr.top()),
-                                       QPointF(tr.right() + xoff, tr.top()),
-                                       QPointF(tr.right() + xoff, tr.bottom()),
-                                       QPointF(tr.left() + xoff, tr.bottom())]
-                            xs = [tf.map(p).x() for p in corners]
-                            lo = min(lo, x_rel + min(xs))
-                            hi = max(hi, x_rel + max(xs))
-                        if lo == float('inf'):
-                            return None
-                        return lo, hi
+                            adv = fm_std.horizontalAdvance(s)
+                            x_off = -adv / 2.0 if axis == 'center' else (-adv if axis == 'right' else 0.0)
+                            box = QRectF(fm_std.boundingRect(s)).translated(x_off, 0.0)
+                            r = tf.map(QPolygonF(box)).boundingRect()
+                            # baseline sits fm.height()*0.3 below the anchor, as drawn
+                            up = max(up, -(r.top() + fm_std.height() * 0.3))
+                        if up > 0:
+                            need_t = max(need_t, up / rs + margin)
 
-                    def _extents(eff_px):
-                        eff_px = max(4, int(round(eff_px)))
-                        font = QFont(family); font.setPixelSize(eff_px)
-                        fm = QFontMetrics(font)
-                        top_e = 0.0
-                        if top_texts:
-                            t = QTransform(); t.rotate(rotation)
-                            for s in top_texts:
-                                tr = fm.boundingRect(s).adjusted(-4, -4, 4, 4)
-                                adv = fm.horizontalAdvance(s)
-                                xoff = -adv / 2.0 if axis == 'center' else (-adv if axis == 'right' else 0.0)
-                                corners = [QPointF(tr.left() + xoff, tr.top()),
-                                           QPointF(tr.right() + xoff, tr.top()),
-                                           QPointF(tr.right() + xoff, tr.bottom()),
-                                           QPointF(tr.left() + xoff, tr.bottom())]
-                                ys = [t.map(p).y() for p in corners]
-                                top_e = max(top_e, -min(ys))
-                        lw = max([fm.horizontalAdvance(s) for s in left_texts], default=0)
-                        rw = max([fm.horizontalAdvance(s) for s in right_texts], default=0)
-                        return top_e, float(lw), float(rw), float(eff_px)
-
-                    def _custom_overflow(view_scale, std_eff_px):
-                        """Extra padding (left, right, top, bottom) in image px needed so custom
-                        markers/shapes and the vertical extent of the standard L/R labels are not
-                        clipped past the CONTENT edge. Everything uses a single SMALL containment
-                        margin (`max(6, std_eff_px/3)`), NOT the 15% frame — the frame is applied
-                        as the base in recommended_values. Using the frame here made padding
-                        balloon when a marker sat inside an existing margin (e.g. an arrow ~120 px
-                        into the left margin demanded frame + 120).
-
-                        Idempotency: all positions are content-relative (minus cl/ct) and compared
-                        to content_w/content_h. Apply Padding shifts items by (pad_l, pad_t) and
-                        grows the margins by the same amount, so (pos - margin) is invariant →
-                        Set-Recommended is stable across cycles. A side only grows when an item
-                        would otherwise clip (near/past that content edge)."""
-                        # Custom-item bounds (content-relative).
-                        cmin_x = cmin_y = float('inf')
-                        cmax_x = cmax_y = float('-inf')
-                        c_found = False
-                        # Standard L/R label vertical bounds (small margin).
-                        lmin_y = float('inf'); lmax_y = float('-inf')
-                        l_found = False
-                        small_margin = max(6.0, std_eff_px / 3.0)
-
-                        # All positions are converted to CONTENT-relative coordinates
-                        # (subtract the current padding cl/ct) and compared against the CONTENT
-                        # box [0..content_w] x [0..content_h]. This makes the recommendation
-                        # invariant to padding already applied: Apply Padding shifts every item
-                        # by (pad_left, pad_top) and grows the margins by the same amount, so
-                        # (pos - margin) is unchanged → Set-Recommended is idempotent (no cycling).
-
-                        # Standard left/right marker labels — vertical extent only (their
-                        # horizontal reach is already covered by lw/rw above).
-                        std_font = QFont(family)
-                        std_font.setPixelSize(max(4, int(round(std_eff_px))))
-                        fm_lr = QFontMetrics(std_font)
-                        for _side, _lst in (('left', getattr(self, 'left_markers', [])),
-                                            ('right', getattr(self, 'right_markers', []))):
-                            for _entry in _lst:
-                                try:
-                                    y_rel = float(_entry[0]) - ct
-                                    full = self.marker_label_text(_entry[1], _side)
-                                    if not full:
-                                        continue
-                                    br = fm_lr.tightBoundingRect(str(full))
-                                    hh = br.height() / 2.0
-                                    lmin_y = min(lmin_y, y_rel - hh)
-                                    lmax_y = max(lmax_y, y_rel + hh)
-                                    l_found = True
-                                except Exception:
-                                    continue
-
-                        for md in getattr(self, 'custom_markers', []):
-                            try:
-                                mxr = float(md[0]) - cl; myr = float(md[1]) - ct; text = str(md[2])
-                                if text == '':
-                                    continue
-                                fam = str(md[4]); size = float(md[5])
-                                bold = bool(md[6]) if len(md) > 6 else False
-                                italic = bool(md[7]) if len(md) > 7 else False
-                                # Matches the exporters: size * font_scale_factor, no UI Scale.
-                                eff_c = size / max(view_scale, 1e-3)
-                                eff_c = min(max(eff_c, size), size * 10.0)
-                                f = QFont(fam); f.setPixelSize(max(4, int(round(eff_c))))
-                                f.setBold(bold); f.setItalic(italic)
-                                br = QFontMetrics(f).boundingRect(text)
-                                hw = br.width() / 2.0; hh = br.height() / 2.0
-                                cmin_x = min(cmin_x, mxr - hw); cmax_x = max(cmax_x, mxr + hw)
-                                cmin_y = min(cmin_y, myr - hh); cmax_y = max(cmax_y, myr + hh)
-                                c_found = True
-                            except Exception:
-                                continue
-
-                        for sd in getattr(self, 'custom_shapes', []):
-                            try:
-                                th = max(1.0, float(sd.get('thickness', 1))) / 2.0
-                                if sd.get('type') in ('line', 'arrow'):
-                                    sx = sd['start'][0] - cl; sy = sd['start'][1] - ct
-                                    ex = sd['end'][0] - cl; ey = sd['end'][1] - ct
-                                    cmin_x = min(cmin_x, sx - th, ex - th)
-                                    cmax_x = max(cmax_x, sx + th, ex + th)
-                                    cmin_y = min(cmin_y, sy - th, ey - th)
-                                    cmax_y = max(cmax_y, sy + th, ey + th)
-                                    c_found = True
-                                elif sd.get('type') == 'rectangle':
-                                    x = sd['rect'][0] - cl; y = sd['rect'][1] - ct
-                                    w = sd['rect'][2]; h = sd['rect'][3]
-                                    cmin_x = min(cmin_x, x - th); cmax_x = max(cmax_x, x + w + th)
-                                    cmin_y = min(cmin_y, y - th); cmax_y = max(cmax_y, y + h + th)
-                                    c_found = True
-                            except Exception:
-                                continue
-
-                        ol = orr = ot = ob = 0.0
-                        if c_found:
-                            # Custom items only need a SMALL containment margin so they are not
-                            # clipped past the content edge — NOT the full 15% frame. Using the
-                            # frame ballooned the padding when a marker/arrow was placed inside
-                            # the existing left/top margin (it demanded frame + its offset). The
-                            # 15% framing already comes from the base in recommended_values; a
-                            # custom item only enlarges a side when it would otherwise clip.
-                            ol = max(ol, small_margin - cmin_x)
-                            orr = max(orr, cmax_x - content_w + small_margin)
-                            ot = max(ot, small_margin - cmin_y)
-                            ob = max(ob, cmax_y - content_h + small_margin)
-                        if l_found:
-                            # L/R labels only need a small margin so they aren't clipped.
-                            ot = max(ot, small_margin - lmin_y)
-                            ob = max(ob, lmax_y - content_h + small_margin)
-                        # Cap each side's overflow to the content size. A custom item parked far
-                        # OFF-canvas (e.g. a label left behind outside the region after a crop —
-                        # crop now keeps such items instead of deleting them) would otherwise ask
-                        # for padding equal to its full off-canvas distance, ballooning the canvas.
-                        # Capping means Set Recommended never grows a side by more than the content
-                        # itself; the user can still drag a stray label back into view.
-                        return (max(0.0, min(ol, float(content_w))), max(0.0, min(orr, float(content_w))),
-                                max(0.0, min(ot, float(content_h))), max(0.0, min(ob, float(content_h))))
-
-                    pad_top = content_h * 0.15
-                    pad_l = pad_r = content_w * 0.15
-                    pad_bottom = 0.0
-                    for _ in range(6):
-                        fw = content_w + pad_l + pad_r
-                        fh = content_h + pad_top + pad_bottom
-                        if lbl_w > 0 and lbl_h > 0 and fw > 0 and fh > 0:
-                            view_scale = min(lbl_w / fw, lbl_h / fh)
-                        else:
-                            view_scale = 1.0
-                        view_scale = max(view_scale, 1e-3)
-                        # Effective on-image font size = exactly the exporters'
-                        # font_size * font_scale_factor at render_scale 1. No UI Scale term.
-                        eff_px = font_size / view_scale
-                        eff_px = min(max(eff_px, float(font_size)), font_size * 10.0)
-                        top_e, lw, rw, ep = _extents(eff_px)
-                        margin = max(6.0, ep / 3.0)
-                        # Size each side so the label INK clears the canvas edge, given where
-                        # the offset sliders put the anchors. After padding P_l the left label
-                        # spans [P_l + shift_l_rel - lw, P_l + shift_l_rel], so it needs
-                        # P_l >= margin + lw - shift_l_rel; the right/top follow the same way.
-                        # With the anchors at their defaults (left 0, right = content edge,
-                        # top 0) these collapse to the previous lw/rw/top_e + margin values.
-                        #
-                        # CLAMP the anchors to the CANVAS (content box + the margins already on
-                        # the image), NOT to the content box itself.
-                        #
-                        # Why clamp at all: a crop shifts every anchor by -crop_start (see
-                        # update_crop) and can leave a label anchored far OUTSIDE the cropped
-                        # image (a ladder cropped out of a 2750px-wide gel leaves
-                        # left_marker_shift_added ≈ -1100). Unclamped, the formula demands
-                        # ~1100px of padding to "reveal" a label the user can no longer see.
-                        #
-                        # Why the CANVAS and not the content box: labels are normally parked in
-                        # the existing margin, i.e. ABOVE/OUTSIDE the content — the top labels
-                        # of a gel sit above the gel itself. Clamping those to 0 discarded the
-                        # offset entirely, so the recommendation ignored the anchor completely:
-                        # moving the top labels 140px further up changed the recommended top
-                        # padding by 0px instead of +140, and the labels were clipped. An anchor
-                        # `d` px above the content needs `d` px MORE padding, not less, which is
-                        # exactly what the `- clamp_t` term below produces once clamp_t is
-                        # allowed to go negative down to -ct.
-                        #
-                        # Anchors inside the content are unaffected (normal gels unchanged), and
-                        # the crop case is still bounded — it can only ever ask for the margins
-                        # the image actually has.
-                        clamp_t = min(max(shift_t_rel, -float(ct)), float(content_h + cb))
-                        clamp_l = min(max(shift_l_rel, -float(cl)), float(content_w + cr))
-                        clamp_r = min(max(shift_r_rel, -float(cl)), float(content_w + cr))
-                        pad_top = max(0.0, math.ceil(top_e) + margin + 0.4 * ep - clamp_t)
-                        pad_l = max(0.0, lw + margin - clamp_l)
-                        pad_r = max(0.0, clamp_r + rw + margin - content_w)
-
-                        # Rotated top labels also reach SIDEWAYS past the outermost lanes —
-                        # fold that in, capped to the content size like the custom-item
-                        # overflow so a stray marker can't balloon the canvas.
-                        _hb = _top_h_bounds(ep)
-                        if _hb is not None:
-                            _lo, _hi = _hb
-                            pad_l = max(pad_l, min(max(0.0, margin - _lo), float(content_w)))
-                            pad_r = max(pad_r, min(max(0.0, _hi + margin - content_w), float(content_w)))
-                        # Fold in custom markers/shapes (and the vertical extent of the
-                        # standard L/R marker labels) that spill past the canvas edges.
-                        cust_l, cust_r, cust_t, cust_b = _custom_overflow(view_scale, ep)
-                        pad_l = max(pad_l, cust_l)
-                        pad_r = max(pad_r, cust_r)
-                        pad_top = max(pad_top, cust_t)
-                        pad_bottom = cust_b
-                    return (int(math.ceil(pad_l)), int(math.ceil(pad_r)),
-                            int(math.ceil(pad_top)), int(math.ceil(pad_bottom)))
+                    # Never let one stray item (e.g. a label left far off-canvas by a crop, which
+                    # now keeps such items) balloon the canvas: cap every side at the content's
+                    # own size. Normal labels are far below this.
+                    cap = float(max(content_w, content_h))
+                    def _fin(v):
+                        return int(math.ceil(max(0.0, min(v, cap))))
+                    return _fin(need_l), _fin(need_r), _fin(need_t), _fin(need_b)
                 except Exception:
+                    log_traceback()
                     return 0, 0, 0, 0
 
             def recommended_values(self):
@@ -23808,25 +23896,14 @@ if __name__ == "__main__":
                     content_w = max(1, self.image.width() - cl - cr)
                     content_h = max(1, self.image.height() - ct - cb)
 
-                    # Baseline framing for the TOP only (15% of content height). Left/right no
-                    # longer use a 15% baseline — see below.
-                    base_top = int(content_h * 0.15)
-
-                    # Grow each axis so the actual marker labels fit at the size they are
-                    # really rendered — the effective on-image font size (which is larger than
-                    # the raw point size on big gels) and, for the top labels, their full
-                    # rotated bounding box. This is what fixes long/large labels overflowing.
-                    # need_* also accounts for custom markers and custom shapes (lines/rects)
-                    # that spill past the canvas edges, including below it (need_bottom).
+                    # Every side is sized from what is actually drawn (see _label_padding_needed):
+                    # rotation, rotation axis, marker symbol, custom text and shapes. There is no
+                    # fixed 15% top frame any more -- that is what left the big empty band above
+                    # the gel whenever the labels themselves needed less.
                     need_left, need_right, need_top, need_bottom = self._label_padding_needed()
-
-                    # LEFT/RIGHT: size to the marker LABEL TEXT (need_left/right already = the
-                    # widest L/R label width + a small margin, and also contains any custom-item
-                    # overflow) instead of a flat 15% of content — the 15% baseline left large
-                    # empty margins beside short MW numbers ("250" only needs ~105px, not 174).
-                    self.left_padding_input.setText(str(max(6, int(need_left))))
-                    self.right_padding_input.setText(str(max(6, int(need_right))))
-                    self.top_padding_input.setText(str(max(base_top, int(need_top))))
+                    self.left_padding_input.setText(str(max(0, int(need_left))))
+                    self.right_padding_input.setText(str(max(0, int(need_right))))
+                    self.top_padding_input.setText(str(max(0, int(need_top))))
                     self.bottom_padding_input.setText(str(max(0, int(need_bottom))))
 
                     # DO NOT update slider ranges or _marker_shift_added here.
@@ -24205,6 +24282,10 @@ if __name__ == "__main__":
                     "- Line/Arrow: drag an end to re-aim, or a side handle to change thickness.\n"
                     "- Text: click to select, then drag the handle at its lower-right to "
                     "resize the font.\n"
+                    "- DOUBLE-CLICK any text (custom marker, left/right MW label or top label) "
+                    "to edit its text, font, size, style and color, or any line/arrow/rectangle "
+                    "to set its color, thickness and coordinates. Changes preview live.\n"
+                    "- Hover over an item to see what it is and what you can do with it.\n"
                     "- Hold Shift to constrain axis (or snap lines to 45°).\n"
                     "- Arrow keys to nudge selected item (1 px).\n"
                     "- Shift+Arrow to nudge by 10 px.")
@@ -24533,6 +24614,31 @@ if __name__ == "__main__":
 
                 layout.addWidget(ui_group)
 
+                # --- Experimental Features ---
+                exp_group = QGroupBox("Experimental Features")
+                exp_layout = QVBoxLayout(exp_group)
+                exp_layout.setSpacing(8)
+                self.exp_gaussian_checkbox = QCheckBox("Gaussian Deconvolution (band fitting)")
+                self.exp_gaussian_checkbox.setChecked(bool(getattr(self, 'experimental_gaussian_deconv', False)))
+                self.exp_gaussian_checkbox.setToolTip(
+                    "Adds 'Gaussian Deconvolution' to the Area/Background method lists in the "
+                    "densitometry window and the Auto Gel wizard.\n\n"
+                    "WARNING: it is computationally intensive. Each lane runs hundreds of bounded "
+                    "curve fits on the UI thread, so the window can stop responding for seconds to "
+                    "minutes — longer on gels with many bands. Off by default.")
+                self.exp_gaussian_checkbox.toggled.connect(self._on_experimental_gaussian_toggled)
+                exp_layout.addWidget(self.exp_gaussian_checkbox)
+                exp_note = QLabel(
+                    "⚠ Gaussian Deconvolution separates overlapping bands and shoulders by fitting "
+                    "curves to the trace. It is the most accurate method for touching bands, but it "
+                    "is <b>very intensive</b>: the app runs the fit on the interface thread, so it "
+                    "can <b>appear to hang</b> while a lane is being processed (seconds to minutes, "
+                    "depending on the number of bands). Everything else works normally with it off.")
+                exp_note.setWordWrap(True)
+                exp_note.setStyleSheet("color: palette(mid);")
+                exp_layout.addWidget(exp_note)
+                layout.addWidget(exp_group)
+
                 # --- Viewer Dimensions ---
                 dim_group = QGroupBox("Application Dimensions (Requires Restart)")
                 dim_layout = QGridLayout(dim_group)
@@ -24612,9 +24718,39 @@ if __name__ == "__main__":
                     self.active_device_label.setText(f"(Currently Active: {active_text})")
                     self.active_device_label.setStyleSheet(f"color: {color}; font-style: italic; font-size: 11px;")
 
+            def _on_experimental_gaussian_toggled(self, checked):
+                """Confirm before switching Gaussian Deconvolution on: it is opt-in precisely
+                because it can lock the window up while it fits."""
+                if not checked:
+                    self.experimental_gaussian_deconv = False
+                    return
+                if bool(getattr(self, 'experimental_gaussian_deconv', False)):
+                    return          # already enabled (e.g. restored from the config)
+                reply = QMessageBox.warning(
+                    self, "Enable Gaussian Deconvolution?",
+                    "Gaussian Deconvolution is an EXPERIMENTAL, computationally intensive "
+                    "feature.\n\n"
+                    "It fits curves to every band to separate overlapping peaks, running hundreds "
+                    "of bounded least-squares fits per lane. The fit runs on the interface thread, "
+                    "so the app can STOP RESPONDING (appear to hang) for seconds to several "
+                    "minutes while a lane is processed — longer on gels with many bands.\n\n"
+                    "Results are the most accurate available for touching bands. All other "
+                    "methods remain available and are much faster.\n\n"
+                    "Enable it anyway?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply != QMessageBox.Yes:
+                    self.exp_gaussian_checkbox.blockSignals(True)
+                    self.exp_gaussian_checkbox.setChecked(False)
+                    self.exp_gaussian_checkbox.blockSignals(False)
+                    self.experimental_gaussian_deconv = False
+                    return
+                self.experimental_gaussian_deconv = True
+
             def apply_app_settings(self):
                 """Saves the application-wide settings and notifies user."""
                 self.use_gpu = self.gpu_radio.isChecked()
+                if hasattr(self, 'exp_gaussian_checkbox'):
+                    self.experimental_gaussian_deconv = bool(self.exp_gaussian_checkbox.isChecked())
                 
                 # Apply CPU/GPU Toggle Immediately
                 try:
@@ -25354,10 +25490,14 @@ if __name__ == "__main__":
                         "thickness.\n"
                         "• Text — one handle at the lower-right scales the font. For a custom "
                         "marker it resizes just that label; for a left/right/top marker it "
-                        "resizes the whole set (they share one font size).\n\n"
+                        "resizes the whole set (they share one font size).\n"
+                        "• Double-click any text — custom marker, left/right MW label or top "
+                        "label — to edit it, or any line/arrow/rectangle to set its color, "
+                        "thickness and coordinates. Changes preview live on the image.\n\n"
                         "Press ESC or un-check the button to exit this mode.")
                     self.show_mode_status("MOVE/RESIZE items — click a marker/shape, drag to move or "
-                                          "use a handle to resize. Press Esc to exit.",
+                                          "use a handle to resize; double-click any item to edit it. "
+                                          "Press Esc to exit.",
                                           active_button=getattr(self, 'move_resize_button', None))
                     self.update_live_view()
                 else:
@@ -25385,83 +25525,454 @@ if __name__ == "__main__":
                 self.clear_mode_status()
                 self.update_live_view()
 
-            def _get_standard_marker_bounding_box_in_label_space(self, marker_type, marker_index):
-                """
-                Calculates the bounding shape (QRectF or QPolygonF) of a standard marker 
-                in the LiveViewLabel's coordinate space.
-                """
-                if not (self.image and not self.image.isNull()): return None
-                
-                marker_list = None
-                if marker_type == 'left_marker': marker_list = self.left_markers
-                elif marker_type == 'right_marker': marker_list = self.right_markers
-                elif marker_type == 'top_marker': marker_list = self.top_markers
-                else: return None
+            # ------------------------------------------------------------------ #
+            # Move/Resize: double-click to edit text, hover tooltips              #
+            # ------------------------------------------------------------------ #
+            _MOVE_RESIZE_MODES = ("select_custom_item", "dragging_custom_item", "resizing_custom_item")
+            _TEXT_ITEM_NAMES = {'marker': "Custom marker", 'left_marker': "Left MW label",
+                                'right_marker': "Right MW label", 'top_marker': "Top label"}
 
-                if not (0 <= marker_index < len(marker_list)): return None
-
-                pos, text = marker_list[marker_index]
-                
-                font = QFont(self.font_family, self.font_size)
-                fm = QFontMetrics(font)
-                padding = 4 # Click padding
-                text_rect_unscaled = fm.boundingRect(str(text)).adjusted(-padding, -padding, padding, padding)
-
-                label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
-                img_w = float(self.image.width()); img_h = float(self.image.height())
-                if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0): return None
-                scale = min(label_w / img_w, label_h / img_h)
-                offset_x = (label_w - img_w * scale) / 2.0; offset_y = (label_h - img_h * scale) / 2.0
-                
-                y_offset_baseline = fm.height() * 0.3
-
-                if marker_type in ['left_marker', 'right_marker']:
-                    y_ls = pos * scale + offset_y
-                    full_text = self.marker_label_text(
-                        text, 'left' if marker_type == 'left_marker' else 'right')
-                    text_width_ls = fm.horizontalAdvance(full_text) + (2 * padding)
-                    
-                    x_ls = (self.left_marker_shift_added if marker_type == 'left_marker' else self.right_marker_shift_added) * scale + offset_x
-                    
-                    rect_height = text_rect_unscaled.height()
-                    top_y = y_ls # Center around the baseline
-
-                    if marker_type == 'left_marker':
-                        return QRectF(x_ls - text_width_ls, top_y - rect_height / 2, text_width_ls, rect_height)
-                    else:
-                        return QRectF(x_ls, top_y - rect_height / 2, text_width_ls, rect_height)
-
-                elif marker_type == 'top_marker':
-                    anchor_x_ls = pos * scale + offset_x
-                    anchor_y_ls = self.top_marker_shift_added * scale + offset_y + y_offset_baseline
-
-                    # Mirror the paint code: shift text draw origin based on rotation axis
-                    rotation_axis = getattr(self, 'top_rotation_axis', 'left')
-                    text_str = str(text)
-                    if rotation_axis == 'center':
-                        text_x_offset = -fm.horizontalAdvance(text_str) / 2.0
-                    elif rotation_axis == 'right':
-                        text_x_offset = -fm.horizontalAdvance(text_str)
-                    else:
-                        text_x_offset = 0.0
-
-                    # Get corners of bounding rect offset by rotation axis, matching painter draw position
-                    corners = [
-                        QPointF(text_rect_unscaled.left() + text_x_offset, text_rect_unscaled.top()),
-                        QPointF(text_rect_unscaled.right() + text_x_offset, text_rect_unscaled.top()),
-                        QPointF(text_rect_unscaled.right() + text_x_offset, text_rect_unscaled.bottom()),
-                        QPointF(text_rect_unscaled.left() + text_x_offset, text_rect_unscaled.bottom()),
-                    ]
-
-                    transform = QTransform()
-                    transform.translate(anchor_x_ls, anchor_y_ls)
-                    transform.rotate(self.font_rotation)
-
-                    rotated_corners = [transform.map(p) for p in corners]
-
-                    return QPolygonF(rotated_corners)
-                    
+            def _text_item_at_ls(self, point_ls):
+                """Topmost TEXT annotation under a label-space point, as {'type', 'index'} or
+                None. Same priority as a Move/Resize click: custom markers first (newest on
+                top), then left, right and top labels."""
+                for i in range(len(getattr(self, 'custom_markers', [])) - 1, -1, -1):
+                    r = self._get_marker_bounding_box_in_label_space(i)
+                    if r is not None and r.contains(point_ls):
+                        return {'type': 'marker', 'index': i}
+                for kind, lst in (('left_marker', getattr(self, 'left_markers', [])),
+                                  ('right_marker', getattr(self, 'right_markers', [])),
+                                  ('top_marker', getattr(self, 'top_markers', []))):
+                    for i in range(len(lst) - 1, -1, -1):
+                        shp = self._get_standard_marker_bounding_box_in_label_space(kind, i)
+                        if isinstance(shp, QPolygonF) and shp.containsPoint(point_ls, Qt.OddEvenFill):
+                            return {'type': kind, 'index': i}
+                        if isinstance(shp, QRectF) and shp.contains(point_ls):
+                            return {'type': kind, 'index': i}
                 return None
+
+            def _shape_at_ls(self, point_ls):
+                """Index of the topmost custom shape whose body is under the point, or None."""
+                for i in range(len(getattr(self, 'custom_shapes', [])) - 1, -1, -1):
+                    body_ls, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                    if self._shape_body_hit_ls(i, body_ls, handles_ls, point_ls):
+                        return i
+                return None
+
+            def _text_item_value(self, info):
+                """The editable text of a text item (L/R labels: the VALUE, without the
+                marker symbol that is added when drawing)."""
+                t, i = info['type'], info['index']
+                if t == 'marker':
+                    return str(self.custom_markers[i][2])
+                lst = {'left_marker': self.left_markers, 'right_marker': self.right_markers,
+                       'top_marker': self.top_markers}[t]
+                return str(lst[i][1])
+
+            def update_move_resize_hover(self, event):
+                """Tooltip for whatever is under the cursor while Move/Resize is active, so
+                every item says what it is and what can be done with it. Called from the live
+                view's mouseMoveEvent; only re-shown when the hovered item changes."""
+                if getattr(self, 'current_selection_mode', None) != "select_custom_item" or event.buttons():
+                    return
+                try:
+                    pt = self.live_view_label.transform_point(event.position())
+                    tip = ""
+                    info = self._text_item_at_ls(pt)
+                    key = None
+                    if info is not None:
+                        key = (info['type'], info['index'])
+                        name = self._TEXT_ITEM_NAMES.get(info['type'], "Text")
+                        text = self._text_item_value(info)
+                        if info['type'] == 'marker':
+                            how = ("Double-click to edit its text, font, size, style and color.\n"
+                                   "Drag to move · select, then drag the red handle to resize.")
+                        else:
+                            how = ("Double-click to edit this label's text.\n"
+                                   "Drag to move it along its axis · select, then drag the red "
+                                   "handle to resize the whole set's font.")
+                        tip = f"{name}: “{text}”\n{how}"
+                    else:
+                        si = self._shape_at_ls(pt)
+                        if si is not None:
+                            key = ('shape', si)
+                            stype = str(self.custom_shapes[si].get('type', 'shape')).capitalize()
+                            if stype.lower() == 'rectangle':
+                                how = "Drag to move · drag a corner to resize · handle above the top edge sets the border thickness."
+                            else:
+                                how = "Drag to move · drag an end to re-aim · side handles set the thickness."
+                            tip = (f"{stype}\n{how}\nDouble-click to edit its color, thickness and "
+                                   "exact coordinates.\nDelete / Backspace removes the selected item.")
+                    if key != getattr(self, '_move_resize_hover_key', None):
+                        self._move_resize_hover_key = key
+                        if tip:
+                            QToolTip.showText(event.globalPosition().toPoint(), tip, self.live_view_label)
+                        else:
+                            QToolTip.hideText()
+                except Exception:
+                    pass
+
+            def handle_text_item_double_click(self, event):
+                """Move/Resize mode: double-click a text item (custom marker, left/right MW
+                label, top label) or a shape (line, arrow, rectangle) to open its editor.
+                Returns True when it handled the event."""
+                if getattr(self, 'current_selection_mode', None) not in self._MOVE_RESIZE_MODES:
+                    return False
+                if event.button() != Qt.LeftButton:
+                    return False
+                pt = self.live_view_label.transform_point(event.position())
+                info = self._text_item_at_ls(pt)
+                if info is None:
+                    si = self._shape_at_ls(pt)
+                    if si is None:
+                        return False
+                    info = {'type': 'shape', 'index': si}
+                # The double-click's first press started a (zero-length) drag; end it cleanly
+                # so the modal editor can't leave the view stuck in drag mode.
+                self.current_selection_mode = "select_custom_item"
+                self.live_view_label.mode = "select_custom_item"
+                self.live_view_label._custom_mouseMoveEvent_from_app = None
+                self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                self.resizing_corner_index = -1
+                self.moving_custom_item_info = dict(info)
+                QToolTip.hideText()
+                self.update_live_view()
+                if info['type'] == 'shape':
+                    self._edit_shape_item(info['index'])
+                else:
+                    self._edit_text_item(info)
+                return True
+
+            def _run_live_edit_dialog(self, dlg, read_values, apply_values, original, on_commit=None):
+                """Shared LIVE-PREVIEW flow for the item editors.
+
+                Every change in the dialog is written straight into the item and the view
+                repaints, so the image updates as you type / pick. Cancel (or closing the
+                dialog) restores `original`. OK restores the original first, records ONE undo
+                snapshot, then applies the final values -- so Ctrl+Z returns to exactly what
+                was there before the dialog opened. Returns True if something was committed."""
+                state = {'busy': False}
+
+                def _preview(*_a):
+                    if state['busy']:
+                        return
+                    state['busy'] = True
+                    try:
+                        apply_values(read_values())
+                        self.update_live_view()
+                    except Exception:
+                        log_traceback()
+                    finally:
+                        state['busy'] = False
+                dlg._live_preview = _preview   # editors connect their widgets to this
+
+                accepted = (dlg.exec() == QDialog.Accepted)
+                final = read_values()
+                apply_values(original)
+                if not accepted or final == original:
+                    self.update_live_view()
+                    return False
+                self.save_state()
+                apply_values(final)
+                if on_commit is not None:
+                    on_commit(final)
+                self.is_modified = True
+                self.update_live_view()
+                return True
+
+            def _color_button(self, dlg, initial, title, tooltip, on_change):
+                """A 'Color…' button showing its color; returns (button, getter)."""
+                chosen = {'color': QColor(initial)}
+                btn = QPushButton("Color…")
+                btn.setToolTip(tooltip)
+                def _paint():
+                    c = chosen['color']
+                    fg = "#000000" if c.lightness() > 128 else "#ffffff"
+                    btn.setStyleSheet(f"QPushButton {{ background-color: {c.name()}; color: {fg}; }}")
+                def _pick():
+                    c = QColorDialog.getColor(chosen['color'], dlg, title)
+                    if c.isValid():
+                        chosen['color'] = c; _paint(); on_change()
+                btn.clicked.connect(_pick); _paint()
+                return btn, (lambda: QColor(chosen['color']))
+
+            def _edit_text_item(self, info):
+                """Editor for one text annotation (double-click it in Move/Resize).
+
+                Custom markers: text, font, size, bold, italic and color of that marker.
+                Left/right/top labels: the text of THAT label, plus font, size, bold, italic
+                and color -- which are shared by the whole standard-label set (left, right
+                AND top), so the dialog says so and changing them restyles every one.
+                Changes preview live on the image; Cancel restores everything."""
+                t, i = info['type'], info['index']
+                is_custom = (t == 'marker')
+                dlg = ManagedDialog(self._modal_dialog_parent())
+                dlg.setWindowTitle(f"Edit {self._TEXT_ITEM_NAMES.get(t, 'Text')}")
+                form = QFormLayout(dlg)
+                live = lambda *_a: dlg._live_preview()
+
+                text_edit = QLineEdit(self._text_item_value(info))
+                text_edit.selectAll()
+                if is_custom:
+                    text_edit.setToolTip("The marker's text. Unicode symbols (arrows, Greek letters, "
+                                         "etc.) can be pasted in.")
+                elif t == 'top_marker':
+                    text_edit.setToolTip("Text of THIS top (lane) label only. Rotation and rotation "
+                                         "axis are shared by all top labels (Markers tab).")
+                else:
+                    text_edit.setToolTip("Value of THIS molecular-weight label only, WITHOUT the "
+                                         "marker symbol -- the symbol chosen in the Markers tab is "
+                                         "added automatically.")
+                form.addRow("Text:", text_edit)
+
+                if is_custom:
+                    _x, _y, _txt, color0, family0, size0, bold0, italic0 = self.custom_markers[i]
+                    scope = "this marker only"
+                else:
+                    family0 = self.font_family; size0 = self.font_size
+                    color0 = getattr(self, 'font_color', QColor(Qt.black))
+                    bold0 = bool(getattr(self, 'font_bold', False))
+                    italic0 = bool(getattr(self, 'font_italic', False))
+                    scope = "ALL left, right and top labels"
+                    note = QLabel("<b>Note:</b> Text changes only this label. Font, size, bold, "
+                                  "italic and color are shared by <b>all left, right and top "
+                                  "labels</b> — changing them here restyles every one of them "
+                                  "(the Markers tab updates to match).")
+                    note.setWordWrap(True)
+                    form.addRow(note)
+
+                font_box = QFontComboBox(); font_box.setCurrentFont(QFont(str(family0)))
+                font_box.setToolTip(f"Font family — applies to {scope}.")
+                size_spin = QSpinBox(); size_spin.setRange(1, 150); size_spin.setValue(int(size0))
+                size_spin.setToolTip(f"Font size in points (as it appears when the saved/copied "
+                                     f"figure is inserted at 100%) — applies to {scope}.")
+                bold_cb = QCheckBox("Bold"); bold_cb.setChecked(bool(bold0))
+                bold_cb.setToolTip(f"Bold text — applies to {scope}.")
+                italic_cb = QCheckBox("Italic"); italic_cb.setChecked(bool(italic0))
+                italic_cb.setToolTip(f"Italic text — applies to {scope}.")
+                style_row = QHBoxLayout(); style_row.addWidget(bold_cb); style_row.addWidget(italic_cb)
+                style_row.addStretch(1)
+                color_btn, get_color = self._color_button(
+                    dlg, color0, "Text Color", f"Pick the text color — applies to {scope}.", live)
+                form.addRow("Font:", font_box)
+                form.addRow("Size:", size_spin)
+                form.addRow("Style:", style_row)
+                form.addRow("Color:", color_btn)
+
+                hint = QLabel("Changes preview live on the image. Cancel restores the original.")
+                hint.setStyleSheet("color: palette(mid);")
+                form.addRow(hint)
+                buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                buttons.button(QDialogButtonBox.Ok).setToolTip("Keep the changes (undoable with Ctrl+Z).")
+                buttons.button(QDialogButtonBox.Cancel).setToolTip("Discard the changes and restore the original.")
+                buttons.accepted.connect(dlg.accept); buttons.rejected.connect(dlg.reject)
+                form.addRow(buttons)
+
+                text_edit.textChanged.connect(live)
+                font_box.currentFontChanged.connect(live)
+                size_spin.valueChanged.connect(live)
+                bold_cb.toggled.connect(live)
+                italic_cb.toggled.connect(live)
+                text_edit.setFocus()
+
+                lst = None if is_custom else {'left_marker': self.left_markers,
+                                              'right_marker': self.right_markers,
+                                              'top_marker': self.top_markers}[t]
+
+                def read_values():
+                    return (text_edit.text(), font_box.currentFont().family(), int(size_spin.value()),
+                            bool(bold_cb.isChecked()), bool(italic_cb.isChecked()), get_color().name())
+
+                original = (self._text_item_value(info), str(family0), int(size0), bool(bold0),
+                            bool(italic0), QColor(color0).name())
+
+                def apply_values(v):
+                    text, fam, size, bold, italic, cname = v
+                    if is_custom:
+                        m = list(self.custom_markers[i])
+                        m[2] = text; m[3] = QColor(cname); m[4] = fam; m[5] = size; m[6] = bold; m[7] = italic
+                        self.custom_markers[i] = m
+                    else:
+                        lst[i] = (lst[i][0], text)
+                        self.font_family, self.font_size = fam, size
+                        self.font_bold, self.font_italic = bold, italic
+                        self.font_color = QColor(cname)
+                        self._sync_standard_font_widgets()
+
+                def on_commit(final):
+                    # Top labels have their own source list; keep it (and its text box) in
+                    # step so a later relabel does not undo the edit.
+                    if t == 'top_marker' and final[0] != original[0]:
+                        src = list(getattr(self, 'top_label', []) or [])
+                        if i < len(src) and str(src[i]) == str(original[0]):
+                            src[i] = final[0]
+                            self.top_label = src
+                            if hasattr(self, 'top_marker_input'):
+                                self.top_marker_input.blockSignals(True)
+                                self.top_marker_input.setText(", ".join(map(str, src)))
+                                self.top_marker_input.blockSignals(False)
+                    self.show_mode_status(f"Edited {self._TEXT_ITEM_NAMES.get(t, 'text').lower()} — "
+                                          "Ctrl+Z to undo. Double-click another item to edit it.",
+                                          active_button=getattr(self, 'move_resize_button', None))
+
+                try:
+                    return self._run_live_edit_dialog(dlg, read_values, apply_values, original, on_commit)
+                except Exception:
+                    log_traceback()
+                    return False
+
+            def _edit_shape_item(self, index):
+                """Editor for a custom line / arrow / rectangle (double-click it in
+                Move/Resize): color, thickness and exact coordinates in image pixels.
+                Changes preview live on the image; Cancel restores the original."""
+                sd0 = dict(self.custom_shapes[index])
+                stype = sd0.get('type', 'line')
+                name = {'line': "Line", 'arrow': "Arrow", 'rectangle': "Rectangle"}.get(stype, "Shape")
+                dlg = ManagedDialog(self._modal_dialog_parent())
+                dlg.setWindowTitle(f"Edit {name}")
+                form = QFormLayout(dlg)
+                live = lambda *_a: dlg._live_preview()
+
+                img_w = float(self.image.width()) if self.image else 10000.0
+                img_h = float(self.image.height()) if self.image else 10000.0
+                lim = max(img_w, img_h) * 5.0
+
+                def _coord(value, tip):
+                    sp = QDoubleSpinBox(); sp.setDecimals(1); sp.setRange(-lim, lim)
+                    sp.setSingleStep(1.0); sp.setValue(float(value)); sp.setSuffix(" px")
+                    sp.setToolTip(tip + "\n(Image pixels from the image's top-left corner; values "
+                                        "outside the image place the shape in the padding.)")
+                    sp.valueChanged.connect(live)
+                    return sp
+
+                color_btn, get_color = self._color_button(
+                    dlg, QColor(sd0.get('color', '#000000')), f"{name} Color",
+                    f"Pick the {name.lower()}'s color.", live)
+                thick = QDoubleSpinBox(); thick.setDecimals(1); thick.setRange(0.5, 150.0)
+                thick.setSingleStep(0.5); thick.setValue(float(sd0.get('thickness', 1.0) or 1.0))
+                thick.setSuffix(" px")
+                thick.setToolTip("Line thickness in image pixels (the arrow head scales with it). "
+                                 "Also becomes the 'Size:' for the next shape you draw.")
+                thick.valueChanged.connect(live)
+                form.addRow("Color:", color_btn)
+                form.addRow("Thickness:", thick)
+
+                if stype == 'rectangle':
+                    x, y, w, h = [float(v) for v in sd0['rect']]
+                    sx = _coord(x, "Left edge (X) of the rectangle.")
+                    sy = _coord(y, "Top edge (Y) of the rectangle.")
+                    sw = _coord(w, "Width of the rectangle."); sw.setRange(1.0, lim)
+                    sh = _coord(h, "Height of the rectangle."); sh.setRange(1.0, lim)
+                    r1 = QHBoxLayout(); r1.addWidget(QLabel("X")); r1.addWidget(sx); r1.addWidget(QLabel("Y")); r1.addWidget(sy)
+                    r2 = QHBoxLayout(); r2.addWidget(QLabel("W")); r2.addWidget(sw); r2.addWidget(QLabel("H")); r2.addWidget(sh)
+                    form.addRow("Position:", r1)
+                    form.addRow("Size:", r2)
+                    def read_values():
+                        return (get_color().name(), round(thick.value(), 3),
+                                (round(sx.value(), 3), round(sy.value(), 3), round(sw.value(), 3), round(sh.value(), 3)))
+                    original = (QColor(sd0.get('color', '#000000')).name(), round(float(sd0.get('thickness', 1.0) or 1.0), 3),
+                                tuple(round(v, 3) for v in (x, y, w, h)))
+                    def apply_values(v):
+                        c, th, rect = v
+                        sd = dict(self.custom_shapes[index]); sd['color'] = c; sd['thickness'] = th; sd['rect'] = tuple(rect)
+                        self.custom_shapes[index] = sd
+                else:
+                    (x1, y1), (x2, y2) = [tuple(map(float, p)) for p in (sd0['start'], sd0['end'])]
+                    ax1 = _coord(x1, "Start point X."); ay1 = _coord(y1, "Start point Y.")
+                    ax2 = _coord(x2, f"End point X{' (the arrow head)' if stype == 'arrow' else ''}.")
+                    ay2 = _coord(y2, f"End point Y{' (the arrow head)' if stype == 'arrow' else ''}.")
+                    r1 = QHBoxLayout(); r1.addWidget(QLabel("X")); r1.addWidget(ax1); r1.addWidget(QLabel("Y")); r1.addWidget(ay1)
+                    r2 = QHBoxLayout(); r2.addWidget(QLabel("X")); r2.addWidget(ax2); r2.addWidget(QLabel("Y")); r2.addWidget(ay2)
+                    form.addRow("Start:", r1)
+                    form.addRow("End (head):" if stype == 'arrow' else "End:", r2)
+                    def read_values():
+                        return (get_color().name(), round(thick.value(), 3),
+                                ((round(ax1.value(), 3), round(ay1.value(), 3)), (round(ax2.value(), 3), round(ay2.value(), 3))))
+                    original = (QColor(sd0.get('color', '#000000')).name(), round(float(sd0.get('thickness', 1.0) or 1.0), 3),
+                                ((round(x1, 3), round(y1, 3)), (round(x2, 3), round(y2, 3))))
+                    def apply_values(v):
+                        c, th, (p1, p2) = v
+                        sd = dict(self.custom_shapes[index]); sd['color'] = c; sd['thickness'] = th
+                        sd['start'] = tuple(p1); sd['end'] = tuple(p2)
+                        self.custom_shapes[index] = sd
+
+                hint = QLabel("Changes preview live on the image. Cancel restores the original.")
+                hint.setStyleSheet("color: palette(mid);")
+                form.addRow(hint)
+                buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                buttons.button(QDialogButtonBox.Ok).setToolTip("Keep the changes (undoable with Ctrl+Z).")
+                buttons.button(QDialogButtonBox.Cancel).setToolTip("Discard the changes and restore the original.")
+                buttons.accepted.connect(dlg.accept); buttons.rejected.connect(dlg.reject)
+                form.addRow(buttons)
+
+                def on_commit(final):
+                    try:
+                        self._sync_size_spin_from_thickness(final[1])
+                    except Exception:
+                        pass
+                    self.show_mode_status(f"Edited {name.lower()} — Ctrl+Z to undo. Double-click "
+                                          "another item to edit it.",
+                                          active_button=getattr(self, 'move_resize_button', None))
+
+                try:
+                    return self._run_live_edit_dialog(dlg, read_values, apply_values, original, on_commit)
+                except Exception:
+                    log_traceback()
+                    return False
+
+            def _sync_standard_font_widgets(self):
+                """Reflect the standard-label font (family, size, colour) into the Markers
+                tab controls without re-triggering their handlers."""
+                try:
+                    if hasattr(self, 'font_combo_box'):
+                        self.font_combo_box.blockSignals(True)
+                        self.font_combo_box.setCurrentFont(QFont(self.font_family))
+                        self.font_combo_box.blockSignals(False)
+                    if hasattr(self, 'font_size_spinner'):
+                        self.font_size_spinner.blockSignals(True)
+                        self.font_size_spinner.setValue(int(self.font_size))
+                        self.font_size_spinner.blockSignals(False)
+                    if hasattr(self, 'font_color_button'):
+                        self._update_color_button_style(self.font_color_button, self.font_color)
+                except Exception:
+                    log_traceback()
+
+            def _standard_marker_anchor_ls(self, marker_type, index, outline=None):
+                """Label-space point a standard label is anchored to: (outline centre x, band y)
+                for left/right labels, (lane x, outline centre y) for top labels."""
+                try:
+                    label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                    img_w = float(self.image.width()); img_h = float(self.image.height())
+                    scale = min(label_w / img_w, label_h / img_h)
+                    off_x = (label_w - img_w * scale) / 2.0; off_y = (label_h - img_h * scale) / 2.0
+                    if outline is None:
+                        outline = self._get_standard_marker_bounding_box_in_label_space(marker_type, index)
+                    c = outline.boundingRect().center() if isinstance(outline, QPolygonF) else outline.center()
+                    if marker_type == 'top_marker':
+                        return QPointF(off_x + float(self.top_markers[index][0]) * scale, c.y())
+                    lst = self.left_markers if marker_type == 'left_marker' else self.right_markers
+                    return QPointF(c.x(), off_y + float(lst[index][0]) * scale)
+                except Exception:
+                    if outline is None:
+                        return QPointF()
+                    return outline.boundingRect().center() if isinstance(outline, QPolygonF) else outline.center()
+
+            def _get_standard_marker_bounding_box_in_label_space(self, marker_type, marker_index):
+                """Clickable outline of a standard L/R/top marker in (unzoomed) label space:
+                a QRectF for left/right labels, a QPolygonF for (possibly rotated) top labels.
+
+                Measured from the exact layout the shared renderer draws
+                (_annotation_text_items), so the selection box always hugs the visible text.
+                It used to measure a QFont built from the POINT size, which only matched the
+                drawn text when the on-screen font scale happened to be 1."""
+                if marker_type not in ('left_marker', 'right_marker', 'top_marker'):
+                    return None
+                poly = self._annotation_outline_ls(marker_type, marker_index)
+                if poly is None or poly.isEmpty():
+                    return None
+                if marker_type == 'top_marker':
+                    return poly
+                return poly.boundingRect()
 
             def _point_segment_distance_ls(self, p, a, b):
                 """Shortest distance from point `p` to the segment a→b (all QPointF)."""
@@ -25599,7 +26110,14 @@ if __name__ == "__main__":
                         if bbox_ls and bbox_ls.contains(clicked_point_ls):
                             self.moving_custom_item_info = {'type': 'marker', 'index': i}
                             self.resizing_corner_index = -1 # Markers can't be resized this way
-                            self.shape_points_at_drag_start_label = [bbox_ls.center()]
+                            # Drag from the marker's stored anchor (its text centre point),
+                            # not the outline centre, which is off by glyph-box rounding.
+                            _lw = float(self.live_view_label.width()); _lh = float(self.live_view_label.height())
+                            _iw = float(self.image.width()); _ih = float(self.image.height())
+                            _sc = min(_lw / _iw, _lh / _ih)
+                            self.shape_points_at_drag_start_label = [QPointF(
+                                (_lw - _iw * _sc) / 2.0 + float(self.custom_markers[i][0]) * _sc,
+                                (_lh - _ih * _sc) / 2.0 + float(self.custom_markers[i][1]) * _sc)]
                             item_selected = True
                             break
                 
@@ -25618,14 +26136,12 @@ if __name__ == "__main__":
                                 self.moving_custom_item_info = {'type': marker_type_str, 'index': i}
                                 self.resizing_corner_index = -1
                                 
-                                # --- START FIX for DRAG ANCHOR ---
-                                if marker_type_str == 'top_marker':
-                                    # For top markers (QPolygonF), use its bounding rect's center.
-                                    self.shape_points_at_drag_start_label = [selection_shape.boundingRect().center()]
-                                else:
-                                    # For L/R markers (QRectF), the object itself is the rect. Use its center.
-                                    self.shape_points_at_drag_start_label = [selection_shape.center()]
-                                # --- END FIX ---
+                                # Drag from the label's TRUE anchor (band y for L/R, lane x for
+                                # top), not the centre of its outline: the outline hugs the ink,
+                                # whose centre is not the anchor (rotated top labels especially),
+                                # so the label jumped by that offset on the first move.
+                                self.shape_points_at_drag_start_label = [
+                                    self._standard_marker_anchor_ls(marker_type_str, i, selection_shape)]
 
                                 item_selected = True
                                 break
@@ -25911,8 +26427,17 @@ if __name__ == "__main__":
 
             def handle_custom_item_drag_release(self, event):
                 if self.current_selection_mode in ["dragging_custom_item", "resizing_custom_item"] and event.button() == Qt.LeftButton:
-                    self.save_state()
-                    self.is_modified = True
+                    # A plain click (select, or the first half of a double-click) moves
+                    # nothing -- don't push an undo entry for it, or Ctrl+Z appears to do
+                    # nothing and every double-click edit costs two undo steps.
+                    try:
+                        _moved = (self.live_view_label.transform_point(event.position())
+                                  - self.initial_mouse_pos_for_shape_drag_label).manhattanLength() > 0.5
+                    except Exception:
+                        _moved = True
+                    if _moved:
+                        self.save_state()
+                        self.is_modified = True
                     self.shape_points_at_drag_start_label = []
                     self.initial_mouse_pos_for_shape_drag_label = QPointF()
                     self.resizing_corner_index = -1
@@ -25923,31 +26448,12 @@ if __name__ == "__main__":
                     self.update_live_view()
             
             def _get_marker_bounding_box_in_label_space(self, marker_index):
-                if not (self.image and not self.image.isNull()): return None
-                try:
-                    marker_data = self.custom_markers[marker_index]
-                    x_img, y_img, text, _color, font_family, font_size, is_bold, is_italic = marker_data
-                    label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
-                    img_w = float(self.image.width()); img_h = float(self.image.height())
-                    if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0): return None
-                    scale = min(label_w / img_w, label_h / img_h)
-                    offset_x = (label_w - img_w * scale) / 2.0; offset_y = (label_h - img_h * scale) / 2.0
-                    anchor_x_ls = x_img * scale + offset_x; anchor_y_ls = y_img * scale + offset_y
-                    
-                    font = QFont(font_family, int(font_size)); font.setBold(is_bold); font.setItalic(is_italic)
-                    fm = QFontMetrics(font)
-                    # Add a small padding to the bounding box to make it easier to click
-                    padding = 4
-                    text_rect = fm.boundingRect(text).adjusted(-padding, -padding, padding, padding)
-                    
-                    return QRectF(
-                        anchor_x_ls - text_rect.width() / 2.0,
-                        anchor_y_ls - text_rect.height() / 2.0,
-                        text_rect.width(),
-                        text_rect.height()
-                    )
-                except (IndexError, Exception):
+                """Clickable box of a custom marker in (unzoomed) label space, measured from
+                the same layout the shared renderer draws."""
+                poly = self._annotation_outline_ls('marker', marker_index)
+                if poly is None or poly.isEmpty():
                     return None
+                return poly.boundingRect()
 
             def _get_shape_bounding_box_and_handles_in_label_space(self, shape_index):
                 if not (self.image and not self.image.isNull()): return None, None
@@ -26460,6 +26966,7 @@ if __name__ == "__main__":
                     "window_x": getattr(self, "saved_window_x", None) if getattr(self, "saved_window_x", None) is not None else int(self.pos().x()),
                     "window_y": getattr(self, "saved_window_y", None) if getattr(self, "saved_window_y", None) is not None else int(self.pos().y()),
                     "use_gpu": getattr(self, "use_gpu", True),
+                    "experimental_gaussian_deconv": bool(getattr(self, "experimental_gaussian_deconv", False)),
                     "ui_scale_preference": getattr(self, "ui_scale_preference", 1.0),
                     "ui_font_size": int(getattr(self, "ui_font_size", self.DEFAULT_UI_FONT_SIZE)),
                     "plot_font_size": int(getattr(self, "plot_font_size", self.DEFAULT_PLOT_FONT_SIZE)),
@@ -26642,6 +27149,9 @@ if __name__ == "__main__":
                         
                         # --- New Settings ---
                         self.use_gpu = loaded_json.get("use_gpu", True)
+                        # Experimental, opt-in: heavy band fitting that can freeze the UI.
+                        self.experimental_gaussian_deconv = bool(
+                            loaded_json.get("experimental_gaussian_deconv", False))
                         self.ui_scale_preference = loaded_json.get("ui_scale_preference", 1.0)
                         try:
                             cv2.ocl.setUseOpenCL(self.use_gpu)
@@ -26703,6 +27213,7 @@ if __name__ == "__main__":
                     # Defaults for new file (first boot). Open the viewer at ~80% of the
                     # screen instead of the tiny 550x350.
                     self.use_gpu = True
+                    self.experimental_gaussian_deconv = False
                     self.viewer_fixed_width, self.viewer_fixed_height = self._default_viewer_size()
                     self.safe_content_width = 1000
                     
@@ -26874,6 +27385,7 @@ if __name__ == "__main__":
                     # -----------------------------------------------------------
 
                     # Initialize backups
+                    self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = self.image.copy()
                     self.original_image = self.image.copy()
                     # A DIFFERENT picture is now the master, so any Image 1 still sitting in
@@ -27190,11 +27702,53 @@ if __name__ == "__main__":
 
                 options = QFileDialog.Options()
                 file_path, _ = QFileDialog.getOpenFileName(
-                    self, "Open Image File", "", "Image Files (*.png *.jpg *.bmp *.tif *.tiff)", options=options
+                    self, "Open Image File", "",
+                    "Image Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.PNG *.JPG *.JPEG *.BMP *.TIF *.TIFF)",
+                    options=options
                 )
                 
                 if file_path:
                     self.open_image_from_path(file_path)
+
+            def _file_read_error_text(self, file_path):
+                """User-facing reason an image could not be opened. Probes the file directly
+                so a macOS privacy denial (Downloads / Desktop / Documents / cloud folders), a
+                cloud placeholder that is not downloaded yet, or a locked file is reported as
+                such instead of as an unreadable image."""
+                name = os.path.basename(file_path)
+                lower = file_path.lower()
+                in_cloud = any(k in lower for k in ("cloudstorage", "google drive", "googledrive",
+                                                    "onedrive", "box-box", "box drive", "dropbox",
+                                                    "mobile documents", "icloud"))
+                reason = None
+                try:
+                    with open(file_path, "rb") as fh:
+                        head = fh.read(16)
+                    if not head:
+                        reason = ("The file is empty. If it is in a cloud folder it may not have "
+                                  "finished downloading.")
+                except PermissionError:
+                    if sys.platform == "darwin":
+                        reason = ("macOS blocked access to this folder.\n\nOpen System Settings ▸ "
+                                  "Privacy & Security ▸ Files and Folders (or Full Disk Access) and "
+                                  "allow Gel Blot Analyzer (or the Terminal/IDE running it) to "
+                                  "access this location" + (", including cloud storage." if in_cloud else ".")
+                                  + "\nThen open the image again.")
+                    else:
+                        reason = ("Permission denied. Another program (a sync client or antivirus) "
+                                  "may be locking the file, or Windows Controlled Folder Access may "
+                                  "be blocking this folder.")
+                except FileNotFoundError:
+                    reason = "The file no longer exists at this location."
+                except OSError as e:
+                    reason = f"The file could not be read ({e.strerror or e})."
+                if reason is None:
+                    reason = ("The file could be read but is not an image format this app "
+                              "understands (PNG, JPEG, BMP, TIFF), or it is damaged.")
+                    if in_cloud:
+                        reason += ("\n\nIt is in a cloud folder: make sure it is fully downloaded "
+                                   "(right-click ▸ Make available offline / Download now).")
+                return f"Could not open '{name}'.\n\n{reason}"
 
             def _load_tiff_preserve_depth(self, file_path):
                 """Read a .tif/.tiff with tifffile so its TRUE bit depth and channel count
@@ -27233,6 +27787,7 @@ if __name__ == "__main__":
                 """Loads the image from a specific path (Used by Load Action and Drag & Drop)."""
                 self.reset_image() # Clear previous state
 
+                self._clear_font_reference()   # content changed: fonts follow the new canvas
                 self.image_path = file_path
                 loaded_image = QImage(self.image_path)
 
@@ -27259,7 +27814,8 @@ if __name__ == "__main__":
                         # Fallback to Qt's loader if Pillow fails
                         loaded_image = QImage(self.image_path)
                         if loaded_image.isNull():
-                            QMessageBox.warning(self, "Error", f"Failed to load image '{os.path.basename(file_path)}' with both Pillow and Qt.")
+                            QMessageBox.warning(self, "Could Not Open Image",
+                                                self._file_read_error_text(file_path))
                             self.image_path = None
                             return
 
@@ -27525,10 +28081,20 @@ if __name__ == "__main__":
                 self.font_rotation = int(font_options_data.get("font_rotation", -45))
                 self.top_rotation_axis = font_options_data.get("top_rotation_axis", "left")
                 self.marker_symbol = font_options_data.get("marker_symbol", getattr(self, 'marker_symbol', '⎯'))
+                self.font_bold = bool(font_options_data.get("font_bold", False))
+                self.font_italic = bool(font_options_data.get("font_italic", False))
                 self._sync_marker_symbol_ui_from_value()
                 font_color_str = font_options_data.get("font_color", "#000000")
                 self.font_color = QColor(font_color_str)
                 if not self.font_color.isValid(): self.font_color = QColor(0,0,0) # Fallback
+                # Pinned label-font reference (see _font_reference_dims). Absent in configs
+                # written before it existed -> fonts follow the canvas, exactly as they did.
+                _ref = font_options_data.get("font_reference_size")
+                try:
+                    self.font_reference_size = ((int(_ref[0]), int(_ref[1]))
+                                                if _ref and int(_ref[0]) > 0 and int(_ref[1]) > 0 else None)
+                except Exception:
+                    self.font_reference_size = None
 
 
                 # --- Marker Shifts and Slider Value Logic ---
@@ -27756,6 +28322,12 @@ if __name__ == "__main__":
                         "font_color": self.font_color.name(),
                         "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'),
                         "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
+                        "font_bold": bool(getattr(self, 'font_bold', False)),
+                        "font_italic": bool(getattr(self, 'font_italic', False)),
+                        # Only written once padding has pinned it, so unpadded figures keep
+                        # exactly the config format (and rendering) they always had.
+                        **({"font_reference_size": list(self.font_reference_size)}
+                           if getattr(self, 'font_reference_size', None) else {}),
                     },
                     "slider_ranges": {
                          "left": getattr(self, 'left_slider_range', [-100, 1000]),
@@ -28096,7 +28668,7 @@ if __name__ == "__main__":
 
                 Robust to two cases: (1) genuine transparent padding (a fully-transparent border,
                 alpha == 0), and (2) padding that a later edit has flattened to a solid uniform
-                colour — detected as a border whose every pixel equals the corner pixel. The
+                color — detected as a border whose every pixel equals the corner pixel. The
                 uniform fallback is capped so it can never strip more than ~45% of a side."""
                 try:
                     if not self.image_master or self.image_master.isNull():
@@ -28124,7 +28696,7 @@ if __name__ == "__main__":
                             if left or right or top or bottom:
                                 return left, right, top, bottom
 
-                    # 2) Fallback: uniform solid-colour border equal to the corner pixel
+                    # 2) Fallback: uniform solid-color border equal to the corner pixel
                     #    (covers padding that has been flattened to opaque white/black by a
                     #    later contrast/rasterize step, so alpha-based detection would miss it).
                     rgb = np_img[:, :, :min(3, ch)]
@@ -28173,6 +28745,10 @@ if __name__ == "__main__":
                     return
 
                 self.save_state()
+
+                # Freeze the label font scale at the pre-padding canvas so padding moves the
+                # labels WITH the content but never resizes them (see _font_reference_dims).
+                self._pin_font_reference()
 
                 try:
                     # 1. Update marker / shape coordinates by the NET shift = new padding minus
@@ -28846,7 +29422,7 @@ if __name__ == "__main__":
                              temp_rotated = image_to_transform.transformed(transform_rotate, interactive_xform)
                              if not temp_rotated.isNull(): image_to_transform = temp_rotated
 
-                    if abs(taper_value) > 0.01:
+                    if abs(taper_value) > 0.005:
                         if not image_to_transform.isNull() and image_to_transform.width() > 0 and image_to_transform.height() > 0:
                             try:
                                 np_image = self.qimage_to_numpy(image_to_transform)
@@ -28873,8 +29449,20 @@ if __name__ == "__main__":
                         self._end_render_timing()
                         return
 
+                    # With a pending rotation/skew the transformed image is fitted into the
+                    # rect the UNTRANSFORMED image occupies -- the same rect the markers are
+                    # mapped into and the same fit the save/copy exporters use
+                    # (_paint_export_layers) -- rather than into the whole viewer, whose
+                    # aspect ratio would otherwise change the preview's scale vs. the file.
+                    fit_w, fit_h = render_width, render_height
+                    if ((abs(orientation) > 0.01 or abs(taper_value) > 0.005)
+                            and image_for_view.width() > 0 and image_for_view.height() > 0):
+                        _su = min(render_width / float(image_for_view.width()),
+                                  render_height / float(image_for_view.height()))
+                        fit_w = max(1, int(round(image_for_view.width() * _su)))
+                        fit_h = max(1, int(round(image_for_view.height() * _su)))
                     scaled_image_for_render_canvas = image_to_transform.scaled(
-                        render_width, render_height, Qt.KeepAspectRatio, interactive_xform
+                        fit_w, fit_h, Qt.KeepAspectRatio, interactive_xform
                     )
                     if scaled_image_for_render_canvas.isNull():
                         if hasattr(self, 'live_view_label'): self.live_view_label.clear()
@@ -29081,7 +29669,7 @@ if __name__ == "__main__":
             
             def _draw_arrow_on_painter(self, painter, start_pt, end_pt, line_width):
                 """Draws an arrow (shaft + filled triangular head at `end_pt`) between two
-                QPointF in the painter's current coordinate space. The current pen colour is
+                QPointF in the painter's current coordinate space. The current pen color is
                 used for both the shaft and the head; `line_width` is the shaft width in
                 painter units. The arrowhead scales with the thickness but stays visible for
                 thin shafts. Used by every render path (live view, saved figure, clipboard)."""
@@ -29279,6 +29867,7 @@ if __name__ == "__main__":
                     if self.undo_stack: self.undo_action_m()
                     return
 
+                self._clear_font_reference()   # content changed: fonts follow the new canvas
                 self.image_master = new_master_image.copy()
                 self.image_before_contrast = self.image_master.copy()
                 self.image_contrasted = self.image_master.copy()
@@ -29447,6 +30036,7 @@ if __name__ == "__main__":
                     if rotated_image_high_res.isNull():
                         raise ValueError("Rotation resulted in an invalid image.")
 
+                    self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = rotated_image_high_res.copy()
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
@@ -29658,6 +30248,7 @@ if __name__ == "__main__":
                     # Qt detaches them the moment anything writes, so they stay independent
                     # while costing no memcpy. On a large gel this turns four full-image
                     # copies into one.
+                    self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = cropped_qimage
                     self.image_before_contrast = QImage(self.image_master)
                     self.image_contrasted = QImage(self.image_master)
@@ -30182,6 +30773,7 @@ if __name__ == "__main__":
                         raise ValueError("Perspective correction resulted in an invalid image.")
 
                     # 6. Update image state
+                    self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = warped_image.copy()
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
@@ -30588,94 +31180,8 @@ if __name__ == "__main__":
 
                 # --- DRAWING LOGIC WITH OVERLAYS ---
 
-                # 0. Draw Background (Master) — unless Image 1 (Base) replaces it.
-                # Image 1 is the bottom layer when placed; painting the master under it too
-                # double-composites the base and defeats region clipping on Image 1. Same
-                # rule as the live preview and Rasterize, so save/copy matches the screen.
-                if not self._overlay_base_layer_active():
-                    # Determine Main Image Settings
-                    main_settings = {}
-                    if hasattr(self, 'main_levels_gamma'):
-                        main_settings['levels_gamma'] = self.main_levels_gamma
-                    else:
-                        main_settings['levels_gamma'] = {
-                            'black_point': self.black_point_slider.value(),
-                            'white_point': self.white_point_slider.value(),
-                            'gamma': self.gamma_slider.value()
-                        }
-                    main_settings['is_inverted'] = self.main_image_is_inverted
-                    main_settings['channel_mixer'] = getattr(self, 'channel_mixer_data', self._get_default_adjustments()['channel_mixer']).copy()
-                    main_settings['unsharp_mask'] = getattr(self, 'unsharp_mask_data', self._get_default_adjustments()['unsharp_mask']).copy()
-                    main_settings['clahe'] = getattr(self, 'clahe_data', self._get_default_adjustments()['clahe']).copy()
+                self._paint_export_layers(painter, canvas_width, canvas_height, render_scale)
 
-                    # We need to generate the base image with these settings
-                    # fully_adjusted_master might range from "Main Settings" (if in Main context) or "Overlay Settings" (bleed)
-                    # Safest is to re-generate it here specifically for the background layer
-                    base_bg_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
-
-                    painter.setOpacity(1.0)
-                    painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_bg_img, QRectF(base_bg_img.rect()))
-
-                # Effective opacities = individual Mixing % x Global Mixing % for each image.
-                op1_blend, op2_blend = self._overlay_effective_opacities()
-
-                # 1. Base Layer (Image 1 - Overlay 1)
-                if has_img1 and adjusted_img1:
-                    # Draw Image 1
-                    painter.setOpacity(op1_blend)
-
-                    w_scaled = adjusted_img1.width() * (self._overlay_scale_factor(1)) * render_scale
-                    h_scaled = adjusted_img1.height() * (self._overlay_scale_factor(1)) * render_scale
-                    x_scaled = self.image1_position[0] * render_scale
-                    y_scaled = self.image1_position[1] * render_scale
-
-                    rect1_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
-
-                    rotation1 = self.image1_rotation_slider.value() / 10.0
-                    # 'Select Regions to Keep' was previously honoured ONLY by the live
-                    # preview and Rasterize, so saving/copying a figure without rasterizing
-                    # first silently ignored the regions and blended the layer over the whole
-                    # image. Clip here too so the saved file matches the screen.
-                    clip_path1 = (self._build_region_clip_path(canvas_width, canvas_height)
-                                  if self._region_target_includes(1) else None)
-                    painter.save()
-                    if clip_path1 is not None:
-                        painter.setClipPath(clip_path1)
-                    if abs(rotation1) > 0.01:
-                        center_point = rect1_draw.center()
-                        painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
-                    painter.drawImage(rect1_draw, adjusted_img1)
-                    painter.restore()
-                # Note: removed the 'else draw Standard Master' block since we draw Master at step 0 now.
-
-
-                # 2. Overlay Layer (Image 2)
-                if has_img2 and adjusted_img2:
-                    painter.setOpacity(op2_blend)
-
-                    w_scaled = adjusted_img2.width() * (self._overlay_scale_factor(2)) * render_scale
-                    h_scaled = adjusted_img2.height() * (self._overlay_scale_factor(2)) * render_scale
-                    x_scaled = self.image2_position[0] * render_scale
-                    y_scaled = self.image2_position[1] * render_scale
-
-                    rect2_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
-
-                    rotation2 = self.image2_rotation_slider.value() / 10.0
-                    # Union clip so Image 2 is composited exactly once through all regions
-                    # (no double-blending where they overlap) — same as the live preview.
-                    clip_path2 = (self._build_region_clip_path(canvas_width, canvas_height)
-                                  if self._region_target_includes(2) else None)
-                    painter.save()
-                    if clip_path2 is not None:
-                        painter.setClipPath(clip_path2)
-                    if abs(rotation2) > 0.01:
-                        center_point = rect2_draw.center()
-                        painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
-                    painter.drawImage(rect2_draw, adjusted_img2)
-                    painter.restore()
-
-                    # Reset opacity for markers
-                    painter.setOpacity(1.0)
 
                 # ... (Draw Annotations - Code remains exactly the same as previous) ...
                 # Use a FIXED reference viewer size (NOT the user-adjustable Settings ▸
@@ -30689,58 +31195,14 @@ if __name__ == "__main__":
                 # FIXED 550x350 reference (font_scale_factor) — never the UI Scale, the on-screen
                 # viewer size, or the monitor DPI — so the saved/copied image is byte-identical on
                 # every machine and every display. (Do NOT reintroduce a ui_scale factor here.)
-                font_scale_factor = (render_scale / scale_native_to_view) if scale_native_to_view > 1e-6 else float(render_scale)
+                font_scale_factor = self._export_font_scale_factor(render_scale, native_width, native_height)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
 
                 def map_img_coords_to_canvas(img_x, img_y):
                     return QPointF(img_x * render_scale, img_y * render_scale)
 
-                std_font = QFont(self.font_family); std_font.setPixelSize(int(self.font_size * font_scale_factor))
-                painter.setFont(std_font); painter.setPen(self.font_color)
-                fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
-                for y_img, text in self.left_markers:
-                    anchor_x = self.left_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = self.marker_label_text(text, 'left')
-                    painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
-                for y_img, text in self.right_markers:
-                    anchor_x = self.right_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = self.marker_label_text(text, 'right')
-                    painter.drawText(QPointF(anchor_x, anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
-                for x_img, text in self.top_markers:
-                    painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
-                    painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
-                    _save_axis = getattr(self, 'top_rotation_axis', 'left')
-                    if _save_axis == 'center':
-                        _fm_save = QFontMetrics(painter.font())
-                        _save_x_off = -_fm_save.horizontalAdvance(str(text)) / 2.0
-                    elif _save_axis == 'right':
-                        _fm_save = QFontMetrics(painter.font())
-                        _save_x_off = -_fm_save.horizontalAdvance(str(text))
-                    else:
-                        _save_x_off = 0.0
-                    painter.drawText(QPointF(_save_x_off, 0), str(text)); painter.restore()
-                for marker_data in getattr(self, "custom_markers", []):
-                    try:
-                        x, y, text, color, font, size, is_bold, is_italic = marker_data
-                        custom_font = QFont(font); custom_font.setPixelSize(int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
-                        painter.setFont(custom_font); painter.setPen(QColor(color))
-                        fm = QFontMetrics(custom_font); rect = fm.boundingRect(text)
-                        draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
-                        painter.drawText(draw_pos, text)
-                    except Exception: pass
-                for shape_data in getattr(self, "custom_shapes", []):
-                    try:
-                        shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
-                        pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
-                        if shape_type == 'line':
-                            painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
-                        elif shape_type == 'arrow':
-                            self._draw_arrow_on_painter(painter, map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']), max(1.0, thickness * render_scale))
-                        elif shape_type == 'rectangle':
-                            x, y, w, h = shape_data['rect']
-                            painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
-                    except Exception: pass
+                self._paint_annotations(painter, render_scale, font_scale_factor)
 
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
@@ -30965,6 +31427,350 @@ if __name__ == "__main__":
                 except Exception:
                     log_traceback()
 
+            # ------------------------------------------------------------------ #
+            # Shared annotation renderer (live view == save == copy)              #
+            # ------------------------------------------------------------------ #
+            # The live view, Save, Copy and the PDF/report render used to draw the
+            # MW markers, top labels, custom markers and shapes with FOUR separate
+            # copies of the drawing code. They drifted: the preview truncated font
+            # pixel sizes at screen resolution (a 12 pt label became 7 px on screen but
+            # 58 px in the export, so the text widths and right-aligned left labels
+            # moved), used capHeight/2 instead of height*0.3 for the top-label baseline,
+            # a 0.5 px instead of 1 px minimum pen, a 7 px arrow-head floor in SCREEN
+            # units (a big head on screen, a 2 px head in the file), drew custom markers
+            # and shapes in the opposite z-order, and Copy ignored overlays and a pending
+            # Rotation/Skew entirely. Everything now goes through _paint_annotations(),
+            # in EXPORT-CANVAS units; the live view simply maps that canvas onto the
+            # label with a painter transform, so text is laid out at the export font size
+            # and what you see is, geometrically, exactly what gets saved.
+            EXPORT_RENDER_SCALE = 3
+            EXPORT_REF_W = 550.0
+            EXPORT_REF_H = 350.0
+
+            def _font_reference_dims(self, native_w, native_h):
+                """Image size that on-image label fonts are scaled from.
+
+                Normally the canvas itself (the historical behaviour, so every existing figure
+                renders exactly as before). Apply Padding PINS it to the pre-padding canvas
+                (`font_reference_size`) so adding, changing or removing padding never changes
+                any label's size -- which is what made text grow, slide off its underline and
+                creep into neighbouring labels, and made Set Recommended chase its own tail.
+                Operations that genuinely change the content (load, crop, rotate, perspective,
+                Auto Gel) clear the pin. Saved in the config, restored by undo."""
+                ref = getattr(self, 'font_reference_size', None)
+                try:
+                    if ref and float(ref[0]) > 0 and float(ref[1]) > 0:
+                        return float(ref[0]), float(ref[1])
+                except Exception:
+                    pass
+                return float(native_w), float(native_h)
+
+            def _pin_font_reference(self):
+                """Pin the font reference to the CURRENT canvas if it is not pinned yet (called
+                just before padding changes the canvas)."""
+                if getattr(self, 'font_reference_size', None):
+                    return
+                img = self.image_master if (self.image_master and not self.image_master.isNull()) else self.image
+                if img is not None and not img.isNull() and img.width() > 0 and img.height() > 0:
+                    self.font_reference_size = (int(img.width()), int(img.height()))
+
+            def _clear_font_reference(self):
+                """Fonts follow the canvas again (content itself changed)."""
+                self.font_reference_size = None
+
+            def _export_font_scale_factor(self, render_scale, native_w, native_h):
+                """Font multiplier used by every exporter: fonts are sized against a FIXED
+                550x350 reference (never the viewer, UI scale or monitor DPI)."""
+                try:
+                    native_w, native_h = self._font_reference_dims(native_w, native_h)
+                    if native_w <= 0 or native_h <= 0:
+                        return float(render_scale)
+                    s = min(self.EXPORT_REF_W / native_w, self.EXPORT_REF_H / native_h)
+                    return (render_scale / s) if s > 1e-6 else float(render_scale)
+                except Exception:
+                    return float(render_scale)
+
+            def _annotation_text_items(self, render_scale, font_scale_factor, kinds=None):
+                """Every text annotation exactly as it is drawn, in export-canvas units.
+
+                Returns a list of dicts: kind ('left_marker' / 'right_marker' /
+                'top_marker' / 'marker'), index, text, font, color and `transform` — the
+                QTransform that maps the text's own baseline-origin frame onto the canvas
+                (used for outlines / hit-testing / padding), plus `paint_tf` + `paint_pt`, the
+                equivalent draw call (drawText(paint_pt) under paint_tf) kept in the exact
+                form the exporters always used so their output stays byte-identical."""
+                items = []
+                rs = float(render_scale)
+                want = (lambda k: True) if kinds is None else (lambda k: k in kinds)
+
+                std_font = QFont(self.font_family)
+                std_font.setPixelSize(max(1, int(self.font_size * font_scale_factor)))
+                std_font.setBold(bool(getattr(self, 'font_bold', False)))
+                std_font.setItalic(bool(getattr(self, 'font_italic', False)))
+                fm_std = QFontMetrics(std_font)
+                std_color = QColor(getattr(self, 'font_color', QColor(Qt.black)))
+
+                if want('left_marker'):
+                    ax = float(getattr(self, 'left_marker_shift_added', 0)) * rs
+                    for i, (y_img, text) in enumerate(getattr(self, 'left_markers', [])):
+                        full = self.marker_label_text(text, 'left')
+                        if not full:
+                            continue
+                        pt = QPointF(ax - fm_std.horizontalAdvance(full),
+                                     float(y_img) * rs + self.marker_baseline_offset(fm_std, full))
+                        t = QTransform.fromTranslate(pt.x(), pt.y())
+                        items.append({'kind': 'left_marker', 'index': i, 'text': full,
+                                      'font': std_font, 'color': std_color, 'transform': t,
+                                      'paint_tf': None, 'paint_pt': pt})
+                if want('right_marker'):
+                    ax = float(getattr(self, 'right_marker_shift_added', 0)) * rs
+                    for i, (y_img, text) in enumerate(getattr(self, 'right_markers', [])):
+                        full = self.marker_label_text(text, 'right')
+                        if not full:
+                            continue
+                        pt = QPointF(ax, float(y_img) * rs + self.marker_baseline_offset(fm_std, full))
+                        t = QTransform.fromTranslate(pt.x(), pt.y())
+                        items.append({'kind': 'right_marker', 'index': i, 'text': full,
+                                      'font': std_font, 'color': std_color, 'transform': t,
+                                      'paint_tf': None, 'paint_pt': pt})
+                if want('top_marker'):
+                    ay = float(getattr(self, 'top_marker_shift_added', 0)) * rs + fm_std.height() * 0.3
+                    axis = getattr(self, 'top_rotation_axis', 'left')
+                    for i, (x_img, text) in enumerate(getattr(self, 'top_markers', [])):
+                        s = str(text)
+                        if axis == 'center':
+                            x_off = -fm_std.horizontalAdvance(s) / 2.0
+                        elif axis == 'right':
+                            x_off = -float(fm_std.horizontalAdvance(s))
+                        else:
+                            x_off = 0.0
+                        pre = QTransform()
+                        pre.translate(float(x_img) * rs, ay)
+                        pre.rotate(float(getattr(self, 'font_rotation', 0)))
+                        t = QTransform(pre); t.translate(x_off, 0.0)
+                        items.append({'kind': 'top_marker', 'index': i, 'text': s,
+                                      'font': std_font, 'color': std_color, 'transform': t,
+                                      'paint_tf': pre, 'paint_pt': QPointF(x_off, 0.0)})
+                if want('marker'):
+                    for i, md in enumerate(getattr(self, 'custom_markers', [])):
+                        try:
+                            x, y, text, color, family, size, is_bold, is_italic = md
+                            f = QFont(family)
+                            f.setPixelSize(max(1, int(float(size) * font_scale_factor)))
+                            f.setBold(bool(is_bold)); f.setItalic(bool(is_italic))
+                            rect = QFontMetrics(f).boundingRect(str(text))
+                            c = color if isinstance(color, QColor) else QColor(color)
+                            if not c.isValid():
+                                c = QColor(Qt.black)
+                            pt = QPointF(float(x) * rs - rect.center().x(),
+                                         float(y) * rs - rect.center().y())
+                            t = QTransform.fromTranslate(pt.x(), pt.y())
+                            items.append({'kind': 'marker', 'index': i, 'text': str(text),
+                                          'font': f, 'color': c, 'transform': t,
+                                          'paint_tf': None, 'paint_pt': pt})
+                        except Exception:
+                            continue
+                return items
+
+            def _paint_annotations(self, painter, render_scale, font_scale_factor):
+                """Draw MW markers, top labels, custom shapes and custom markers onto an
+                export-canvas-space painter. The ONE routine used by the live view, Save,
+                Copy and the PDF/report render."""
+                rs = float(render_scale)
+                painter.save()
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+                def _draw_text_item(it):
+                    painter.save()
+                    painter.setFont(it['font']); painter.setPen(it['color'])
+                    if it.get('paint_tf') is not None:
+                        painter.setTransform(it['paint_tf'], True)
+                    painter.drawText(it['paint_pt'], it['text'])
+                    painter.restore()
+
+                # 1. Standard L/R/top markers.
+                for it in self._annotation_text_items(render_scale, font_scale_factor,
+                                                      kinds=('left_marker', 'right_marker', 'top_marker')):
+                    _draw_text_item(it)
+
+                # 2. Custom shapes (under the custom text, so labels stay readable).
+                def _cv(p):
+                    return QPointF(float(p[0]) * rs, float(p[1]) * rs)
+                for shape_data in getattr(self, 'custom_shapes', []):
+                    try:
+                        stype = shape_data.get('type')
+                        th = float(shape_data.get('thickness', 1.0) or 1.0)
+                        pen_w = max(1.0, th * rs)
+                        pen = QPen(QColor(shape_data.get('color', '#000000')), pen_w)
+                        painter.setPen(pen); painter.setBrush(Qt.NoBrush)
+                        if stype == 'line':
+                            painter.drawLine(_cv(shape_data['start']), _cv(shape_data['end']))
+                        elif stype == 'arrow':
+                            self._draw_arrow_on_painter(painter, _cv(shape_data['start']),
+                                                        _cv(shape_data['end']), pen_w)
+                        elif stype == 'rectangle':
+                            x, y, w, h = shape_data['rect']
+                            painter.drawRect(QRectF(_cv((x, y)), QSizeF(float(w) * rs, float(h) * rs)))
+                    except Exception:
+                        continue
+
+                # 3. Custom markers / free text.
+                for it in self._annotation_text_items(render_scale, font_scale_factor, kinds=('marker',)):
+                    _draw_text_item(it)
+                painter.restore()
+
+            def _annotation_outline_ls(self, kind, index, pad_ls=4.0):
+                """Clickable outline (QPolygonF, label space, unzoomed) of one text
+                annotation, measured from the SAME layout _paint_annotations draws, or
+                None."""
+                if not (self.image and not self.image.isNull()) or not hasattr(self, 'live_view_label'):
+                    return None
+                try:
+                    label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                    img_w = float(self.image.width()); img_h = float(self.image.height())
+                    if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0):
+                        return None
+                    scale = min(label_w / img_w, label_h / img_h)
+                    off_x = (label_w - img_w * scale) / 2.0; off_y = (label_h - img_h * scale) / 2.0
+                    rs = float(self.EXPORT_RENDER_SCALE)
+                    fsf = self._export_font_scale_factor(rs, img_w, img_h)
+                    for it in self._annotation_text_items(rs, fsf, kinds=(kind,)):
+                        if it['index'] != index:
+                            continue
+                        k = scale / rs
+                        pad_c = float(pad_ls) / k if k > 1e-9 else 0.0
+                        box = QRectF(QFontMetrics(it['font']).boundingRect(it['text']))
+                        box = box.adjusted(-pad_c, -pad_c, pad_c, pad_c)
+                        poly_c = it['transform'].map(QPolygonF(box))
+                        return QPolygonF([QPointF(off_x + p.x() * k, off_y + p.y() * k) for p in poly_c])
+                except Exception:
+                    return None
+                return None
+
+            def _paint_export_layers(self, painter, canvas_width, canvas_height, render_scale):
+                """Draw the image layers of an export canvas exactly as the live view
+                composes them: the fully-adjusted master (with any PENDING Rotation /
+                Tapering Skew baked in and fitted like the preview does), then the placed
+                Image 1 / Image 2 overlays with their opacity, rotation and region clips.
+                Shared by Save, Copy and the PDF/report render so none of them can drop a
+                layer the screen shows (Copy used to ignore overlays and a pending
+                rotation altogether)."""
+                has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
+                has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
+                adjusted_img1 = getattr(self, 'image1_adjusted_preview', None) if has_img1 else None
+                adjusted_img2 = getattr(self, 'image2_adjusted_preview', None) if has_img2 else None
+                if self._overlay_base_layer_active():
+                    painter.fillRect(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), Qt.white)
+                # 0. Draw Background (Master) — unless Image 1 (Base) replaces it.
+                # Image 1 is the bottom layer when placed; painting the master under it too
+                # double-composites the base and defeats region clipping on Image 1. Same
+                # rule as the live preview and Rasterize, so save/copy matches the screen.
+                if not self._overlay_base_layer_active():
+                    # Determine Main Image Settings
+                    main_settings = {}
+                    # Same levels source as the live view (apply_all_adjustments): the
+                    # sliders while they edit the Main Image, the stored main levels while
+                    # they are editing an overlay. (Reading main_levels_gamma unconditionally
+                    # could export stale levels the screen was no longer showing.)
+                    if getattr(self, 'adjustment_context', "Main Image") == "Main Image":
+                        main_settings['levels_gamma'] = {
+                            'black_point': self.black_point_slider.value(),
+                            'white_point': self.white_point_slider.value(),
+                            'gamma': self.gamma_slider.value()
+                        }
+                    else:
+                        main_settings['levels_gamma'] = getattr(
+                            self, 'main_levels_gamma',
+                            self._get_default_adjustments(for_image=self.image_master)['levels_gamma'])
+                    main_settings['is_inverted'] = self.main_image_is_inverted
+                    main_settings['channel_mixer'] = getattr(self, 'channel_mixer_data', self._get_default_adjustments()['channel_mixer']).copy()
+                    main_settings['unsharp_mask'] = getattr(self, 'unsharp_mask_data', self._get_default_adjustments()['unsharp_mask']).copy()
+                    main_settings['clahe'] = getattr(self, 'clahe_data', self._get_default_adjustments()['clahe']).copy()
+
+                    # We need to generate the base image with these settings
+                    # fully_adjusted_master might range from "Main Settings" (if in Main context) or "Overlay Settings" (bleed)
+                    # Safest is to re-generate it here specifically for the background layer
+                    base_bg_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
+
+                    painter.setOpacity(1.0)
+                    # A pending (not yet applied) Rotation Angle / Tapering Skew is shown by the
+                    # live view, so bake it in here too and fit the result into the image rect
+                    # the same way update_live_view does. No-op when nothing is pending.
+                    pending_img = self._apply_pending_view_geometry(base_bg_img)
+                    if (pending_img is not None and pending_img is not base_bg_img and not pending_img.isNull()
+                            and pending_img.width() > 0 and pending_img.height() > 0):
+                        _s = min(canvas_width / float(pending_img.width()), canvas_height / float(pending_img.height()))
+                        _dw = pending_img.width() * _s; _dh = pending_img.height() * _s
+                        painter.save(); painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                        painter.drawImage(QRectF((canvas_width - _dw) / 2.0, (canvas_height - _dh) / 2.0, _dw, _dh),
+                                          pending_img, QRectF(pending_img.rect()))
+                        painter.restore()
+                    else:
+                        painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_bg_img, QRectF(base_bg_img.rect()))
+
+                # Effective opacities = individual Mixing % x Global Mixing % for each image.
+                op1_blend, op2_blend = self._overlay_effective_opacities()
+
+                # 1. Base Layer (Image 1 - Overlay 1)
+                if has_img1 and adjusted_img1:
+                    # Draw Image 1
+                    painter.setOpacity(op1_blend)
+
+                    w_scaled = adjusted_img1.width() * (self._overlay_scale_factor(1)) * render_scale
+                    h_scaled = adjusted_img1.height() * (self._overlay_scale_factor(1)) * render_scale
+                    x_scaled = self.image1_position[0] * render_scale
+                    y_scaled = self.image1_position[1] * render_scale
+
+                    rect1_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
+
+                    rotation1 = self.image1_rotation_slider.value() / 10.0
+                    # 'Select Regions to Keep' was previously honoured ONLY by the live
+                    # preview and Rasterize, so saving/copying a figure without rasterizing
+                    # first silently ignored the regions and blended the layer over the whole
+                    # image. Clip here too so the saved file matches the screen.
+                    clip_path1 = (self._build_region_clip_path(canvas_width, canvas_height)
+                                  if self._region_target_includes(1) else None)
+                    painter.save()
+                    if clip_path1 is not None:
+                        painter.setClipPath(clip_path1)
+                    if abs(rotation1) > 0.01:
+                        center_point = rect1_draw.center()
+                        painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
+                    painter.drawImage(rect1_draw, adjusted_img1)
+                    painter.restore()
+                # Note: removed the 'else draw Standard Master' block since we draw Master at step 0 now.
+
+
+                # 2. Overlay Layer (Image 2)
+                if has_img2 and adjusted_img2:
+                    painter.setOpacity(op2_blend)
+
+                    w_scaled = adjusted_img2.width() * (self._overlay_scale_factor(2)) * render_scale
+                    h_scaled = adjusted_img2.height() * (self._overlay_scale_factor(2)) * render_scale
+                    x_scaled = self.image2_position[0] * render_scale
+                    y_scaled = self.image2_position[1] * render_scale
+
+                    rect2_draw = QRectF(x_scaled, y_scaled, w_scaled, h_scaled)
+
+                    rotation2 = self.image2_rotation_slider.value() / 10.0
+                    # Union clip so Image 2 is composited exactly once through all regions
+                    # (no double-blending where they overlap) — same as the live preview.
+                    clip_path2 = (self._build_region_clip_path(canvas_width, canvas_height)
+                                  if self._region_target_includes(2) else None)
+                    painter.save()
+                    if clip_path2 is not None:
+                        painter.setClipPath(clip_path2)
+                    if abs(rotation2) > 0.01:
+                        center_point = rect2_draw.center()
+                        painter.translate(center_point); painter.rotate(rotation2); painter.translate(-center_point)
+                    painter.drawImage(rect2_draw, adjusted_img2)
+                    painter.restore()
+
+                    # Reset opacity for markers
+                    painter.setOpacity(1.0)
+                painter.setOpacity(1.0)
+
             def _render_annotated_gel_qimage(self, render_scale=3, draw_densitometry_boxes=False):
                 """Render the fully-adjusted gel image plus all annotations (MW markers,
                 custom markers/shapes, oligomer overlay) onto a high-resolution QImage —
@@ -30997,7 +31803,7 @@ if __name__ == "__main__":
 
                 # 2. Use the single, reliable helper function to apply all adjustments
                 #    to the master image, just like save_image() does.
-                base_image_for_copy = self._apply_all_adjustments_to_image(self.image_master, current_adjustment_settings)
+                # (Layers are drawn by _paint_export_layers below, exactly like save_image.)
                 # --- END FIX ---
 
 
@@ -31012,7 +31818,7 @@ if __name__ == "__main__":
                 
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
                 # Draw the fully adjusted high-quality image as the base
-                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_image_for_copy, QRectF(base_image_for_copy.rect()))
+                self._paint_export_layers(painter, canvas_width, canvas_height, render_scale)
                 
                 # --- The rest of the drawing logic for annotations is correct and remains unchanged ---
                 # Use a FIXED reference viewer size (NOT the user-adjustable Settings ▸
@@ -31026,54 +31832,11 @@ if __name__ == "__main__":
                 # FIXED 550x350 reference (font_scale_factor) — never the UI Scale, the on-screen
                 # viewer size, or the monitor DPI — so the saved/copied image is byte-identical on
                 # every machine and every display. (Do NOT reintroduce a ui_scale factor here.)
-                font_scale_factor = (render_scale / scale_native_to_view) if scale_native_to_view > 1e-6 else float(render_scale)
+                font_scale_factor = self._export_font_scale_factor(render_scale, native_width, native_height)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
                 def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
-                std_font = QFont(self.font_family)
-                std_font.setPixelSize(int(self.font_size * font_scale_factor))
-                painter.setFont(std_font); painter.setPen(self.font_color)
-                fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
-                for y_img, text in self.left_markers:
-                    anchor_x = self.left_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = self.marker_label_text(text, 'left')
-                    painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
-                for y_img, text in self.right_markers:
-                    anchor_x = self.right_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = self.marker_label_text(text, 'right')
-                    painter.drawText(QPointF(anchor_x, anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
-                for x_img, text in self.top_markers:
-                    painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
-                    painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
-                    _clip_axis = getattr(self, 'top_rotation_axis', 'left')
-                    if _clip_axis == 'center':
-                        _fm_clip = QFontMetrics(painter.font())
-                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text)) / 2.0
-                    elif _clip_axis == 'right':
-                        _fm_clip = QFontMetrics(painter.font())
-                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text))
-                    else:
-                        _clip_x_off = 0.0
-                    painter.drawText(QPointF(_clip_x_off, 0), str(text)); painter.restore()
-                for marker_data in getattr(self, "custom_markers", []):
-                    try:
-                        x, y, text, color, font, size, is_bold, is_italic = marker_data
-                        custom_font = QFont(font); custom_font.setPixelSize(int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
-                        painter.setFont(custom_font); painter.setPen(QColor(color))
-                        fm = QFontMetrics(custom_font); rect = fm.boundingRect(text)
-                        draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
-                        painter.drawText(draw_pos, text)
-                    except Exception: pass
-                for shape_data in getattr(self, "custom_shapes", []):
-                    try:
-                        shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
-                        pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
-                        if shape_type == 'line': painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
-                        elif shape_type == 'arrow': self._draw_arrow_on_painter(painter, map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']), max(1.0, thickness * render_scale))
-                        elif shape_type == 'rectangle':
-                            x, y, w, h = shape_data['rect']
-                            painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
-                    except Exception: pass
+                self._paint_annotations(painter, render_scale, font_scale_factor)
 
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
 
@@ -31168,7 +31931,7 @@ if __name__ == "__main__":
 
                 # 2. Use the single, reliable helper function to apply all adjustments
                 #    to the master image, just like save_image() does.
-                base_image_for_copy = self._apply_all_adjustments_to_image(self.image_master, current_adjustment_settings)
+                # (Layers are drawn by _paint_export_layers below, exactly like save_image.)
                 # --- END FIX ---
 
 
@@ -31183,7 +31946,7 @@ if __name__ == "__main__":
                 
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
                 # Draw the fully adjusted high-quality image as the base
-                painter.drawImage(QRectF(0.0, 0.0, float(canvas_width), float(canvas_height)), base_image_for_copy, QRectF(base_image_for_copy.rect()))
+                self._paint_export_layers(painter, canvas_width, canvas_height, render_scale)
                 
                 # --- The rest of the drawing logic for annotations is correct and remains unchanged ---
                 # Use a FIXED reference viewer size (NOT the user-adjustable Settings ▸
@@ -31197,54 +31960,11 @@ if __name__ == "__main__":
                 # FIXED 550x350 reference (font_scale_factor) — never the UI Scale, the on-screen
                 # viewer size, or the monitor DPI — so the saved/copied image is byte-identical on
                 # every machine and every display. (Do NOT reintroduce a ui_scale factor here.)
-                font_scale_factor = (render_scale / scale_native_to_view) if scale_native_to_view > 1e-6 else float(render_scale)
+                font_scale_factor = self._export_font_scale_factor(render_scale, native_width, native_height)
 
                 painter.setRenderHint(QPainter.Antialiasing, True); painter.setRenderHint(QPainter.TextAntialiasing, True)
                 def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
-                std_font = QFont(self.font_family)
-                std_font.setPixelSize(int(self.font_size * font_scale_factor))
-                painter.setFont(std_font); painter.setPen(self.font_color)
-                fm_std = QFontMetrics(std_font); y_offset_baseline = fm_std.height() * 0.3
-                for y_img, text in self.left_markers:
-                    anchor_x = self.left_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = self.marker_label_text(text, 'left')
-                    painter.drawText(QPointF(anchor_x - fm_std.horizontalAdvance(full_text), anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
-                for y_img, text in self.right_markers:
-                    anchor_x = self.right_marker_shift_added * render_scale; anchor_y = y_img * render_scale
-                    full_text = self.marker_label_text(text, 'right')
-                    painter.drawText(QPointF(anchor_x, anchor_y + self.marker_baseline_offset(fm_std, full_text)), full_text)
-                for x_img, text in self.top_markers:
-                    painter.save(); anchor_x = x_img * render_scale; anchor_y = self.top_marker_shift_added * render_scale
-                    painter.translate(anchor_x, anchor_y + y_offset_baseline); painter.rotate(self.font_rotation)
-                    _clip_axis = getattr(self, 'top_rotation_axis', 'left')
-                    if _clip_axis == 'center':
-                        _fm_clip = QFontMetrics(painter.font())
-                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text)) / 2.0
-                    elif _clip_axis == 'right':
-                        _fm_clip = QFontMetrics(painter.font())
-                        _clip_x_off = -_fm_clip.horizontalAdvance(str(text))
-                    else:
-                        _clip_x_off = 0.0
-                    painter.drawText(QPointF(_clip_x_off, 0), str(text)); painter.restore()
-                for marker_data in getattr(self, "custom_markers", []):
-                    try:
-                        x, y, text, color, font, size, is_bold, is_italic = marker_data
-                        custom_font = QFont(font); custom_font.setPixelSize(int(size * font_scale_factor)); custom_font.setBold(is_bold); custom_font.setItalic(is_italic)
-                        painter.setFont(custom_font); painter.setPen(QColor(color))
-                        fm = QFontMetrics(custom_font); rect = fm.boundingRect(text)
-                        draw_pos = QPointF(x * render_scale - rect.center().x(), y * render_scale - rect.center().y())
-                        painter.drawText(draw_pos, text)
-                    except Exception: pass
-                for shape_data in getattr(self, "custom_shapes", []):
-                    try:
-                        shape_type, color_str, thickness = shape_data.get('type'), shape_data.get('color'), shape_data.get('thickness')
-                        pen = QPen(QColor(color_str), max(1.0, thickness * render_scale)); painter.setPen(pen)
-                        if shape_type == 'line': painter.drawLine(map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']))
-                        elif shape_type == 'arrow': self._draw_arrow_on_painter(painter, map_img_coords_to_canvas(*shape_data['start']), map_img_coords_to_canvas(*shape_data['end']), max(1.0, thickness * render_scale))
-                        elif shape_type == 'rectangle':
-                            x, y, w, h = shape_data['rect']
-                            painter.drawRect(QRectF(map_img_coords_to_canvas(x, y), QSizeF(w * render_scale, h * render_scale)))
-                    except Exception: pass
+                self._paint_annotations(painter, render_scale, font_scale_factor)
 
                 self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
@@ -31492,7 +32212,7 @@ if __name__ == "__main__":
 
             def _update_toggle_markers_button_style(self):
                 """Update the Show/Hide Markers button LABEL to reflect the current state.
-                Per user request the button no longer changes colour — only its text toggles
+                Per user request the button no longer changes color — only its text toggles
                 between 'Hide Markers' and 'Show Markers'."""
                 if hasattr(self, 'toggle_markers_button'):
                     self.toggle_markers_button.setText(
@@ -31532,7 +32252,7 @@ if __name__ == "__main__":
                 lbl.setText(f"  ⚠ {count} hidden — use 'Show Markers'  ")
                 lbl.setToolTip(
                     "The densitometry lane boxes are currently hidden.\n"
-                    "Regions you draw still exist and can still be analysed — they are just "
+                    "Regions you draw still exist and can still be analyzed — they are just "
                     "not drawn on the image.\n"
                     "Click 'Show Markers' (bottom of the Analysis tab) to see them again.")
                 # Amber on both themes; readable without relying on the theme's palette.
@@ -31932,6 +32652,7 @@ if __name__ == "__main__":
 
                     # Restore Master Image
                     if hasattr(self, 'original_image') and self.original_image and not self.original_image.isNull():
+                        self._clear_font_reference()   # content changed: fonts follow the new canvas
                         self.image_master = self.original_image.copy()
                         self.image = self.image_master.copy() 
                         self.image_before_padding = None
@@ -31940,6 +32661,7 @@ if __name__ == "__main__":
                         self.image_padded = False
                         self.contrast_applied = False 
                     else:
+                        self._clear_font_reference()   # content changed: fonts follow the new canvas
                         self.image = None; self.image_master = None; self.original_image = None
                         self.image_before_padding = None; self.image_contrasted = None; self.image_before_contrast = None
                         self.image_padded = False; self.contrast_applied = False
@@ -32223,12 +32945,13 @@ if __name__ == "__main__":
                     # incomplete state objects, causing the "no valid master image" error.
                     "image_master": self.image_master.copy() if self.image_master else None,
                     # --- END FIX ---
+                    "font_reference_size": getattr(self, 'font_reference_size', None),
                     "left_markers": self.left_markers.copy(), "right_markers": self.right_markers.copy(), "top_markers": self.top_markers.copy(),
                     "custom_markers": [list(m) for m in getattr(self, "custom_markers", [])], "custom_shapes": [dict(s) for s in getattr(self, "custom_shapes", [])],
                     "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
                     "image_contrasted": self.image_contrasted.copy() if self.image_contrasted else None,
                     "image_before_contrast": self.image_before_contrast.copy() if self.image_before_contrast else None,
-                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation, "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'), "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
+                    "font_family": self.font_family, "font_size": self.font_size, "font_color": self.font_color, "font_rotation": self.font_rotation, "font_bold": bool(getattr(self, 'font_bold', False)), "font_italic": bool(getattr(self, 'font_italic', False)), "top_rotation_axis": getattr(self, 'top_rotation_axis', 'left'), "marker_symbol": getattr(self, 'marker_symbol', '⎯'),
                     "left_marker_shift_added": self.left_marker_shift_added, "right_marker_shift_added": self.right_marker_shift_added, "top_marker_shift_added": self.top_marker_shift_added,
                     "quantities_peak_area_dict": self.quantities_peak_area_dict.copy(), "quantities": self.quantities.copy(), "protein_quantities": self.protein_quantities.copy(), "standard_protein_areas": self.standard_protein_areas.copy(),
                     "custom_marker_color": self.custom_marker_color, "custom_font_family": self.custom_font_type_dropdown.currentText(), "custom_font_size": self.custom_font_size_spinbox.value(),
@@ -32526,7 +33249,7 @@ if __name__ == "__main__":
                 The gel/blot pixels go in as a single high-resolution background picture, and
                 every annotation (Left/Right/Top markers, custom markers, and custom
                 lines/rectangles) is added as a NATIVE PowerPoint text box / shape. Each label
-                can therefore be clicked and its text, font, size and colour edited directly in
+                can therefore be clicked and its text, font, size and color edited directly in
                 PowerPoint (or copied from there into Word). Positions, fonts and sizes mirror
                 the WYSIWYG PNG export (see save_image) so it opens looking like the raster
                 figure.
@@ -32597,7 +33320,7 @@ if __name__ == "__main__":
                 label_width = 550.0; label_height = 350.0
                 scale_native_to_view = (min(label_width / img_w, label_height / img_h)
                                         if img_w > 0 and img_h > 0 else 1.0)
-                native_font_scale = (1.0 / scale_native_to_view) if scale_native_to_view > 1e-6 else 1.0
+                native_font_scale = self._export_font_scale_factor(1.0, img_w, img_h)
 
                 def on_img_px(pt_size):
                     return max(4, int(round(float(pt_size) * native_font_scale)))
@@ -32927,11 +33650,15 @@ if __name__ == "__main__":
                                                iw, ih, color)
                             else:
                                 _add_text(seg_text, x_left, baseline_y, seg_adv, fm,
-                                          pt_size, family, color, pin='left')
+                                          pt_size, family, color, pin='left',
+                                          bold=bool(qfont.bold()) if qfont is not None else False,
+                                          italic=bool(qfont.italic()) if qfont is not None else False)
 
                     # Standard marker font metrics at on-image size.
                     std_px = on_img_px(self.font_size)
                     std_qfont = QFont(self.font_family); std_qfont.setPixelSize(std_px)
+                    std_bold = bool(getattr(self, 'font_bold', False)); std_italic = bool(getattr(self, 'font_italic', False))
+                    std_qfont.setBold(std_bold); std_qfont.setItalic(std_italic)
                     fm_std = QFontMetrics(std_qfont)
                     std_h = fm_std.height()
                     main_color = self.font_color if getattr(self, 'font_color', None) else QColor("#000000")
@@ -32986,9 +33713,10 @@ if __name__ == "__main__":
                         # baseline that reproduces the rotated centre we just computed.
                         _add_text(str(text), cbx, cby - (fm_std.descent() - fm_std.ascent()) / 2.0,
                                   adv, fm_std, self.font_size,
-                                  self.font_family, main_color, pin='center', rotation=theta)
+                                  self.font_family, main_color, pin='center', rotation=theta,
+                                  bold=std_bold, italic=std_italic)
 
-                    # --- Custom markers (own font/size/weight/style/colour), centred on (x,y) ---
+                    # --- Custom markers (own font/size/weight/style/color), centred on (x,y) ---
                     for marker_tuple in getattr(self, "custom_markers", []):
                         try:
                             is_bold = False; is_italic = False
@@ -33114,7 +33842,7 @@ if __name__ == "__main__":
                     self, "Success",
                     f"Editable PowerPoint saved at\n{file_path}\n\n"
                     "Open it in PowerPoint — every label is a real text box you can click and "
-                    "edit (text, font, size, colour). Copy from PowerPoint into Word if needed.")
+                    "edit (text, font, size, color). Copy from PowerPoint into Word if needed.")
 
 
             # --- restored: get_image_format ---
