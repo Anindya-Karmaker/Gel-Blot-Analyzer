@@ -40,7 +40,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.4"
+APP_VERSION = "9.5"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -758,11 +758,13 @@ if __name__ == "__main__":
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, QListWidgetItem,
-            QStackedWidget, QProgressDialog, QSplitter, QToolTip, QFormLayout,
+            QStackedWidget, QProgressDialog, QSplitter, QToolTip, QFormLayout, QLayout,
+            QAbstractSpinBox,
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
+            QKeyEvent,
         )
         from PySide6.QtCore import (
             Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop, QEvent,
@@ -1331,7 +1333,7 @@ if __name__ == "__main__":
 
                 # --- Plot ---
                 self.fig, self.ax = plt.subplots(figsize=(5, 4))
-                self.canvas = FigureCanvas(self.fig)
+                self.canvas = _ResponsiveCanvas(self.fig, scale_fonts=False)
                 main_layout.addWidget(self.canvas)
 
                 # --- Results ---
@@ -1718,7 +1720,11 @@ if __name__ == "__main__":
                 
                 self.glycan_mass_input = QLineEdit()
                 self.glycan_mass_input.setValidator(QDoubleValidator(0, 100, 2, self))
-                self.glycan_mass_input.setPlaceholderText("e.g., 2.5")
+                self.glycan_mass_input.setPlaceholderText("0 (no glycans)")
+                self.glycan_mass_input.setText("0")
+                self.glycan_mass_input.setToolTip(
+                    "Average mass of ONE glycan in kDa. 0 = no glycosylation: only the oligomer "
+                    "base masses are calculated (a blank field is treated as 0).")
                 self.glycan_mass_input.setFixedWidth(80)
                 self.glycan_mass_input.textChanged.connect(self.update_potential_fragments)
                 self.glycan_mass_input.textChanged.connect(self._on_manual_glycan_mass_edit)
@@ -1729,6 +1735,8 @@ if __name__ == "__main__":
                 params_layout.addLayout(glycan_layout, 1, 1, 1, 3)
                 params_layout.addWidget(QLabel("Number of Glycans:"), 2, 0)
                 self.num_glycans_spinbox = QSpinBox(); self.num_glycans_spinbox.setRange(0, 50)
+                # User picks a glycan count with no glycan type yet -> default to the first type.
+                self.num_glycans_spinbox.valueChanged.connect(self._on_num_glycans_changed)
                 self.num_glycans_spinbox.valueChanged.connect(self.update_potential_fragments)
                 params_layout.addWidget(self.num_glycans_spinbox, 2, 1)
                 params_layout.addWidget(QLabel("Number of Oligomers:"), 2, 2)
@@ -1780,9 +1788,9 @@ if __name__ == "__main__":
                     if not matched:
                         self.glycan_type_combo.setCurrentText("Custom...")
                 else:
-                    # Default
+                    # Default: no glycan type, mass 0 -> oligomers are still calculated.
                     self.glycan_type_combo.setCurrentIndex(0)
-                    self.glycan_mass_input.clear()
+                    self.glycan_mass_input.setText("0")
 
                 self.glycan_mass_input.blockSignals(False)
                 self.glycan_type_combo.blockSignals(False)
@@ -2034,6 +2042,28 @@ if __name__ == "__main__":
                 elif mass >= 0.0: self.glycan_mass_input.setText(str(mass))
                 self.glycan_mass_input.blockSignals(False); self.update_potential_fragments()
 
+            def _current_glycan_mass(self):
+                """Avg. glycan mass from the field; blank or invalid counts as 0."""
+                try:
+                    return max(0.0, float(self.glycan_mass_input.text().strip() or 0.0))
+                except ValueError:
+                    return 0.0
+
+            def _on_num_glycans_changed(self, value):
+                """Choosing a number of glycans before any glycan type would model nothing
+                (mass 0), so select the first real glycan type and fill in its mass."""
+                if value <= 0 or self._current_glycan_mass() > 0:
+                    return
+                first = next((n for n, m in GLYCAN_MASSES_KDA.items() if m > 0), None)
+                if first is None:
+                    return
+                self.glycan_type_combo.blockSignals(True)
+                self.glycan_type_combo.setCurrentText(first)
+                self.glycan_type_combo.blockSignals(False)
+                self.glycan_mass_input.blockSignals(True)
+                self.glycan_mass_input.setText(str(GLYCAN_MASSES_KDA[first]))
+                self.glycan_mass_input.blockSignals(False)
+
             def _on_manual_glycan_mass_edit(self):
                 if not self.glycan_mass_input.signalsBlocked():
                     self.glycan_type_combo.blockSignals(True); self.glycan_type_combo.setCurrentText("Custom..."); self.glycan_type_combo.blockSignals(False)
@@ -2043,7 +2073,7 @@ if __name__ == "__main__":
                 try:
                     base_mw_da = float(self.base_protein_mw_input_da.text())
                     base_mw_kda = base_mw_da / 1000.0
-                    glycan_mass = float(self.glycan_mass_input.text())
+                    glycan_mass = self._current_glycan_mass()   # blank -> 0: oligomers only
                     num_glycans_to_calc = self.num_glycans_spinbox.value()
                     num_oligomers_to_calc = self.num_oligomers_spinbox.value()
                     if base_mw_kda <= 0: raise ValueError
@@ -2126,8 +2156,7 @@ if __name__ == "__main__":
             def get_results(self):
                 try: base_mw_da = float(self.base_protein_mw_input_da.text())
                 except ValueError: base_mw_da = 0.0
-                try: glycan_mass = float(self.glycan_mass_input.text())
-                except ValueError: glycan_mass = 0.0
+                glycan_mass = self._current_glycan_mass()
                 return {
                     "sequence": self.sequence_entry.toPlainText().strip(),
                     "base_mw": base_mw_da / 1000.0,
@@ -2423,7 +2452,7 @@ if __name__ == "__main__":
                     new_shape = dict(original_shape)
                     shape_type = original_shape.get('type')
 
-                    if shape_type in ('line', 'arrow'):
+                    if shape_type in ('line', 'arrow', 'leader'):
                         sx, sy = original_shape.get('start', (0, 0))
                         ex, ey = original_shape.get('end', (0, 0))
                         new_shape['start'] = ((sx * rel_x_scale_factor) + abs_x_shift_pixels,
@@ -2507,7 +2536,7 @@ if __name__ == "__main__":
                     
                     # Coordinates
                     details_str, tooltip_str = "", ""
-                    if shape_type in ('Line', 'Arrow'):
+                    if shape_type in ('Line', 'Arrow', 'Leader'):
                         start, end = shape_data.get('start', (0,0)), shape_data.get('end', (0,0))
                         details_str = f"{start[0]:.1f},{start[1]:.1f},{end[0]:.1f},{end[1]:.1f}"; tooltip_str = "Edit format: X1,Y1,X2,Y2"
                     elif shape_type == 'Rectangle':
@@ -2648,7 +2677,7 @@ if __name__ == "__main__":
                         shape_type_internal = shape_data.get('type')
                         try:
                             coords = [float(c.strip()) for c in new_value.split(',')]
-                            if shape_type_internal in ('line', 'arrow') and len(coords) == 4:
+                            if shape_type_internal in ('line', 'arrow', 'leader') and len(coords) == 4:
                                 shape_data['start'], shape_data['end'] = (coords[0], coords[1]), (coords[2], coords[3])
                                 orig_shape_data['start'] = ((coords[0] - abs_x_shift) / rel_x_scale if rel_x_scale else coords[0],
                                                             (coords[1] - abs_y_shift) / rel_y_scale if rel_y_scale else coords[1])
@@ -3243,7 +3272,7 @@ if __name__ == "__main__":
                     if np.any(quantities > 1e4) or (np.any(quantities < 1e-2) and np.any(quantities != 0)): ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0), useMathText=True)
                     try: fig.set_constrained_layout(True)
                     except AttributeError: plt.tight_layout(pad=0.3)
-                    canvas = FigureCanvas(fig); canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
+                    canvas = _ResponsiveCanvas(fig, scale_fonts=False); canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); canvas.updateGeometry()
                     plt.close(fig)
                     return canvas
                 except Exception as e:
@@ -5284,7 +5313,7 @@ if __name__ == "__main__":
                 gs = self._make_plot_gridspec(height_ratios=[3, 1])
                 self.ax = self.fig.add_subplot(gs[0])
                 self.ax_image = self.fig.add_subplot(gs[1], sharex=self.ax)
-                self.canvas = FigureCanvas(self.fig)
+                self.canvas = _ResponsiveCanvas(self.fig, scale_fonts=False)
                 self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.canvas.mpl_connect('draw_event', self.on_draw)
                 self.canvas.mpl_connect('button_press_event', self.on_canvas_press)
@@ -5493,7 +5522,9 @@ if __name__ == "__main__":
                 manual_actions_layout.addWidget(self.delete_selected_peak_button)
                 manual_actions_layout.addWidget(self.identify_peak_button)
                 manual_actions_layout.addWidget(self.invert_display_button)
-                left_controls_vbox.addWidget(manual_actions_group)
+                # Pinned directly under the graph, OUTSIDE the scrolling settings, so the
+                # peak-editing buttons are always next to the plot they act on.
+                main_layout.insertWidget(main_layout.indexOf(self.canvas) + 1, manual_actions_group)
 
                 # ================== PEAK DETECTION — BASIC =========================== #
                 basic_group = QGroupBox("Peak Detection — Basic")
@@ -5671,14 +5702,11 @@ if __name__ == "__main__":
                     and self.parent_app.copied_peak_regions_data.get("regions")
                 ):
                     self.paste_regions_button.setEnabled(False)
-                copy_paste_layout = QHBoxLayout()
-                copy_paste_layout.addWidget(self.copy_regions_button)
-                copy_paste_layout.addWidget(self.paste_regions_button)
-                left_controls_vbox.addLayout(copy_paste_layout)
+                # (Copy/Paste Regions sit in the fixed bottom row, next to OK / Cancel.)
 
                 left_controls_vbox.addStretch(1)
                 controls_main_hbox.addLayout(left_controls_vbox, stretch=1)
-                # Put all the controls (MW marker → Paste Regions) in a scroll area so they
+                # Put the settings (MW marker → Advanced) in a scroll area so they
                 # never squash the graph; OK/Cancel stay outside (always visible).
                 _controls_container = QWidget()
                 _controls_container.setLayout(controls_main_hbox)
@@ -5696,6 +5724,9 @@ if __name__ == "__main__":
                 self.persist_settings_checkbox.setChecked(persist_checked_initial)
                 bottom_button_layout.addWidget(self.persist_settings_checkbox)
                 bottom_button_layout.addStretch(1)
+                bottom_button_layout.addWidget(self.copy_regions_button)
+                bottom_button_layout.addWidget(self.paste_regions_button)
+                bottom_button_layout.addSpacing(12)
                 self.ok_button = QPushButton("OK")
                 self.ok_button.setDefault(True)
                 self.ok_button.clicked.connect(self.accept_and_close)
@@ -6910,7 +6941,7 @@ if __name__ == "__main__":
                     'is_inverted': settings.get('is_inverted', False),
                     'rolling_ball_radius': settings.get('rolling_ball_radius', 50),
                     'smoothing_sigma': settings.get('smoothing_sigma', 0.0),
-                    'peak_height_factor': settings.get('peak_height_factor', 0.1),
+                    'peak_height_factor': settings.get('peak_height_factor', 0.0),
                     'peak_distance': settings.get('peak_distance', 10),
                     'peak_prominence_factor': settings.get('peak_prominence_factor', 0.02),
                     'min_band_width': settings.get('min_band_width', 3),
@@ -8934,6 +8965,19 @@ if __name__ == "__main__":
                 if not self.app_instance or not self.app_instance.image: # Ensure app and image exist
                     super().wheelEvent(event)
                     return
+                # Interactive Alignment: the wheel over the SELECTED overlay resizes it (as the
+                # mode's instructions say) instead of zooming the view.
+                app = self.app_instance
+                if (getattr(app, 'overlay_mode_active', False) and getattr(app, 'selected_overlay_index', 0) > 0):
+                    try:
+                        idx = app.selected_overlay_index
+                        vis = app._get_overlay_rect_in_label_space(idx, content=True)
+                        if vis is not None and vis.contains(self.transform_point(event.position())):
+                            app._wheel_resize_overlay(idx, event.angleDelta().y())
+                            event.accept()
+                            return
+                    except Exception:
+                        log_traceback()
             
                 # --- Determine Zoom Factor ---
                 # event.angleDelta().y() is typically +/- 120 for one notch on a mouse wheel
@@ -9369,7 +9413,7 @@ if __name__ == "__main__":
                 # --- Selection Highlights ---
                 if self.app_instance.overlay_mode_active and self.app_instance.selected_overlay_index > 0:
                     # (This block remains unchanged)
-                    rect_ls = self.app_instance._get_overlay_rect_in_label_space(self.app_instance.selected_overlay_index)
+                    rect_ls = self.app_instance._get_overlay_rect_in_label_space(self.app_instance.selected_overlay_index, content=True)
                     if rect_ls:
                         highlight_pen = QPen(QColor(0, 255, 255, 200)); pen_width = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 1.0)
                         highlight_pen.setWidthF(pen_width); highlight_pen.setStyle(Qt.DashLine); painter.setPen(highlight_pen); painter.drawRect(rect_ls)
@@ -9389,9 +9433,9 @@ if __name__ == "__main__":
                     elif info['type'] in ['left_marker', 'right_marker', 'top_marker']: selection_shape = self.app_instance._get_standard_marker_bounding_box_in_label_space(info['type'], info['index'])
                     elif info['type'] == 'shape':
                         body_ls, handles_ls = self.app_instance._get_shape_bounding_box_and_handles_in_label_space(info['index'])
-                        if body_ls and handles_ls:
+                        if body_ls:
                             painter.setPen(selection_pen); painter.drawRect(body_ls.adjusted(-2,-2,2,2)); painter.setPen(handle_pen); painter.setBrush(handle_brush)
-                            for idx, handle_pt in enumerate(handles_ls):
+                            for idx, handle_pt in enumerate(handles_ls or []):
                                 if is_resizing and idx == self.app_instance.resizing_corner_index: painter.drawEllipse(handle_pt, handle_radius * 1.2, handle_radius * 1.2)
                                 else: painter.drawEllipse(handle_pt, handle_radius, handle_radius)
                             painter.setBrush(Qt.NoBrush)
@@ -9494,7 +9538,9 @@ if __name__ == "__main__":
                         painter.setFont(predict_font); painter.setPen(Qt.green)
                         loc_y_ls = self.app_instance.protein_location.y(); draw_y_mw_ls = loc_y_ls - (predict_line_rect.top() + predict_line_rect.height() / 2.0)
                         painter.drawText(QPointF(predict_line_draw_start_x_ls, draw_y_mw_ls), line_symbol)
-                    should_draw_oligomer_overlay = (self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_model is not None)
+                    # Placed overlays are real custom items (drawn by _paint_annotations); this
+                    # transient copy only follows the cursor while a prediction is being picked.
+                    should_draw_oligomer_overlay = (self.mw_predict_preview_enabled and self.mw_predict_preview_position is not None and self.app_instance and hasattr(self.app_instance, 'show_oligomer_glyco_overlay_checkbox') and self.app_instance.show_oligomer_glyco_overlay_checkbox.isChecked() and self.app_instance.oligomer_products and self.app_instance.last_mw_prediction_model is not None)
                     if should_draw_oligomer_overlay:
                         line_colors, text_colors = self.app_instance._oligomer_overlay_palette()
 
@@ -9851,7 +9897,258 @@ if __name__ == "__main__":
         # ─────────────────────────────────────────────────────────────────────
         # Automated Gel Analysis wizard — v3 (one-step)
         # ─────────────────────────────────────────────────────────────────────
-        class _WizardCanvas(FigureCanvas):
+        class _FlowLayout(QLayout):
+            """Lays widgets out left-to-right and WRAPS to a new row when the width runs out.
+
+            Used for button rows inside columns whose width is deliberately not driven by
+            their contents (e.g. the Image and Contrast tab's equal-width columns). A plain
+            QHBoxLayout there let Qt squeeze the buttons below their text width, so the
+            labels were clipped ("aysca", "ert to"). Here every widget keeps its full size
+            hint and the row count grows instead (height-for-width), so text is never cut
+            and no scroll bar is needed. Buttons in a row are stretched to share the row
+            width evenly, so a wrapped layout still looks like a tidy grid."""
+            def __init__(self, parent=None, h_spacing=6, v_spacing=6):
+                super().__init__(parent)
+                self._items = []
+                self._h = h_spacing
+                self._v = v_spacing
+
+            def addItem(self, item):
+                self._items.append(item)
+
+            def count(self):
+                return len(self._items)
+
+            def itemAt(self, i):
+                return self._items[i] if 0 <= i < len(self._items) else None
+
+            def takeAt(self, i):
+                return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+            def expandingDirections(self):
+                return Qt.Orientations(0)
+
+            def hasHeightForWidth(self):
+                return True
+
+            def heightForWidth(self, width):
+                return self._do_layout(QRect(0, 0, width, 0), apply=False)
+
+            def setGeometry(self, rect):
+                super().setGeometry(rect)
+                self._do_layout(rect, apply=True)
+
+            def sizeHint(self):
+                return self.minimumSize()
+
+            def minimumSize(self):
+                # Narrowest useful width = the widest single widget (one per row).
+                size = QSize()
+                for it in self._items:
+                    size = size.expandedTo(it.minimumSize()).expandedTo(it.sizeHint())
+                m = self.contentsMargins()
+                return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+            def _rows(self, avail_w):
+                rows, row, row_w = [], [], 0
+                for it in self._items:
+                    if it.isEmpty():
+                        continue
+                    w = it.sizeHint().width()
+                    need = w if not row else row_w + self._h + w
+                    if row and need > avail_w:
+                        rows.append(row); row, row_w = [it], w
+                    else:
+                        row.append(it); row_w = need
+                if row:
+                    rows.append(row)
+                return rows
+
+            def _do_layout(self, rect, apply):
+                m = self.contentsMargins()
+                r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+                y = r.y()
+                rows = self._rows(max(1, r.width()))
+                for row in rows:
+                    row_h = max(it.sizeHint().height() for it in row)
+                    if apply:
+                        natural = sum(it.sizeHint().width() for it in row) + self._h * (len(row) - 1)
+                        extra = max(0, r.width() - natural)
+                        x = r.x()
+                        for k, it in enumerate(row):
+                            # Share the spare width evenly so rows fill the group neatly.
+                            add = extra // len(row) + (1 if k < extra % len(row) else 0)
+                            w = it.sizeHint().width() + add
+                            it.setGeometry(QRect(x, y, w, row_h))
+                            x += w + self._h
+                    y += row_h + self._v
+                if rows:
+                    y -= self._v
+                return y - rect.y() + m.bottom()
+
+
+        class _ResponsiveCanvas(FigureCanvas):
+            """FigureCanvas whose text keeps fitting when the window is resized.
+
+            Plots used to lay themselves out ONCE (tight_layout at draw time) with fixed
+            point-size fonts, so shrinking a window clipped and overlapped labels ("ormalized
+            profile", tick labels colliding between stacked axes) and enlarging it left huge
+            stale margins. Every time the canvas size or its text changes, draw() now:
+
+              1. (optional, `scale_fonts`) scales every font by how much smaller the canvas
+                 is than REF_W x REF_H (never enlarges, never below MIN_PT / MIN_FACTOR).
+                 Base sizes are remembered per artist; a size set by plotting code after
+                 our last pass is taken as the new base, so nothing compounds;
+              2. re-solves the layout (tight_layout, unless the figure already has a layout
+                 engine such as 'constrained', which re-solves on its own each draw);
+              3. shrinks any axis label longer than its own axis so it can't spill onto a
+                 neighbouring axes or off the canvas, then lays out again.
+
+            Steady-state redraws (blitting, same size, same text) skip all of this."""
+            REF_W = 560.0
+            REF_H = 360.0
+            MIN_FACTOR = 0.55
+            MIN_PT = 5.0
+
+            def __init__(self, figure, scale_fonts=True, auto_layout=True, layout_pad=0.3):
+                super().__init__(figure)
+                self.scale_fonts = bool(scale_fonts)
+                self.auto_layout = bool(auto_layout)
+                self.layout_pad = float(layout_pad)
+                self._fit_key = None
+                self._fitting = False
+
+            def resizeEvent(self, event):
+                self._fit_key = None
+                super().resizeEvent(event)
+
+            def draw(self):
+                if not self._fitting:
+                    self._fitting = True
+                    try:
+                        self._fit_text_to_canvas()
+                    except Exception:
+                        log_traceback()
+                    finally:
+                        self._fitting = False
+                super().draw()
+
+            # -- helpers ----------------------------------------------------------- #
+            def _font_factor(self):
+                if not self.scale_fonts:
+                    return 1.0
+                w, h = float(self.width()), float(self.height())
+                return max(self.MIN_FACTOR, min(1.0, w / self.REF_W, h / self.REF_H))
+
+            def _scaled(self, base, f):
+                return base if base <= self.MIN_PT else max(self.MIN_PT, base * f)
+
+            @staticmethod
+            def _axes_axes(fig):
+                out = []
+                for ax in fig.get_axes():
+                    out.extend([ax.xaxis, ax.yaxis])
+                return out
+
+            def _fit_text_to_canvas(self):
+                from matplotlib.text import Text
+                fig = self.figure
+                if self.width() < 20 or self.height() < 20:
+                    return
+                f = self._font_factor()
+                changed = False
+
+                # Tick labels: per AXIS via set_tick_params, so ticks created later inherit
+                # the size (scaling the Text objects directly would compound, because new
+                # ticks copy the already-scaled size of tick 0).
+                tick_ids = set()
+                for axis in self._axes_axes(fig):
+                    ticks = list(axis.get_major_ticks()) + list(axis.minorTicks)
+                    for tk in ticks:
+                        tick_ids.add(id(tk.label1)); tick_ids.add(id(tk.label2))
+                    if not ticks:
+                        continue
+                    cur = float(ticks[0].label1.get_fontsize())
+                    if getattr(axis, '_gba_applied', None) != cur:
+                        axis._gba_base = cur
+                        changed = True
+                    new = self._scaled(axis._gba_base, f)
+                    if new != cur:
+                        axis.set_tick_params(which='both', labelsize=new)
+                    axis._gba_applied = new
+
+                texts = [t for t in fig.findobj(Text)
+                         if id(t) not in tick_ids and t.get_text()]
+                for t in texts:
+                    cur = float(t.get_fontsize())
+                    if getattr(t, '_gba_applied', None) != cur:
+                        t._gba_base = cur
+                        changed = True
+                    new = self._scaled(t._gba_base, f)
+                    if new != cur:
+                        t.set_fontsize(new)
+                    t._gba_applied = new
+
+                key = (self.width(), self.height())
+                if not changed and key == self._fit_key:
+                    return
+                self._fit_key = key
+                if not self.auto_layout:
+                    return
+
+                def _layout():
+                    # A constrained engine re-solves itself on every draw. Anything else
+                    # (none, or the placeholder an earlier fig.tight_layout() leaves behind)
+                    # is a one-shot layout that has to be redone for the new size.
+                    try:
+                        from matplotlib.layout_engine import ConstrainedLayoutEngine as _CLE
+                        if isinstance(fig.get_layout_engine(), _CLE):
+                            return
+                    except Exception:
+                        pass
+                    # One-shot CONSTRAINED solve, not tight_layout: tight_layout silently
+                    # refuses any gridspec built with its own hspace/wspace (the wizard's
+                    # figures), which is why those plots were never laid out at all.
+                    import warnings as _w
+                    with _w.catch_warnings():
+                        _w.simplefilter('ignore')
+                        try:
+                            from matplotlib.layout_engine import ConstrainedLayoutEngine as _CLE
+                            pad_in = self.layout_pad * 0.14   # pad is in units of ~10pt text
+                            _CLE(h_pad=pad_in, w_pad=pad_in).execute(fig)
+                        except Exception:
+                            try:
+                                fig.tight_layout(pad=self.layout_pad)
+                            except Exception:
+                                pass
+
+                _layout()
+                # Axis labels longer than their axis: shrink to fit (never below MIN_PT).
+                try:
+                    renderer = self.get_renderer()
+                    shrunk = False
+                    for ax in fig.get_axes():
+                        if not ax.get_visible():
+                            continue
+                        box = ax.get_window_extent(renderer)
+                        for lab, span in ((ax.yaxis.label, box.height), (ax.xaxis.label, box.width)):
+                            if not lab.get_text() or not lab.get_visible() or span <= 1:
+                                continue
+                            ext = lab.get_window_extent(renderer)
+                            length = ext.height if lab is ax.yaxis.label else ext.width
+                            if length > span:
+                                cur = float(lab.get_fontsize())
+                                new = max(self.MIN_PT, cur * span / length * 0.98)
+                                if new < cur:
+                                    lab.set_fontsize(new); lab._gba_applied = new
+                                    shrunk = True
+                    if shrunk:
+                        _layout()
+                except Exception:
+                    pass
+
+
+        class _WizardCanvas(_ResponsiveCanvas):
             """Matplotlib canvas for the Auto Gel wizard with a SMALL preferred size.
 
             FigureCanvasQT reports its current figure size as its sizeHint, so a canvas that
@@ -10002,7 +10299,7 @@ if __name__ == "__main__":
                 # ── Step 2: Lane detection parameters ────────────────────
                 self._lane_smooth     = 5.0
                 self._lane_prom       = 0.05
-                self._lane_height     = 0.05
+                self._lane_height     = 0.0    # lane finding: no height floor (prominence filters)
                 self._lane_dist       = 15
                 self._lane_peaks      = np.array([], dtype=int)
                 self._lane_bounds     = []
@@ -10028,7 +10325,10 @@ if __name__ == "__main__":
                 self._band_method     = self.band_settings.get('area_subtraction_method', 'Rolling Ball')
                 self._band_smooth     = self.band_settings.get('smoothing_sigma', 0.5)
                 self._band_prom       = self.band_settings.get('peak_prominence_factor', 0.02)
-                self._band_height     = self.band_settings.get('peak_height_factor', 0.05)
+                # Auto Gel always starts band detection with no height floor (MW + sample
+                # lanes), even when the app carries a saved value from an earlier image.
+                self._band_height     = 0.0
+                self.band_settings['peak_height_factor'] = 0.0
                 self._band_dist       = self.band_settings.get('peak_distance', 10)
                 self._band_min_w      = self.band_settings.get('min_band_width', 3)
                 self._band_invert     = self.band_settings.get('is_inverted', False)
@@ -10075,6 +10375,53 @@ if __name__ == "__main__":
 
                 self._stack.setCurrentIndex(0)
                 self._step_label.setText("Step 1 — Select Analysis Tasks")
+
+            _PREP_ARROWS = None
+
+            def _install_prep_arrow_keys(self):
+                """Route arrow keys pressed anywhere on the Image Adjustment page (including the
+                preview canvas, which would otherwise swallow them) to Rotation / Skew. Text and
+                number fields are left alone so they keep their own arrow keys."""
+                page = getattr(self, '_prep_page', None)
+                if page is None:
+                    return
+                for w in [page] + page.findChildren(QWidget):
+                    if not isinstance(w, (QAbstractSpinBox, QLineEdit)):
+                        w.installEventFilter(self)
+
+            def eventFilter(self, obj, event):
+                try:
+                    if (event.type() == QEvent.KeyPress and getattr(self, '_prep_page', None) is not None
+                            and self._prep_page.isVisible()
+                            and not isinstance(obj, (QAbstractSpinBox, QLineEdit))):
+                        k = event.key()
+                        step = 10 if (event.modifiers() & Qt.ShiftModifier) else 1
+                        target = {Qt.Key_Left: (self._prep_sl_rot, -step), Qt.Key_Right: (self._prep_sl_rot, step),
+                                  Qt.Key_Down: (self._prep_sl_skew, -step), Qt.Key_Up: (self._prep_sl_skew, step)}.get(k)
+                        if target is not None:
+                            sl, d = target
+                            sl.setValue(sl.value() + d)
+                            return True
+                except Exception:
+                    pass
+                return super().eventFilter(obj, event)
+
+            def _fix_prep_label_widths(self):
+                """Pin the Rotation / Skew readouts to the width of their WIDEST possible text
+                (measured from sizeHint after the theme font is applied), same width for both so
+                the two sliders line up and never change length while dragging."""
+                try:
+                    w = 0
+                    for lbl, widest in ((self._prep_lbl_rot, "Rotation: -180.0°"),
+                                        (self._prep_lbl_skew, "Skew: -1.00")):
+                        cur = lbl.text()
+                        lbl.setText(widest)
+                        w = max(w, lbl.sizeHint().width())
+                        lbl.setText(cur)
+                    for lbl in (self._prep_lbl_rot, self._prep_lbl_skew):
+                        lbl.setFixedWidth(w + 4)
+                except Exception:
+                    log_traceback()
 
             def _make_page_scrollable(self, page):
                 """Move everything on a wizard page except its LAST layout item (the nav
@@ -10196,6 +10543,9 @@ if __name__ == "__main__":
                 self._prep_fig = plt.figure(figsize=(11, 5))
                 self._prep_ax = self._prep_fig.add_subplot(111)
                 self._prep_canvas = _WizardCanvas(self._prep_fig)
+                # Hand-tuned axis-off preview (see _on_prep_geometry_changed): keep its own layout.
+                self._prep_canvas.scale_fonts = False
+                self._prep_canvas.auto_layout = False
                 self._prep_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self._prep_canvas.mpl_connect('button_press_event',   self._on_prep_crop_press)
                 self._prep_canvas.mpl_connect('motion_notify_event',  self._on_prep_crop_motion)
@@ -10235,6 +10585,25 @@ if __name__ == "__main__":
                 g.addWidget(self._prep_lbl_skew, 1, 0)
                 g.addWidget(self._prep_sl_skew, 1, 1)
                 g.addWidget(self._prep_skew_reset, 1, 2)
+
+                # Keyboard: Left/Right = rotation 0.1 deg (Shift: 1 deg), Up/Down = skew 0.01
+                # (Shift: 0.10), wherever focus is on this page -- including the preview
+                # canvas, which otherwise swallows arrow keys. Text fields keep their own arrows.
+                for _sl, _tip in ((self._prep_sl_rot, "Rotation (degrees). Keyboard: ←/→ = 0.1°, Shift+←/→ = 1°."),
+                                  (self._prep_sl_skew, "Tapering skew. Keyboard: ↑/↓ = 0.01, Shift+↑/↓ = 0.10.")):
+                    _sl.setFocusPolicy(Qt.StrongFocus)
+                    _sl.setSingleStep(1)
+                    _sl.setPageStep(10)
+                    _sl.setToolTip(_tip)
+                # (Handled by an event filter installed on every widget of this page once it
+                # is fully built -- see _install_prep_arrow_keys / eventFilter.)
+                self._prep_page = page
+                QTimer.singleShot(0, self._install_prep_arrow_keys)
+                self._prep_lbl_rot.setToolTip(self._prep_sl_rot.toolTip())
+                self._prep_lbl_skew.setToolTip(self._prep_sl_skew.toolTip())
+                # Fixed-width readouts: the text changes length as the value changes ("+0.0°" ->
+                # "-123.4°"), which kept resizing the label and making the sliders jump.
+                QTimer.singleShot(0, self._fix_prep_label_widths)
 
                 # Manual edge crop inputs (synced with the draggable crop box)
                 H0, W0 = self._gel_arr_raw.shape[:2]
@@ -10980,6 +11349,7 @@ if __name__ == "__main__":
                 _seed_vals, _seed_hidden, _seed_preset = self.parent_app._mwm_seed_for_dialog()
                 self._mwm_preset_name = _seed_preset or "Custom"
                 self._mwm_custom_text = ", ".join(str(v) for v in _seed_vals) if _seed_vals else ""
+                self._mwm_seed_text = self._mwm_custom_text
 
                 # ── Top-label styling (font, size, color, rotation, axis) ──
                 app = self.parent_app
@@ -12394,7 +12764,7 @@ if __name__ == "__main__":
                 if p_range < 1e-9:
                     return []
                 min_h  = (float(profile_norm.min()) +
-                           settings.get('peak_height_factor', 0.05) * p_range)
+                           settings.get('peak_height_factor', 0.0) * p_range)
                 min_pr = settings.get('peak_prominence_factor', 0.02) * p_range
 
                 # MAD-based noise floor (raises threshold for noisy lanes)
@@ -12831,6 +13201,12 @@ if __name__ == "__main__":
                 # gel changes the coordinate origin, so without this they end up misplaced.
                 orig_custom_markers = [list(m) for m in getattr(app, 'custom_markers', [])]
                 orig_custom_shapes  = [dict(s)  for s in getattr(app, 'custom_shapes', [])]
+                # The user's existing left/right MW labels too: if no ladder lane is marked in
+                # the wizard they are kept, so they must land on the committed gel as well.
+                orig_left_markers  = list(getattr(app, 'left_markers', []) or [])
+                orig_right_markers = list(getattr(app, 'right_markers', []) or [])
+                orig_left_shift  = float(getattr(app, 'left_marker_shift_added', 0) or 0)
+                orig_right_shift = float(getattr(app, 'right_marker_shift_added', 0) or 0)
 
                 W = self._gel_arr.shape[1]   # gel-array width (already rotated if rotation was applied)
                 H = self._gel_arr.shape[0]
@@ -12989,7 +13365,7 @@ if __name__ == "__main__":
                             ss = dict(s)
                             try:
                                 stype = ss.get('type')
-                                if stype in ('line', 'arrow'):
+                                if stype in ('line', 'arrow', 'leader'):
                                     sx, sy = ss['start']; ex, ey = ss['end']
                                     ss['start'] = (float(sx) + dx, float(sy) + dy)
                                     ss['end']   = (float(ex) + dx, float(ey) + dy)
@@ -13000,6 +13376,14 @@ if __name__ == "__main__":
                                 pass
                             new_shapes.append(ss)
                         app.custom_shapes = new_shapes
+                        # Existing left/right MW labels: same exact translation (band Y and the
+                        # set's X position). A ladder lane marked in the wizard replaces them
+                        # further down; otherwise these are what the user keeps.
+                        if orig_left_markers or orig_right_markers:
+                            app.left_markers = [(float(y) + dy, t) for (y, t) in orig_left_markers]
+                            app.right_markers = [(float(y) + dy, t) for (y, t) in orig_right_markers]
+                            app._set_marker_set_shift('left', orig_left_shift + dx)
+                            app._set_marker_set_shift('right', orig_right_shift + dx)
                 except Exception:
                     log_traceback()
 
@@ -13056,7 +13440,13 @@ if __name__ == "__main__":
                         # preset/values. These labels are provisional: whatever the user
                         # confirms in the densitometry dialog replaces them further down.
                         raw = (self._mwm_custom_text or "").strip()
-                        if raw:
+                        if (raw and raw == (getattr(self, '_mwm_seed_text', None) or "").strip()
+                                and getattr(app, 'marker_values', None)):
+                            # Untouched seed: the app's own labels (incl. hidden blanks) are
+                            # already right. Rewriting them with the full ladder would discard
+                            # the hidden-label state before the densitometry dialog opens.
+                            vals = []
+                        elif raw:
                             vals = [v.strip() for v in raw.split(',') if v.strip()]
                         else:
                             vals = [str(v) for v in self._mwm_values_for(preset_name)]
@@ -13257,8 +13647,8 @@ if __name__ == "__main__":
                         if lane_dicts:
                             dlg = PeakAreaDialog(
                                 cropped_data=lane_dicts,
-                                current_settings=app.peak_dialog_settings
-                                    if hasattr(app, 'peak_dialog_settings') else {},
+                                current_settings=dict(getattr(app, 'peak_dialog_settings', {}) or {},
+                                                      peak_height_factor=0.0),
                                 persist_checked=getattr(
                                     app, 'persist_peak_settings_enabled', False),
                                 parent=app
@@ -13381,8 +13771,8 @@ if __name__ == "__main__":
                         if mwm_lane_dicts:
                             dlg = PeakAreaDialog(
                                 cropped_data=mwm_lane_dicts,
-                                current_settings=app.peak_dialog_settings
-                                    if hasattr(app, 'peak_dialog_settings') else {},
+                                current_settings=dict(getattr(app, 'peak_dialog_settings', {}) or {},
+                                                      peak_height_factor=0.0),
                                 persist_checked=getattr(
                                     app, 'persist_peak_settings_enabled', False),
                                 parent=app
@@ -14363,7 +14753,7 @@ if __name__ == "__main__":
                 }
                 self.peak_dialog_settings = {
                     'rolling_ball_radius': 50,
-                    'peak_height_factor': 0.1,
+                    'peak_height_factor': 0.0,   # no height floor by default (MW + sample lanes)
                     'peak_distance': 10,
                     'peak_prominence_factor': 0.00,
                     'valley_offset_pixels': 0,  # Added to persist settings
@@ -15461,6 +15851,10 @@ if __name__ == "__main__":
                 # sync with that button both ways (see _set_move_resize_checked).
                 self.move_resize_action = QAction("&Move/Resize Items", self)
                 self.move_resize_action.setCheckable(True)
+                # Ctrl+Shift+M (Shift+Cmd+M on macOS) toggles the tool from anywhere in the
+                # window; plain Cmd+M is macOS "Minimize", so it is deliberately not used.
+                self.move_resize_action.setShortcut(QKeySequence("Ctrl+Shift+M"))
+                self.move_resize_action.setShortcutContext(Qt.WindowShortcut)
                 self.copy_custom_items_action = QAction("Copy Custom Markers/Shapes", self)
                 self.paste_custom_items_action = QAction("Paste Custom Markers/Shapes", self)
 
@@ -15513,7 +15907,9 @@ if __name__ == "__main__":
                     "coordinates. Changes preview live.\n"
                     "Hover over an item to see what it is and what you can do with it.\n"
                     "Resizing updates the 'Size:' box in Custom Markers, Shapes and Grid.\n"
-                    "\nHOLD this button for 2 seconds to open Marker Options.")
+                    "\nHOLD this button for 2 seconds to open Marker Options.\n"
+                    f"Shortcut: {self.move_resize_action.shortcut().toString(QKeySequence.NativeText)}"
+                    " (press again, or Esc, to exit).")
                 
                 self.load_action.setShortcut(QKeySequence.Open)
                 self.save_action.setShortcut(QKeySequence.Save)
@@ -17078,6 +17474,106 @@ if __name__ == "__main__":
 
                 # Must come after addAction: widgetForAction() has no button before that.
                 self._install_move_resize_longpress()
+                # Every control gets a tooltip; runs once the whole window has been built.
+                QTimer.singleShot(0, self._apply_missing_tooltips)
+
+            def _apply_missing_tooltips(self):
+                """Tooltips for controls that had none. Only fills EMPTY tooltips, so anything
+                set where a control is built always wins."""
+                by_attr = {
+                    # Image and Contrast
+                    'bw_button': "Convert the image to grayscale (keeps its bit depth). Shortcut: Ctrl+B.",
+                    'cm_mono_checkbox': "Mix the Red/Green/Blue channels above into ONE grayscale image.",
+                    'black_point_slider': "Black point: pixel values at or below this become black. Raise it to darken the background.",
+                    'white_point_slider': "White point: pixel values at or above this become white. Lower it to brighten faint bands.",
+                    'gamma_slider': "Gamma (mid-tone curve): below 1.00 lightens mid-tones, above 1.00 darkens them; black and white stay fixed.",
+                    'cm_red_slider': "Red channel strength (100% = unchanged).",
+                    'cm_green_slider': "Green channel strength (100% = unchanged).",
+                    'cm_blue_slider': "Blue channel strength (100% = unchanged).",
+                    'usm_amount_slider': "Sharpening strength (Unsharp Mask). 0% = off.",
+                    'usm_radius_slider': "Sharpening radius in pixels: how wide the edges that get sharpened are.",
+                    'usm_threshold_slider': "Only sharpen edges whose contrast exceeds this, so flat background noise is left alone.",
+                    'clahe_clip_slider': "Local contrast (CLAHE) limit. 1.0 = off; higher = stronger local contrast in each tile.",
+                    'clahe_tile_slider': "CLAHE tile grid: how many regions local contrast is equalised over (more tiles = more local).",
+                    'adjustment_context_combo': "Which layer the sliders on this tab adjust: the main image, or Image 1 / Image 2 placed in Overlap Images.",
+                    # Transform
+                    'orientation_slider': "Rotation preview (degrees). The image is only rotated for real when you press Apply (Apply Crop also commits it).",
+                    'align_button': "Apply the rotation shown in the preview to the image (markers move with it).",
+                    'reset_align_button': "Set the rotation back to 0° without changing the image.",
+                    'flip_vertical_button': "Flip the image upside down. Markers and labels are NOT flipped -- best done before placing them.",
+                    'flip_horizontal_button': "Mirror the image left-right. Markers and labels are NOT mirrored -- best done before placing them.",
+                    'taper_skew_slider': "Tapering skew preview: corrects a gel that is wider at one end. Press Apply to commit.",
+                    'skew_button': "Apply the skew shown in the preview to the image.",
+                    'reset_skew_button': "Set the skew back to 0 without changing the image.",
+                    'draw_crop_rect_button': "Drag a rectangle on the image to choose what to keep. Fine-tune with the sliders below, then Apply Crop.",
+                    'apply_crop_button': "Crop the image to the drawn area (custom markers and shapes are kept and moved with it).",
+                    'crop_x_start_slider': "Left edge of the crop area (% of image width). Enabled after Draw Crop Area.",
+                    'crop_x_end_slider': "Right edge of the crop area (% of image width). Enabled after Draw Crop Area.",
+                    'crop_y_start_slider': "Top edge of the crop area (% of image height). Enabled after Draw Crop Area.",
+                    'crop_y_end_slider': "Bottom edge of the crop area (% of image height). Enabled after Draw Crop Area.",
+                    'recommend_button': "Fill in padding that exactly fits every label, marker and shape (measured from what is drawn).",
+                    'clear_padding_button': "Set all four padding fields to 0 (press Apply Padding to remove existing padding).",
+                    'finalize_button': "Apply the padding values: the margins around the gel become exactly these sizes (labels keep their size).",
+                    'left_padding_input': "Transparent margin to the LEFT of the gel, in pixels (room for left MW labels).",
+                    'right_padding_input': "Transparent margin to the RIGHT of the gel, in pixels (room for right MW labels / callouts).",
+                    'top_padding_input': "Transparent margin ABOVE the gel, in pixels (room for top lane labels).",
+                    'bottom_padding_input': "Transparent margin BELOW the gel, in pixels.",
+                    # Overlap Images
+                    'interactive_overlay_button': "Move and resize placed images with the mouse: click a layer to select it, drag to move, drag a corner or use the mouse wheel to resize, arrow keys to nudge. Esc or click again to finish.",
+                    'image1_left_slider': "Image 1 horizontal position (pixels from the left edge).",
+                    'image1_top_slider': "Image 1 vertical position (pixels from the top edge).",
+                    'image1_rotation_slider': "Rotate Image 1 about its centre (degrees).",
+                    'image2_left_slider': "Image 2 horizontal position (pixels from the left edge).",
+                    'image2_top_slider': "Image 2 vertical position (pixels from the top edge).",
+                    'image2_rotation_slider': "Rotate Image 2 about its centre (degrees).",
+                    # Analysis
+                    'mw_regression_model_combo': "Curve used to convert band position to molecular weight from the ladder (Predict Molecular Weight).",
+                    'standard_protein_values': "Known amounts of your standards, comma-separated, in the same order as the standard regions.",
+                    'standard_protein_areas_text': "Band areas measured for the standards (filled in by Process Selected as Standard).",
+                    # Settings
+                    'gpu_radio': "Use the graphics card (OpenCL) for image processing where available -- faster on large images.",
+                    'cpu_radio': "Use the processor only. Choose this if the GPU option causes problems.",
+                    'spin_viewer_w': "Width of the image viewer in pixels.",
+                    'spin_viewer_h': "Height of the image viewer in pixels.",
+                    'spin_content_w': "Width of the controls panel (tabs) in pixels.",
+                }
+                for attr, tip in by_attr.items():
+                    w = getattr(self, attr, None)
+                    try:
+                        if w is not None and not w.toolTip().strip():
+                            w.setToolTip(tip)
+                    except Exception:
+                        pass
+                # Unnamed buttons, matched by their text (and group for the two overlay slots).
+                by_text = {
+                    "Invert": "Invert the image (dark bands on light <-> light bands on dark). Shortcut: Ctrl+I.",
+                    "Reset Image": "Undo every adjustment on this tab (levels, gamma, channels, sharpening, CLAHE, inversion).",
+                    "Rasterize Image": ("Bake the placed Image 1 / Image 2 into the image as ONE picture. Markers and "
+                                        "labels are NOT burned in -- they stay editable (labels from a copied panel "
+                                        "are added as markers if you ticked them when placing). Levels and other "
+                                        "image settings are reset afterwards. Undo with Ctrl+Z."),
+                    "Apply and Save Settings": "Apply these settings now and remember them for next time.",
+                }
+                for b in self.findChildren(QPushButton):
+                    try:
+                        if b.toolTip().strip():
+                            continue
+                        t = b.text().replace("&", "")
+                        if t in by_text:
+                            b.setToolTip(by_text[t]); continue
+                        grp = b.parentWidget()
+                        while grp is not None and not isinstance(grp, QGroupBox):
+                            grp = grp.parentWidget()
+                        title = grp.title() if grp is not None else ""
+                        slot = "Image 1" if title.startswith("Image 1") else ("Image 2" if title.startswith("Image 2") else None)
+                        if slot and t == "Copy Current":
+                            b.setToolTip(f"Copy the current image into the {slot} buffer (with its labels, so they "
+                                         "can be pasted when you place it on another image).")
+                        elif slot and t == "Place":
+                            b.setToolTip(f"Put {slot} on the canvas at the X/Y/size set below. If it came from "
+                                         "another image you will be asked which markers/labels to bring along.")
+                    except Exception:
+                        continue
 
                 
             # ──────────────────────────────────────────────────────────────
@@ -17253,6 +17749,14 @@ if __name__ == "__main__":
                 """
                 try:
                     if apply_padding:
+                        # Re-measure NOW: the wizard's own estimate (and the Set Recommended
+                        # pass it ran) predate the densitometry dialog re-placing the ladder
+                        # labels, and never saw the user's existing standard / custom markers in
+                        # their final positions. Set Recommended Values counts every drawn item.
+                        try:
+                            self.recommended_values()
+                        except Exception:
+                            log_traceback()
                         cl, cr, ct, cb = self._measure_transparent_margins()
                         want = (max(0, int(self.left_padding_input.text())),
                                 max(0, int(self.right_padding_input.text())),
@@ -17517,9 +18021,18 @@ if __name__ == "__main__":
                 is currently carrying (preset selection / edited values / hidden labels), so
                 the dialog opens on the user's marker instead of a hard-coded default.
                 Returns (values, hidden_indices, preset_name)."""
+                current = [str(v).strip() for v in (getattr(self, 'marker_values', []) or [])]
                 vals = [str(v).strip() for v in (getattr(self, 'mwm_label_values', None) or [])]
+                hidden = [int(i) for i in (getattr(self, 'mwm_hidden_label_indices', []) or [])]
+                # The saved full ladder is only trustworthy while it still produces the labels
+                # the app is showing. Changing the preset or deleting values in the main
+                # window updates marker_values but not mwm_label_values, and seeding from that
+                # stale list is what made Auto Gel / Auto Lane revert to the old ladder.
+                if vals and ["" if i in hidden else v for i, v in enumerate(vals)] != current:
+                    vals, hidden = [], []
                 if not vals:
-                    vals = [str(v).strip() for v in (getattr(self, 'marker_values', []) or [])]
+                    vals = current
+                    hidden = []
                 preset = (self.combo_box.currentText()
                           if hasattr(self, 'combo_box') else "Custom")
                 if not vals:
@@ -17530,7 +18043,10 @@ if __name__ == "__main__":
                     if isinstance(cfg, dict):
                         vals = [str(v).strip() for v in (cfg.get('marker_values') or [])]
                         preset = _default_preset
-                hidden = [int(i) for i in (getattr(self, 'mwm_hidden_label_indices', []) or [])]
+                _pcfg = (getattr(self, 'presets_data', {}) or {}).get(preset)
+                if (isinstance(_pcfg, dict) and
+                        [str(v).strip() for v in (_pcfg.get('marker_values') or [])] != vals):
+                    preset = "Custom"   # edited ladder: don't let the picker reload the preset
                 return vals, hidden, preset
 
             def _store_mwm_state_from_dialog(self, dialog, lane_id):
@@ -18100,6 +18616,7 @@ if __name__ == "__main__":
                     # --- Core Image ---
                     "image_master": self.image_master.copy(),
                     "font_reference_size": getattr(self, 'font_reference_size', None),
+                    "rotation_wedges": bool(getattr(self, '_master_has_rotation_wedges', False)),
 
                     # --- Annotations ---
                     "left_markers": [list(m) for m in self.left_markers],
@@ -18233,11 +18750,18 @@ if __name__ == "__main__":
                     self.top_markers = state_dict['top_markers']
                     self.custom_markers = state_dict['custom_markers']
                     self.custom_shapes = state_dict['custom_shapes']
-                    
+                    # Keep the overlay checkbox truthful after undo/redo of an overlay change.
+                    if hasattr(self, 'show_oligomer_glyco_overlay_checkbox'):
+                        self.show_oligomer_glyco_overlay_checkbox.blockSignals(True)
+                        self.show_oligomer_glyco_overlay_checkbox.setChecked(
+                            any(s.get('oligo_overlay') for s in self.custom_shapes))
+                        self.show_oligomer_glyco_overlay_checkbox.blockSignals(False)
+
                     self.left_marker_shift_added = state_dict['left_marker_shift_added']
                     self.right_marker_shift_added = state_dict['right_marker_shift_added']
                     self.top_marker_shift_added = state_dict['top_marker_shift_added']
                     self.font_reference_size = state_dict.get('font_reference_size', None)
+                    self._master_has_rotation_wedges = bool(state_dict.get('rotation_wedges', False))
 
                     # --- Overlay placement ---
                     # save_state has always recorded image1/2_position, but nothing here ever
@@ -18469,8 +18993,19 @@ if __name__ == "__main__":
 
                 mw_layout.setColumnStretch(1, 1)
                 self.show_oligomer_glyco_overlay_checkbox = QCheckBox("Show Oligomer/Glyco Overlay")
-                self.show_oligomer_glyco_overlay_checkbox.setToolTip("After predicting an MW, overlay potential oligomeric and glycosylated bands on the image.")
-                self.show_oligomer_glyco_overlay_checkbox.stateChanged.connect(self.update_live_view)
+                self.show_oligomer_glyco_overlay_checkbox.setToolTip(
+                    "Mark the potential oligomeric and glycosylated forms of your protein on the gel.\n\n"
+                    "• Uses the protein mass, glycan mass and counts from Protein Analysis.\n"
+                    "• If no protein size / glycan data is entered there, it uses the CURRENT "
+                    "Predict Molecular Weight result as the monomer (no glycans).\n"
+                    "• Clearing the Protein Analysis data switches it back to the predicted MW and "
+                    "the callouts update immediately; a new prediction updates them too.\n\n"
+                    "Each callout is a label + arrow: the arrow stays on its band, and dragging the "
+                    "label (Move/Resize) moves the line with it -- put the label on the other side "
+                    "and the arrow turns to point from that side. Labels you moved keep their place "
+                    "when the prediction changes. Saved and exported with the figure; un-tick to "
+                    "remove them.")
+                self.show_oligomer_glyco_overlay_checkbox.stateChanged.connect(self._on_oligomer_overlay_toggled)
                 mw_layout.addWidget(self.show_oligomer_glyco_overlay_checkbox, 1, 0, 1, 4)
 
                 self.show_partial_glycosylation_checkbox = QCheckBox("Show Partial Glycosylation")
@@ -19147,6 +19682,12 @@ if __name__ == "__main__":
                     results = dialog.get_results()
                     self.protein_sequence = results["sequence"]
                     self.base_protein_mw = results["base_mw"]
+                    # The dialog pre-fills the PREDICTED MW when no protein mass was entered.
+                    # Accepting that untouched must not freeze it as the protein mass, or later
+                    # predictions would stop updating the overlay: keep following the prediction.
+                    if (not results["sequence"] and self.last_predicted_mw > 0
+                            and abs(self.base_protein_mw - self.last_predicted_mw) < 1e-6):
+                        self.base_protein_mw = 0.0
                     self.avg_glycan_mass = results["glycan_mass"]
                     self.num_glycosylation_sites = results["sites"]
                     self.num_glycans_to_model = results["glycans_to_use"]
@@ -19154,11 +19695,13 @@ if __name__ == "__main__":
 
                     # Recalculate and store all potential products
                     self._rebuild_oligomer_products()
+                    self._sync_oligomer_overlay_items()
                     self.update_live_view()
 
             def _on_partial_glycosylation_toggled(self, _state=None):
                 """Rebuild the product list with/without partial glycosylation and redraw."""
                 self._rebuild_oligomer_products()
+                self._sync_oligomer_overlay_items()
                 self.update_live_view()
 
             def _rebuild_oligomer_products(self):
@@ -19184,6 +19727,10 @@ if __name__ == "__main__":
                 self.oligomer_products = []
                 self.oligomer_product_groups = []
                 base = self.base_protein_mw or 0.0
+                if base <= 0:
+                    # No Protein Analysis needed: a plain Predict Molecular Weight is enough --
+                    # the predicted band itself is the monomer (no glycans modelled).
+                    base = float(getattr(self, 'last_predicted_mw', 0.0) or 0.0)
                 if base <= 0:
                     return
                 glycan = self.avg_glycan_mass or 0.0
@@ -20531,6 +21078,7 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
+                self.image2_annotations = None   # a file has no editable annotations to carry
                 overlay_image = QImage(file_path)
                 if overlay_image.isNull():
                     try:
@@ -20941,6 +21489,8 @@ if __name__ == "__main__":
                 """
                 if hasattr(self, 'image1_position'):
                     del self.image1_position
+                if getattr(self, 'selected_overlay_index', 0) == 1:
+                    self.selected_overlay_index = 0   # nothing left to select on the canvas
                 # Image 1 is no longer the bottom layer, so the main image must be painted
                 # again (see _overlay_base_layer_active).
                 self._image1_shadows_master = False
@@ -20950,8 +21500,11 @@ if __name__ == "__main__":
                 """RESET Image 1: empty the slot completely (buffer, adjustments, transform)."""
                 if hasattr(self, 'image1_position'):
                     del self.image1_position
+                if getattr(self, 'selected_overlay_index', 0) == 1:
+                    self.selected_overlay_index = 0   # nothing left to select on the canvas
                 if hasattr(self, 'image1_original'):
                     del self.image1_original
+                self.image1_annotations = None
 
                 self.image1_adjusted_preview = None
                 self.image1_adjustments = {}
@@ -20973,15 +21526,20 @@ if __name__ == "__main__":
                 See remove_image1 -- 'Reset' (clear_image2) is the destructive one."""
                 if hasattr(self, 'image2_position'):
                     del self.image2_position
+                if getattr(self, 'selected_overlay_index', 0) == 2:
+                    self.selected_overlay_index = 0   # nothing left to select on the canvas
                 self._update_overlay_size_labels()
 
             def clear_image2(self):
                 """RESET Image 2: empty the slot completely (buffer, adjustments, transform)."""
                 if hasattr(self, 'image2_position'):
                     del self.image2_position
+                if getattr(self, 'selected_overlay_index', 0) == 2:
+                    self.selected_overlay_index = 0   # nothing left to select on the canvas
                 if hasattr(self, 'image2_original'):
                     del self.image2_original
-                
+                self.image2_annotations = None
+
                 self.image2_adjusted_preview = None
                 self.image2_adjustments = {}
                 self._update_overlay_size_labels()
@@ -21039,6 +21597,232 @@ if __name__ == "__main__":
                     log_traceback()
                 return did
 
+            def _overlay_snapshot(self):
+                """The image Copy Current puts in an overlay buffer: the master EXACTLY as it is.
+
+                Only when a rotation / skew / perspective correction has baked see-through
+                corner wedges into the master are those trimmed off (_trim_to_solid_content).
+                Trimming every snapshot also cut away any transparent PADDING -- so a panel
+                cropped from a padded figure came out smaller than what was cropped, i.e. the
+                copied image "got cropped again" once placed on another gel."""
+                self._last_trim_offset = (0, 0)
+                if getattr(self, '_master_has_rotation_wedges', False):
+                    return self._trim_to_solid_content(self.image_master).copy()
+                return self.image_master.copy()
+
+            def _snapshot_annotations_for_overlay(self):
+                """Everything annotated on the CURRENT image, in its own image coordinates, so
+                that a panel taken with Copy Current keeps its labels as EDITABLE items when it
+                is later rasterized onto another gel (Copy Current itself only takes pixels).
+
+                Custom markers and shapes are copied as they are. Left/right MW labels become
+                custom text markers at exactly the place they are drawn (the target image has
+                its own single left/right set). Top labels keep their lane x positions and join
+                the target's top-label row at rasterize time. `serial` identifies the image the
+                snapshot came from, so a copy of the image that is still open is never
+                imported on top of itself."""
+                img = self.image if (self.image and not self.image.isNull()) else self.image_master
+                rs = float(self.EXPORT_RENDER_SCALE)
+                fsf = self._export_font_scale_factor(rs, img.width(), img.height())
+                k = fsf / rs                       # on-image font px per font "size" unit
+                std = []; std_side = []
+                for it in self._annotation_text_items(rs, fsf, kinds=('left_marker', 'right_marker')):
+                    r = QFontMetrics(it['font']).boundingRect(it['text'])
+                    c = it['transform'].map(QPointF(r.center()))
+                    std.append([c.x() / rs, c.y() / rs, it['text'], QColor(it['color']).name(),
+                                self.font_family, int(self.font_size),
+                                bool(getattr(self, 'font_bold', False)),
+                                bool(getattr(self, 'font_italic', False))])
+                    std_side.append('left' if it['kind'] == 'left_marker' else 'right')
+                customs = []
+                for m in getattr(self, 'custom_markers', []) or []:
+                    mm = list(m); mm[3] = QColor(mm[3]).name(); customs.append(mm)
+                return {
+                    'serial': getattr(self, '_image_load_serial', 0),
+                    'offset': tuple(getattr(self, '_last_trim_offset', (0, 0))),
+                    'k': k,
+                    'custom_markers': customs,
+                    'custom_shapes': [dict(sd) for sd in (getattr(self, 'custom_shapes', []) or [])],
+                    'std_text': std,
+                    'std_side': std_side,
+                    # Raw label sets, so a panel's left/right labels can JOIN this image's own
+                    # sets (and follow L/R Values / font controls) when they line up.
+                    'left_raw': [(float(y), str(t)) for y, t in (getattr(self, 'left_markers', []) or [])],
+                    'right_raw': [(float(y), str(t)) for y, t in (getattr(self, 'right_markers', []) or [])],
+                    'left_shift': float(getattr(self, 'left_marker_shift_added', 0) or 0),
+                    'right_shift': float(getattr(self, 'right_marker_shift_added', 0) or 0),
+                    'top_markers': [(float(x), str(t)) for x, t in (getattr(self, 'top_markers', []) or [])],
+                    'top_shift': float(getattr(self, 'top_marker_shift_added', 0) or 0),
+                    'font_rotation': getattr(self, 'font_rotation', -45),
+                    'top_rotation_axis': getattr(self, 'top_rotation_axis', 'left'),
+                }
+
+            def _join_imported_lr_labels(self, ann, mp):
+                """Add a pasted panel's left/right MW labels to THIS image's left/right sets
+                when they line up, so L/R Values, Update Labels and the font controls keep
+                driving every label. Labels are index-matched to `marker_values`, so a side
+                joins only if that stays consistent; anything that cannot join is returned to
+                the caller to be added as custom text markers instead. Returns the joined sides."""
+                img = self.image if (self.image and not self.image.isNull()) else self.image_master
+                tol = max(4.0, 0.01 * float(img.width()))
+                mv = [str(v).strip() for v in (getattr(self, 'marker_values', []) or [])]
+                plans = {}
+                for side in ('left', 'right'):
+                    raw = ann.get(f'{side}_raw', []) or []
+                    if not raw:
+                        continue
+                    shift = float(ann.get(f'{side}_shift', 0.0))
+                    nx = mp(shift, raw[0][0])[0]
+                    ys = [mp(shift, y)[1] for y, _ in raw]
+                    vals = [str(t).strip() for _, t in raw]
+                    lst = getattr(self, f'{side}_markers', []) or []
+                    cur = float(getattr(self, f'{side}_marker_shift_added', 0) or 0)
+                    if lst and abs(nx - cur) <= tol and len(lst) == len(mv):
+                        plans[side] = ('append', ys, vals, nx)
+                    elif not lst and (not mv or mv[:len(vals)] == vals):
+                        plans[side] = ('adopt', ys, vals, nx)
+                appends = [sd for sd, p in plans.items() if p[0] == 'append']
+                if len(appends) == 2 and plans['left'][2] != plans['right'][2]:
+                    plans.pop('right')        # one shared value list cannot hold two ladders
+                joined = set()
+                extra = None
+                for side, (kind, ys, vals, nx) in plans.items():
+                    lst = list(getattr(self, f'{side}_markers', []) or [])
+                    if kind == 'append':
+                        lst.extend(zip(ys, vals))
+                        extra = extra or vals
+                    else:
+                        lst = list(zip(ys, vals))
+                        self._set_marker_set_shift(side, nx)
+                        if not mv:
+                            mv = list(vals)
+                    setattr(self, f'{side}_markers', lst)
+                    joined.add(side)
+                if extra:
+                    mv = mv + list(extra)
+                if joined:
+                    self.marker_values = mv
+                    self.mwm_label_values = list(mv); self.mwm_hidden_label_indices = []
+                    if hasattr(self, 'marker_values_textbox'):
+                        self.marker_values_textbox.blockSignals(True)
+                        self.marker_values_textbox.setText(", ".join(mv))
+                        self.marker_values_textbox.blockSignals(False)
+                    if hasattr(self, 'combo_box'):
+                        ci = self.combo_box.findText("Custom")
+                        if ci >= 0:
+                            self.combo_box.blockSignals(True); self.combo_box.setCurrentIndex(ci)
+                            self.combo_box.blockSignals(False)
+                            if hasattr(self, 'marker_values_textbox'):
+                                self.marker_values_textbox.setEnabled(True)
+                return joined
+
+            def _import_overlay_annotations(self, idx):
+                """Rasterize: bring slot `idx`'s snapshotted annotations onto the canvas as
+                editable items, mapped through the layer's final position, scale and rotation.
+                Font sizes and line widths are rescaled so they keep their size relative to the
+                panel. Returns the number of items added."""
+                ann = getattr(self, f'image{idx}_annotations', None)
+                if not ann or ann.get('serial') == getattr(self, '_image_load_serial', 0):
+                    return 0    # a copy of the image that is open: its items are already here
+                src = getattr(self, f'image{idx}_original', None)
+                pos = getattr(self, f'image{idx}_position', None)
+                if src is None or src.isNull() or pos is None:
+                    return 0
+                sc = float(self._overlay_scale_factor(idx))
+                rot_sl = getattr(self, f'image{idx}_rotation_slider', None)
+                rot = (rot_sl.value() / 10.0) if rot_sl is not None else 0.0
+                ox, oy = ann.get('offset', (0, 0))
+                rect = QRectF(QPointF(float(pos[0]), float(pos[1])),
+                              QSizeF(src.width() * sc, src.height() * sc))
+                tf = QTransform()
+                if abs(rot) > 0.01:
+                    c = rect.center(); tf.translate(c.x(), c.y()); tf.rotate(rot); tf.translate(-c.x(), -c.y())
+
+                def mp(x, y):
+                    q = tf.map(QPointF(rect.x() + (float(x) - ox) * sc, rect.y() + (float(y) - oy) * sc))
+                    return q.x(), q.y()
+
+                img = self.image if (self.image and not self.image.isNull()) else self.image_master
+                rs = float(self.EXPORT_RENDER_SCALE)
+                k_dst = self._export_font_scale_factor(rs, img.width(), img.height()) / rs
+                size_f = (float(ann.get('k', k_dst)) * sc / k_dst) if k_dst > 0 else sc
+                lo, hi = self.CUSTOM_TEXT_FONT_RANGE
+                n = 0
+                # Only what the user ticked when placing (nothing if they never chose).
+                inc = ann.get('include', set()) or set()
+                if not inc:
+                    setattr(self, f'image{idx}_annotations', None)
+                    return 0
+                joined_sides = set()
+                if 'lr' in inc and abs(rot) <= 0.01:
+                    joined_sides = self._join_imported_lr_labels(ann, mp)
+                    n += sum(len(ann.get(f'{sd}_raw', [])) for sd in joined_sides)
+                std_left_over = [m for m, sd in zip(ann.get('std_text', []), ann.get('std_side', []))
+                                 if sd not in joined_sides]
+                chosen_markers = ((list(ann.get('custom_markers', [])) if 'custom' in inc else [])
+                                  + (std_left_over if 'lr' in inc else []))
+                for m in chosen_markers:
+                    try:
+                        x, y = mp(m[0], m[1])
+                        size = int(round(max(lo, min(hi, float(m[5]) * size_f))))
+                        self.custom_markers.append([x, y, m[2], QColor(m[3]), m[4], size,
+                                                    bool(m[6]), bool(m[7])])
+                        n += 1
+                    except Exception:
+                        continue
+                for sd in ann.get('custom_shapes', []):
+                    # Callout lines travel with their labels; other shapes have their own box.
+                    if ('custom' if sd.get('type') == 'leader' else 'shapes') not in inc:
+                        continue
+                    try:
+                        sd = dict(sd)
+                        if sd.get('type') in ('line', 'arrow', 'leader'):
+                            sd['start'] = mp(*sd['start']); sd['end'] = mp(*sd['end'])
+                        elif sd.get('type') == 'rectangle':
+                            x, y, w, h = [float(v) for v in sd['rect']]
+                            (ax, ay), (bx, by) = mp(x, y), mp(x + w, y + h)
+                            sd['rect'] = (min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay))
+                        else:
+                            continue
+                        sd['thickness'] = max(0.5, float(sd.get('thickness', 1.0) or 1.0) * sc)
+                        self.custom_shapes.append(sd)
+                        n += 1
+                    except Exception:
+                        continue
+                tops = ann.get('top_markers', []) if 'top' in inc else []
+                self._last_import_skipped_tops = 0
+                if tops and getattr(self, 'top_markers', []):
+                    # Top labels share ONE row: a panel whose row is somewhere else (e.g. stacked
+                    # below) cannot join it, and custom markers cannot be rotated -- skip, report.
+                    _, row_y = mp(tops[0][0], ann.get('top_shift', 0.0))
+                    tol = max(6.0, 0.02 * float(img.height()))
+                    if abs(row_y - float(getattr(self, 'top_marker_shift_added', 0) or 0)) > tol:
+                        self._last_import_skipped_tops = len(tops)
+                        tops = []
+                if tops:
+                    had_top = bool(getattr(self, 'top_markers', []))
+                    labels = list(getattr(self, 'top_label', []) or [])
+                    # Keep top_label index-aligned with top_markers before appending.
+                    labels = (labels + [""] * len(self.top_markers))[:len(self.top_markers)]
+                    for x, t in tops:
+                        nx, _ = mp(x, ann.get('top_shift', 0.0))
+                        self.top_markers.append((nx, t)); labels.append(t)
+                        n += 1
+                    self.top_label = labels
+                    if hasattr(self, 'top_marker_input'):
+                        self.top_marker_input.blockSignals(True)
+                        self.top_marker_input.setText(", ".join(map(str, labels)))
+                        self.top_marker_input.blockSignals(False)
+                    if not had_top:
+                        # The target had no top row: adopt the panel's row height and style.
+                        _, ny = mp(tops[0][0], ann.get('top_shift', 0.0))
+                        self._set_marker_set_shift('top', ny)
+                        self.font_rotation = ann.get('font_rotation', self.font_rotation)
+                        self.top_rotation_axis = ann.get('top_rotation_axis', getattr(self, 'top_rotation_axis', 'left'))
+                # Imported once; placing the same buffer again must not duplicate them.
+                setattr(self, f'image{idx}_annotations', None)
+                return n
+
             def _trim_to_solid_content(self, source_image):
                 """Trim an overlay snapshot down to its largest fully-opaque rectangle.
 
@@ -21083,6 +21867,7 @@ if __name__ == "__main__":
                         return source_image
                     if right - left < 2 or bottom - top < 2:
                         return source_image
+                    self._last_trim_offset = (int(left), int(top))
                     return source_image.copy(int(left), int(top),
                                              int(right - left), int(bottom - top))
                 except Exception:
@@ -21194,7 +21979,8 @@ if __name__ == "__main__":
                     # (see _commit_pending_view_geometry), so by the time a straightened image
                     # is copied the master is genuinely straight and needs nothing further.
                     # Only the transparent wedges a previous rotation left behind are trimmed.
-                    self.image1_original = self._trim_to_solid_content(self.image_master).copy()
+                    self.image1_original = self._overlay_snapshot()
+                    self.image1_annotations = self._snapshot_annotations_for_overlay()
                     # Image 1 is now a duplicate of the master, so the master must not be
                     # painted underneath it as well (see _overlay_base_layer_active).
                     self._image1_shadows_master = True
@@ -21225,7 +22011,8 @@ if __name__ == "__main__":
                     self.image2_adjustments = current_main_image_adjustments
                     
                     # Same as Image 1: the master as it is, with no rotation applied.
-                    self.image2_original = self._trim_to_solid_content(self.image_master).copy()
+                    self.image2_original = self._overlay_snapshot()
+                    self.image2_annotations = self._snapshot_annotations_for_overlay()
                     self._update_overlay_size_labels()
                     self._update_overlay_preview(2)
                     self.reset_overlay2_transform()
@@ -21234,8 +22021,60 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.warning(self, "Error", "No valid master image to copy.")
             
+            def _ask_overlay_annotation_choice(self, idx):
+                """Before placing a panel copied (Copy Current) from ANOTHER image, ask which of
+                its markers / labels to bring along. Every box starts UN-ticked. Returns False
+                if the user cancelled (nothing is placed)."""
+                ann = getattr(self, f'image{idx}_annotations', None)
+                if not ann or ann.get('serial') == getattr(self, '_image_load_serial', 0):
+                    return True
+                shapes = ann.get('custom_shapes', []) or []
+                cats = [
+                    ('custom', "Custom markers / text", len(ann.get('custom_markers', []) or []),
+                     "Free text and symbols placed on the source gel (oligomer/glyco callouts "
+                     "come with their lines)."),
+                    ('shapes', "Lines, arrows and rectangles",
+                     sum(1 for sd in shapes if sd.get('type') != 'leader'), ""),
+                    ('lr', "Left / right MW labels", len(ann.get('std_text', []) or []),
+                     "Joined to this image's left/right labels when they line up (then L/R Values and "
+                     "the font controls update them); otherwise added as editable text markers."),
+                    ('top', "Top (lane) labels", len(ann.get('top_markers', []) or []),
+                     "Joined to this image's row of top labels (only if they sit on the same row)."),
+                ]
+                cats = [c for c in cats if c[2] > 0]
+                if not cats:
+                    ann['include'] = set()
+                    return True
+                dlg = ManagedDialog(self._modal_dialog_parent())
+                dlg.setWindowTitle(f"Place Image {idx}")
+                lay = QVBoxLayout(dlg)
+                intro = QLabel("This panel was copied from another image that has markers and "
+                               "labels.\nDo you want to paste any of them with it?\n"
+                               "Ticked items are added as EDITABLE markers when you Rasterize "
+                               "(never burned into the image).")
+                intro.setWordWrap(True)
+                lay.addWidget(intro)
+                boxes = {}
+                for key, text, count, tip in cats:
+                    cb = QCheckBox(f"{text} ({count})")
+                    cb.setChecked(False)
+                    if tip:
+                        cb.setToolTip(tip)
+                    lay.addWidget(cb)
+                    boxes[key] = cb
+                bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                bb.button(QDialogButtonBox.Ok).setText("Place")
+                bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
+                lay.addWidget(bb)
+                if dlg.exec() != QDialog.Accepted:
+                    return False
+                ann['include'] = {k for k, cb in boxes.items() if cb.isChecked()}
+                return True
+
             def place_image1(self):
                 if hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull():
+                    if not self._ask_overlay_annotation_choice(1):
+                        return
                     self.image1_position = (self.image1_left_slider.value(), self.image1_top_slider.value())
                     self._update_overlay_size_labels()
                     self.update_live_view()
@@ -21244,6 +22083,8 @@ if __name__ == "__main__":
 
             def place_image2(self):
                 if hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull():
+                    if not self._ask_overlay_annotation_choice(2):
+                        return
                     self.image2_position = (self.image2_left_slider.value(), self.image2_top_slider.value())
                     self._update_overlay_size_labels()
                     self.update_live_view()
@@ -21324,9 +22165,14 @@ if __name__ == "__main__":
                 has_img1 = hasattr(self, 'image1_original') and self.image1_original and not self.image1_original.isNull() and hasattr(self, 'image1_position')
                 has_img2 = hasattr(self, 'image2_original') and self.image2_original and not self.image2_original.isNull() and hasattr(self, 'image2_position')
                 
-                if hasattr(self, 'interactive_overlay_button'):
+                # Leave Interactive Alignment for real. setChecked(False) alone does not emit
+                # `clicked`, so the mode used to stay armed after Rasterize and kept drawing the
+                # (now invisible) layer's selection box until Esc was pressed.
+                if getattr(self, 'overlay_mode_active', False):
+                    self.cancel_interactive_overlay_mode()
+                elif hasattr(self, 'interactive_overlay_button'):
                     self.interactive_overlay_button.setChecked(False)
-                    
+
                 if not (has_img1 or has_img2):
                     QMessageBox.information(self, "Info", "No overlays are currently placed to rasterize.")
                     return
@@ -21506,6 +22352,16 @@ if __name__ == "__main__":
                 # the next one can be positioned against what was just baked in, which is how
                 # a multi-panel figure (gel + blot + blot...) gets built up. Only 'Reset'
                 # empties a slot.
+                # Annotations that came with a Copy Current panel from ANOTHER image are added
+                # as editable items (mapped through the layer's final placement) -- they are
+                # never burned into the pixels.
+                _imported = 0
+                for _idx, _placed in ((1, has_img1), (2, has_img2)):
+                    if _placed:
+                        try:
+                            _imported += self._import_overlay_annotations(_idx)
+                        except Exception:
+                            log_traceback()
                 self.remove_image1(); self.remove_image2()
                 self.clear_overlay_region()
                 # The master now CONTAINS Image 1's pixels, so Image 1 is no longer a
@@ -21520,6 +22376,19 @@ if __name__ == "__main__":
                 self.adjustment_context_combo.model().item(1).setEnabled(_img1_kept)
                 self.adjustment_context_combo.model().item(2).setEnabled(_img2_kept)
                 self.adjustment_context_combo.setCurrentText("Main Image")
+                # The layers are now part of the image: start every retained slot from neutral
+                # settings too (keeping its polarity), so placing it again is not re-adjusted.
+                for _i in (1, 2):
+                    _src = getattr(self, f'image{_i}_original', None)
+                    if _src is not None and not _src.isNull():
+                        _prev = getattr(self, f'image{_i}_adjustments', None) or {}
+                        _fresh = self._get_default_adjustments(for_image=_src)
+                        _fresh['is_inverted'] = bool(_prev.get('is_inverted', False))
+                        setattr(self, f'image{_i}_adjustments', _fresh)
+                        try:
+                            self._update_overlay_preview(_i)
+                        except Exception:
+                            pass
 
                 self._update_status_bar()
                 self._update_marker_slider_ranges()
@@ -21529,7 +22398,15 @@ if __name__ == "__main__":
                 self._suppress_state_save = False
                 self.update_live_view()
                 
-                QMessageBox.information(self, "Success", "The overlay(s) have been rasterized onto the image.")
+                QMessageBox.information(
+                    self, "Success", "The overlay(s) have been rasterized onto the image."
+                    + (f"\n\n{_imported} label(s)/shape(s) from the copied panel(s) were added as "
+                       "editable markers (not burned into the image). Left/right MW labels that "
+                       "line up with this image's were joined to its own labels, so 'L/R Values' "
+                       "and the font controls update them too." if _imported else "")
+                    + (f"\n\n{self._last_import_skipped_tops} top label(s) were NOT added: their "
+                       "row does not line up with this image's top labels." if getattr(
+                           self, '_last_import_skipped_tops', 0) else ""))
 
             def _update_overlay_position_from_sliders(self):
                 if hasattr(self, 'image1_position'):
@@ -21579,11 +22456,48 @@ if __name__ == "__main__":
                 self.clear_mode_status()
                 self.update_live_view() # Redraw to remove selection highlight
 
-            def _get_overlay_rect_in_label_space(self, overlay_index):
+            def _overlay_content_box(self, overlay_index):
+                """Bounding box (x, y, w, h, in the layer's own pixels) of what is VISIBLE in
+                an overlay layer -- i.e. excluding a transparent padding border. Copy Current
+                keeps a padded figure's transparent margins (so the copy is never cropped), but
+                those margins are invisible, so Interactive Alignment selects, highlights and
+                resizes by this box: the handles sit on the corners you can actually see.
+                Cached per image."""
+                img = getattr(self, f'image{overlay_index}_original', None)
+                if img is None or img.isNull():
+                    return None
+                full = (0, 0, img.width(), img.height())
+                cache = getattr(self, '_overlay_content_cache', None)
+                if cache is None:
+                    cache = self._overlay_content_cache = {}
+                key = (overlay_index, img.cacheKey())
+                if key in cache:
+                    return cache[key]
+                box = full
+                if img.hasAlphaChannel():
+                    try:
+                        arr = self.qimage_to_numpy(img)
+                        if arr is not None and arr.ndim == 3 and arr.shape[2] == 4:
+                            thr = 2056 if arr.dtype == np.uint16 else 8
+                            vis = arr[:, :, 3] > thr
+                            rows = np.where(vis.any(axis=1))[0]; cols = np.where(vis.any(axis=0))[0]
+                            if rows.size and cols.size:
+                                box = (int(cols[0]), int(rows[0]),
+                                       int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1))
+                    except Exception:
+                        log_traceback()
+                cache.clear(); cache[key] = box
+                return box
+
+            def _get_overlay_rect_in_label_space(self, overlay_index, content=False):
                 """Calculates the QRectF of an overlay image in the main label's coordinate space."""
                 if not (self.image and not self.image.isNull()): return None
                 
                 overlay_image_orig = getattr(self, f'image{overlay_index}_original', None)
+                # A layer that is loaded but not PLACED is not on the canvas: no rectangle
+                # (it used to default to (0,0) and leave a phantom selection box behind).
+                if not hasattr(self, f'image{overlay_index}_position'):
+                    return None
                 overlay_position_native = getattr(self, f'image{overlay_index}_position', (0,0))
                 overlay_resize_slider = getattr(self, f'image{overlay_index}_resize_slider', None)
                 
@@ -21596,6 +22510,13 @@ if __name__ == "__main__":
                 
                 # Create a QRectF in native image coordinates
                 rect_native = QRectF(QPointF(overlay_position_native[0], overlay_position_native[1]), QSizeF(overlay_w_native, overlay_h_native))
+                if content:
+                    # Visible part only (see _overlay_content_box) -- for selection/handles.
+                    cb = self._overlay_content_box(overlay_index)
+                    if cb:
+                        rect_native = QRectF(overlay_position_native[0] + cb[0] * scale_factor,
+                                             overlay_position_native[1] + cb[1] * scale_factor,
+                                             cb[2] * scale_factor, cb[3] * scale_factor)
                 
                 # Map this native rect to label space
                 native_w = self.image.width(); native_h = self.image.height()
@@ -21611,6 +22532,37 @@ if __name__ == "__main__":
                 
                 return QRectF(topLeft_ls, bottomRight_ls)
 
+            def _wheel_resize_overlay(self, idx, delta_y):
+                """Scale overlay `idx` by ~5% per wheel notch about the centre of its visible
+                content, through its Resize / position sliders (one undo step per burst)."""
+                steps = delta_y / 120.0
+                if abs(steps) < 1e-6:
+                    return
+                img = getattr(self, f'image{idx}_original', None)
+                pos = getattr(self, f'image{idx}_position', None)
+                sl = getattr(self, f'image{idx}_resize_slider', None)
+                if img is None or pos is None or sl is None:
+                    return
+                old = float(self._overlay_scale_factor(idx))
+                new_val = int(round(sl.value() * (1.05 ** steps)))
+                new_val = max(sl.minimum(), min(sl.maximum(), new_val))
+                if new_val == sl.value():
+                    return
+                new = new_val / (100.0 * self.OVERLAY_RESIZE_STEPS_PER_PERCENT)
+                cb = self._overlay_content_box(idx) or (0, 0, img.width(), img.height())
+                cx = pos[0] + (cb[0] + cb[2] / 2.0) * old
+                cy = pos[1] + (cb[1] + cb[3] / 2.0) * old
+                sl.setValue(new_val)
+                getattr(self, f'image{idx}_left_slider').setValue(int(round(cx - (cb[0] + cb[2] / 2.0) * new)))
+                getattr(self, f'image{idx}_top_slider').setValue(int(round(cy - (cb[1] + cb[3] / 2.0) * new)))
+                # One undo entry per wheel burst, not per notch.
+                t = getattr(self, '_wheel_resize_undo_timer', None)
+                if t is None:
+                    t = self._wheel_resize_undo_timer = QTimer(self)
+                    t.setSingleShot(True)
+                    t.timeout.connect(self.save_state)
+                t.start(400)
+
             def _handle_overlay_mouse_press(self, event):
                 if not self.overlay_mode_active or event.button() != Qt.LeftButton: return
                 
@@ -21618,7 +22570,7 @@ if __name__ == "__main__":
                 
                 # Check for resize handle click on the ALREADY selected overlay first
                 if self.selected_overlay_index > 0:
-                    rect_ls = self._get_overlay_rect_in_label_space(self.selected_overlay_index)
+                    rect_ls = self._get_overlay_rect_in_label_space(self.selected_overlay_index, content=True)
                     if rect_ls:
                         corners = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
                         click_radius = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 1.5 / self.live_view_label.zoom_level
@@ -21636,8 +22588,10 @@ if __name__ == "__main__":
                                 return
 
                 # If not resizing, check for a click on ANY overlay body to select/move
-                rect2_ls = self._get_overlay_rect_in_label_space(2)
-                rect1_ls = self._get_overlay_rect_in_label_space(1)
+                # Hit-test the VISIBLE part of each layer, so a layer's invisible transparent
+                # margin can't steal clicks meant for the layer underneath.
+                rect2_ls = self._get_overlay_rect_in_label_space(2, content=True)
+                rect1_ls = self._get_overlay_rect_in_label_space(1, content=True)
                 
                 new_selection = 0
                 if rect2_ls and rect2_ls.contains(clicked_point_ls):
@@ -21684,10 +22638,11 @@ if __name__ == "__main__":
                     fixed_corner_ls = self.drag_start_overlay_state['opposite_corner_ls']
                     new_rect_ls = QRectF(fixed_corner_ls, current_pos_ls).normalized()
                     
-                    # Enforce aspect ratio
+                    # Enforce aspect ratio -- of the VISIBLE content box the handles sit on.
                     overlay_img = getattr(self, f'image{self.selected_overlay_index}_original')
                     if not overlay_img: return
-                    aspect_ratio = overlay_img.width() / overlay_img.height() if overlay_img.height() > 0 else 1
+                    cb = self._overlay_content_box(self.selected_overlay_index) or (0, 0, overlay_img.width(), overlay_img.height())
+                    aspect_ratio = cb[2] / cb[3] if cb[3] > 0 else 1
                     
                     if new_rect_ls.width() / aspect_ratio > new_rect_ls.height():
                         new_rect_ls.setHeight(new_rect_ls.width() / aspect_ratio)
@@ -21700,9 +22655,13 @@ if __name__ == "__main__":
                     new_topleft_native_x = (new_rect_ls.left() - offset_x_ls) / scale_to_label
                     new_topleft_native_y = (new_rect_ls.top() - offset_y_ls) / scale_to_label
 
-                    # Determine new size percentage
+                    # Determine new size percentage from the content box, then place the layer
+                    # so that box's top-left lands under the dragged rectangle's top-left.
                     new_width_native = new_rect_ls.width() / scale_to_label
-                    new_size_perc = (new_width_native / overlay_img.width()) * 100 if overlay_img.width() > 0 else 100
+                    new_scale = (new_width_native / cb[2]) if cb[2] > 0 else 1.0
+                    new_size_perc = new_scale * 100.0
+                    new_topleft_native_x -= cb[0] * new_scale
+                    new_topleft_native_y -= cb[1] * new_scale
                     
                     # Update sliders
                     getattr(self, f'image{self.selected_overlay_index}_left_slider').setValue(int(new_topleft_native_x))
@@ -21786,8 +22745,11 @@ if __name__ == "__main__":
                 # General Actions
                 actions_group = QGroupBox("General Image Actions")
                 actions_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                actions_layout = QHBoxLayout(actions_group)
-                
+                # Wrapping layout: the buttons keep their full text and drop to a second
+                # (third…) row when the column is narrow, instead of being squeezed until the
+                # labels are clipped. The column's width is not content-driven (see below).
+                actions_layout = _FlowLayout(actions_group)
+
                 self.bw_button = QPushButton("Grayscale")
                 self.bw_button.clicked.connect(self.convert_to_black_and_white)
                 self.convert_8bit_button = QPushButton("Convert to 8-bit")
@@ -21809,7 +22771,6 @@ if __name__ == "__main__":
                 actions_layout.addWidget(self.convert_8bit_button)
                 actions_layout.addWidget(invert_button)
                 actions_layout.addWidget(self.optimize_levels_button)
-                actions_layout.addStretch()
                 actions_layout.addWidget(reset_button)
 
                 left_column_layout.addWidget(actions_group)
@@ -22760,8 +23721,14 @@ if __name__ == "__main__":
                     # Call the dedicated function to reset sliders to their default full range
                     self._update_level_slider_ranges_and_defaults() 
                     # --- END FIX ---
-
                     if hasattr(self, 'gamma_slider'): self.gamma_slider.setValue(100)
+                    # Both calls above can re-apply the adjustments, which first SAVES the
+                    # still-old sliders back into these settings -- that silently undid the reset
+                    # of sharpening / channel mixer / CLAHE. Re-assert the defaults last; the
+                    # sliders are reloaded from them just below.
+                    self.channel_mixer_data = default_settings['channel_mixer'].copy()
+                    self.unsharp_mask_data = default_settings['unsharp_mask'].copy()
+                    self.clahe_data = default_settings['clahe'].copy()
                     
                 elif self.adjustment_context in ("Overlay 1 (Base)", "Overlay 2 (Overlay)"):
                     # Defaults sized to THIS overlay's bit depth, and the slider range
@@ -22777,6 +23744,8 @@ if __name__ == "__main__":
                     fresh['is_inverted'] = bool(prev.get('is_inverted', False))
                     setattr(self, f'image{idx}_adjustments', fresh)
                     self._update_level_slider_ranges_and_defaults()
+                    # (Re-assert: the range update can save the old sliders back over `fresh`.)
+                    setattr(self, f'image{idx}_adjustments', dict(fresh))
 
                 # Load these newly reset default settings into the UI sliders
                 self._load_adjustments_to_ui(self.adjustment_context)
@@ -23808,11 +24777,14 @@ if __name__ == "__main__":
                             pen_c = max(1.0, th * rs)
                             half = pen_c / 2.0 / rs
                             stype = sd.get('type')
-                            if stype in ('line', 'arrow'):
+                            if stype in ('line', 'arrow', 'leader'):
                                 (sx, sy), (ex, ey) = sd['start'], sd['end']
                                 sx, sy, ex, ey = float(sx), float(sy), float(ex), float(ey)
                                 ext = half
-                                if stype == 'arrow':
+                                if stype == 'leader':
+                                    # Arrowhead half-width; the elbow lies between tip and label.
+                                    ext = max(ext, max(6.0, pen_c * 4.0) * 0.5 / rs)
+                                elif stype == 'arrow':
                                     length_c = math.hypot(ex - sx, ey - sy) * rs
                                     head_c = min(max(pen_c * 3.5, 7.0), length_c)
                                     ext = max(ext, head_c * 0.5 / rs)
@@ -24113,17 +25085,36 @@ if __name__ == "__main__":
                     standard_layout.addLayout(btn_box, row_idx, 0)
                     
                     slider = QSlider(Qt.Horizontal)
-                    slider.setToolTip(f"Adjust horizontal/vertical padding/offset for {label} markers.")
+                    axis = "Y" if mode == 'top' else "X"
+                    where = ("how far DOWN from the top of the image the row of top labels sits"
+                             if mode == 'top' else
+                             f"how far from the left edge of the image the column of {label.lower()} "
+                             "MW labels (and their tick marks) sits")
+                    slider.setToolTip(
+                        f"{label} label position ({axis}, image pixels): {where}.\n"
+                        f"Moves ALL {label.lower()} labels together. You can also drag any "
+                        f"{label.lower()} label {'up/down' if mode == 'top' else 'left/right'} "
+                        "in Move/Resize -- this slider follows.")
                     r_min, r_max = getattr(self, range_attr)
                     slider.setRange(r_min, r_max)
                     slider.setValue(getattr(self, val_attr))
                     setattr(self, slider_attr, slider) # Store reference
-                    
+
                     update_func_name = f"update_{label.lower()}_padding"
                     slider.valueChanged.connect(lambda: getattr(self, update_func_name)())
                     slider.valueChanged.connect(lambda: slider.setFocus())
-                    
-                    standard_layout.addWidget(slider, row_idx, 1)
+
+                    # Caption + live readout so it is clear what the slider moves.
+                    cap = QLabel(f"{label} position ({axis}):")
+                    cap.setToolTip(slider.toolTip())
+                    val_lbl = QLabel(f"{slider.value()} px")
+                    val_lbl.setMinimumWidth(QFontMetrics(val_lbl.font()).horizontalAdvance("-00000 px") + 4)
+                    val_lbl.setToolTip(slider.toolTip())
+                    slider.valueChanged.connect(lambda v, l=val_lbl: l.setText(f"{v} px"))
+                    setattr(self, f"{mode}_position_value_label", val_lbl)
+                    srow = QHBoxLayout()
+                    srow.addWidget(cap); srow.addWidget(slider, 1); srow.addWidget(val_lbl)
+                    standard_layout.addLayout(srow, row_idx, 1)
                     
                     # Copy buttons
                     if mode == 'left':
@@ -24288,7 +25279,9 @@ if __name__ == "__main__":
                     "- Hover over an item to see what it is and what you can do with it.\n"
                     "- Hold Shift to constrain axis (or snap lines to 45°).\n"
                     "- Arrow keys to nudge selected item (1 px).\n"
-                    "- Shift+Arrow to nudge by 10 px.")
+                    "- Shift+Arrow to nudge by 10 px.\n"
+                    f"\nShortcut: {QKeySequence('Ctrl+Shift+M').toString(QKeySequence.NativeText)}"
+                    " (press again, or Esc, to exit).")
                 self.move_resize_button.clicked.connect(self.toggle_custom_item_interaction_mode)
                 self._register_action_button(self.move_resize_button, colorize=True)
                 
@@ -24378,6 +25371,14 @@ if __name__ == "__main__":
                         self.save_state()
                         self.custom_markers = modified_markers_lists
                         self.custom_shapes = modified_shapes_dicts
+                        # A label moved in the table keeps its leader line attached.
+                        _bk = self._backup_custom_markers_before_modify_dialog
+                        if len(_bk) == len(modified_markers_lists):
+                            for _o, _n in zip(_bk, modified_markers_lists):
+                                try:
+                                    self._follow_marker_links((_o[0], _o[1]), (_n[0], _n[1]))
+                                except Exception:
+                                    pass
                         self.is_modified = True
                         self.update_live_view()
                     else:
@@ -25251,7 +26252,12 @@ if __name__ == "__main__":
                         custom_item_deleted = False
                         
                         if item_type == 'marker' and 0 <= item_index < len(self.custom_markers):
-                            self.save_state(); del self.custom_markers[item_index]; custom_item_deleted = True
+                            self.save_state()
+                            # A callout label takes its leader line with it.
+                            self.custom_shapes = [sd for sd in self.custom_shapes
+                                                  if not (sd.get('type') == 'leader' and
+                                                          self._leader_linked_marker_index(sd) == item_index)]
+                            del self.custom_markers[item_index]; custom_item_deleted = True
                         elif item_type == 'shape' and 0 <= item_index < len(self.custom_shapes):
                             self.save_state(); del self.custom_shapes[item_index]; custom_item_deleted = True
                         elif item_type in ['left_marker', 'right_marker', 'top_marker']:
@@ -25334,22 +26340,34 @@ if __name__ == "__main__":
 
                         self.save_state()
                         if item_type == 'marker':
+                            _old = (self.custom_markers[item_index][0], self.custom_markers[item_index][1])
                             self.custom_markers[item_index][0] += dx
                             self.custom_markers[item_index][1] += dy
+                            self._follow_marker_links(_old, (self.custom_markers[item_index][0],
+                                                             self.custom_markers[item_index][1]))
                         elif item_type == 'left_marker':
                             pos, text = self.left_markers[item_index]
                             self.left_markers[item_index] = (pos + dy, text)
+                            if dx:   # Left/Right keys move the whole left set (its slider)
+                                self._set_marker_set_shift('left', self.left_marker_shift_added + dx)
                         elif item_type == 'right_marker':
                             pos, text = self.right_markers[item_index]
                             self.right_markers[item_index] = (pos + dy, text)
+                            if dx:
+                                self._set_marker_set_shift('right', self.right_marker_shift_added + dx)
                         elif item_type == 'top_marker':
                             pos, text = self.top_markers[item_index]
                             self.top_markers[item_index] = (pos + dx, text)
+                            if dy:   # Up/Down keys move the whole top set (its slider)
+                                self._set_marker_set_shift('top', self.top_marker_shift_added + dy)
                         elif item_type == 'shape':
                             shape_data = self.custom_shapes[item_index]
                             if shape_data['type'] == 'rectangle':
                                 x, y, w, h = shape_data['rect']
                                 shape_data['rect'] = (x + dx, y + dy, w, h)
+                            elif shape_data['type'] == 'leader':
+                                if not self._is_locked_leader(shape_data):
+                                    self._move_leader_by(shape_data, dx, dy)
                             elif shape_data['type'] in ('line', 'arrow'):
                                 sx, sy = shape_data['start']
                                 ex, ey = shape_data['end']
@@ -25588,16 +26606,28 @@ if __name__ == "__main__":
                             how = ("Double-click to edit its text, font, size, style and color.\n"
                                    "Drag to move · select, then drag the red handle to resize.")
                         else:
+                            along = "up/down" if info['type'] != 'top_marker' else "left/right"
+                            across = "left/right" if info['type'] != 'top_marker' else "up/down"
                             how = ("Double-click to edit this label's text.\n"
-                                   "Drag to move it along its axis · select, then drag the red "
-                                   "handle to resize the whole set's font.")
+                                   f"Drag {along} to move this label · drag {across} to move the "
+                                   "whole set (its position slider follows) · select, then drag "
+                                   "the red handle to resize the whole set's font.")
                         tip = f"{name}: “{text}”\n{how}"
                     else:
                         si = self._shape_at_ls(pt)
                         if si is not None:
                             key = ('shape', si)
                             stype = str(self.custom_shapes[si].get('type', 'shape')).capitalize()
-                            if stype.lower() == 'rectangle':
+                            if stype.lower() == 'leader' and self._is_locked_leader(self.custom_shapes[si]):
+                                stype = "Oligomer/glyco arrow"
+                                how = ("The arrow is fixed on its predicted band. Drag the LABEL to move "
+                                       "it -- the line follows.")
+                            elif stype.lower() == 'leader':
+                                stype = "Leader line"
+                                how = ("Drag the line to move the whole callout (label included) · drag "
+                                       "the red handle to re-aim the arrow tip · drag the label alone "
+                                       "and the line follows.")
+                            elif stype.lower() == 'rectangle':
                                 how = "Drag to move · drag a corner to resize · handle above the top edge sets the border thickness."
                             else:
                                 how = "Drag to move · drag an end to re-aim · side handles set the thickness."
@@ -25827,7 +26857,8 @@ if __name__ == "__main__":
                 Changes preview live on the image; Cancel restores the original."""
                 sd0 = dict(self.custom_shapes[index])
                 stype = sd0.get('type', 'line')
-                name = {'line': "Line", 'arrow': "Arrow", 'rectangle': "Rectangle"}.get(stype, "Shape")
+                name = {'line': "Line", 'arrow': "Arrow", 'rectangle': "Rectangle",
+                        'leader': "Leader line"}.get(stype, "Shape")
                 dlg = ManagedDialog(self._modal_dialog_parent())
                 dlg.setWindowTitle(f"Edit {name}")
                 form = QFormLayout(dlg)
@@ -25878,13 +26909,22 @@ if __name__ == "__main__":
                         self.custom_shapes[index] = sd
                 else:
                     (x1, y1), (x2, y2) = [tuple(map(float, p)) for p in (sd0['start'], sd0['end'])]
-                    ax1 = _coord(x1, "Start point X."); ay1 = _coord(y1, "Start point Y.")
-                    ax2 = _coord(x2, f"End point X{' (the arrow head)' if stype == 'arrow' else ''}.")
-                    ay2 = _coord(y2, f"End point Y{' (the arrow head)' if stype == 'arrow' else ''}.")
+                    _ld = (stype == 'leader')
+                    ax1 = _coord(x1, "Arrow tip X (on the band)." if _ld else "Start point X.")
+                    ay1 = _coord(y1, "Arrow tip Y (on the band)." if _ld else "Start point Y.")
+                    ax2 = _coord(x2, "Label centre X (moves the attached label)." if _ld else
+                                 f"End point X{' (the arrow head)' if stype == 'arrow' else ''}.")
+                    ay2 = _coord(y2, "Label centre Y (moves the attached label)." if _ld else
+                                 f"End point Y{' (the arrow head)' if stype == 'arrow' else ''}.")
                     r1 = QHBoxLayout(); r1.addWidget(QLabel("X")); r1.addWidget(ax1); r1.addWidget(QLabel("Y")); r1.addWidget(ay1)
                     r2 = QHBoxLayout(); r2.addWidget(QLabel("X")); r2.addWidget(ax2); r2.addWidget(QLabel("Y")); r2.addWidget(ay2)
-                    form.addRow("Start:", r1)
-                    form.addRow("End (head):" if stype == 'arrow' else "End:", r2)
+                    if _ld and self._is_locked_leader(sd0):
+                        for _w in (ax1, ay1):
+                            _w.setEnabled(False)
+                            _w.setToolTip("Oligomer/glyco arrows stay on their predicted band. "
+                                          "Move the label instead -- the line follows.")
+                    form.addRow("Arrow tip:" if _ld else "Start:", r1)
+                    form.addRow("Label:" if _ld else ("End (head):" if stype == 'arrow' else "End:"), r2)
                     def read_values():
                         return (get_color().name(), round(thick.value(), 3),
                                 ((round(ax1.value(), 3), round(ay1.value(), 3)), (round(ax2.value(), 3), round(ay2.value(), 3))))
@@ -25893,6 +26933,12 @@ if __name__ == "__main__":
                     def apply_values(v):
                         c, th, (p1, p2) = v
                         sd = dict(self.custom_shapes[index]); sd['color'] = c; sd['thickness'] = th
+                        if _ld:
+                            # The label end is the attached marker's position: move it too.
+                            mi = self._leader_linked_marker_index(sd)
+                            if mi is not None:
+                                self.custom_markers[mi][0] = float(p2[0])
+                                self.custom_markers[mi][1] = float(p2[1])
                         sd['start'] = tuple(p1); sd['end'] = tuple(p2)
                         self.custom_shapes[index] = sd
 
@@ -25993,6 +27039,18 @@ if __name__ == "__main__":
                 meant for other items. Rectangles keep the filled-box behaviour."""
                 try:
                     stype = self.custom_shapes[shape_index].get('type')
+                    if stype == 'leader':
+                        pts = self._leader_points_ls(self.custom_shapes[shape_index])
+                        if not pts:
+                            return False
+                        # Clicks on the label itself belong to the label (move just the text).
+                        mi = self._leader_linked_marker_index(self.custom_shapes[shape_index])
+                        if mi is not None:
+                            r = self._get_marker_bounding_box_in_label_space(mi)
+                            if r is not None and r.contains(point_ls):
+                                return False
+                        return min(self._point_segment_distance_ls(point_ls, pts[i], pts[i + 1])
+                                   for i in range(len(pts) - 1)) <= 6.0
                     if stype in ('line', 'arrow') and handles_ls and len(handles_ls) >= 2:
                         # Band width = the drawn half-thickness (in label space) + a small margin.
                         label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
@@ -26077,7 +27135,7 @@ if __name__ == "__main__":
                     # click into a resize and made the shape hard to MOVE. Rectangles keep the
                     # roomier radius for easy corner grabbing.
                     handle_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * (
-                        1.0 if stype_i in ('line', 'arrow') else 1.5)
+                        1.0 if stype_i in ('line', 'arrow', 'leader') else 1.5)
                     if handles_ls:
                         for corner_idx, handle_pt in enumerate(handles_ls):
                             if (clicked_point_ls - handle_pt).manhattanLength() < handle_threshold:
@@ -26149,6 +27207,11 @@ if __name__ == "__main__":
 
                 if item_selected:
                     self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
+                    # Where each L/R/top label SET sits when the drag starts: dragging a
+                    # standard label across its own axis moves its whole set (= the slider).
+                    self._std_shift_at_drag_start = {
+                        side: float(getattr(self, f'{side}_marker_shift_added', 0) or 0)
+                        for side in ('left', 'right', 'top')}
                     if self.resizing_corner_index != -1:
                         self.current_selection_mode = "resizing_custom_item"
                         self.live_view_label.mode = "resizing_custom_item"
@@ -26164,6 +27227,22 @@ if __name__ == "__main__":
                     self.resizing_corner_index = -1
 
                 self.update_live_view()
+
+            def _set_marker_set_shift(self, side, value):
+                """Move a whole left / right / top label set to `value` (image px) -- the same
+                thing its Left/Right/Top position slider does -- and keep that slider (and
+                its range) in step, so the slider and every label on that side agree."""
+                value = int(round(float(value)))
+                setattr(self, f'{side}_marker_shift_added', value)
+                try:
+                    self._update_marker_slider_ranges()   # grows the range to include value
+                except Exception:
+                    pass
+                sl = getattr(self, f'{side}_padding_slider', None)
+                if sl is not None:
+                    sl.blockSignals(True)
+                    sl.setValue(value)
+                    sl.blockSignals(False)
 
             def _relabel_standard_markers(self, marker_type):
                 """
@@ -26199,6 +27278,9 @@ if __name__ == "__main__":
 
                 current_mouse_pos_ls = self.live_view_label.transform_point(event.position())
                 info = self.moving_custom_item_info
+                if (info.get('type') == 'shape' and 0 <= info.get('index', -1) < len(self.custom_shapes)
+                        and self._is_locked_leader(self.custom_shapes[info['index']])):
+                    return   # overlay arrows are fixed; drag the label instead
 
                 # Coordinate transformation helper
                 label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
@@ -26225,26 +27307,35 @@ if __name__ == "__main__":
                     if info['type'] == 'marker':
                         new_center_ls = self.shape_points_at_drag_start_label[0] + effective_delta_ls
                         new_center_img = label_to_image(new_center_ls)
+                        _old = (self.custom_markers[info['index']][0], self.custom_markers[info['index']][1])
                         self.custom_markers[info['index']][0] = new_center_img.x()
                         self.custom_markers[info['index']][1] = new_center_img.y()
+                        # Leader lines attached to this label follow it.
+                        self._follow_marker_links(_old, (new_center_img.x(), new_center_img.y()))
                     
                     # --- START MODIFICATION ---
-                    elif info['type'] in ['left_marker', 'right_marker']:
-                        # Constrain movement to Y-axis
-                        new_center_ls = QPointF(self.shape_points_at_drag_start_label[0].x(), snapped_target_ref_point_ls.y())
-                        new_pos_img = label_to_image(new_center_ls)
-                        marker_list = self.left_markers if info['type'] == 'left_marker' else self.right_markers
-                        # Update only the position (index 0) of the tuple
-                        original_text = marker_list[info['index']][1]
-                        marker_list[info['index']] = (new_pos_img.y(), original_text)
-                    
-                    elif info['type'] == 'top_marker':
-                        # Constrain movement to X-axis
-                        new_center_ls = QPointF(snapped_target_ref_point_ls.x(), self.shape_points_at_drag_start_label[0].y())
-                        new_pos_img = label_to_image(new_center_ls)
-                        # Update only the position (index 0) of the tuple
-                        original_text = self.top_markers[info['index']][1]
-                        self.top_markers[info['index']] = (new_pos_img.x(), original_text)
+                    elif info['type'] in ['left_marker', 'right_marker', 'top_marker']:
+                        # Free movement in any direction. Along its own axis (Y for left/right
+                        # labels, X for top labels) only the dragged label moves; across it,
+                        # the label's whole SET moves together -- that is the set's position
+                        # slider (Left/Right/Top), which is updated to match, so every label on
+                        # that side follows at once.
+                        anchor_ls = self.shape_points_at_drag_start_label[0]
+                        new_pos_img = label_to_image(snapped_target_ref_point_ls)
+                        cross_ls = (snapped_target_ref_point_ls.x() - anchor_ls.x()
+                                    if info['type'] != 'top_marker'
+                                    else snapped_target_ref_point_ls.y() - anchor_ls.y())
+                        side = info['type'].split('_')[0]
+                        start = getattr(self, '_std_shift_at_drag_start', {}).get(
+                            side, float(getattr(self, f'{side}_marker_shift_added', 0) or 0))
+                        self._set_marker_set_shift(side, start + (cross_ls / scale if scale else 0.0))
+                        if info['type'] == 'top_marker':
+                            original_text = self.top_markers[info['index']][1]
+                            self.top_markers[info['index']] = (new_pos_img.x(), original_text)
+                        else:
+                            marker_list = self.left_markers if info['type'] == 'left_marker' else self.right_markers
+                            original_text = marker_list[info['index']][1]
+                            marker_list[info['index']] = (new_pos_img.y(), original_text)
                     # --- END MODIFICATION ---
 
                     elif info['type'] == 'shape':
@@ -26254,6 +27345,11 @@ if __name__ == "__main__":
                         if shape_data['type'] == 'rectangle':
                             xs = [p.x() for p in new_points_img]; ys = [p.y() for p in new_points_img]
                             shape_data['rect'] = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+                        elif shape_data['type'] == 'leader':
+                            # Move the whole callout (tip, line and its label) together.
+                            sx, sy = map(float, shape_data['start'])
+                            self._move_leader_by(shape_data, new_points_img[0].x() - sx,
+                                                 new_points_img[0].y() - sy)
                         elif shape_data['type'] in ('line', 'arrow'):
                             shape_data['start'] = (new_points_img[0].x(), new_points_img[0].y())
                             shape_data['end'] = (new_points_img[1].x(), new_points_img[1].y())
@@ -26272,7 +27368,13 @@ if __name__ == "__main__":
 
                     shape_data = self.custom_shapes[info['index']]
                     stype = shape_data['type']
-                    if stype == 'rectangle' and self.resizing_corner_index == 4:
+                    if stype == 'leader' and self._is_locked_leader(shape_data):
+                        pass
+                    elif stype == 'leader':
+                        # The one leader handle is the arrow tip: re-aim it at another band.
+                        tip_img = label_to_image(snapped_mouse_ls)
+                        shape_data['start'] = (tip_img.x(), tip_img.y())
+                    elif stype == 'rectangle' and self.resizing_corner_index == 4:
                         # Border-thickness handle (floats above the top edge): only vertical
                         # travel counts, and it is applied RELATIVE to the thickness captured
                         # on grab, so there is no jump when the handle is picked up.
@@ -26499,6 +27601,14 @@ if __name__ == "__main__":
                         h_a = QPointF(mid_x + perp_x * half_w_ls, mid_y + perp_y * half_w_ls)
                         h_b = QPointF(mid_x - perp_x * half_w_ls, mid_y - perp_y * half_w_ls)
                         handles = [p1, p2, h_a, h_b]
+                    elif shape_type == 'leader':
+                        pts = self._leader_points_ls(shape_data)
+                        if not pts:
+                            return None, None
+                        body = QPolygonF(pts).boundingRect().adjusted(-3, -3, 3, 3)
+                        # One handle, on the arrow tip (re-aim). Drag the line to move the
+                        # whole callout; drag the label to move just the label.
+                        handles = [] if self._is_locked_leader(shape_data) else [pts[0]]
                     return body, handles
                 except (IndexError, KeyError, Exception):
                     return None, None
@@ -27391,6 +28501,9 @@ if __name__ == "__main__":
                     # A DIFFERENT picture is now the master, so any Image 1 still sitting in
                     # the buffer is no longer a duplicate of it and must not suppress it.
                     self._image1_shadows_master = False
+                    self._master_has_rotation_wedges = False
+                    self._oligo_layout_memory = {}   # remembered callout labels belong to the old image
+                    self._image_load_serial = getattr(self, '_image_load_serial', 0) + 1
                     self.image_before_padding = None
                     self.image_contrasted = self.image.copy()
                     self.image_before_contrast = self.image.copy()
@@ -27838,6 +28951,9 @@ if __name__ == "__main__":
                     # A DIFFERENT picture is now the master, so any Image 1 still sitting in
                     # the buffer is no longer a duplicate of it and must not suppress it.
                     self._image1_shadows_master = False
+                    self._master_has_rotation_wedges = False
+                    self._oligo_layout_memory = {}   # remembered callout labels belong to the old image
+                    self._image_load_serial = getattr(self, '_image_load_serial', 0) + 1
                     self.image_before_padding = None        # Reset padding state
                     self.image_contrasted = self.image.copy() # Backup for contrast
                     self.image_before_contrast = self.image.copy()
@@ -28189,6 +29305,13 @@ if __name__ == "__main__":
                     for shape_item in loaded_shapes_from_config:
                         if isinstance(shape_item, dict):
                             self.custom_shapes.append(dict(shape_item))
+                # A saved figure with oligomer/glyco callouts opens with the overlay box ticked,
+                # so un-ticking it removes them (signals blocked: nothing to rebuild here).
+                if hasattr(self, 'show_oligomer_glyco_overlay_checkbox'):
+                    self.show_oligomer_glyco_overlay_checkbox.blockSignals(True)
+                    self.show_oligomer_glyco_overlay_checkbox.setChecked(
+                        any(s.get('oligo_overlay') for s in self.custom_shapes))
+                    self.show_oligomer_glyco_overlay_checkbox.blockSignals(False)
 
                 # Update standard font UI elements
                 if hasattr(self, 'font_combo_box'):
@@ -28877,7 +30000,7 @@ if __name__ == "__main__":
                     shape_data = dict(shape_data_orig) # Work on a copy
                     try:
                         shape_type = shape_data.get('type')
-                        if shape_type in ('line', 'arrow'):
+                        if shape_type in ('line', 'arrow', 'leader'):
                             sx, sy = shape_data['start']
                             ex, ey = shape_data['end']
                             shape_data['start'] = (float(sx) + padding_left, float(sy) + padding_top)
@@ -29260,7 +30383,22 @@ if __name__ == "__main__":
                 p.end()
                 return canvas
 
+            def _sync_position_readouts(self):
+                """Keep the 'N px' readouts beside the Left/Right/Top position sliders true even
+                when a slider was set with its signals blocked (drags, Auto Gel, crop, padding)."""
+                for mode in ('left', 'right', 'top'):
+                    lbl = getattr(self, f"{mode}_position_value_label", None)
+                    sl = getattr(self, f"{mode}_padding_slider", None)
+                    if lbl is not None and sl is not None:
+                        t = f"{sl.value()} px"
+                        if lbl.text() != t:
+                            lbl.setText(t)
+
             def update_live_view(self):
+                try:
+                    self._sync_position_readouts()
+                except Exception:
+                    pass
                 # --- START FIX: Context-aware rendering ---
                 image_for_view = None
 
@@ -29943,7 +31081,7 @@ if __name__ == "__main__":
                     for shape_data_orig in getattr(self, "custom_shapes", []):
                         shape_data = dict(shape_data_orig)
                         shape_type = shape_data.get('type')
-                        if shape_type in ('line', 'arrow'):
+                        if shape_type in ('line', 'arrow', 'leader'):
                             sx, sy = shape_data['start']; ex, ey = shape_data['end']
                             p_s = transform_marker.map(QPointF(sx, sy)); p_e = transform_marker.map(QPointF(ex, ey))
                             shape_data['start'] = (p_s.x(), p_s.y()); shape_data['end'] = (p_e.x(), p_e.y())
@@ -30038,6 +31176,7 @@ if __name__ == "__main__":
 
                     self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = rotated_image_high_res.copy()
+                    self._master_has_rotation_wedges = True   # transparent corners baked in (see _overlay_snapshot)
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
                     
@@ -30204,7 +31343,7 @@ if __name__ == "__main__":
                             shape_data = dict(shape_data_orig)
                             try:
                                 stype = shape_data.get('type')
-                                if stype in ('line', 'arrow'):
+                                if stype in ('line', 'arrow', 'leader'):
                                     sx_old, sy_old = map(float, shape_data['start']); ex_old, ey_old = map(float, shape_data['end'])
                                     shape_data['start'] = (sx_old - crop_x_start, sy_old - crop_y_start)
                                     shape_data['end'] = (ex_old - crop_x_start, ey_old - crop_y_start)
@@ -30250,6 +31389,16 @@ if __name__ == "__main__":
                     # copies into one.
                     self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = cropped_qimage
+                    # Rotation wedges always reach the corners: if the crop left every corner
+                    # opaque, it cut them away and later copies must not be trimmed.
+                    if getattr(self, '_master_has_rotation_wedges', False):
+                        try:
+                            _cw, _ch = cropped_qimage.width(), cropped_qimage.height()
+                            self._master_has_rotation_wedges = cropped_qimage.hasAlphaChannel() and any(
+                                cropped_qimage.pixelColor(cx, cy).alpha() < 250
+                                for cx, cy in ((0, 0), (_cw - 1, 0), (0, _ch - 1), (_cw - 1, _ch - 1)))
+                        except Exception:
+                            pass
                     self.image_before_contrast = QImage(self.image_master)
                     self.image_contrasted = QImage(self.image_master)
                     self.image_before_padding = None
@@ -30342,7 +31491,7 @@ if __name__ == "__main__":
                         for shape_data in self.custom_shapes:
                             shape_copy = dict(shape_data)
                             shape_type = shape_copy.get('type')
-                            if shape_type == 'line':
+                            if shape_type in ('line', 'arrow', 'leader'):
                                 points = np.array([[shape_copy['start'], shape_copy['end']]], dtype=np.float32)
                                 transformed = cv2.perspectiveTransform(points, matrix)
                                 shape_copy['start'] = (float(transformed[0,0,0]), float(transformed[0,0,1]))
@@ -30413,6 +31562,7 @@ if __name__ == "__main__":
 
                     # --- BUG FIX: Replace call to _finalize_permanent_transformation ---
                     self.image_master = skewed_image.copy()
+                    self._master_has_rotation_wedges = True   # transparent corners baked in (see _overlay_snapshot)
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
                     self.image_before_padding = None
@@ -30712,7 +31862,7 @@ if __name__ == "__main__":
                         for shape_data in self.custom_shapes:
                             shape_copy = dict(shape_data)
                             shape_type = shape_copy.get('type')
-                            if shape_type in ('line', 'arrow'):
+                            if shape_type in ('line', 'arrow', 'leader'):
                                 points = np.array(
                                     [[shape_copy['start'], shape_copy['end']]], dtype=np.float32
                                 )
@@ -30775,6 +31925,7 @@ if __name__ == "__main__":
                     # 6. Update image state
                     self._clear_font_reference()   # content changed: fonts follow the new canvas
                     self.image_master = warped_image.copy()
+                    self._master_has_rotation_wedges = True   # transparent corners baked in (see _overlay_snapshot)
                     self.image_before_contrast = self.image_master.copy()
                     self.image_contrasted = self.image_master.copy()
                     self.image_before_padding = None
@@ -30915,108 +32066,412 @@ if __name__ == "__main__":
                 painter.drawPolygon(tri)
                 painter.restore()
 
-            def _draw_oligomer_overlay_on_canvas(self, painter, render_scale, font_scale_factor):
-                """Helper to draw the oligomer overlay on a high-res canvas (Save/Copy)."""
-                if not (hasattr(self, 'show_oligomer_glyco_overlay_checkbox') and 
-                        self.show_oligomer_glyco_overlay_checkbox.isChecked() and 
-                        self.oligomer_products and 
-                        self.last_mw_prediction_model is not None):
+            # ------------------------------------------------------------------ #
+            # Oligomer/Glyco overlay = ordinary, editable custom items            #
+            # ------------------------------------------------------------------ #
+            # The overlay used to be painted on the fly (live view + Save/Copy only): it
+            # could not be selected, moved or edited, the PPTX export skipped it, and labels
+            # that ran past the viewer were simply clipped. It is now materialised as one
+            # custom MARKER (the "90.3 kDa" text) plus one 'leader' SHAPE (arrowhead on the
+            # band + elbow line) per product. A leader stores its band tip in 'start' and the
+            # anchor of the label it serves in 'end' (= that marker's x/y); the line is routed
+            # to the label's CURRENT edge every time it is drawn, so dragging the text drags
+            # the line with it. Everything (padding, crop, rotate, undo, config, PPTX) handles
+            # leaders through the same start/end keys as lines and arrows.
+            _LEADER_LINK_TOL = 1.0   # image px: a leader belongs to the marker at its 'end'
+
+            def _leader_linked_marker_index(self, shape):
+                """Index of the custom marker a leader is attached to, or None."""
+                try:
+                    ex, ey = float(shape['end'][0]), float(shape['end'][1])
+                except Exception:
+                    return None
+                best, best_d = None, self._LEADER_LINK_TOL
+                for i, m in enumerate(getattr(self, 'custom_markers', []) or []):
+                    try:
+                        d = math.hypot(float(m[0]) - ex, float(m[1]) - ey)
+                    except Exception:
+                        continue
+                    if d <= best_d:
+                        best, best_d = i, d
+                return best
+
+            def _follow_marker_links(self, old_xy, new_xy):
+                """A custom marker moved from old_xy to new_xy: keep its leaders attached."""
+                try:
+                    ox, oy = float(old_xy[0]), float(old_xy[1])
+                    nx, ny = float(new_xy[0]), float(new_xy[1])
+                except Exception:
                     return
+                if ox == nx and oy == ny:
+                    return
+                for sd in getattr(self, 'custom_shapes', []) or []:
+                    if sd.get('type') != 'leader':
+                        continue
+                    try:
+                        ex, ey = float(sd['end'][0]), float(sd['end'][1])
+                    except Exception:
+                        continue
+                    if math.hypot(ex - ox, ey - oy) <= self._LEADER_LINK_TOL:
+                        sd['end'] = (nx, ny)
 
-                line_colors, text_colors = self._oligomer_overlay_palette()
+            def _leader_route(self, shape, render_scale, font_scale_factor):
+                """Geometry of a leader in export-canvas units.
 
-                # --- UPDATE: Use Standard Marker Font Settings ---
-                # This ensures the size matches the Left/Right markers exactly
-                base_font_size = self.font_size
-                scaled_font_size = int(base_font_size * font_scale_factor)
-                
-                text_font = QFont(self.font_family)
-                text_font.setPixelSize(max(4, scaled_font_size))
-                text_font.setBold(True) # Keep bold to distinguish specific bands, or remove for exact match
-                painter.setFont(text_font)
-                # -----------------------------------------------
-                
-                fm_text = QFontMetricsF(text_font)
-                text_height = fm_text.height()
-                min_text_spacing = text_height * 1.45
-
-                band_groups = self._oligomer_band_groups(len(self.oligomer_products))
-                bands_to_draw = []
-                for i, mw in enumerate(self.oligomer_products):
-                    y_pos_img = self._get_y_pos_from_mw(mw, self.last_mw_prediction_model, self.last_mw_prediction_min_max_pos)
-                    if y_pos_img is not None:
-                        y_pos_canvas = y_pos_img * render_scale
-                        bands_to_draw.append({
-                            'mw': mw,
-                            'y_canvas': y_pos_canvas,
-                            'group': band_groups[i],
-                            'color': line_colors[i % len(line_colors)],
-                            'text_color': text_colors[i % len(text_colors)]
-                        })
-
-                if not bands_to_draw: return
-
-                # De-crowd vertically and record each band's oligomer group order.
-                self._layout_oligomer_bands(bands_to_draw, 'y_canvas', 'text_y_canvas',
-                                            min_text_spacing)
-
-                arrow_line_width = max(1.0, 2.0 * font_scale_factor)
-
-                # Determine Start X (Cursor location or Image Center)
-                if hasattr(self, "protein_location") and self.protein_location:
-                    start_x = self.protein_location.x() * render_scale
+                Returns (tip, polyline, head_len, pen_w, side): the arrow tip on the band, the
+                elbow polyline from the arrow base to just short of the label, the head length,
+                the line width, and +1 / -1 for a label right / left of the tip (the head then
+                points left / right). The label edge is measured with the same font metrics the
+                custom-marker renderer uses, so the line always ends at the text."""
+                rs = float(render_scale); fsf = float(font_scale_factor)
+                pen_w = max(1.0, float(shape.get('thickness', 1.0) or 1.0) * rs)
+                head = max(6.0, pen_w * 4.0)
+                tx, ty = float(shape['start'][0]) * rs, float(shape['start'][1]) * rs
+                ex, ey = float(shape['end'][0]) * rs, float(shape['end'][1]) * rs
+                lo = hi = ex
+                half_h = 0.0
+                mi = self._leader_linked_marker_index(shape)
+                if mi is not None:
+                    try:
+                        mx, my, text, _c, fam, size, bold, italic = self.custom_markers[mi]
+                        f = QFont(fam)
+                        f.setPixelSize(max(1, int(float(size) * fsf)))
+                        f.setBold(bool(bold)); f.setItalic(bool(italic))
+                        r = QFontMetrics(f).boundingRect(str(text))
+                        ox = float(mx) * rs - r.center().x()
+                        lo, hi = ox + r.left(), ox + r.right()
+                        half_h = r.height() / 2.0
+                        ey = float(my) * rs
+                    except Exception:
+                        pass
+                # The LABEL's side decides the direction: label right of the band -> the arrow
+                # points left into the band, label moved to the left -> it points right. The
+                # tip itself never moves (it marks the predicted band).
+                side = 1.0 if (lo + hi) / 2.0 >= tx else -1.0
+                near = lo if side > 0 else hi      # label edge facing the arrow
+                far = hi if side > 0 else lo
+                gap, stub = 3.0 * fsf, 9.0 * fsf
+                base_x = tx + side * head
+                if side * (near - stub - base_x) >= 0:
+                    # Label lies beyond the arrow: the usual elbow into its near edge.
+                    elbow_x = near - side * stub
+                    poly = [QPointF(base_x, ty), QPointF(elbow_x, ty),
+                            QPointF(elbow_x, ey), QPointF(near - side * gap, ey)]
                 else:
-                    start_x = (self.image_master.width() * render_scale) / 2.0
+                    elbow_x = base_x + side * stub
+                    if side * (elbow_x - (far + side * gap)) >= 0:
+                        # Label sits behind the arrow: out, over, and back into its far edge.
+                        poly = [QPointF(base_x, ty), QPointF(elbow_x, ty),
+                                QPointF(elbow_x, ey), QPointF(far + side * gap, ey)]
+                    else:
+                        # Label straddles the connector column: stop at its top/bottom edge.
+                        sgn = 1.0 if ey >= ty else -1.0
+                        end_y = ey - sgn * (half_h + gap)
+                        if sgn * (end_y - ty) < 0:
+                            end_y = ty
+                        poly = [QPointF(base_x, ty), QPointF(elbow_x, ty), QPointF(elbow_x, end_y)]
+                return QPointF(tx, ty), poly, head, pen_w, side
 
-                # Visual offsets scaled by font_scale_factor to match zoom/view ratio
-                line_len_1 = 30 * font_scale_factor
-                text_offset = 6 * font_scale_factor
-                arrow_len = max(6.0, arrow_line_width * 4.0)
-                line_origin_x = start_x + arrow_len   # leader starts at the arrow base
-                # Each oligomer group's stair begins at the end of the previous group's
-                # labels (a true cascade), separated by group_gap.
-                group_gap = max(12.0, text_height * 0.9)
-                self._assign_oligomer_group_columns(bands_to_draw, fm_text, line_origin_x,
-                                                    line_len_1, text_offset, group_gap)
+            def _draw_leader_on_painter(self, painter, shape, render_scale, font_scale_factor):
+                tip, poly, head, pen_w, side = self._leader_route(shape, render_scale, font_scale_factor)
+                color = QColor(shape.get('color', '#000000'))
+                painter.save()
+                pen = QPen(color); pen.setWidthF(pen_w); pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(pen); painter.setBrush(Qt.NoBrush)
+                painter.drawPolyline(QPolygonF(poly))
+                half = head * 0.5
+                tri = QPolygonF([tip, QPointF(tip.x() + side * head, tip.y() - half),
+                                 QPointF(tip.x() + side * head, tip.y() + half)])
+                pen = QPen(color); pen.setWidthF(max(0.5, head * 0.12)); pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(pen); painter.setBrush(color)
+                painter.drawPolygon(tri)
+                painter.restore()
 
-                # Pass 1: arrowheads + leader lines first, so the label pills below
-                # cleanly cover any lines that pass behind them.
-                for band in bands_to_draw:
-                    # Pointed arrowhead with its tip on the band position.
-                    self._draw_overlay_arrowhead(painter, line_origin_x, band['y_canvas'],
-                                                 arrow_len, band['color'])
-                    pen = QPen(band['color'])
-                    pen.setWidthF(arrow_line_width)
-                    pen.setJoinStyle(Qt.RoundJoin)
-                    painter.setPen(pen)
-                    polyline_points = [
-                        QPointF(line_origin_x, band['y_canvas']),
-                        QPointF(band['elbow_x'], band['y_canvas']),
-                        QPointF(band['elbow_x'], band['text_y_canvas']),
-                        QPointF(band['text_start_x'], band['text_y_canvas']),
-                    ]
-                    painter.drawPolyline(QPolygonF(polyline_points))
+            def _leader_points_ls(self, shape):
+                """Leader as unzoomed label-space points [tip, base, elbow1, elbow2, attach]
+                (for hit-testing, handles and the selection box), or None."""
+                if not (self.image and not self.image.isNull()) or not hasattr(self, 'live_view_label'):
+                    return None
+                label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                img_w = float(self.image.width()); img_h = float(self.image.height())
+                if not (label_w > 0 and label_h > 0 and img_w > 0 and img_h > 0):
+                    return None
+                scale = min(label_w / img_w, label_h / img_h)
+                off_x = (label_w - img_w * scale) / 2.0; off_y = (label_h - img_h * scale) / 2.0
+                rs = float(self.EXPORT_RENDER_SCALE)
+                fsf = self._export_font_scale_factor(rs, img_w, img_h)
+                tip, poly, _h, _w, _s = self._leader_route(shape, rs, fsf)
+                k = scale / rs
+                return [QPointF(off_x + p.x() * k, off_y + p.y() * k) for p in [tip] + poly]
 
-                # Pass 2: label pills + text on top.
-                pad_x = max(2.0, 4.0 * font_scale_factor)
-                pad_y = max(1.0, 2.0 * font_scale_factor)
-                radius = max(1.5, 3.0 * font_scale_factor)
-                for band in bands_to_draw:
-                    text = f"{band['mw']:.1f} kDa"
-                    text_rect = fm_text.boundingRect(text)
-                    text_w = fm_text.horizontalAdvance(text)
-                    text_start_x = band['text_start_x']
-                    text_draw_y = band['text_y_canvas'] - (text_rect.top() + text_rect.height() / 2.0)
-                    bg_rect = QRectF(text_start_x - pad_x,
-                                     band['text_y_canvas'] - text_rect.height() / 2.0 - pad_y,
-                                     text_w + 2 * pad_x,
-                                     text_rect.height() + 2 * pad_y)
-                    painter.setPen(Qt.NoPen)
-                    painter.setBrush(QColor(255, 255, 255, 235))
-                    painter.drawRoundedRect(bg_rect, radius, radius)
-                    painter.setBrush(Qt.NoBrush)
-                    painter.setPen(band['text_color'])
-                    painter.drawText(QPointF(text_start_x, text_draw_y), text)
+            @staticmethod
+            def _is_locked_leader(shape):
+                """Oligomer/glyco callout lines are locked: their arrow stays on its band and
+                keeps its direction. Only the attached LABEL can be moved."""
+                return bool(shape and shape.get('type') == 'leader' and shape.get('oligo_overlay'))
+
+            def _move_leader_by(self, shape, dx, dy):
+                """Translate a whole callout: the leader and the label attached to it."""
+                mi = self._leader_linked_marker_index(shape)
+                sx, sy = map(float, shape['start']); ex, ey = map(float, shape['end'])
+                shape['start'] = (sx + dx, sy + dy)
+                shape['end'] = (ex + dx, ey + dy)
+                if mi is not None:
+                    self.custom_markers[mi][0] = float(self.custom_markers[mi][0]) + dx
+                    self.custom_markers[mi][1] = float(self.custom_markers[mi][1]) + dy
+
+            def _remove_oligomer_overlay_items(self):
+                """Delete every overlay leader and the label attached to it. Returns True if
+                anything was removed."""
+                shapes = list(getattr(self, 'custom_shapes', []) or [])
+                leaders = [s for s in shapes if s.get('oligo_overlay')]
+                if not leaders:
+                    return False
+                drop = {mi for mi in (self._leader_linked_marker_index(s) for s in leaders) if mi is not None}
+                self.custom_shapes = [s for s in shapes if not s.get('oligo_overlay')]
+                self.custom_markers = [m for i, m in enumerate(getattr(self, 'custom_markers', []) or [])
+                                       if i not in drop]
+                # Indices shifted; drop any selection rather than point at the wrong item.
+                self.moving_custom_item_info = None
+                return True
+
+            def _build_oligomer_overlay_items(self):
+                """Append one label + leader per oligomer/glyco product (the same layout the
+                old painted overlay used: de-crowded labels, one cascading column per
+                oligomer). Returns the number of products placed."""
+                if not (getattr(self, 'oligomer_products', None)
+                        and getattr(self, 'last_mw_prediction_model', None) is not None):
+                    return 0
+                img = self.image if (self.image and not self.image.isNull()) else None
+                if img is None:
+                    return 0
+                W, H = float(img.width()), float(img.height())
+                rs = float(self.EXPORT_RENDER_SCALE)
+                fsf = self._export_font_scale_factor(rs, W, H)
+                line_colors, _text_colors = self._oligomer_overlay_palette()
+                size = max(1, int(round(float(self.font_size))))
+                font = QFont(self.font_family)
+                font.setPixelSize(max(1, int(size * fsf)))
+                font.setBold(True)
+                fm = QFontMetricsF(font)
+                text_h = fm.height()
+
+                groups = self._oligomer_band_groups(len(self.oligomer_products))
+                bands = []
+                for i, mw in enumerate(self.oligomer_products):
+                    y = self._get_y_pos_from_mw(mw, self.last_mw_prediction_model,
+                                                self.last_mw_prediction_min_max_pos)
+                    if y is None:
+                        continue
+                    bands.append({'mw': mw, 'y': float(y) * rs, 'group': groups[i],
+                                  'color': QColor(line_colors[i % len(line_colors)])})
+                if not bands:
+                    return 0
+                self._layout_oligomer_bands(bands, 'y', 'ty', text_h * 1.45)
+
+                loc = getattr(self, 'protein_location', None)
+                start_x = (float(loc.x()) if loc is not None else W / 2.0) * rs
+                pen_w = max(1.0, 2.0 * fsf)
+                head = max(6.0, pen_w * 4.0)
+                self._assign_oligomer_group_columns(bands, fm, start_x + head, 30.0 * fsf,
+                                                    9.0 * fsf, max(12.0, text_h * 0.9))
+                self._fit_oligomer_layout_to_view(bands, fm, start_x, head, fsf, rs, text_h)
+                fm_i = QFontMetrics(font)   # what the custom-marker renderer centres with
+                memory = getattr(self, '_oligo_layout_memory', None) or {}
+                for b in bands:
+                    key = f"{b['group']}:{float(b['mw']):.4f}"
+                    text = f"{b['mw']:.1f} kDa"
+                    r = fm_i.boundingRect(text)
+                    marker = [(b['text_start_x'] + r.center().x()) / rs, b['ty'] / rs, text,
+                              QColor(b['color']), self.font_family, size, True, False]
+                    line_color, line_th = b['color'].name(), pen_w / rs
+                    side = float(b.get('side', 1.0))
+                    mem = memory.get(key)
+                    if mem:
+                        # Re-prediction: keep the label exactly where (and how) the user left it;
+                        # only the arrow moves to the newly predicted band.
+                        marker = list(mem['label'])
+                        marker[3] = QColor(marker[3])
+                        line_color = mem.get('color', line_color)
+                        line_th = mem.get('thickness', line_th)
+                        side = float(mem.get('side') or side)
+                    self.custom_markers.append(marker)
+                    self.custom_shapes.append({'type': 'leader', 'start': (start_x / rs, b['y'] / rs),
+                                               'end': (float(marker[0]), float(marker[1])),
+                                               'thickness': line_th, 'color': line_color,
+                                               'oligo_overlay': True, 'oligo_key': key,
+                                               'side': side})
+                return len(bands)
+
+            OLIGO_VIEW_MARGIN = 0.15   # callouts may sit at most 15% outside the preview
+
+            def _overlay_allowed_region_img(self):
+                """Image-space rectangle (x0, y0, x1, y1) the callouts must stay inside: the
+                area the preview shows at the fitted (100%) view -- the image plus the viewer's
+                white margins -- grown by OLIGO_VIEW_MARGIN on every side."""
+                W = float(self.image.width()); H = float(self.image.height())
+                lbl = getattr(self, 'live_view_label', None)
+                lw = float(lbl.width()) if lbl is not None else 0.0
+                lh = float(lbl.height()) if lbl is not None else 0.0
+                if lw > 0 and lh > 0 and W > 0 and H > 0:
+                    sc = min(lw / W, lh / H)
+                    ox = (lw - W * sc) / 2.0; oy = (lh - H * sc) / 2.0
+                    x0, x1 = -ox / sc, (lw - ox) / sc
+                    y0, y1 = -oy / sc, (lh - oy) / sc
+                else:
+                    x0, y0, x1, y1 = 0.0, 0.0, W, H
+                mx = (x1 - x0) * self.OLIGO_VIEW_MARGIN; my = (y1 - y0) * self.OLIGO_VIEW_MARGIN
+                return x0 - mx, y0 - my, x1 + mx, y1 + my
+
+            def _fit_oligomer_layout_to_view(self, bands, fm, start_x, head, fsf, rs, text_h):
+                """Keep the default callout layout inside the allowed region (see
+                _overlay_allowed_region_img), in export-canvas units. Cascade columns that
+                run off the right collapse into one column; that column slides left; if there
+                is no room right of the arrows at all the labels go on the LEFT (arrows point
+                right). Labels below the region shift up, compressing only if they must."""
+                try:
+                    x0, y0, x1, y1 = [v * rs for v in self._overlay_allowed_region_img()]
+                except Exception:
+                    return
+                width = {id(b): fm.horizontalAdvance(f"{b['mw']:.1f} kDa") for b in bands}
+                offset = 9.0 * fsf
+                right = max(b['text_start_x'] + width[id(b)] for b in bands)
+                if right > x1:
+                    max_w = max(width.values())
+                    first = start_x + head + 30.0 * fsf
+                    lowest = start_x + head + 6.0 * fsf          # tightest elbow right of the arrows
+                    col = min(first, x1 - max_w - offset)
+                    if col >= lowest:
+                        for b in bands:
+                            b['elbow_x'] = col; b['text_start_x'] = col + offset; b['side'] = 1.0
+                    else:
+                        # No room on the right: labels to the LEFT, right-aligned, arrows -> right.
+                        text_end = max(x0 + max_w, start_x - head - 30.0 * fsf - offset)
+                        for b in bands:
+                            b['text_start_x'] = text_end - width[id(b)]
+                            b['elbow_x'] = text_end + offset
+                            b['side'] = -1.0
+                half = text_h / 2.0
+                bottom = max(b['ty'] for b in bands) + half
+                if bottom > y1:
+                    for b in bands:
+                        b['ty'] -= bottom - y1
+                top = min(b['ty'] for b in bands) - half
+                if top < y0:
+                    order = sorted(bands, key=lambda b: b['ty'])
+                    n = len(order)
+                    span = (y1 - half) - (y0 + half)
+                    for k, b in enumerate(order):
+                        b['ty'] = y0 + half + (span * k / (n - 1) if n > 1 else span / 2.0)
+
+            def _ensure_overlay_items_visible(self):
+                """Zoom the preview out (and pan) just enough that every oligomer/glyco label
+                and arrow is on screen. Never zooms in; does nothing if all are visible."""
+                lbl = getattr(self, 'live_view_label', None)
+                if lbl is None or not (self.image and not self.image.isNull()):
+                    return
+                rect = QRectF()
+                for i, sd in enumerate(getattr(self, 'custom_shapes', []) or []):
+                    if not sd.get('oligo_overlay'):
+                        continue
+                    pts = self._leader_points_ls(sd) or []
+                    if pts:
+                        rect = rect.united(QPolygonF(pts).boundingRect())
+                    mi = self._leader_linked_marker_index(sd)
+                    if mi is not None:
+                        r = self._get_marker_bounding_box_in_label_space(mi)
+                        if r is not None:
+                            rect = rect.united(r)
+                if rect.isNull():
+                    return
+                # Always keep the image itself in view as well.
+                W = float(self.image.width()); H = float(self.image.height())
+                lw = float(lbl.width()); lh = float(lbl.height())
+                sc = min(lw / W, lh / H)
+                img_ls = QRectF((lw - W * sc) / 2.0, (lh - H * sc) / 2.0, W * sc, H * sc)
+                rect = rect.united(img_ls).adjusted(-8, -8, 8, 8)
+                z = float(lbl.zoom_level) if lbl.zoom_level > 1e-9 else 1.0
+                pan = lbl.pan_offset
+                vis = QRectF(-pan.x() / z, -pan.y() / z, lw / z, lh / z)   # visible, unzoomed
+                if vis.contains(rect):
+                    return
+                new_z = max(lbl.MIN_ZOOM, min(1.0, z, lw / rect.width(), lh / rect.height()))
+                lbl.zoom_level = new_z
+                c = rect.center()
+                lbl.pan_offset = QPointF(lw / 2.0 - c.x() * new_z, lh / 2.0 - c.y() * new_z)
+                if abs(new_z - 1.0) < 1e-6 and vis.contains(rect):
+                    lbl.pan_offset = QPointF(0, 0)
+
+            def _remember_oligomer_overlay_layout(self):
+                """Record where every current callout's label is (and its styling), keyed by
+                product, so a rebuild -- new Predict Molecular Weight point, partial
+                glycosylation toggle, re-ticking the overlay -- puts labels back where the user
+                arranged them."""
+                memory = getattr(self, '_oligo_layout_memory', None)
+                if memory is None:
+                    memory = self._oligo_layout_memory = {}
+                for sd in getattr(self, 'custom_shapes', []) or []:
+                    key = sd.get('oligo_key')
+                    if not (sd.get('oligo_overlay') and key):
+                        continue
+                    mi = self._leader_linked_marker_index(sd)
+                    if mi is None:
+                        continue
+                    lab = list(self.custom_markers[mi])
+                    lab[3] = QColor(lab[3]).name()
+                    memory[key] = {'label': lab, 'color': sd.get('color'),
+                                   'thickness': sd.get('thickness'), 'side': sd.get('side')}
+
+            def _sync_oligomer_overlay_items(self, record_undo=True):
+                """Make the overlay items match the checkbox: rebuilt from the current
+                prediction/products when it is ticked, removed when it is not."""
+                cb = getattr(self, 'show_oligomer_glyco_overlay_checkbox', None)
+                want = bool(cb is not None and cb.isChecked()
+                            and getattr(self, 'oligomer_products', None)
+                            and getattr(self, 'last_mw_prediction_model', None) is not None)
+                has = any(s.get('oligo_overlay') for s in (getattr(self, 'custom_shapes', []) or []))
+                if not want and not has:
+                    return
+                self._remember_oligomer_overlay_layout()
+                self._remove_oligomer_overlay_items()
+                n = self._build_oligomer_overlay_items() if want else 0
+                self.is_modified = True
+                if n:
+                    try:
+                        self._ensure_overlay_items_visible()
+                    except Exception:
+                        log_traceback()
+                if record_undo:
+                    # The undo stack holds POST-change snapshots (undo restores the entry
+                    # below the top), so record after the items changed.
+                    try:
+                        self.save_state()
+                    except Exception:
+                        log_traceback()
+                if n:
+                    try:
+                        self.show_mode_status(
+                            f"Oligomer/glyco overlay: {n} label(s) added as custom markers. Use "
+                            "Move/Resize to drag a label (its line follows), drag a line to move "
+                            "the whole callout, or double-click to edit. Add padding if labels "
+                            "run past the image edge.")
+                    except Exception:
+                        pass
+                self.update_live_view()
+
+            def _on_oligomer_overlay_toggled(self, _state=None):
+                cb = self.show_oligomer_glyco_overlay_checkbox
+                if cb.isChecked() and not (getattr(self, 'oligomer_products', None)
+                                           and getattr(self, 'last_mw_prediction_model', None) is not None):
+                    try:
+                        self.show_mode_status("Oligomer/glyco overlay: predict a molecular weight "
+                                              "first (and set up Protein Analysis); the overlay "
+                                              "appears as soon as a prediction exists.")
+                    except Exception:
+                        pass
+                    self.update_live_view()
+                    return
+                self._sync_oligomer_overlay_items()
 
             def save_image(self):
                 self.draw_guides = False
@@ -31204,7 +32659,6 @@ if __name__ == "__main__":
 
                 self._paint_annotations(painter, render_scale, font_scale_factor)
 
-                self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
 
                 # Embed DPI so annotation fonts open at their TRUE point size when this
@@ -31609,6 +33063,8 @@ if __name__ == "__main__":
                         elif stype == 'arrow':
                             self._draw_arrow_on_painter(painter, _cv(shape_data['start']),
                                                         _cv(shape_data['end']), pen_w)
+                        elif stype == 'leader':
+                            self._draw_leader_on_painter(painter, shape_data, rs, font_scale_factor)
                         elif stype == 'rectangle':
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(_cv((x, y)), QSizeF(float(w) * rs, float(h) * rs)))
@@ -31838,7 +33294,6 @@ if __name__ == "__main__":
                 def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
                 self._paint_annotations(painter, render_scale, font_scale_factor)
 
-                self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
 
                 # --- Optionally overlay the densitometry lane bounding boxes ---
                 if draw_densitometry_boxes:
@@ -31966,7 +33421,6 @@ if __name__ == "__main__":
                 def map_img_coords_to_canvas(img_x, img_y): return QPointF(img_x * render_scale, img_y * render_scale)
                 self._paint_annotations(painter, render_scale, font_scale_factor)
 
-                self._draw_oligomer_overlay_on_canvas(painter, render_scale, font_scale_factor)
                 painter.end()
                 
                 # --- Publish to clipboard ---
@@ -32177,6 +33631,7 @@ if __name__ == "__main__":
                 self.last_mw_prediction_marker_width_ls = None
                 if hasattr(self, 'show_oligomer_glyco_overlay_checkbox'):
                     self.show_oligomer_glyco_overlay_checkbox.setChecked(False)
+                self._oligo_layout_memory = {}   # Clear Markers: start the next overlay fresh
                 
                 # --- MODIFIED/ADDED: Clear multi-lane and LiveViewLabel preview states ---
                 self.multi_lane_mode_active = False
@@ -32581,6 +34036,7 @@ if __name__ == "__main__":
                     
                     if self.avg_glycan_mass <= 0: self.avg_glycan_mass = 0.0
                     self._rebuild_oligomer_products()
+                    self._sync_oligomer_overlay_items()
                 else:
                     self.last_mw_prediction_model = None
                     self.run_predict_MW = False
@@ -32654,6 +34110,7 @@ if __name__ == "__main__":
                     if hasattr(self, 'original_image') and self.original_image and not self.original_image.isNull():
                         self._clear_font_reference()   # content changed: fonts follow the new canvas
                         self.image_master = self.original_image.copy()
+                        self._master_has_rotation_wedges = False
                         self.image = self.image_master.copy() 
                         self.image_before_padding = None
                         self.image_contrasted = self.image_master.copy()
@@ -32946,6 +34403,7 @@ if __name__ == "__main__":
                     "image_master": self.image_master.copy() if self.image_master else None,
                     # --- END FIX ---
                     "font_reference_size": getattr(self, 'font_reference_size', None),
+                    "rotation_wedges": bool(getattr(self, '_master_has_rotation_wedges', False)),
                     "left_markers": self.left_markers.copy(), "right_markers": self.right_markers.copy(), "top_markers": self.top_markers.copy(),
                     "custom_markers": [list(m) for m in getattr(self, "custom_markers", [])], "custom_shapes": [dict(s) for s in getattr(self, "custom_shapes", [])],
                     "image_before_padding": self.image_before_padding.copy() if self.image_before_padding else None,
@@ -33819,6 +35277,28 @@ if __name__ == "__main__":
                                     except Exception:
                                         pass
                                     _no_shadow(conn)
+                            elif stype == 'leader':
+                                # Oligomer/glyco callout line: ONE editable open polyline from
+                                # the band tip along the elbow to the label, with a native
+                                # arrowhead at the tip — same route the app draws.
+                                _rs = float(self.EXPORT_RENDER_SCALE)
+                                _fsf = self._export_font_scale_factor(_rs, img_w, img_h)
+                                _tip, _poly, _hd, _pw, _sd = self._leader_route(shape_data, _rs, _fsf)
+                                _pts = [(_tip.x() / _rs, _tip.y() / _rs)] + [(q.x() / _rs, q.y() / _rs) for q in _poly]
+                                ff = slide.shapes.build_freeform(int(E(_pts[0][0])), int(E(_pts[0][1])), scale=1.0)
+                                ff.add_line_segments([(int(E(px)), int(E(py))) for px, py in _pts[1:]], close=False)
+                                shp = ff.convert_to_shape()
+                                shp.fill.background()
+                                shp.line.color.rgb = _rgb(color)
+                                shp.line.width = E(float(shape_data.get('thickness', 1)))
+                                try:
+                                    from pptx.oxml.ns import qn
+                                    ln = shp.line._get_or_add_ln()
+                                    ln.append(ln.makeelement(qn('a:headEnd'),
+                                                             {'type': 'triangle', 'w': 'med', 'len': 'med'}))
+                                except Exception:
+                                    pass
+                                _no_shadow(shp)
                             elif stype == 'rectangle':
                                 rect = shape_data.get('rect')
                                 if rect:
