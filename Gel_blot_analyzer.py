@@ -40,7 +40,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.5"
+APP_VERSION = "9.5.1"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -919,7 +919,93 @@ if __name__ == "__main__":
             """ 4-Parameter Logistic Regression model (sigmoidal). y = d + (a - d) / (1 + (x / c)**b) """
             return d + (a - d) / (1 + (x / c)**b)
 
-        
+        def fit_mw_standard_curve(norm_dist, log_vals, model_text):
+            """Fit the ladder standard curve (log10 MW vs normalised distance).
+
+            Shared by the Prediction dialog and the main-window Regression Model combo, so
+            both produce identical curves. Returns (model_type, coeffs, r_squared, error):
+            model_type is "4-PL" or "poly"; on failure coeffs is None and error says why."""
+            norm_dist = np.asarray(norm_dist, dtype=float)
+            log_vals = np.asarray(log_vals, dtype=float)
+            if "4-PL" in (model_text or ""):
+                if not SCIPY_AVAILABLE:
+                    return "4-PL", None, 0.0, "SciPy required for 4-PL."
+                if len(norm_dist) < 4:
+                    return "4-PL", None, 0.0, "Need 4+ points for 4-PL."
+                try:
+                    p0 = [np.max(log_vals), 1.0, np.median(norm_dist), np.min(log_vals)]
+                    coeffs, _ = curve_fit(four_param_logistic, norm_dist, log_vals, p0=p0, maxfev=10000)
+                    fitted = four_param_logistic(norm_dist, *coeffs)
+                except (RuntimeError, ValueError):
+                    return "4-PL", None, 0.0, "4-PL failed to converge."
+                model_type = "4-PL"
+            else:
+                degree = 3 if "Degree 3" in (model_text or "") else 2 if "Degree 2" in (model_text or "") else 1
+                if len(norm_dist) <= degree:
+                    return "poly", None, 0.0, "Not enough points."
+                coeffs = np.polyfit(norm_dist, log_vals, degree)
+                fitted = np.polyval(coeffs, norm_dist)
+                model_type = "poly"
+            ss_res = np.sum((log_vals - fitted) ** 2)
+            ss_tot = np.sum((log_vals - np.mean(log_vals)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+            return model_type, coeffs, r_squared, None
+
+        def eval_mw_standard_curve(model_type, coeffs, norm_x):
+            """Raw (uncalibrated) log10 MW of the standard curve at normalised distance(s)."""
+            with np.errstate(all='ignore'):
+                if model_type == "4-PL":
+                    return four_param_logistic(np.asarray(norm_x, dtype=float), *coeffs)
+                return np.polyval(coeffs, norm_x)
+
+        def invert_mw_standard_curve(model_type, coeffs, log_mw, slope=1.0, offset=0.0):
+            """Normalised distance at which the (calibrated) curve reaches log_mw.
+
+            Never gives up on a valid MW. Inside the curve's well-behaved, monotonic part
+            (grown outward from the ladder span 0..1) the model itself is inverted. Beyond
+            it -- e.g. a 4-PL flattening onto its asymptote, or a polynomial turning back --
+            the curve is continued as a straight line with the slope at that edge (floored
+            at a quarter of the ladder's mean slope), so large oligomers are still placed,
+            in a model-dependent way."""
+            ts = np.linspace(-2.0, 3.0, 5001)
+            g = slope * np.asarray(eval_mw_standard_curve(model_type, coeffs, ts), dtype=float) + offset
+            if not np.all(np.isfinite(g[(ts >= 0) & (ts <= 1)])):
+                return None
+            i0 = int(np.searchsorted(ts, 0.0)); i1 = int(np.searchsorted(ts, 1.0))
+            mean_slope = (g[i1] - g[i0]) / (ts[i1] - ts[i0])
+            if not np.isfinite(mean_slope) or abs(mean_slope) < 1e-12:
+                return None
+            sgn = 1.0 if mean_slope > 0 else -1.0
+            floor = 0.25 * abs(mean_slope)
+            dg = np.gradient(g, ts)
+            good = np.isfinite(g) & np.isfinite(dg) & (dg * sgn >= floor)
+            # Connected run of "good" samples around the ladder centre.
+            ic = int(np.searchsorted(ts, 0.5))
+            if not good[ic]:
+                cand = np.where(good[i0:i1 + 1])[0]
+                if cand.size == 0:
+                    lo, hi = i0, i1   # pathological curve: use the ladder span as is
+                else:
+                    ic = i0 + int(cand[np.argmin(np.abs(cand + i0 - ic))])
+            if good[ic]:
+                lo = ic
+                while lo > 0 and good[lo - 1]:
+                    lo -= 1
+                hi = ic
+                while hi < len(ts) - 1 and good[hi + 1]:
+                    hi += 1
+            seg_t, seg_g = ts[lo:hi + 1], g[lo:hi + 1]
+            gmin, gmax = (seg_g[0], seg_g[-1]) if sgn > 0 else (seg_g[-1], seg_g[0])
+            if gmin <= log_mw <= gmax:
+                order = np.argsort(seg_g)
+                return float(np.interp(log_mw, seg_g[order], seg_t[order]))
+            # Extrapolate from the nearer end of the segment.
+            low_end = (log_mw < gmin)
+            j = (lo if sgn > 0 else hi) if low_end else (hi if sgn > 0 else lo)
+            s = dg[j] if (np.isfinite(dg[j]) and abs(dg[j]) >= floor) else sgn * floor
+            return float(ts[j] + (log_mw - g[j]) / s)
+
+
 
 
         def _toolbar_icon_svg(name, c):
@@ -1444,42 +1530,11 @@ if __name__ == "__main__":
                 self.ax.clear()
 
                 # --- FIT THE STANDARD CURVE ---
-                if "4-PL" in selected_model_text:
-                    self.final_model_type = "4-PL"
-                    if not SCIPY_AVAILABLE:
-                        self.ax.text(0.5, 0.5, "SciPy required for 4-PL.", ha='center')
-                        self.canvas.draw(); return
-                    if len(normalized_distances) < 4:
-                        self.ax.text(0.5, 0.5, f"Need 4+ points for 4-PL.", ha='center')
-                        self.canvas.draw(); return
-                    
-                    try:
-                        p0 = [np.max(log_marker_values), 1.0, np.median(normalized_distances), np.min(log_marker_values)]
-                        coefficients, _ = curve_fit(four_param_logistic, normalized_distances, log_marker_values, p0=p0, maxfev=10000)
-                        
-                        residuals = log_marker_values - four_param_logistic(normalized_distances, *coefficients)
-                        ss_res = np.sum(residuals**2)
-                        ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
-                        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                    except RuntimeError:
-                        self.ax.text(0.5, 0.5, "4-PL failed to converge.", ha='center')
-                        self.canvas.draw(); return
-
-                else: # Polynomial models
-                    self.final_model_type = "poly"
-                    poly_degree = 1
-                    if "Degree 2" in selected_model_text: poly_degree = 2
-                    elif "Degree 3" in selected_model_text: poly_degree = 3
-
-                    if len(normalized_distances) <= poly_degree:
-                        self.ax.text(0.5, 0.5, f"Not enough points.", ha='center')
-                        self.canvas.draw(); return
-
-                    coefficients = np.polyfit(normalized_distances, log_marker_values, poly_degree)
-                    residuals = log_marker_values - np.polyval(coefficients, normalized_distances)
-                    ss_res = np.sum(residuals**2)
-                    ss_tot = np.sum((log_marker_values - np.mean(log_marker_values))**2)
-                    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+                self.final_model_type, coefficients, r_squared, fit_error = fit_mw_standard_curve(
+                    normalized_distances, log_marker_values, selected_model_text)
+                if coefficients is None:
+                    self.ax.text(0.5, 0.5, fit_error or "Fit failed.", ha='center')
+                    self.canvas.draw(); return
 
                 # --- Helper to get Raw Prediction from Curve ---
                 def get_raw_log_mw(y_pos_px):
@@ -1586,8 +1641,15 @@ if __name__ == "__main__":
 
                 return {
                     "model": self.final_model_type, 
+                    "model_text": self.model_combo_dialog.currentText(),
                     "coeffs": coeffs_safe, 
-                    "min_max_pos": self.final_min_max_pos,
+                    "min_max_pos": (None if self.final_min_max_pos is None
+                                    else [float(v) for v in self.final_min_max_pos]),
+                    # Fit inputs, so the main Regression Model combo can refit without
+                    # re-picking (see CombinedSDSApp._on_main_regression_model_changed).
+                    "marker_positions": [float(v) for v in self.active_marker_positions],
+                    "marker_values": [float(v) for v in self.active_marker_values],
+                    "protein_y": float(self.protein_y_image),
                     "calibration": {
                         "active": self.calibration_active,
                         "slope": self.calib_slope,
@@ -10043,6 +10105,23 @@ if __name__ == "__main__":
             def _scaled(self, base, f):
                 return base if base <= self.MIN_PT else max(self.MIN_PT, base * f)
 
+            def adopt_text(self, t):
+                """Pre-register a data-annotation Text (e.g. a lane tag) at its scaled size.
+                A Text the fitter has never seen counts as "text changed" and forces a full
+                layout re-solve on the next draw -- for overlays rebuilt on every slider step
+                that re-solve was most of the redraw cost, and data labels never affect the
+                layout anyway."""
+                try:
+                    base = float(t.get_fontsize())
+                    new = self._scaled(base, self._font_factor())
+                    if new != base:
+                        t.set_fontsize(new)
+                    t._gba_base = base
+                    t._gba_applied = new
+                except Exception:
+                    pass
+                return t
+
             @staticmethod
             def _axes_axes(fig):
                 out = []
@@ -11287,25 +11366,37 @@ if __name__ == "__main__":
 
                 self._stack.addWidget(page)
 
+            def _schedule_lane_detection(self):
+                """Slider steps arrive in bursts while dragging; detect + redraw once per
+                burst (after ~40 ms of quiet) instead of once per tick."""
+                t = getattr(self, '_lane_detect_timer', None)
+                if t is None:
+                    t = QTimer(self)
+                    t.setSingleShot(True)
+                    t.setInterval(40)
+                    t.timeout.connect(self._run_lane_detection)
+                    self._lane_detect_timer = t
+                t.start()
+
             def _on_p1_smooth_changed(self, v):
                 self._lane_smooth = v / 10.0
                 self._p1_lbl_sm.setText(f"Smoothing σ  {self._lane_smooth:.1f}")
-                self._run_lane_detection()
+                self._schedule_lane_detection()
 
             def _on_p1_prom_changed(self, v):
                 self._lane_prom = v / 100.0
                 self._p1_lbl_pr.setText(f"Min Prominence  {self._lane_prom:.2f}")
-                self._run_lane_detection()
+                self._schedule_lane_detection()
 
             def _on_p1_ht_changed(self, v):
                 self._lane_height = v / 100.0
                 self._p1_lbl_ht.setText(f"Min Height  {self._lane_height:.2f}")
-                self._run_lane_detection()
+                self._schedule_lane_detection()
 
             def _on_p1_dist_changed(self, v):
                 self._lane_dist = v
                 self._p1_lbl_d.setText(f"Min Spacing  {v} px")
-                self._run_lane_detection()
+                self._schedule_lane_detection()
 
             # ── Page 3: Labels & MWM setup ─────────────────────────────
             def _build_page3(self):
@@ -12110,27 +12201,94 @@ if __name__ == "__main__":
                 self._gel_disp_cache = (dsp, fh, fw)
                 return self._gel_disp_cache
 
+            def _p1_build_base(self, dsp, Hd, Wd):
+                """Build the parts of the lane figure that do NOT depend on the lanes or the
+                sliders: the gel image, axes, labels, theme and layout. Done once per gel
+                (keyed on the cached display array) instead of on every slider step -- the
+                old cla()+imshow()+tight_layout() per tick is what made Step 3 sluggish."""
+                self._ax1_img.cla()
+                self._ax1_prof.cla()
+                self._p1_lane_artists = []
+                self._ax1_img.imshow(
+                    dsp, cmap='gray', aspect='auto', interpolation='nearest',
+                    extent=[-0.5, Wd - 0.5, Hd - 0.5, -0.5])
+                self._ax1_img.set_ylabel("Row", fontsize=plot_font(self.parent_app, 7))
+                self._ax1_img.tick_params(labelsize=plot_font(self.parent_app, 6))
+                self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=plot_font(self.parent_app, 8), pad=3, wrap=True)
+                self._ax1_img.set_xlim(-0.5, Wd - 0.5)
+                self._ax1_img.set_ylim(Hd - 0.5, -0.5)
+                self._p1_prof_line, = self._ax1_prof.plot(np.arange(Wd), np.zeros(Wd),
+                                                          color='steelblue', lw=1.5, animated=True)
+                self._ax1_prof.set_xlim(-0.5, Wd - 0.5)
+                self._ax1_prof.set_ylim(-0.02, 1.15)
+                self._ax1_prof.set_xlabel("Column (px)", fontsize=plot_font(self.parent_app, 7))
+                self._ax1_prof.set_ylabel("Normalized profile", fontsize=plot_font(self.parent_app, 7))
+                self._ax1_prof.tick_params(labelsize=plot_font(self.parent_app, 6))
+                try: self._apply_fig_theme(self._fig1, [self._ax1_img, self._ax1_prof])
+                except Exception: pass
+                try: self._fig1.tight_layout(pad=0.3, h_pad=0.8)
+                except Exception: pass
+                self._p1_base_key = dsp
+                self._p1_bg = None
+                if not getattr(self, '_p1_draw_cid', None):
+                    self._p1_draw_cid = self._canvas1.mpl_connect('draw_event', self._p1_on_full_draw)
+
+            def _p1_overlay_artists(self):
+                arts = list(getattr(self, '_p1_lane_artists', []) or [])
+                line = getattr(self, '_p1_prof_line', None)
+                if line is not None:
+                    arts.append(line)
+                return arts
+
+            def _p1_on_full_draw(self, _event=None):
+                """After every FULL draw (first show, resize, theme...) snapshot the static
+                background -- gel image, axes, ticks; the lane overlays are 'animated' so a
+                full draw leaves them out -- then paint the overlays on top."""
+                try:
+                    self._p1_bg = (self._canvas1.copy_from_bbox(self._fig1.bbox),
+                                   self._canvas1.width(), self._canvas1.height())
+                    for a in self._p1_overlay_artists():
+                        a.axes.draw_artist(a)
+                    self._canvas1.blit(self._fig1.bbox)
+                except Exception:
+                    self._p1_bg = None
+
+            def _p1_blit_overlays(self):
+                """Repaint only the lane overlays + profile curve over the cached background
+                (a few ms) instead of re-rendering the whole figure. Falls back to a full
+                redraw when there is no valid background yet."""
+                bg = getattr(self, '_p1_bg', None)
+                cv = self._canvas1
+                if bg is None or bg[1] != cv.width() or bg[2] != cv.height():
+                    cv.draw_idle()
+                    return
+                try:
+                    cv.restore_region(bg[0])
+                    for a in self._p1_overlay_artists():
+                        a.axes.draw_artist(a)
+                    cv.blit(self._fig1.bbox)
+                except Exception:
+                    self._p1_bg = None
+                    cv.draw_idle()
+
             def _draw_phase1_figure(self, col_norm):
+                """Update the lane figure. The gel image/axes are persistent (see
+                _p1_build_base); only the lane overlays and the profile curve are replaced."""
                 self._last_col_norm = col_norm
                 try:
-                    self._ax1_img.cla()
-                    self._ax1_prof.cla()
+                    dsp, Hd, Wd = self._gel_display_array()
+                    if getattr(self, '_p1_base_key', None) is not dsp:
+                        self._p1_build_base(dsp, Hd, Wd)
+                    for a in getattr(self, '_p1_lane_artists', []) or []:
+                        try: a.remove()
+                        except Exception: pass
+                    self._p1_lane_artists = []
                     self._drag_lines.clear()
                 except Exception:
                     return
 
                 try:
-                    # Downscaled pixels, full-resolution coordinates (via extent), so every
-                    # lane boundary / overlay below still works in original gel pixels.
-                    dsp, Hd, Wd = self._gel_display_array()
-
-                    self._ax1_img.imshow(
-                        dsp, cmap='gray', aspect='auto', interpolation='nearest',
-                        extent=[-0.5, Wd - 0.5, Hd - 0.5, -0.5])
-                    self._ax1_img.set_ylabel("Row", fontsize=plot_font(self.parent_app, 7))
-                    self._ax1_img.tick_params(labelsize=plot_font(self.parent_app, 6))
-                    self._ax1_img.set_title("Draggable lanes — Grab boundaries to adjust individual channel widths", fontsize=plot_font(self.parent_app, 8), pad=3, wrap=True)
-
+                    arts = self._p1_lane_artists
                     colors = plt.cm.tab10.colors
                     self._sync_lane_skew_length()
                     for i, (x0, x1) in enumerate(self._lane_bounds):
@@ -12144,48 +12302,54 @@ if __name__ == "__main__":
                         poly = plt.Polygon(
                             poly_xy, closed=True,
                             edgecolor=c, facecolor=(*c[:3], 0.25 if sel else 0.10),
-                            linewidth=lw, linestyle='-')
+                            linewidth=lw, linestyle='-', animated=True)
                         self._ax1_img.add_patch(poly)
-                        self._ax1_img.text(
+                        arts.append(poly)
+                        arts.append(self._canvas1.adopt_text(self._ax1_img.text(
                             (x0 + x1) / 2 + t, Hd * 0.06, f"L{i+1}",
                             color='white', fontsize=plot_font(self.parent_app, 7), ha='center', va='top',
-                            bbox=dict(boxstyle='round,pad=0.15', fc=c, alpha=0.8, ec='none'))
+                            bbox=dict(boxstyle='round,pad=0.15', fc=c, alpha=0.8, ec='none'),
+                            animated=True)))
 
                         # Slanted left/right boundary lines (still pickable for width drags).
-                        ll, = self._ax1_img.plot([x0 + t, x0 + b], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
-                        lr, = self._ax1_img.plot([x1 + t, x1 + b], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5)
+                        ll, = self._ax1_img.plot([x0 + t, x0 + b], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5, animated=True)
+                        lr, = self._ax1_img.plot([x1 + t, x1 + b], [0, Hd], color=c, lw=2.0 if sel else 1.2, picker=5, animated=True)
                         self._drag_lines.append(ll)
                         self._drag_lines.append(lr)
+                        arts.extend((ll, lr))
 
+                    # plot() may autoscale; the gel view is fixed.
                     self._ax1_img.set_xlim(-0.5, Wd - 0.5)
                     self._ax1_img.set_ylim(Hd - 0.5, -0.5)
 
                     # Raw normalized profile mapping directly to clean workspace array
                     cn = np.asarray(col_norm, dtype=float).ravel()
-                    self._ax1_prof.plot(np.arange(Wd), cn, color='steelblue', lw=1.5)
+                    if len(cn) == Wd:
+                        self._p1_prof_line.set_data(np.arange(Wd), cn)
+                    else:
+                        self._p1_prof_line.set_data(np.arange(len(cn)), cn)
                     for i, (x0, x1) in enumerate(self._lane_bounds):
                         c = colors[i % len(colors)]
-                        if x1 > x0:
-                            self._ax1_prof.fill_between(np.arange(x0, x1 + 1), 0, cn[x0:x1 + 1], alpha=0.40, color=c)
+                        if x1 > x0 and x0 < len(cn):
+                            xs = np.arange(x0, min(x1, len(cn) - 1) + 1)
+                            arts.append(self._ax1_prof.fill_between(xs, 0, cn[xs], alpha=0.40, color=c,
+                                                                    animated=True))
                     self._ax1_prof.set_xlim(-0.5, Wd - 0.5)
                     self._ax1_prof.set_ylim(-0.02, 1.15)
-                    self._ax1_prof.set_xlabel("Column (px)", fontsize=plot_font(self.parent_app, 7))
-                    self._ax1_prof.set_ylabel("Normalized profile", fontsize=plot_font(self.parent_app, 7))
-                    self._ax1_prof.tick_params(labelsize=plot_font(self.parent_app, 6))
                 except Exception:
-                    pass
+                    log_traceback()
                 finally:
-                    try: self._apply_fig_theme(self._fig1, [self._ax1_img, self._ax1_prof])
-                    except Exception: pass
-                    try: self._fig1.tight_layout(pad=0.3, h_pad=0.8)
-                    except Exception: pass
-                    try: self._canvas1.draw_idle()
+                    try: self._p1_blit_overlays()
                     except Exception: pass
 
             def _redraw_lanes_keep(self):
                 """Redraw the lane figure from the CURRENT lane bounds (no re-detection),
-                so manual edits — added / deleted / dragged lanes — are preserved."""
-                self._draw_phase1_figure(self._compute_lane_profile())
+                so manual edits — added / deleted / dragged lanes — are preserved. The profile
+                does not change with lane edits, so the last one is reused."""
+                cn = getattr(self, '_last_col_norm', None)
+                if cn is None:
+                    cn = self._compute_lane_profile()
+                self._draw_phase1_figure(cn)
 
             def keyPressEvent(self, event):
                 """Escape stops the current interactive operation (e.g. Add-Lane mode or a
@@ -12252,30 +12416,10 @@ if __name__ == "__main__":
                         return
 
             def _arm_lane_drag_blit(self, lane_idx, side):
-                """Cache the lane figure so a boundary drag only has to redraw the moving line.
-
-                draw_idle() re-renders the WHOLE figure -- the 10-megapixel gel image, every
-                lane rectangle and the intensity profile -- even though a drag moves one line.
-                That is why widening a lane felt sluggish (~36 ms a frame here, and Matplotlib's
-                Agg backend is slower still on Windows). Standard Matplotlib blitting: draw once
-                with the dragged line marked animated (so it is left out of the snapshot), keep
-                the rendered background, then per motion event restore it and draw just the line.
-                """
+                """Boundary drags repaint through _p1_blit_overlays (every lane overlay is
+                already 'animated' over a cached background), so nothing to arm here."""
                 self._lane_blit_bg = None
                 self._lane_blit_line = None
-                try:
-                    line_idx = lane_idx * 2 + side
-                    if line_idx >= len(self._drag_lines):
-                        return
-                    line = self._drag_lines[line_idx]
-                    line.set_animated(True)
-                    self._canvas1.draw()
-                    self._lane_blit_bg = self._canvas1.copy_from_bbox(self._ax1_img.bbox)
-                    self._lane_blit_line = line
-                except Exception:
-                    # Any backend that cannot blit just keeps the old full-redraw path.
-                    self._lane_blit_bg = None
-                    self._lane_blit_line = None
 
             def _finish_lane_drag_blit(self):
                 """Undo the animated flag so the line is painted normally again."""
@@ -12310,15 +12454,8 @@ if __name__ == "__main__":
                     self._drag_lines[line_idx].set_data(
                         [nv + t + off_x, nv + b + off_x], [0, Hd])
 
-                bg = getattr(self, '_lane_blit_bg', None)
-                line = getattr(self, '_lane_blit_line', None)
-                if bg is not None and line is not None:
-                    # Restore the cached pixels and repaint only the boundary being dragged.
-                    self._canvas1.restore_region(bg)
-                    self._ax1_img.draw_artist(line)
-                    self._canvas1.blit(self._ax1_img.bbox)
-                else:
-                    self._canvas1.draw_idle()
+                # Restore the cached background and repaint only the lane overlays.
+                self._p1_blit_overlays()
 
             def _p1_mpl_release(self, event):
                 if self._drag_info is None:
@@ -14717,7 +14854,7 @@ if __name__ == "__main__":
                 self.right_markers = []
                 self.top_markers = []
                 self.custom_markers=[]
-                self.markers_visible = True
+                self.markers_visible = False
                 self.current_left_marker_index = 0
                 self.current_right_marker_index = 0
                 self.current_top_label_index = 0
@@ -18972,6 +19109,8 @@ if __name__ == "__main__":
                 self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)","Log 4-PL"])
                 self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 2)")
                 mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
+                self.mw_regression_model_combo.currentTextChanged.connect(
+                    self._on_main_regression_model_changed)
                 
                 self.predict_button = QPushButton("Predict Molecular Weight")
                 self.predict_button.setToolTip("Click a point on a lane to predict its molecular weight/size based on the active standard markers.\nShortcut: Ctrl+P")
@@ -19756,50 +19895,100 @@ if __name__ == "__main__":
                         self.oligomer_products.append(oligomer_base_mw)
                         self.oligomer_product_groups.append(j)
 
+            def _mw_norm_dist(self, mw, model_data):
+                """Normalised ladder distance (0..1 = ladder span) of a MW under the model,
+                calibration included. Extrapolates instead of failing (see
+                invert_mw_standard_curve), so it is None only for an unusable model."""
+                if mw is None or mw <= 0 or not model_data:
+                    return None
+                coeffs = model_data.get("coeffs")
+                if coeffs is None:
+                    return None
+                model_type = model_data.get("model", "poly")
+                if model_type == "4-PL" and not SCIPY_AVAILABLE:
+                    return None
+                cal = model_data.get("calibration", {}) or {}
+                slope, offset = 1.0, 0.0
+                if cal.get("active", False):
+                    slope = float(cal.get("slope", 1.0)); offset = float(cal.get("offset", 0.0))
+                    if abs(slope) < 1e-9:
+                        slope = 1.0
+                try:
+                    return invert_mw_standard_curve(model_type, np.asarray(coeffs, dtype=float),
+                                                    float(np.log10(mw)), slope, offset)
+                except (ValueError, ZeroDivisionError, RuntimeError, TypeError):
+                    log_traceback()
+                    return None
+
             def _get_y_pos_from_mw(self, mw, model_data, min_max_pos):
                 """Calculates the image Y-position for a given MW using the inverse regression model + calibration."""
-                if mw <= 0 or model_data is None: return None
+                if mw is None or mw <= 0 or model_data is None: return None
                 if min_max_pos is None: min_max_pos = model_data.get("min_max_pos")
                 if min_max_pos is None: return None
-
                 min_pos, max_pos = min_max_pos
-                log_mw = np.log10(mw)
-                
-                # --- APPLY CALIBRATION INVERSE ---
-                calibration = model_data.get("calibration", {})
-                if calibration.get("active", False):
-                    slope = calibration.get("slope", 1.0)
-                    offset = calibration.get("offset", 0.0)
-                    if abs(slope) > 1e-9:
-                        log_mw = (log_mw - offset) / slope
-                
-                model_type = model_data.get("model", "poly")
-                coeffs = model_data.get("coeffs")
-                if coeffs is None: return None
+                norm_dist = self._mw_norm_dist(mw, model_data)
+                if norm_dist is None:
+                    return None
+                return min_pos + norm_dist * (max_pos - min_pos)
 
+            def _on_main_regression_model_changed(self, model_text):
+                """Main-window Regression Model changed: refit the stored ladder with the new
+                model (keeping the user's calibration points), update the predicted MW and
+                move the oligomer/glyco overlay to the new curve."""
+                md = getattr(self, 'last_mw_prediction_model', None)
+                if not md or not md.get("marker_positions") or not md.get("marker_values"):
+                    return   # no prediction yet (or one saved before fit inputs were stored)
                 try:
-                    norm_dist = None
-                    if model_type == "4-PL":
-                        if not SCIPY_AVAILABLE: return None
-                        a, b, c, d = coeffs
-                        if (a - d) == 0 or (log_mw - d) == 0: return None
-                        term = ((a - d) / (log_mw - d)) - 1
-                        if term < 0: return None 
-                        norm_dist = c * (term**(1/b))
-                    else: # Polynomial
-                        poly_coeffs = list(coeffs)
-                        poly_coeffs[-1] -= log_mw
-                        roots = np.roots(poly_coeffs)
-                        valid_roots = [r.real for r in roots if np.isreal(r) and -0.5 <= r.real <= 1.5]
-                        if not valid_roots: return None
-                        norm_dist = min(valid_roots, key=lambda r: abs(r - 0.5))
+                    pos = np.asarray(md["marker_positions"], dtype=float)
+                    vals = np.asarray(md["marker_values"], dtype=float)
+                    lo, hi = float(np.min(pos)), float(np.max(pos))
+                    if hi - lo <= 0:
+                        return
+                    norm = lambda y: (np.asarray(y, dtype=float) - lo) / (hi - lo)
+                    model_type, coeffs, _r2, err = fit_mw_standard_curve(norm(pos), np.log10(vals), model_text)
+                    if coeffs is None:
+                        self.show_mode_status(f"Regression model '{model_text}': {err} "
+                                              "The previous curve is kept.")
+                        return
+                    raw = lambda y: float(eval_mw_standard_curve(model_type, coeffs, norm(y)))
+                    # Recompute the calibration exactly like PredictionResultDialog does.
+                    cal = dict(md.get("calibration", {}) or {})
+                    p1 = cal.get("point1", {}) or {}; p2 = cal.get("point2", {}) or {}
+                    use_p1 = bool(p1.get("active")) and float(p1.get("mw", 0) or 0) > 0
+                    use_p2 = use_p1 and bool(p2.get("active")) and float(p2.get("mw", 0) or 0) > 0
+                    slope, offset = 1.0, 0.0
+                    if use_p1:
+                        k1 = np.log10(float(p1["mw"])); r1 = raw(float(p1.get("y", 0.0)))
+                        if use_p2:
+                            k2 = np.log10(float(p2["mw"])); r2 = raw(float(p2.get("y", 0.0)))
+                            if abs(r2 - r1) > 1e-5:
+                                slope = (k2 - k1) / (r2 - r1)
+                            offset = k1 - slope * r1
+                        else:
+                            offset = k1 - r1
+                    cal.update({"active": use_p1, "slope": slope, "offset": offset})
+                    new_md = dict(md)
+                    new_md.update({"model": model_type, "model_text": model_text,
+                                   "coeffs": np.asarray(coeffs, dtype=float), "calibration": cal})
+                    self.last_mw_prediction_model = new_md
+                    self.last_mw_prediction_min_max_pos = [lo, hi]
+                    py = md.get("protein_y")
+                    if py is not None:
+                        mw = 10 ** (slope * raw(float(py)) + offset)
+                        if np.isfinite(mw) and mw > 0:
+                            self.last_predicted_mw = float(mw)
+                    self.is_modified = True
+                    self._rebuild_oligomer_products()
+                    self._sync_oligomer_overlay_items()
+                    if py is not None and not any(sh.get('oligo_overlay') for sh in
+                                                  (getattr(self, 'custom_shapes', []) or [])):
+                        # (With the overlay on, its own status — incl. the out-of-range note — wins.)
+                        self.show_mode_status(f"Regression model: {model_text} — predicted MW "
+                                              f"{self.last_predicted_mw:.2f}.")
+                    self.update_live_view()
+                except Exception:
+                    log_traceback()
 
-                    if norm_dist is not None:
-                        return min_pos + norm_dist * (max_pos - min_pos)
-                    return None
-                except (ValueError, ZeroDivisionError, RuntimeError):
-                    return None
-                
             def _ensure_markers_visible_for_regions(self):
                 """Called before a lane-region tool starts. If the densitometry boxes are
                 hidden, say so and offer to show them.
@@ -32258,11 +32447,19 @@ if __name__ == "__main__":
 
                 groups = self._oligomer_band_groups(len(self.oligomer_products))
                 bands = []
+                # Products outside the ladder span are still placed (extrapolated) and listed
+                # so the user is told; ones the model cannot place at all are listed too.
+                self._oligo_extrapolated_mws = []
+                self._oligo_unplaced_mws = []
                 for i, mw in enumerate(self.oligomer_products):
                     y = self._get_y_pos_from_mw(mw, self.last_mw_prediction_model,
                                                 self.last_mw_prediction_min_max_pos)
                     if y is None:
+                        self._oligo_unplaced_mws.append(mw)
                         continue
+                    nd = self._mw_norm_dist(mw, self.last_mw_prediction_model)
+                    if nd is not None and not (-0.02 <= nd <= 1.02):
+                        self._oligo_extrapolated_mws.append(mw)
                     bands.append({'mw': mw, 'y': float(y) * rs, 'group': groups[i],
                                   'color': QColor(line_colors[i % len(line_colors)])})
                 if not bands:
@@ -32450,11 +32647,20 @@ if __name__ == "__main__":
                         log_traceback()
                 if n:
                     try:
+                        fmt = lambda mws: ", ".join(f"{m:.1f}" for m in mws)
+                        ext = getattr(self, '_oligo_extrapolated_mws', []) or []
+                        bad = getattr(self, '_oligo_unplaced_mws', []) or []
+                        note = ""
+                        if ext:
+                            note += (f" NOTE: {fmt(ext)} kDa lie beyond the ladder range — their "
+                                     "positions are extrapolated and approximate.")
+                        if bad:
+                            note += f" Could not place {fmt(bad)} kDa with this regression model."
                         self.show_mode_status(
-                            f"Oligomer/glyco overlay: {n} label(s) added as custom markers. Use "
-                            "Move/Resize to drag a label (its line follows), drag a line to move "
-                            "the whole callout, or double-click to edit. Add padding if labels "
-                            "run past the image edge.")
+                            f"Oligomer/glyco overlay: {n} label(s) added as custom markers."
+                            + (note or " Use Move/Resize to drag a label (its line follows), drag "
+                               "a line to move the whole callout, or double-click to edit. Add "
+                               "padding if labels run past the image edge."))
                     except Exception:
                         pass
                 self.update_live_view()
