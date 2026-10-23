@@ -131,6 +131,10 @@ hiddenimports.extend(collect_submodules('lmfit'))
 hiddenimports.extend(collect_submodules('asteval'))
 hiddenimports.extend(collect_submodules('uncertainties'))
 hiddenimports.extend(collect_submodules('dill'))
+# pypdf locks the exported PDF report against editing (lock_pdf_for_editing). It is
+# imported lazily inside that function and loads its crypt providers dynamically, so
+# collect it explicitly; without it reports are still written, just not protected.
+hiddenimports.extend(collect_submodules('pypdf'))
 
 # --- Excluded Modules ---
 # Other Qt bindings, tkinter, and every Qt module the app does not import. The app uses

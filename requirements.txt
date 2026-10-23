@@ -1,4 +1,4 @@
-# Gel Blot Analyzer — pip requirements (v9.3)
+# Gel Blot Analyzer — pip requirements (v9.4)
 #
 #   python -m pip install -r requirements.txt
 #
@@ -89,6 +89,9 @@ openpyxl>=3.1
 
 # Editable PowerPoint export (native text boxes per marker/label)
 python-pptx>=0.6.21
+
+# Locks the exported PDF report against editing (pure Python, no compiled parts)
+pypdf>=4.0
 
 # Build Tool (only needed to produce a standalone app)
 pyinstaller>=5.13
