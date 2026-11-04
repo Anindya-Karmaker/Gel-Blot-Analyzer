@@ -42,7 +42,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.6.0"
+APP_VERSION = "9.7.0"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -1005,6 +1005,158 @@ if __name__ == "__main__":
         def four_param_logistic(x, a, b, c, d):
             """ 4-Parameter Logistic Regression model (sigmoidal). y = d + (a - d) / (1 + (x / c)**b) """
             return d + (a - d) / (1 + (x / c)**b)
+
+        # ── Densitometry quantification standard curve ──────────────────────────────
+        # ONE engine shared by quantification, the Standard Curve plot and the PDF/Excel
+        # report, so the curve the user sees is the curve the numbers come from.
+        #
+        # Calibration is fitted in its natural direction, Area = f(Quantity), and then
+        # inverted. Background-subtracted area is zero when there is no protein, so the
+        # inversion is pinned to the origin: below the lowest standard the response is
+        # taken as proportional (straight line from (0, 0) to the fitted curve at the lowest
+        # standard). Without that, a straight-line fit of a slightly saturating standard
+        # series has a large positive area intercept and every band smaller than that
+        # intercept came out as a NEGATIVE amount (minor bands, impurities, mass balance).
+        def fit_quant_standard_curve(model_name, quantities, areas):
+            """Fit Area = f(Qty). Returns a fit dict (kind, params, r_squared, equation,
+            q_min, q_max, a_at_qmin) or None when the model can't be fitted."""
+            model_name = model_name or "Linear"
+            q = np.asarray(quantities, dtype=float)
+            a = np.asarray(areas, dtype=float)
+            ok = np.isfinite(q) & np.isfinite(a)
+            q, a = q[ok], a[ok]
+            if len(q) < 2:
+                return None
+            order = np.argsort(q)
+            q, a = q[order], a[order]
+            try:
+                if "Power" in model_name:
+                    pos = (q > 0) & (a > 0)
+                    if np.count_nonzero(pos) < 2:
+                        return None
+                    b, ln_k = np.polyfit(np.log(q[pos]), np.log(a[pos]), 1)
+                    params = np.array([float(np.exp(ln_k)), float(b)])
+                    kind = "power"
+                    equation = f"Area = {params[0]:.5g} × Qty^{params[1]:.4g}"
+                elif "4-PL" in model_name:
+                    if not SCIPY_AVAILABLE or len(q) < 4:
+                        return None
+                    p0 = [min(a), 1.0, np.median(q), max(a)]
+                    params, _ = curve_fit(four_param_logistic, q, a, p0=p0, maxfev=10000)
+                    kind = "4-PL"
+                    a4, b4, c4, d4 = params
+                    equation = (f"Area = {d4:.4g} + ({a4:.4g} - {d4:.4g}) / "
+                                f"(1 + (Qty / {c4:.4g})^{b4:.4g})")
+                else:
+                    degree = 3 if "Deg 3" in model_name else 2 if "Deg 2" in model_name else 1
+                    if len(q) <= degree:
+                        return None
+                    params = np.polyfit(q, a, degree)
+                    kind = "poly"
+                    if degree == 1:
+                        equation = f"Area = {params[0]:.5g} × Qty + {params[1]:.5g}"
+                    elif degree == 2:
+                        equation = (f"Area = {params[0]:.5g} × Qty² + "
+                                    f"{params[1]:.5g} × Qty + {params[2]:.5g}")
+                    else:
+                        equation = (f"Area = {params[0]:.5g} × Qty³ + {params[1]:.5g} × Qty² + "
+                                    f"{params[2]:.5g} × Qty + {params[3]:.5g}")
+            except (RuntimeError, ValueError, TypeError, np.linalg.LinAlgError):
+                return None
+            fit = {'kind': kind, 'params': np.asarray(params, dtype=float),
+                   'q_min': float(q[0]), 'q_max': float(q[-1]), 'a_at_qmin': float(a[0]),
+                   'equation': equation, 'model_name': model_name,
+                   # Least-squares line through the origin: last-resort fallback only.
+                   'slope_origin': float(np.sum(q * a) / np.sum(q * q)) if np.sum(q * q) > 0 else 0.0}
+            fitted = eval_quant_standard_curve(fit, q)
+            ss_res = float(np.sum((a - fitted) ** 2))
+            ss_tot = float(np.sum((a - np.mean(a)) ** 2))
+            fit['r_squared'] = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
+            return fit
+
+        def eval_quant_standard_curve(fit, qty):
+            """Forward model: fitted area at quantity/quantities `qty`."""
+            qty = np.asarray(qty, dtype=float)
+            p = fit['params']
+            with np.errstate(all='ignore'):
+                if fit['kind'] == "power":
+                    return p[0] * np.power(np.clip(qty, 0.0, None), p[1])
+                if fit['kind'] == "4-PL":
+                    return four_param_logistic(qty, *p)
+                return np.polyval(p, qty)
+
+        def quant_low_anchor(fit):
+            """(q_min, area) the below-range proportional segment runs to from the origin."""
+            f_min = float(eval_quant_standard_curve(fit, fit['q_min']))
+            if not np.isfinite(f_min) or f_min <= 0:
+                f_min = fit.get('a_at_qmin', 0.0)
+            return fit['q_min'], f_min
+
+        def quantify_with_standard_curve(fit, sample_areas):
+            """Invert Area = f(Qty) for each sample area. Always finite and >= 0, monotonic
+            in area, continuous at the lowest standard. Areas <= 0 give 0."""
+            areas = np.asarray(sample_areas, dtype=float)
+            out = np.zeros_like(areas, dtype=float)
+            valid = np.isfinite(areas) & (areas > 0)
+            if fit is None or not np.any(valid):
+                return out.tolist()
+            p = fit['params']
+            if fit['kind'] == "power" and p[0] > 0 and p[1] > 0:
+                # Passes through the origin on its own and is invertible everywhere.
+                with np.errstate(all='ignore'):
+                    out[valid] = np.power(areas[valid] / p[0], 1.0 / p[1])
+                out[~np.isfinite(out)] = 0.0
+                return out.tolist()
+
+            q_min, q_max = fit['q_min'], fit['q_max']
+            _q_lo, f_lo = quant_low_anchor(fit)
+            span = max(q_max - q_min, abs(q_max), 1e-12)
+            # In-range + a reasonable look-ahead above the top standard, kept only while the
+            # curve keeps rising (a quadratic turning over / a 4-PL plateau stop it).
+            ts = np.linspace(q_min, q_max + 9.0 * span, 20001)
+            g = np.asarray(eval_quant_standard_curve(fit, ts), dtype=float)
+            def _through_origin():
+                s0 = fit.get('slope_origin', 0.0)
+                if s0 > 0:
+                    out[valid] = areas[valid] / s0
+                return out.tolist()
+            if f_lo <= 0 or not np.all(np.isfinite(g)):
+                # Degenerate curve: fall back to a least-squares line through the origin.
+                return _through_origin()
+            in_range = ts <= q_max
+            g_in = np.maximum.accumulate(g[in_range])
+            t_in = ts[in_range]
+            rising = np.diff(g[~in_range], prepend=g_in[-1]) > 0
+            stop = int(np.argmin(rising)) if not np.all(rising) else len(rising)
+            t_all = np.concatenate([t_in, ts[~in_range][:stop]])
+            g_all = np.concatenate([g_in, g[~in_range][:stop]])
+            # A curve that is <= 0 at the bottom standard can't anchor the origin segment.
+            pos = g_all > 0
+            t_all, g_all = t_all[pos], g_all[pos]
+            if len(g_all) < 2:
+                return _through_origin()
+            # Strictly increasing xp for np.interp
+            keep = np.concatenate([[True], np.diff(g_all) > 0])
+            t_all, g_all = t_all[keep], g_all[keep]
+            g_floor = g_all[0]
+            if g_floor <= 0 or len(g_all) < 2:
+                return _through_origin()
+
+            v = areas.copy()
+            below = valid & (v <= g_floor)
+            mid = valid & (v > g_floor) & (v <= g_all[-1])
+            above = valid & (v > g_all[-1])
+            # Proportional segment from the origin to the curve at the lowest standard.
+            out[below] = v[below] * (t_all[0] / g_floor) if t_all[0] > 0 else 0.0
+            out[mid] = np.interp(v[mid], g_all, t_all)
+            if np.any(above):
+                dq = t_all[-1] - t_all[-2]
+                slope = (g_all[-1] - g_all[-2]) / dq if dq > 0 else 0.0
+                if not (slope > 0):
+                    slope = g_all[-1] / t_all[-1] if t_all[-1] > 0 else 0.0
+                out[above] = t_all[-1] + (v[above] - g_all[-1]) / slope if slope > 0 else t_all[-1]
+            out[~np.isfinite(out)] = 0.0
+            return np.clip(out, 0.0, None).tolist()
 
         def fit_mw_standard_curve(norm_dist, log_vals, model_text):
             """Fit the ladder standard curve (log10 MW vs normalised distance).
@@ -3770,7 +3922,7 @@ if __name__ == "__main__":
                     self._update_analysis_display_for_tab(is_for_history=False)
 
             def _get_available_models(self):
-                models = ["Linear", "Polynomial (Deg 2)", "Polynomial (Deg 3)"]
+                models = ["Linear", "Power (Log-Log)", "Polynomial (Deg 2)", "Polynomial (Deg 3)"]
                 if SCIPY_AVAILABLE:
                     models.extend(["4-PL Sigmoidal"])
                 return models
@@ -4031,6 +4183,12 @@ if __name__ == "__main__":
                     self.results_display_layout_current.addWidget(new_content)
             
             def _create_results_display_widget(self, results_data, std_dict, is_multi_lane, is_for_history):
+                # Calibrated range, so the table can flag quantities read outside it.
+                try:
+                    _sq = [float(k) for k in (std_dict or {}).keys()]
+                    self._active_std_range = (min(_sq), max(_sq)) if len(_sq) >= 2 else None
+                except (TypeError, ValueError):
+                    self._active_std_range = None
                 container = QWidget()
                 layout = QVBoxLayout(container)
                 layout.setContentsMargins(0, 0, 0, 0)
@@ -4138,37 +4296,29 @@ if __name__ == "__main__":
 
                     ax.scatter(quantities, areas, label='Standard Points', color=scatter_color, zorder=5, s=30)
                     
-                    # --- NEW: Model fitting and plotting ---
-                    q_min, q_max = np.min(quantities), np.max(quantities)
-                    x_line = np.linspace(q_min, q_max, 200)
-                    y_line = None
-                    fit_label = f'{model_name}: Fit Failed'
-                    
-                    try:
-                        if "Linear" in model_name or "Polynomial" in model_name:
-                            degree = 1
-                            if "Deg 2" in model_name: degree = 2
-                            elif "Deg 3" in model_name: degree = 3
-                            if len(quantities) > degree:
-                                params = np.polyfit(quantities, areas, degree)
-                                y_line = np.polyval(params, x_line)
-                                residuals = areas - np.polyval(params, quantities)
-                                ss_res = np.sum(residuals**2); ss_tot = np.sum((areas - np.mean(areas))**2)
-                                r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                                fit_label = f'{model_name} (R² = {r_squared:.4f})'
-                        
-                        elif SCIPY_AVAILABLE and "4-PL" in model_name and len(quantities) >= 4:
-                            p0 = [min(areas), 1.0, np.median(quantities), max(areas)]
-                            params, _ = curve_fit(four_param_logistic, quantities, areas, p0=p0, maxfev=10000)
-                            y_line = four_param_logistic(x_line, *params)
-                            fit_label = '4-PL Sigmoidal Fit'
-
-
-                        if y_line is not None:
-                            ax.plot(x_line, y_line, label=fit_label, color=line_color, linewidth=1.2)
-                    except (RuntimeError, ValueError) as fit_error:
-                         pass # print(f"Fit Error: {fit_error}")
-                         ax.text(0.5, 0.5, f"Could not fit\n{model_name}", ha='center', va='center', color='red', transform=ax.transAxes)
+                    # Same fit the quantities are computed from (fit_quant_standard_curve).
+                    fit = fit_quant_standard_curve(model_name, quantities, areas)
+                    if fit is not None:
+                        x_line = np.linspace(fit['q_min'], fit['q_max'], 200)
+                        y_line = eval_quant_standard_curve(fit, x_line)
+                        if "4-PL" in model_name:
+                            fit_label = f"4-PL Sigmoidal (R² = {fit['r_squared']:.4f})"
+                        else:
+                            fit_label = f"{model_name} (R² = {fit['r_squared']:.4f})"
+                        ax.plot(x_line, y_line, label=fit_label, color=line_color, linewidth=1.2)
+                        if fit['kind'] == "power":
+                            # The power law runs through the origin by itself.
+                            x_lo = np.linspace(0.0, fit['q_min'], 60)
+                            ax.plot(x_lo, eval_quant_standard_curve(fit, x_lo), color=line_color,
+                                    linewidth=1.0, linestyle='--')
+                        else:
+                            q_lo, f_lo = quant_low_anchor(fit)
+                            if f_lo > 0:
+                                ax.plot([0.0, q_lo], [0.0, f_lo], color=line_color, linewidth=1.0,
+                                        linestyle='--', label='Below lowest std: ∝ to origin')
+                    else:
+                        ax.text(0.5, 0.5, f"Could not fit\n{model_name}", ha='center', va='center',
+                                color='red', transform=ax.transAxes)
 
                     ax.set_xlabel('Known Quantity', fontsize=_fs(8)); ax.set_ylabel('Measured Peak Area', fontsize=_fs(8))
                     ax.set_title('Standard Curve', fontsize=_fs(9), fontweight='bold')
@@ -4750,6 +4900,29 @@ if __name__ == "__main__":
                     )
                 else:
                     QMessageBox.information(self, "No Selection", "Please select a history entry to export.")
+            def _flag_out_of_range_qty(self, item, qty):
+                """Italic + tooltip on a quantity read outside the standards' range."""
+                rng = getattr(self, '_active_std_range', None)
+                if item is None or not rng:
+                    return
+                try:
+                    qv = float(qty)
+                except (TypeError, ValueError):
+                    return
+                lo, hi = rng
+                tol = 1e-9 * max(abs(hi), 1.0)
+                if qv < lo - tol:
+                    tip = (f"Below the lowest standard ({lo:g}). Estimated assuming the signal is "
+                           f"proportional to amount between zero and the lowest standard; outside "
+                           f"the calibrated range — add a lower standard for an accurate value.")
+                elif qv > hi + tol:
+                    tip = (f"Above the highest standard ({hi:g}). Extrapolated beyond the "
+                           f"calibrated range — add a higher standard or load less sample.")
+                else:
+                    return
+                f = item.font(); f.setItalic(True); item.setFont(f)
+                item.setToolTip(tip)
+
             def _populate_table_generic(self, table_widget, results_data, is_standard_mode, is_multi_lane_data):
                 table_widget.clearContents()
                 table_widget.setRowCount(0)
@@ -4794,6 +4967,10 @@ if __name__ == "__main__":
                             quantity_str = f"{calculated_quantities[band_idx]:.3f}" # More precision
                         _put(current_row_idx, f"Band {band_idx + 1}", f"{area:.3f}",
                              band_pct, lane_pct, quantity_str)
+                        if quantity_str:
+                            self._flag_out_of_range_qty(
+                                table_widget.item(current_row_idx, table_widget.columnCount() - 1),
+                                calculated_quantities[band_idx])
                         current_row_idx += 1
                     total_qty = ""
                     if is_standard_mode and calculated_quantities:
@@ -5111,52 +5288,19 @@ if __name__ == "__main__":
 
             def _compute_standard_fit(self, standard_dictionary, model_name):
                 """Fit the standard curve and return a dict describing the fit, or None.
-                Keys: 'x', 'y', 'r_squared', 'equation', 'params'."""
+                Keys: 'x', 'y', 'r_squared', 'equation', 'params', 'fit' (the shared
+                fit_quant_standard_curve dict, so callers can evaluate the same model)."""
                 if not standard_dictionary or len(standard_dictionary) < 2:
                     return None
                 try:
-                    quantities = np.array(list(standard_dictionary.keys()), dtype=float)
-                    areas = np.array(list(standard_dictionary.values()), dtype=float)
-                    order = np.argsort(quantities)
-                    quantities, areas = quantities[order], areas[order]
-                    x_line = np.linspace(np.min(quantities), np.max(quantities), 200)
-
-                    if "Linear" in model_name or "Polynomial" in model_name:
-                        degree = 1
-                        if "Deg 2" in model_name: degree = 2
-                        elif "Deg 3" in model_name: degree = 3
-                        if len(quantities) <= degree:
-                            return None
-                        params = np.polyfit(quantities, areas, degree)
-                        y_line = np.polyval(params, x_line)
-                        residuals = areas - np.polyval(params, quantities)
-                        ss_res = float(np.sum(residuals ** 2))
-                        ss_tot = float(np.sum((areas - np.mean(areas)) ** 2))
-                        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                        if degree == 1:
-                            equation = f"Area = {params[0]:.5g} × Qty + {params[1]:.5g}"
-                        elif degree == 2:
-                            equation = (f"Area = {params[0]:.5g} × Qty² + "
-                                        f"{params[1]:.5g} × Qty + {params[2]:.5g}")
-                        else:
-                            equation = (f"Area = {params[0]:.5g} × Qty³ + {params[1]:.5g} × Qty² + "
-                                        f"{params[2]:.5g} × Qty + {params[3]:.5g}")
-                        return {'x': x_line, 'y': y_line, 'r_squared': r_squared,
-                                'equation': equation, 'params': params}
-
-                    elif SCIPY_AVAILABLE and "4-PL" in model_name and len(quantities) >= 4:
-                        p0 = [min(areas), 1.0, np.median(quantities), max(areas)]
-                        params, _ = curve_fit(four_param_logistic, quantities, areas, p0=p0, maxfev=10000)
-                        y_line = four_param_logistic(x_line, *params)
-                        residuals = areas - four_param_logistic(quantities, *params)
-                        ss_res = float(np.sum(residuals ** 2))
-                        ss_tot = float(np.sum((areas - np.mean(areas)) ** 2))
-                        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 1e-9 else 1.0
-                        a, b, c, d = params
-                        equation = (f"Area = {d:.4g} + ({a:.4g} - {d:.4g}) / "
-                                    f"(1 + (Qty / {c:.4g})^{b:.4g})")
-                        return {'x': x_line, 'y': y_line, 'r_squared': r_squared,
-                                'equation': equation, 'params': params}
+                    fit = fit_quant_standard_curve(model_name, list(standard_dictionary.keys()),
+                                                   list(standard_dictionary.values()))
+                    if fit is None:
+                        return None
+                    x_line = np.linspace(fit['q_min'], fit['q_max'], 200)
+                    y_line = eval_quant_standard_curve(fit, x_line)
+                    return {'x': x_line, 'y': y_line, 'r_squared': fit['r_squared'],
+                            'equation': fit['equation'], 'params': fit['params'], 'fit': fit}
                 except Exception:
                     log_traceback()
                 return None
@@ -5952,11 +6096,8 @@ if __name__ == "__main__":
                             def _model_at(qv):
                                 if fit is None:
                                     return None
-                                p = fit.get('params')
                                 try:
-                                    if "4-PL" in model_name:
-                                        return float(four_param_logistic(qv, *p))
-                                    return float(np.polyval(p, qv))
+                                    return float(eval_quant_standard_curve(fit['fit'], qv))
                                 except Exception:
                                     return None
 
@@ -6896,6 +7037,20 @@ if __name__ == "__main__":
                 self.persist_settings_checkbox.setToolTip("Remember these settings the next time the dialog opens.")
                 self.persist_settings_checkbox.setChecked(persist_checked_initial)
                 bottom_button_layout.addWidget(self.persist_settings_checkbox)
+                # Display only: the profile axis normally zooms to the data range so bands on
+                # a high background stay visible; ticked, it starts at 0 (true proportions).
+                # Off by default; the choice is kept for the rest of the session.
+                self.y_from_zero_checkbox = QCheckBox("Y-axis from zero")
+                self.y_from_zero_checkbox.setToolTip(
+                    "Start the profile plot's Intensity axis at 0.\n"
+                    "Off (default): the axis zooms to the profile so small bands on a high "
+                    "background are easy to see.\n"
+                    "On: peak heights are drawn in true proportion to total intensity.\n"
+                    "Display only - band detection, areas and quantities are not affected.")
+                self.y_from_zero_checkbox.setChecked(
+                    bool(getattr(self.parent_app, 'densitometry_plot_y_from_zero', False)))
+                self.y_from_zero_checkbox.toggled.connect(self._on_y_from_zero_toggled)
+                bottom_button_layout.addWidget(self.y_from_zero_checkbox)
                 bottom_button_layout.addStretch(1)
                 bottom_button_layout.addWidget(self.copy_regions_button)
                 bottom_button_layout.addWidget(self.paste_regions_button)
@@ -6910,6 +7065,14 @@ if __name__ == "__main__":
                 main_layout.addLayout(bottom_button_layout)
                 self.setLayout(main_layout)
                 self.update_rb_controls_enabled_state()
+
+            def _on_y_from_zero_toggled(self, checked):
+                if self.parent_app is not None:
+                    self.parent_app.densitometry_plot_y_from_zero = bool(checked)
+                try:
+                    self.update_plot()
+                except Exception:
+                    log_traceback()
 
             def _toggle_inversion_display(self, checked):
                 self.is_inverted = checked
@@ -8868,6 +9031,58 @@ if __name__ == "__main__":
                 # NOTE: no hspace here — the layout engine owns the spacing.
                 return GridSpec(2, 1, height_ratios=height_ratios, figure=self.fig)
 
+            def _fit_profile_ylim(self, profile, max_label_y, label_artists):
+                """Fit the profile axis to the DATA RANGE, not 0..max.
+
+                The axis used to run from 0 to 1.25 x max. A lane on a high baseline
+                (e.g. a raw 16-bit lane sitting at ~7.5e6 with bands only ~0.5e6 tall) then
+                drew its whole profile as a flat line squeezed against the top. Now the
+                bottom is the lowest plotted value (profile, baseline, fills) less a small
+                margin, and the top is raised until the tallest band label fits inside."""
+                ax = self.ax
+                prof = np.asarray(profile, dtype=float)
+                prof = prof[np.isfinite(prof)]
+                if prof.size == 0:
+                    return
+                lo, hi = float(np.min(prof)), float(np.max(prof))
+                try:
+                    dl = ax.dataLim                    # lines + fill_between, not text
+                    if np.isfinite(dl.y0) and np.isfinite(dl.y1) and dl.y1 >= dl.y0:
+                        lo, hi = min(lo, float(dl.y0)), max(hi, float(dl.y1))
+                except Exception:
+                    pass
+                if np.isfinite(max_label_y):
+                    hi = max(hi, float(max_label_y))
+                if getattr(self, 'y_from_zero_checkbox', None) is not None \
+                        and self.y_from_zero_checkbox.isChecked():
+                    lo = min(0.0, lo)      # user asked for a zero-based axis
+                span = hi - lo
+                if not (span > 0):
+                    span = max(abs(hi), 1.0) * 0.05
+                bottom = 0.0 if lo == 0.0 else lo - 0.05 * span
+                top = hi + 0.08 * span
+                ax.set_ylim(bottom, top)
+                # Labels sit ON their y (va='bottom'), so the box needs pixel headroom above
+                # it. Solve for the top that leaves room for the tallest one.
+                try:
+                    renderer = self.canvas.get_renderer()
+                    ax_h = float(ax.get_window_extent(renderer=renderer).height)
+                    for _ in range(3):
+                        need_top = top
+                        for t in label_artists:
+                            th = float(t.get_window_extent(renderer=renderer).height) + 4.0
+                            if ax_h <= th * 1.5:
+                                continue
+                            y_t = float(t.get_position()[1])
+                            frac = th / ax_h            # share of axis height the box needs
+                            need_top = max(need_top, (y_t - frac * bottom) / (1.0 - frac))
+                        if need_top <= top * (1 + 1e-12) + 1e-12:
+                            break
+                        top = need_top
+                        ax.set_ylim(bottom, top)
+                except Exception:
+                    log_traceback()
+
             def update_plot(self):
                 if not hasattr(self, 'canvas') or self.canvas is None:
                     return
@@ -9340,12 +9555,14 @@ if __name__ == "__main__":
                 last_text_end_x = -np.inf
                 text_spacing_pixels = 5
                 text_positions.sort(key=lambda item: item[0])
+                _label_artists = []
                 for x_t, y_t, text_str in text_positions:
                     text_artist = self.ax.text(
                         x_t, y_t, text_str,
                         ha="center", va="bottom", fontsize=_fs(7), color=text_color, zorder=20,
                         bbox=dict(boxstyle="round,pad=0.2", fc=ax_bg_color, ec=spine_color, alpha=0.8)
                     )
+                    _label_artists.append(text_artist)
                     renderer = self.canvas.get_renderer()
                     bbox = text_artist.get_window_extent(renderer=renderer)
                     bbox_data = self.ax.transData.inverted().transform(bbox)
@@ -9387,10 +9604,7 @@ if __name__ == "__main__":
 
                 if len(profile_to_plot_and_calc) > 1:
                     self.ax.set_xlim(0, len(profile_to_plot_and_calc) - 1)
-                    self.ax.set_ylim(
-                        bottom=min(0.0, float(np.min(profile_for_display))),
-                        top=max_y_for_plot_limit * 1.25
-                    )
+                    self._fit_profile_ylim(profile_for_display, max_y_for_plot_limit, _label_artists)
 
                 if np.max(profile_to_plot_and_calc) > 10000:
                     self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
@@ -21029,16 +21243,62 @@ if __name__ == "__main__":
                     log_traceback()
                     self.latest_multi_lane_settings = {}
 
-            def calculate_peak_area(self, pil_image_for_dialog, force_manual_rb=False):
+            def _store_standard_lane_state(self, dialog, lane_id):
+                """Write the standard dialog's bands/settings back to the ONE lane it came from,
+                leaving every other lane's saved state untouched."""
+                try:
+                    bs = (dialog.get_all_lanes_band_state() or {}).get(1)
+                    if bs:
+                        if not isinstance(getattr(self, 'latest_multi_lane_band_state', None), dict):
+                            self.latest_multi_lane_band_state = {}
+                        self.latest_multi_lane_band_state[lane_id] = bs
+                    ls = (dialog.get_all_lanes_settings() or {}).get(1)
+                    if ls:
+                        if not isinstance(getattr(self, 'latest_multi_lane_settings', None), dict):
+                            self.latest_multi_lane_settings = {}
+                        self.latest_multi_lane_settings[lane_id] = ls
+                except Exception:
+                    log_traceback()
+
+            def calculate_peak_area(self, pil_image_for_dialog, force_manual_rb=False, is_standard=False,
+                                    standard_lane_id=None):
+                """is_standard: measuring a quantity standard. It must never REPLACE the sample
+                lanes' stored band boundaries / per-lane settings (that wiped every analysed
+                lane, so the next "Analyze as Sample" re-detected from scratch).
+
+                standard_lane_id: the analysed lane the standard was taken from. Its saved bands
+                and per-lane settings seed the standard's dialog (so the user doesn't start over
+                from defaults), and whatever the user changes there is written back to THAT lane
+                only."""
                 if pil_image_for_dialog is None:
                     return None
+                _lane_bs = getattr(self, 'latest_multi_lane_band_state', None) or {}
+                _lane_set = getattr(self, 'latest_multi_lane_settings', None) or {}
+                if is_standard:
+                    _band_state_in = None
+                    _seed_settings = {}
+                    if standard_lane_id is not None:
+                        _e = _lane_bs.get(standard_lane_id, _lane_bs.get(str(standard_lane_id)))
+                        if isinstance(_e, dict):
+                            # The standard's single-lane dialog calls its lane 1.
+                            _band_state_in = {1: _e}
+                        _ls = _lane_set.get(standard_lane_id, _lane_set.get(str(standard_lane_id)))
+                        if isinstance(_ls, dict):
+                            _seed_settings = {k: v for k, v in _ls.items()
+                                              if k != 'regions_are_manual' and v is not None}
+                else:
+                    _band_state_in = _lane_bs or None
+                    _seed_settings = {}
 
                 # Standards are measured with a FIXED rolling-ball radius (Auto off) so the
                 # background subtraction is consistent and not re-estimated from the standard's
                 # own bands.
-                settings_to_use = self.peak_dialog_settings
+                settings_to_use = {**self.peak_dialog_settings, **_seed_settings} if _seed_settings \
+                    else self.peak_dialog_settings
                 if force_manual_rb:
-                    settings_to_use = {**self.peak_dialog_settings, 'auto_adjust_rb_radius': False}
+                    # Fixed radius for standards. Seeded from the lane, this is the radius the
+                    # lane was actually measured with (also when it was Auto-sized).
+                    settings_to_use = {**settings_to_use, 'auto_adjust_rb_radius': False}
 
                 if isinstance(pil_image_for_dialog, list):
                     dialog = PeakAreaDialog(
@@ -21046,7 +21306,7 @@ if __name__ == "__main__":
                         current_settings=settings_to_use,
                         persist_checked=self.persist_peak_settings_enabled,
                         parent=self,
-                        initial_band_state=getattr(self, 'latest_multi_lane_band_state', None)
+                        initial_band_state=_band_state_in
                     )
                     # The lanes were cut from _get_fully_adjusted_image_for_analysis, which honours
                     # Settings > Densitometry > Measure raw pixel data; the report states it.
@@ -21054,7 +21314,8 @@ if __name__ == "__main__":
                     if dialog.exec() == QDialog.Accepted:
                         all_lanes_info = dialog.get_all_lanes_peak_info()
                         self._persist_peak_dialog_settings(dialog, force_manual_rb)
-                        self._store_band_state_from_dialog(dialog)
+                        if not is_standard:
+                            self._store_band_state_from_dialog(dialog)
                         return all_lanes_info
                     else:
                         return None
@@ -21068,7 +21329,7 @@ if __name__ == "__main__":
                         current_settings=settings_to_use,
                         persist_checked=self.persist_peak_settings_enabled,
                         parent=self,
-                        initial_band_state=getattr(self, 'latest_multi_lane_band_state', None)
+                        initial_band_state=_band_state_in
                     )
                     # The lanes were cut from _get_fully_adjusted_image_for_analysis, which honours
                     # Settings > Densitometry > Measure raw pixel data; the report states it.
@@ -21077,18 +21338,29 @@ if __name__ == "__main__":
                     peak_info_list = None
                     if dialog.exec() == QDialog.Accepted:
                         peak_info_list = dialog.get_final_peak_info()
-                        self._persist_peak_dialog_settings(dialog, force_manual_rb)
-                        self._store_band_state_from_dialog(dialog)
+                        # A standard taken from an analysed lane was seeded with THAT lane's
+                        # settings; persisting them globally would re-tune every other lane on
+                        # the next sample analysis. Its changes go back to its own lane below.
+                        if not (is_standard and standard_lane_id is not None and _seed_settings):
+                            self._persist_peak_dialog_settings(dialog, force_manual_rb)
+                        if not is_standard:
+                            self._store_band_state_from_dialog(dialog)
+                        elif standard_lane_id is not None:
+                            self._store_standard_lane_state(dialog, standard_lane_id)
                     else:
                         pass
 
                     return peak_info_list if peak_info_list is not None else []
 
-            def analyze_bounding_box(self, pil_image_for_dialog, standard):
+            def analyze_bounding_box(self, pil_image_for_dialog, standard, standard_lane_id=None):
                 peak_info_result = None # Will hold list of dicts
-                self.latest_peak_areas = [] # Clear for single lane mode
-                self.latest_peak_details = [] # Clear for single lane mode
-                self.latest_calculated_quantities = []
+                if not standard:
+                    # Only a SAMPLE run replaces the single-lane sample results. Measuring a
+                    # standard used to wipe them (and then store the standard's own bands as
+                    # the "sample" result), so the user had to re-analyse after every standard.
+                    self.latest_peak_areas = []
+                    self.latest_peak_details = []
+                    self.latest_calculated_quantities = []
 
                 if standard:
                     quantity, ok = QInputDialog.getText(self, "Enter Standard Quantity", "Enter the known amount (e.g., 1.5):")
@@ -21096,7 +21368,9 @@ if __name__ == "__main__":
                         try:
                             quantity_value = float(quantity.split()[0])
                             # Process standards with a fixed rolling-ball radius (Auto off).
-                            peak_info_result = self.calculate_peak_area(pil_image_for_dialog, force_manual_rb=True)
+                            peak_info_result = self.calculate_peak_area(pil_image_for_dialog, force_manual_rb=True,
+                                                                        is_standard=True,
+                                                                        standard_lane_id=standard_lane_id)
                             
                             if peak_info_result and len(peak_info_result) > 0:
                                 areas_for_standard = [info['area'] for info in peak_info_result]
@@ -21109,9 +21383,11 @@ if __name__ == "__main__":
                                 self.standard_protein_values.setText(", ".join(formatted_quantities))
                                 self.standard_protein_areas_text.setText(", ".join(formatted_areas))
 
-                                pass # print(f"Standard Added: Qty={quantity_value}, Area={total_area:.3f}")
-                                self.latest_peak_areas = [round(a, 3) for a in areas_for_standard]
-                                self.latest_peak_details = peak_info_result # Store full details
+                                # The curve changed: requantify what's already been analysed
+                                # instead of making the user run the samples again.
+                                self._requantify_loaded_results(only_existing=False)
+                                self._refresh_sample_results_text()
+                                self._sync_table_window_standards()
                             else:
                                  pass # print("Peak area calculation cancelled or failed for standard.")
                         except (ValueError, IndexError) as e:
@@ -21130,7 +21406,7 @@ if __name__ == "__main__":
                         if len(self.quantities_peak_area_dict) >= 2:
                             # --- NEW: Use the central quantification engine ---
                             # The model name is taken from the TableWindow's current tab, if open.
-                            model_to_use = "Linear" # Default
+                            model_to_use = str(getattr(self, 'latest_standard_curve_model', '') or 'Linear')
                             if self.table_window_instance and not self.table_window_instance.isHidden():
                                 model_to_use = self.table_window_instance.model_combo_current.currentText()
                             
@@ -21155,59 +21431,17 @@ if __name__ == "__main__":
             
             def _perform_quantification(self, model_name, standard_quantities, standard_areas, sample_areas):
                 """
-                Central quantification engine. Fits a standard curve using the specified model
-                and calculates unknown quantities for sample areas.
+                Central quantification engine. Fits the standard curve Area = f(Qty) with the
+                chosen model (same fit the Standard Curve plot and report show) and inverts it
+                for each sample area. Results are never negative: below the lowest standard
+                the response is proportional to the origin (see fit_quant_standard_curve).
                 """
                 if len(standard_quantities) < 2 or not sample_areas:
                     return ([0.0] * len(sample_areas), None)
-
-                std_qty_np = np.array(standard_quantities, dtype=float)
-                std_area_np = np.array(standard_areas, dtype=float)
-                sample_areas_np = np.array(sample_areas, dtype=float)
-                
-                fit_params = None
-                calculated_quantities = []
-
-                try:
-                    # --- START OF THE FIX ---
-                    # For polynomial models, we fit Quantity as a function of Area.
-                    # This makes calculating the unknown quantity a simple evaluation, not a complex root-finding problem.
-                    if "Linear" in model_name or "Polynomial" in model_name:
-                        degree = 1
-                        if "Deg 2" in model_name: degree = 2
-                        elif "Deg 3" in model_name: degree = 3
-                        
-                        # Ensure enough points for the chosen degree
-                        if len(std_qty_np) <= degree: return ([0.0] * len(sample_areas), None)
-
-                        # Fit Quantity = f(Area)
-                        fit_params = np.polyfit(std_area_np, std_qty_np, degree)
-                        
-                        # Calculate quantities by simply evaluating the polynomial with the sample areas
-                        calculated_quantities = np.polyval(fit_params, sample_areas_np).tolist()
-
-                    # --- END OF THE FIX ---
-
-                    elif SCIPY_AVAILABLE and "4-PL" in model_name:
-                        # For sigmoidal models, we fit Area = f(Quantity) and then use the mathematical inverse.
-                        if len(std_qty_np) < 4: return ([0.0] * len(sample_areas), None)
-                        
-                        p0 = [min(std_area_np), 1.0, np.median(std_qty_np), max(std_area_np)]
-                        fit_params, _ = curve_fit(four_param_logistic, std_qty_np, std_area_np, p0=p0, maxfev=10000)
-                        a, b, c, d = fit_params
-
-                        # Calculate quantity from area using the inverse of the 4-PL function
-                        term = ((a - d) / (sample_areas_np - d)) - 1
-                        quantities = np.full_like(sample_areas_np, 0.0)
-                        valid_mask = term > 0
-                        quantities[valid_mask] = c * (term[valid_mask]**(1/b))
-                        calculated_quantities = quantities.tolist()
-                
-                except (RuntimeError, ValueError, np.linalg.LinAlgError) as e:
-                    pass # print(f"ERROR: Could not fit model '{model_name}': {e}")
+                fit = fit_quant_standard_curve(model_name, standard_quantities, standard_areas)
+                if fit is None:
                     return ([0.0] * len(sample_areas), None)
-
-                return (calculated_quantities, fit_params)
+                return (quantify_with_standard_curve(fit, sample_areas), fit['params'])
 
                 
             
@@ -22124,12 +22358,64 @@ if __name__ == "__main__":
                     self.multi_lane_processing_finished = config_data.get(
                         "multi_lane_processing_finished", False)
 
+                # Quantities saved by older versions could be negative (a straight-line fit
+                # extrapolated below its area intercept). Recompute them from the stored areas
+                # and standards with the current engine so a reopened file is correct.
+                self._requantify_loaded_results()
+
                 # Rebuild the "Sample Results" summary so the restored analysis is visible in
                 # the Process Regions panel too, not just in View Full Results and History.
                 self._refresh_sample_results_text()
 
                 # Everything now matches the file on disk.
                 self._analysis_dirty_since_load = False
+
+            def _requantify_loaded_results(self, only_existing=True):
+                """Recompute stored quantities from their areas + the standard curve.
+                only_existing=True (file load): just the lists that were quantified before.
+                False (a standard was added/edited): every analysed lane; with < 2 standards
+                the quantities are cleared."""
+                try:
+                    std = getattr(self, 'quantities_peak_area_dict', None) or {}
+                    if len(std) < 2:
+                        if not only_existing:
+                            self.latest_calculated_quantities = []
+                            self.latest_multi_lane_calculated_quantities = {}
+                        return
+                    model = str(getattr(self, 'latest_standard_curve_model', '') or 'Linear')
+                    std_q, std_a = list(std.keys()), list(std.values())
+                    ml_q = getattr(self, 'latest_multi_lane_calculated_quantities', None) or {}
+                    ml_a = getattr(self, 'latest_multi_lane_peak_areas', None) or {}
+                    lane_ids = list(ml_q.keys()) if only_existing else list(ml_a.keys())
+                    for lid in lane_ids:
+                        areas = ml_a.get(lid) or []
+                        if areas and (ml_q.get(lid) or not only_existing):
+                            ml_q[lid], _ = self._perform_quantification(model, std_q, std_a, areas)
+                    self.latest_multi_lane_calculated_quantities = ml_q
+                    if (getattr(self, 'latest_calculated_quantities', None) or not only_existing) \
+                            and getattr(self, 'latest_peak_areas', None):
+                        self.latest_calculated_quantities, _ = self._perform_quantification(
+                            model, std_q, std_a, self.latest_peak_areas)
+                except Exception:
+                    log_traceback()
+
+            def _sync_table_window_standards(self):
+                """Point an open results window at the CURRENT standards and redraw it (it
+                held the dict object it was opened with, which update_standards_from_text_fields
+                replaces — so the window kept showing the old curve)."""
+                tw = getattr(self, 'table_window_instance', None)
+                if not tw or tw.isHidden():
+                    return
+                try:
+                    tw.current_standard_dictionary = self.quantities_peak_area_dict
+                    _ml = self.latest_multi_lane_calculated_quantities if self.latest_multi_lane_peak_areas \
+                        else {1: self.latest_calculated_quantities}
+                    for lid, content in tw.current_results_data.items():
+                        if lid in _ml:
+                            content['quantities'] = list(_ml.get(lid) or [])
+                    tw._update_analysis_display_for_tab(is_for_history=False)
+                except Exception:
+                    log_traceback()
 
             def _refresh_sample_results_text(self):
                 """Repopulate the Sample Results box from the current densitometry results.
@@ -22255,7 +22541,7 @@ if __name__ == "__main__":
                         return
 
                     # Determine which regression model to use from the (potentially open) TableWindow
-                    model_to_use = "Linear" # Default if window isn't open or accessible
+                    model_to_use = str(getattr(self, 'latest_standard_curve_model', '') or 'Linear')
                     if self.table_window_instance and not self.table_window_instance.isHidden():
                         model_to_use = self.table_window_instance.model_combo_current.currentText()
                     
@@ -22296,8 +22582,7 @@ if __name__ == "__main__":
                         self.target_protein_areas_text.setText("\n".join(all_lanes_text_results))
                     
                     # If the table window is open, refresh it to show the new curve and quantities
-                    if self.table_window_instance and not self.table_window_instance.isHidden():
-                        self.table_window_instance._update_analysis_display_for_tab(is_for_history=False)
+                    self._sync_table_window_standards()
 
                     # --- END OF MODIFICATION ---
 
@@ -23204,7 +23489,8 @@ if __name__ == "__main__":
                 # --- Final analysis step (unchanged) ---
                 processed_data_pil = self.convert_qimage_to_grayscale_pil(extracted_qimage)
                 if processed_data_pil:
-                    self.analyze_bounding_box(processed_data_pil, standard=True)
+                    self.analyze_bounding_box(processed_data_pil, standard=True,
+                                              standard_lane_id=target_lane_def.get('id'))
                 else:
                     QMessageBox.warning(self, "Error", f"Could not convert {region_type_for_message} to grayscale for analysis.")
                 self.save_state()
@@ -23302,7 +23588,7 @@ if __name__ == "__main__":
                     return
 
                 all_lanes_text_results = []
-                model_to_use = "Linear"
+                model_to_use = str(getattr(self, 'latest_standard_curve_model', '') or 'Linear')
                 std_qtys = list(self.quantities_peak_area_dict.keys())
                 std_areas = list(self.quantities_peak_area_dict.values())
 
