@@ -42,7 +42,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.7.0"
+APP_VERSION = "9.7.1"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -1001,6 +1001,27 @@ if __name__ == "__main__":
             
             "Custom...": -1.0
         }
+
+        _SUPERSCRIPT_DIGITS = str.maketrans("-0123456789", "\u207b\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079")
+
+
+        def format_intensity_value(v):
+            """Compact, readable intensity: 17725802 -> '1.773\u00d710\u2077', 842.5 -> '842.5'."""
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return str(v)
+            if not np.isfinite(v):
+                return str(v)
+            if v == 0 or 0.01 <= abs(v) < 1e4:
+                return f"{v:.1f}" if abs(v) >= 1 else f"{v:.3g}"
+            exp = int(np.floor(np.log10(abs(v))))
+            mant = v / 10 ** exp
+            if abs(round(mant, 3)) >= 10:
+                exp += 1
+                mant /= 10
+            return f"{mant:.3f}\u00d710" + str(exp).translate(_SUPERSCRIPT_DIGITS)
+
 
         def four_param_logistic(x, a, b, c, d):
             """ 4-Parameter Logistic Regression model (sigmoidal). y = d + (a - d) / (1 + (x / c)**b) """
@@ -8047,13 +8068,50 @@ if __name__ == "__main__":
                     return
                 avg_radius = float(np.clip(round(np.mean(radii)), 10, 200))
 
-                # Apply the same constant radius to the active lane and every stored lane.
+                # Apply the same constant radius to the active lane and every stored lane,
+                # and RE-BASELINE every lane whose radius actually changed. Previously only the
+                # number changed: the backgrounds/areas stayed those of the old radius, so the
+                # dialog reported "radius 83" while measuring at 50 -- and a standard taken
+                # from that lane (measured at the reported 83) did not match its own sample.
+                changed_current = float(self.rolling_ball_radius) != avg_radius
                 self.rolling_ball_radius = avg_radius
                 for lane in getattr(self, 'lanes_data', []):
-                    if lane['id'] in self.lanes_state:
-                        self.lanes_state[lane['id']]['rolling_ball_radius'] = avg_radius
+                    lid = lane['id']
+                    st = self.lanes_state.get(lid)
+                    if st is None or lid == current_id:
+                        continue
+                    if float(st.get('rolling_ball_radius') or 0) != avg_radius:
+                        st['rolling_ball_radius'] = avg_radius
+                        self._rebaseline_stored_lane(lid)
+                if changed_current and self.profile_original_inverted is not None:
+                    try:
+                        self._recalculate_all_regions()
+                        self._integrate_band_areas()
+                    except Exception:
+                        log_traceback()
 
                 self._sync_rb_controls(avg_radius)
+
+            def _rebaseline_stored_lane(self, lane_id):
+                """Recompute background, regions (hand-edited ones are kept) and areas of a
+                stored lane after its baseline parameters changed; current lane untouched."""
+                saved_id = getattr(self, 'current_lane_id', None)
+                if saved_id is not None:
+                    self._save_current_lane_state()
+                try:
+                    self._load_lane_state(lane_id)
+                    if self.profile_original_inverted is not None:
+                        self._recalculate_all_regions()
+                        self._integrate_band_areas()
+                    self._save_current_lane_state()
+                except Exception:
+                    log_traceback()
+                finally:
+                    if saved_id is not None:
+                        try:
+                            self._load_lane_state(saved_id)
+                        except Exception:
+                            log_traceback()
 
             def _recalculate_all_regions(self):
                 if hasattr(self, 'method_combobox'):
@@ -8901,7 +8959,9 @@ if __name__ == "__main__":
                         saved_id = self.current_lane_id
                         try:
                             self._load_lane_state(lane_id)
-                            self.update_plot()
+                            # Integrate only (no redraw): the same routine update_plot uses.
+                            self.method = method
+                            self._integrate_band_areas()
                             self._save_current_lane_state()
                         except Exception:
                             log_traceback()
@@ -9083,6 +9143,169 @@ if __name__ == "__main__":
                 except Exception:
                     log_traceback()
 
+            def _integrate_band_areas(self):
+                """Integrate every band of the CURRENT lane with the selected area method.
+
+                This is THE densitometry integration. update_plot() draws from it, and the
+                headless engine (_PeakEngine: Auto Gel preview) calls it directly, so every
+                path that reports a band area -- Analyze as Sample(s), Process Selected as
+                Standard, Auto Lane, Auto Gel -- runs this exact code.
+                Returns (global_sl_baseline, total_area); also sets self.lane_intensity."""
+                profile_to_plot_and_calc = self.profile_original_inverted
+                if profile_to_plot_and_calc is None or len(profile_to_plot_and_calc) == 0:
+                    return None, 0.0
+                if (getattr(self, 'background', None) is None
+                        or self.background.shape != profile_to_plot_and_calc.shape):
+                    self.background = np.zeros_like(profile_to_plot_and_calc)
+                # --- Clear area accumulators ---
+                self.peak_areas_rolling_ball.clear()
+                self.peak_areas_straight_line.clear()
+                self.peak_areas_valley.clear()
+                self.peak_areas_deconv.clear()
+
+                global_sl_baseline = None
+
+                if self.peak_regions and self.method == "Straight Line":
+                    trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
+                    trough_y = [profile_to_plot_and_calc[x] for x in trough_x]
+                    if len(trough_x) >= 2:
+                        x_all = np.arange(len(profile_to_plot_and_calc))
+                        global_sl_baseline = np.interp(x_all, trough_x, trough_y)
+
+
+                # Helper: per-pixel nearest-peak index, used as the fractional-attribution
+                # fallback (replaces the old "equal share among all components" rule, which
+                # could leak a peak's stray pixels into distant bands).
+                def _nearest_peak_mask(x_region_arr, this_peak_index):
+                    if len(self.peaks) == 0:
+                        return np.ones(len(x_region_arr), dtype=np.float64)
+                    diffs = np.abs(self.peaks.astype(float)[None, :] - x_region_arr[:, None])
+                    nearest = np.argmin(diffs, axis=1)
+                    return (nearest == this_peak_index).astype(np.float64)
+
+                # ------------------------------------------------------------------ #
+                # PASS 1 — Area Integration                                           #
+                # ------------------------------------------------------------------ #
+                for i in range(len(self.peaks)):
+                    if i >= len(self.peak_regions):
+                        if self.method == "Gaussian Deconvolution":
+                            self.peak_areas_deconv.append(0.0)
+                        else:
+                            self.peak_areas_rolling_ball.append(0.0)
+                            self.peak_areas_straight_line.append(0.0)
+                            self.peak_areas_valley.append(0.0)
+                        continue
+
+                    start_handle = int(self.peak_regions[i][0])
+                    end_handle   = int(self.peak_regions[i][1])
+
+                    if start_handle >= end_handle:
+                        if self.method == "Gaussian Deconvolution":
+                            self.peak_areas_deconv.append(0.0)
+                        else:
+                            self.peak_areas_rolling_ball.append(0.0)
+                            self.peak_areas_straight_line.append(0.0)
+                            self.peak_areas_valley.append(0.0)
+                        continue
+
+                    if self.method == "Gaussian Deconvolution":
+                        owned        = getattr(self, 'component_ownership', {}).get(i, [])
+                        start_handle = int(self.peak_regions[i][0])
+                        end_handle   = int(self.peak_regions[i][1])
+
+                        x_region = np.arange(start_handle, end_handle + 1, dtype=np.float64)
+
+                        actual_subtracted = np.maximum(
+                            profile_to_plot_and_calc[start_handle:end_handle + 1].astype(np.float64)
+                            - self.background[start_handle:end_handle + 1].astype(np.float64),
+                            0.0
+                        )
+
+                        if owned and len(self.fitted_gaussian_params) > 0:
+                            this_peak_fit = np.zeros(len(x_region), dtype=np.float64)
+                            for comp_idx in owned:
+                                if (comp_idx < len(self.fitted_gaussian_params)
+                                        and comp_idx < len(self.tau_values)):
+                                    amp, cen, sig = self.fitted_gaussian_params[comp_idx]
+                                    tau = self.tau_values[comp_idx]
+                                    this_peak_fit += np.maximum(
+                                        self._emg(x_region, amp, cen, sig, tau), 0.0
+                                    )
+
+                            total_fit = np.zeros(len(x_region), dtype=np.float64)
+                            for comp_idx_all, (amp_all, cen_all, sig_all) in enumerate(
+                                    self.fitted_gaussian_params):
+                                tau_all = (self.tau_values[comp_idx_all]
+                                        if comp_idx_all < len(self.tau_values)
+                                        else sig_all * 0.3)
+                                total_fit += np.maximum(
+                                    self._emg(x_region, amp_all, cen_all, sig_all, tau_all), 0.0
+                                )
+
+                            # CHANGED: where the fit carries no signal, attribute the pixel to
+                            # the nearest detected peak rather than splitting it equally.
+                            fallback = _nearest_peak_mask(x_region, i)
+                            fraction = np.where(total_fit > 1e-9, this_peak_fit / total_fit, fallback)
+
+                            area = float(np.trapezoid(actual_subtracted * fraction))
+
+                        else:
+                            area = float(np.trapezoid(actual_subtracted))
+
+                        self.peak_areas_deconv.append(max(0.0, area))
+
+                    else:
+                        # Rolling Ball area (baseline already clamped <= profile, so no
+                        # rectification bias here; the maximum() is a safety no-op).
+                        area_rb = np.trapezoid(np.maximum(
+                            0.0,
+                            profile_to_plot_and_calc[start_handle:end_handle + 1]
+                            - self.background[start_handle:end_handle + 1]
+                        ))
+                        self.peak_areas_rolling_ball.append(max(0.0, area_rb))
+
+                        # Straight Line area (linear baseline CAN cross above the trace;
+                        # clipping here is the standard densitometry convention).
+                        area_sl = 0.0
+                        if global_sl_baseline is not None:
+                            area_sl = np.trapezoid(np.maximum(
+                                0.0,
+                                profile_to_plot_and_calc[start_handle:end_handle + 1]
+                                - global_sl_baseline[start_handle:end_handle + 1]
+                            ))
+                        self.peak_areas_straight_line.append(max(0.0, area_sl))
+
+                        # Rolling-valley (local straight-line) area
+                        y_start_rv  = float(self.background[start_handle])
+                        y_end_rv    = float(self.background[end_handle])
+                        baseline_rv = np.interp(
+                            np.arange(start_handle, end_handle + 1),
+                            [start_handle, end_handle],
+                            [y_start_rv, y_end_rv]
+                        )
+                        area_valley = np.trapezoid(np.maximum(
+                            0.0,
+                            profile_to_plot_and_calc[start_handle:end_handle + 1] - baseline_rv
+                        ))
+                        self.peak_areas_valley.append(max(0.0, area_valley))
+
+                # --- Total area for percentage labels ---
+                total_area = 0.0
+                if   self.method == "Rolling-valley":         total_area = sum(self.peak_areas_valley)
+                elif self.method == ROLLING_BALL_METHOD: total_area = sum(self.peak_areas_rolling_ball)
+                elif self.method == "Straight Line":          total_area = sum(self.peak_areas_straight_line)
+                elif self.method == "Gaussian Deconvolution": total_area = sum(self.peak_areas_deconv)
+                if total_area < 1e-9:
+                    total_area = 0.0
+
+                # Whole-lane intensity: the lane's background-subtracted volume, the Lane %
+                # denominator (Band % uses total_area, the sum of the detected bands).
+                self.lane_intensity = self._lane_intensity_from(
+                    profile_to_plot_and_calc,
+                    global_sl_baseline if (self.method == "Straight Line"
+                                           and global_sl_baseline is not None) else self.background)
+                return global_sl_baseline, total_area
+
             def update_plot(self):
                 if not hasattr(self, 'canvas') or self.canvas is None:
                     return
@@ -9216,29 +9439,17 @@ if __name__ == "__main__":
                                         markeredgecolor=selected_peak_color, markerfacecolor='none',
                                         label='Selected for Delete', zorder=17)
 
-                # --- Clear area accumulators ---
-                self.peak_areas_rolling_ball.clear()
-                self.peak_areas_straight_line.clear()
-                self.peak_areas_valley.clear()
-                self.peak_areas_deconv.clear()
+                # Band areas: one integration routine shared with the headless engine
+                # (Auto Gel preview), so the numbers can never differ between paths.
+                global_sl_baseline, total_area = self._integrate_band_areas()
+                self._plot_total_area = float(total_area)
 
                 profile_range_plot = np.ptp(profile_for_display) if np.ptp(profile_for_display) > 0 else 1.0
                 max_y_for_plot_limit = np.max(profile_for_display) if len(profile_for_display) > 0 else 1.0
                 text_positions = []
-                global_sl_baseline = None
-
-                if self.peak_regions and self.method == "Straight Line":
-                    trough_x = [self.peak_regions[0][0]] + [r[1] for r in self.peak_regions]
-                    trough_y = [profile_to_plot_and_calc[x] for x in trough_x]
-                    if len(trough_x) >= 2:
-                        x_all = np.arange(len(profile_to_plot_and_calc))
-                        global_sl_baseline = np.interp(x_all, trough_x, trough_y)
 
                 x_full = np.arange(len(profile_for_display), dtype=np.float64)
 
-                # Helper: per-pixel nearest-peak index, used as the fractional-attribution
-                # fallback (replaces the old "equal share among all components" rule, which
-                # could leak a peak's stray pixels into distant bands).
                 def _nearest_peak_mask(x_region_arr, this_peak_index):
                     if len(self.peaks) == 0:
                         return np.ones(len(x_region_arr), dtype=np.float64)
@@ -9246,127 +9457,6 @@ if __name__ == "__main__":
                     nearest = np.argmin(diffs, axis=1)
                     return (nearest == this_peak_index).astype(np.float64)
 
-                # ------------------------------------------------------------------ #
-                # PASS 1 — Area Integration                                           #
-                # ------------------------------------------------------------------ #
-                for i in range(len(self.peaks)):
-                    if i >= len(self.peak_regions):
-                        if self.method == "Gaussian Deconvolution":
-                            self.peak_areas_deconv.append(0.0)
-                        else:
-                            self.peak_areas_rolling_ball.append(0.0)
-                            self.peak_areas_straight_line.append(0.0)
-                            self.peak_areas_valley.append(0.0)
-                        continue
-
-                    start_handle = int(self.peak_regions[i][0])
-                    end_handle   = int(self.peak_regions[i][1])
-
-                    if start_handle >= end_handle:
-                        if self.method == "Gaussian Deconvolution":
-                            self.peak_areas_deconv.append(0.0)
-                        else:
-                            self.peak_areas_rolling_ball.append(0.0)
-                            self.peak_areas_straight_line.append(0.0)
-                            self.peak_areas_valley.append(0.0)
-                        continue
-
-                    if self.method == "Gaussian Deconvolution":
-                        owned        = getattr(self, 'component_ownership', {}).get(i, [])
-                        start_handle = int(self.peak_regions[i][0])
-                        end_handle   = int(self.peak_regions[i][1])
-
-                        x_region = np.arange(start_handle, end_handle + 1, dtype=np.float64)
-
-                        actual_subtracted = np.maximum(
-                            profile_to_plot_and_calc[start_handle:end_handle + 1].astype(np.float64)
-                            - self.background[start_handle:end_handle + 1].astype(np.float64),
-                            0.0
-                        )
-
-                        if owned and len(self.fitted_gaussian_params) > 0:
-                            this_peak_fit = np.zeros(len(x_region), dtype=np.float64)
-                            for comp_idx in owned:
-                                if (comp_idx < len(self.fitted_gaussian_params)
-                                        and comp_idx < len(self.tau_values)):
-                                    amp, cen, sig = self.fitted_gaussian_params[comp_idx]
-                                    tau = self.tau_values[comp_idx]
-                                    this_peak_fit += np.maximum(
-                                        self._emg(x_region, amp, cen, sig, tau), 0.0
-                                    )
-
-                            total_fit = np.zeros(len(x_region), dtype=np.float64)
-                            for comp_idx_all, (amp_all, cen_all, sig_all) in enumerate(
-                                    self.fitted_gaussian_params):
-                                tau_all = (self.tau_values[comp_idx_all]
-                                        if comp_idx_all < len(self.tau_values)
-                                        else sig_all * 0.3)
-                                total_fit += np.maximum(
-                                    self._emg(x_region, amp_all, cen_all, sig_all, tau_all), 0.0
-                                )
-
-                            # CHANGED: where the fit carries no signal, attribute the pixel to
-                            # the nearest detected peak rather than splitting it equally.
-                            fallback = _nearest_peak_mask(x_region, i)
-                            fraction = np.where(total_fit > 1e-9, this_peak_fit / total_fit, fallback)
-
-                            area = float(np.trapezoid(actual_subtracted * fraction))
-
-                        else:
-                            area = float(np.trapezoid(actual_subtracted))
-
-                        self.peak_areas_deconv.append(max(0.0, area))
-
-                    else:
-                        # Rolling Ball area (baseline already clamped <= profile, so no
-                        # rectification bias here; the maximum() is a safety no-op).
-                        area_rb = np.trapezoid(np.maximum(
-                            0.0,
-                            profile_to_plot_and_calc[start_handle:end_handle + 1]
-                            - self.background[start_handle:end_handle + 1]
-                        ))
-                        self.peak_areas_rolling_ball.append(max(0.0, area_rb))
-
-                        # Straight Line area (linear baseline CAN cross above the trace;
-                        # clipping here is the standard densitometry convention).
-                        area_sl = 0.0
-                        if global_sl_baseline is not None:
-                            area_sl = np.trapezoid(np.maximum(
-                                0.0,
-                                profile_to_plot_and_calc[start_handle:end_handle + 1]
-                                - global_sl_baseline[start_handle:end_handle + 1]
-                            ))
-                        self.peak_areas_straight_line.append(max(0.0, area_sl))
-
-                        # Rolling-valley (local straight-line) area
-                        y_start_rv  = float(self.background[start_handle])
-                        y_end_rv    = float(self.background[end_handle])
-                        baseline_rv = np.interp(
-                            np.arange(start_handle, end_handle + 1),
-                            [start_handle, end_handle],
-                            [y_start_rv, y_end_rv]
-                        )
-                        area_valley = np.trapezoid(np.maximum(
-                            0.0,
-                            profile_to_plot_and_calc[start_handle:end_handle + 1] - baseline_rv
-                        ))
-                        self.peak_areas_valley.append(max(0.0, area_valley))
-
-                # --- Total area for percentage labels ---
-                total_area = 0.0
-                if   self.method == "Rolling-valley":         total_area = sum(self.peak_areas_valley)
-                elif self.method == ROLLING_BALL_METHOD: total_area = sum(self.peak_areas_rolling_ball)
-                elif self.method == "Straight Line":          total_area = sum(self.peak_areas_straight_line)
-                elif self.method == "Gaussian Deconvolution": total_area = sum(self.peak_areas_deconv)
-                if total_area < 1e-9:
-                    total_area = 0.0
-
-                # Whole-lane intensity: the lane's background-subtracted volume, the Lane %
-                # denominator (Band % uses total_area, the sum of the detected bands).
-                self.lane_intensity = self._lane_intensity_from(
-                    profile_to_plot_and_calc,
-                    global_sl_baseline if (self.method == "Straight Line"
-                                           and global_sl_baseline is not None) else self.background)
 
                 # ------------------------------------------------------------------ #
                 # Background / composite profile lines + fit quality                  #
@@ -9599,7 +9689,11 @@ if __name__ == "__main__":
                         text.set_color(text_color)
 
                 self.ax.set_ylabel("Intensity", fontsize=_fs(9))
-                self.ax.set_title(f"Profile & Peak Engine ({self.method})", fontsize=_fs(10), weight='bold')
+                _title = f"Profile & Peak Engine ({self.method})"
+                _tot = float(getattr(self, '_plot_total_area', 0.0) or 0.0)
+                if _tot > 0 and len(self.peaks):
+                    _title += f"  \u2014  Total intensity: {format_intensity_value(_tot)}"
+                self.ax.set_title(_title, fontsize=_fs(10), weight='bold')
                 self.ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
 
                 if len(profile_to_plot_and_calc) > 1:
@@ -10502,6 +10596,70 @@ if __name__ == "__main__":
                     w = max(1, self.peak_distance // 8 if hasattr(self, 'peak_distance') else 2)
                     return max(0, peak_idx - w), min(profile_len - 1, peak_idx + w)
                 return valley_left_idx, valley_right_idx
+
+        class _ConstText:
+            """Stand-in for a combo box: currentText() only."""
+            def __init__(self, text):
+                self._t = text
+
+            def currentText(self):
+                return self._t
+
+        class _PeakEngine:
+            """PeakAreaDialog's measurement code with no window.
+
+            Every method below is PeakAreaDialog's own function object (copied in after the
+            class body), so profile building, peak detection, baselines, regions, areas,
+            saturation, band positions and the Auto rolling-ball average are executed by the
+            SAME code as the "Advanced Densitometry & Band Analysis" dialog. Used where a
+            measurement is needed without showing that dialog (Auto Gel band preview / MW
+            band placement), so those numbers cannot drift from the dialog's."""
+
+            def __init__(self, lanes, settings, parent_app=None, initial_band_state=None):
+                settings = dict(settings or {})
+                self.parent_app = parent_app
+                self.lanes_data = list(lanes)
+                self._initial_band_state = initial_band_state or {}
+                self.band_position_method = resolve_band_position_method(
+                    settings.get('band_position_method'))
+                self.lane_mw_labels = {}
+                self.mwm_lane_ids = set()
+                self.lane_mwm_preset = {}
+                self.lane_mw_hidden = {}
+                self.measure_raw_pixel_data = None
+                self.selected_peak_for_ui_focus = -1
+                self.selected_peak_index_for_delete = -1
+                self.method = resolve_area_method(parent_app, settings.get('area_subtraction_method'))
+                settings['area_subtraction_method'] = self.method
+                self.method_combobox = _ConstText(self.method)
+                self.lanes_state = {}
+                self._lanes_needing_recompute = set()
+                for lane in self.lanes_data:
+                    self.lanes_state[lane['id']] = self._init_lane_state(lane['id'], lane['pil'], settings)
+                self.current_lane_id = None
+                for lane in self.lanes_data:
+                    self._load_lane_state(lane['id'])
+                    self.regenerate_profile_and_detect()
+                    self._save_current_lane_state()
+                try:
+                    self._restore_band_state(self._initial_band_state)
+                except Exception:
+                    log_traceback()
+                self._load_lane_state(self.lanes_data[0]['id'])
+                # The dialog runs this once its UI exists; same step, same place.
+                self._apply_average_rb_radius()
+                self._integrate_band_areas()
+                self._save_current_lane_state()
+
+            def lane_curves(self, lane_id):
+                """(profile, background) of a lane, as measured."""
+                st = self.lanes_state.get(lane_id, {})
+                return st.get('profile_original_inverted'), st.get('background')
+
+        for _pe_name, _pe_val in list(PeakAreaDialog.__dict__.items()):
+            if _pe_name.startswith('__') or _pe_name in _PeakEngine.__dict__:
+                continue
+            setattr(_PeakEngine, _pe_name, _pe_val)
 
         class LiveViewLabel(QLabel):
             mouseMovedInLabel = Signal(QPointF, QPointF, bool)
@@ -12012,7 +12170,9 @@ if __name__ == "__main__":
                 self._band_dist       = self.band_settings.get('peak_distance', 10)
                 self._band_min_w      = self.band_settings.get('min_band_width', 3)
                 self._band_invert     = self.band_settings.get('is_inverted', False)
-                self._band_rb_radius  = int(self.band_settings.get('rolling_ball_radius', 50))
+                # Kept fractional (e.g. 32.69) so the wizard measures with the SAME radius as the
+                # densitometry dialog; only the slider position is rounded.
+                self._band_rb_radius  = float(self.band_settings.get('rolling_ball_radius', 50))
                 self._band_auto_rb    = bool(self.band_settings.get('auto_adjust_rb_radius', False))
                 # Band position for MW marker placement; the wizard's long-standing default is
                 # the FWHM midpoint until the user picks another method (here or in the
@@ -13162,11 +13322,11 @@ if __name__ == "__main__":
                 self._p2_method.currentTextChanged.connect(self._on_p2_method_changed)
                 global_g.addWidget(self._p2_method, 0, 1, 1, 2)
 
-                self._p2_lbl_rb = QLabel(f"Rolling Ball Radius ({self._band_rb_radius})")
+                self._p2_lbl_rb = QLabel(f"Rolling Ball Radius ({self._band_rb_radius:g})")
                 self._p2_lbl_rb.setMinimumWidth(180)
                 self._p2_sl_rb  = QSlider(Qt.Horizontal)
                 self._p2_sl_rb.setRange(1, 500)
-                self._p2_sl_rb.setValue(self._band_rb_radius)
+                self._p2_sl_rb.setValue(int(round(self._band_rb_radius)))
                 self._p2_sl_rb.valueChanged.connect(self._on_p2_rb_changed)
                 self._p2_auto_rb_chk = QCheckBox("Auto")
                 self._p2_auto_rb_chk.setChecked(self._band_auto_rb)
@@ -13808,6 +13968,27 @@ if __name__ == "__main__":
                     self._lane_quads[i] = None
                     if i < len(self._lane_skew):
                         self._lane_skew[i] = [0.0, 0.0]
+
+            def _lane_pil_native(self, lane_np):
+                """Lane strip -> PIL image at the gel's OWN bit depth and intensity scale.
+
+                The wizard used to stretch every lane to 0-255 by that lane's own min/max
+                before measuring it. That put wizard areas on a different scale from
+                "Analyze as Sample" / "Process Selected as Standard" (raw 16-bit sums, ~100x
+                larger), so a standard measured afterwards quantified the wizard's samples
+                wrongly -- and the per-lane stretch also made lanes incomparable with each
+                other. The strip is cut from the same image those paths measure
+                (_get_fully_adjusted_image_for_analysis), so keeping its values keeps every
+                path on one scale."""
+                a = np.nan_to_num(np.asarray(lane_np, dtype=np.float64))
+                if a.ndim == 3:
+                    a = np.mean(a[:, :, :3], axis=2)
+                if self._max_val == 65535.0:
+                    return Image.fromarray(np.clip(np.rint(a), 0, 65535).astype(np.uint16),
+                                           mode='I;16')
+                if self._max_val == 255.0:
+                    return Image.fromarray(np.clip(np.rint(a), 0, 255).astype(np.uint8), mode='L')
+                return Image.fromarray(a.astype(np.float32), mode='F')
 
             def _lane_extract(self, i):
                 """(strip, row_map) for lane i. `strip` is the lane straightened into an
@@ -14668,13 +14849,20 @@ if __name__ == "__main__":
                 except Exception:
                     return np.zeros(L)
 
-            def _headless_densitometry(self, x0, x1, settings, skew=None, lane_idx=None):
+            def _headless_densitometry(self, x0, x1, settings, skew=None, lane_idx=None,
+                                       regions_override=None):
                 """
-                Run baseline + peak-detection densitometry on lane columns [x0:x1].
+                Measure one lane WITHOUT opening the densitometry dialog -- but with the
+                dialog's own engine (_PeakEngine), on the lane at native bit depth, with the
+                same effective settings the final dialog gets (_effective_band_settings).
+                The Step 4 preview, MW band placement and the final densitometry therefore
+                report the same bands and the same areas as Analyze as Sample(s) / Process
+                Selected as Standard.
                 When `skew=(top_off, bot_off)` is given, the lane is de-skewed first so a
                 tilted lane is profiled along its true axis.
-                Returns list of dicts: {area, y_coord_in_lane_image, original_peak_index}.
-                Uses raw float array for higher precision than normalised 8-bit PIL.
+                regions_override: [(peak, start, end), ...] hand-dragged integration spans.
+                Returns list of dicts: {area, y_coord_in_lane_image, original_peak_index,
+                fence_left, fence_right, lane_intensity, y_in_gel}.
                 """
                 x0 = max(0, x0)
                 x1 = min(self._gel_arr.shape[1] - 1, x1)
@@ -14696,167 +14884,48 @@ if __name__ == "__main__":
                 else:
                     lane_arr = self._gel_arr[:, x0:x1 + 1].astype(np.float64)
 
-                # Inverted vertical profile (row-wise sum)
-                if settings.get('is_inverted', False):
-                    inv = lane_arr
-                else:
-                    inv = self._max_val - lane_arr
-                profile_raw = np.sum(inv, axis=1)
-
-                # Preprocessing: median then Gaussian smoothing
-                if len(profile_raw) >= 3:
-                    profile_raw = scipy_median_filter(profile_raw, size=3).astype(np.float64)
-                sigma = settings.get('smoothing_sigma', 0.5)
-                if sigma > 0.1:
-                    profile_raw = gaussian_filter1d(profile_raw, sigma=sigma)
-
-                # Normalise to [0,255] for consistent threshold scaling
-                p_min, p_max = profile_raw.min(), profile_raw.max()
-                if p_max <= p_min + 1e-6:
+                if lane_arr.ndim != 2 or lane_arr.shape[0] < 4 or lane_arr.shape[1] < 1:
                     return []
-                profile_norm = (profile_raw - p_min) / (p_max - p_min) * 255.0
+                eff = self._effective_band_settings(settings)
+                band_state = None
+                if regions_override:
+                    band_state = {1: {
+                        'peaks': [int(p) for p, _a, _b in regions_override],
+                        'peak_regions': [[int(_a), int(_b)] for _p, _a, _b in regions_override],
+                        'regions_are_manual': True,
+                        'prominence': float(eff.get('peak_prominence_factor', 0.02)),
+                        'is_inverted': bool(eff.get('is_inverted', False)),
+                        'profile_len': int(lane_arr.shape[0]),
+                    }}
+                eng = _PeakEngine([{'pil': self._lane_pil_native(lane_arr), 'id': 1}], eff,
+                                  parent_app=getattr(self, 'parent_app', None),
+                                  initial_band_state=band_state)
+                info = (eng.get_all_lanes_peak_info() or {}).get(1, [])
+                prof, bg = eng.lane_curves(1)
+                self._last_engine_curves = (prof, bg)
+                out = []
+                for d in info:
+                    pos = float(d.get('y_coord_in_lane_image', d.get('original_peak_index', 0)))
+                    out.append({
+                        'area': float(d.get('area', 0.0)),
+                        'y_coord_in_lane_image': round(pos, 2),
+                        'original_peak_index': int(d.get('original_peak_index', 0)),
+                        'fence_left': int(d.get('region_start', 0)),
+                        'fence_right': int(d.get('region_end', 0)),
+                        'lane_intensity': float(d.get('lane_intensity', 0.0)),
+                        'is_saturated': bool(d.get('is_saturated', False)),
+                        # Position on the gel (differs from the strip row only for lanes
+                        # with their own outline) -- used to place MW markers.
+                        'y_in_gel': self._strip_row_to_gel(row_map, pos)})
+                return out
 
-                # Peak detection parameters
-                p_range = float(np.ptp(profile_norm))
-                if p_range < 1e-9:
-                    return []
-                min_h  = (float(profile_norm.min()) +
-                           settings.get('peak_height_factor', 0.0) * p_range)
-                min_pr = settings.get('peak_prominence_factor', 0.02) * p_range
-
-                # MAD-based noise floor (raises threshold for noisy lanes)
-                try:
-                    d   = np.diff(profile_norm)
-                    mad = np.median(np.abs(d - np.median(d)))
-                    noise_floor = (float(profile_norm.min()) +
-                                   3.0 * 1.4826 * mad / np.sqrt(2.0))
-                    min_h = max(min_h, noise_floor)
-                except Exception:
-                    pass
-
-                try:
-                    peaks, props = find_peaks(
-                        profile_norm,
-                        height=min_h, prominence=min_pr,
-                        distance=max(1, settings.get('peak_distance', 10)),
-                        width=1, rel_height=0.5)
-                except Exception:
-                    return []
-
-                # Width filter
-                min_bw = settings.get('min_band_width', 3)
-                if len(peaks) > 0 and 'widths' in props:
-                    keep   = props['widths'] >= min_bw
-                    peaks  = peaks[keep]
-                    widths = props['widths'][keep]
-                    heights = props['peak_heights'][keep] if 'peak_heights' in props else None
-                    # Sharpness outlier rejection
-                    if heights is not None and len(peaks) >= 2:
-                        sharpness = heights / np.maximum(widths, 1.0)
-                        med_s     = np.median(sharpness)
-                        mad_s     = 1.4826 * np.median(np.abs(sharpness - med_s))
-                        max_h     = np.max(heights)
-                        if mad_s > 1e-9 and max_h > 0:
-                            spikes = ((sharpness > med_s + 3.5 * mad_s) &
-                                      (heights < max_h * 0.10))
-                            peaks = peaks[~spikes]
-
-                if len(peaks) == 0:
-                    return []
-
-                n = len(peaks)
-                L = len(profile_raw)
-
-                # Background estimation — choose method
-                method = resolve_area_method(getattr(self, 'parent_app', None),
-                                             settings.get('area_subtraction_method', DEFAULT_AREA_METHOD))
-                rb_radius = int(settings.get('rolling_ball_radius', 50))
-                # Auto rolling ball radius: mirror PeakAreaDialog._calculate_optimal_rb_radius
-                if method in RB_FAMILY_METHODS and settings.get('auto_adjust_rb_radius', False):
-                    try:
-                        w_arr = widths if len(peaks) > 0 else np.array([])
-                        if len(w_arr) > 0:
-                            rb_radius = int(np.clip(2.5 * float(np.mean(w_arr)), 10, 200))
-                    except Exception:
-                        pass
-                elif method == ROLLING_BALL_METHOD and rb_radius > L * RB_MAX_LANE_FRACTION:
-                    rb_radius = int(rb_default_radius(L))   # see PeakAreaDialog
-                if method in RB_FAMILY_METHODS:
-                    try:
-                        safe_r = max(1, min(rb_radius, L // 2 - 1))
-                        # Use custom rolling ball
-                        bg_rb = self._rolling_ball_bg(profile_raw, safe_r)
-                        bg    = np.clip(bg_rb, 0.0, profile_raw)
-                    except Exception:
-                        lam = float(np.clip(1e5 * (L / 200.0) ** 2, 1e4, 1e8))
-                        bg  = self._als_baseline(profile_raw, lam=lam, p=0.01)
-                        bg  = np.clip(bg, 0.0, profile_raw)
-                elif method == "Straight Line":
-                    # Global straight-line baseline connecting first/last trough
-                    fences_x = [0]
-                    for i in range(n - 1):
-                        fences_x.append(int((peaks[i] + peaks[i + 1]) // 2))
-                    fences_x.append(L - 1)
-                    fences_y = [float(profile_raw[x]) for x in fences_x]
-                    bg = np.interp(np.arange(L), fences_x, fences_y)
-                    bg = np.clip(bg, 0.0, profile_raw)
-                else:
-                    # Gaussian Deconvolution / default → AsLS
-                    lam = float(np.clip(1e5 * (L / 200.0) ** 2, 1e4, 1e8))
-                    bg  = self._als_baseline(profile_raw, lam=lam, p=0.01)
-                    bg  = np.clip(bg, 0.0, profile_raw)
-
-                # Build midpoint fences between consecutive peaks
-                fences_l = []
-                fences_r = []
-                for i, pk in enumerate(peaks):
-                    lf = int((peaks[i - 1] + pk) // 2) if i > 0     else 0
-                    rf = int((pk + peaks[i + 1]) // 2) if i < n - 1 else L - 1
-                    fences_l.append(max(0, lf))
-                    fences_r.append(min(L - 1, rf))
-
-                # Area integration (trapz between midpoint fences) + sub-pixel band
-                # centre (intensity-weighted center-of-mass of the background-subtracted
-                # signal in a tight window around the peak). This places the marker on
-                # the true band centre rather than the nearest integer row.
-                areas = []
-                centers = []
-                sig_all = np.maximum(profile_raw - bg, 0.0)
-                for i in range(n):
-                    lf, rf = fences_l[i], fences_r[i]
-                    if method == ROLLING_BALL_METHOD:
-                        # Bound each band by its own edges: walk out from the peak
-                        # until the background-subtracted signal drops to 2 % of the band's
-                        # height (never past the midpoint fences), instead of integrating the
-                        # whole span between neighbouring bands.
-                        pk_i = int(peaks[i]); thr = sig_all[pk_i] * 0.02
-                        a_ = pk_i
-                        while a_ > lf and sig_all[a_ - 1] > thr:
-                            a_ -= 1
-                        b_ = pk_i
-                        while b_ < rf and sig_all[b_ + 1] > thr:
-                            b_ += 1
-                        lf, rf = a_, b_
-                    seg  = profile_raw[lf:rf + 1]
-                    bg_s = bg[lf:rf + 1]
-                    areas.append(float(np.trapz(np.maximum(seg - bg_s, 0.0))))
-                    centers.append(round(band_position(
-                        sig_all, int(peaks[i]), lf, rf,
-                        resolve_band_position_method(settings.get('band_position_method'),
-                                                     WIZARD_DEFAULT_BAND_POSITION)), 2))
-
-                # Whole-lane background-subtracted volume (Lane % denominator).
-                lane_intensity = float(np.trapezoid(sig_all))
-                return [{'area': areas[i],
-                         'y_coord_in_lane_image': centers[i],
-                         'original_peak_index':   int(peaks[i]),
-                         'fence_left':  fences_l[i],
-                         'fence_right': fences_r[i],
-                         'lane_intensity': lane_intensity,
-                         # Position on the gel (differs from the strip row only for lanes
-                         # with their own outline) — used to place MW markers.
-                         'y_in_gel': self._strip_row_to_gel(row_map, centers[i])}
-                        for i in range(n)]
+            def _effective_band_settings(self, settings=None):
+                """The settings the wizard measures with: the app's densitometry settings
+                (denoise, speck removal, ...) overlaid with this wizard's Step 4 choices.
+                Used for the preview AND handed to the final densitometry dialog."""
+                eff = dict(getattr(self.parent_app, 'peak_dialog_settings', {}) or {})
+                eff.update(settings if settings is not None else self._get_band_settings())
+                return eff
 
             def _rolling_ball_bg(self, profile, radius):
                 """Background estimator for a 1-D profile, as used by the band-detection preview.
@@ -14921,10 +14990,16 @@ if __name__ == "__main__":
                 x0, x1   = self._lane_bounds[idx]
                 settings  = self._get_band_settings()
                 try:
-                    if idx in self._fence_overrides:
-                        info = self._fence_overrides[idx]
-                    else:
-                        info = self._headless_densitometry(x0, x1, settings, lane_idx=idx)
+                    # Hand-dragged spans are re-measured by the engine (not just redrawn), so
+                    # the preview areas are the ones the final analysis will report.
+                    _ov = self._fence_overrides.get(idx)
+                    _ov = ([(int(p['original_peak_index']), int(p['fence_left']),
+                             int(p['fence_right'])) for p in _ov] if _ov else None)
+                    info = self._headless_densitometry(x0, x1, settings, lane_idx=idx,
+                                                       regions_override=_ov)
+                    if not hasattr(self, '_p4_curves'):
+                        self._p4_curves = {}
+                    self._p4_curves[idx] = getattr(self, '_last_engine_curves', None)
                     self._p4_current_info = list(info) if info else []
                     self._draw_phase2_figure(self._p4_current_info, idx)
                 except Exception:
@@ -14969,14 +15044,18 @@ if __name__ == "__main__":
                     # Band profile
                     _strip, _rmap = self._lane_extract(lane_idx)
                     if _strip is not None and _strip.shape[0] > 3 and _strip.shape[1] > 1:
-                        lane_arr = _strip.astype(np.float64)
-                        inv      = (lane_arr if self._band_invert
-                                    else self._max_val - lane_arr)
-                        prof_raw = np.sum(inv, axis=1)
-                        if len(prof_raw) >= 3:
-                            prof_raw = scipy_median_filter(prof_raw, size=3).astype(np.float64)
-                        prof_sm  = (gaussian_filter1d(prof_raw, sigma=self._band_smooth)
-                                    if self._band_smooth > 0.1 else prof_raw.copy())
+                        # Draw the profile and background the densitometry engine actually
+                        # measured (see _headless_densitometry), not a separate approximation.
+                        _curves = getattr(self, '_p4_curves', {}).get(lane_idx)
+                        if _curves and _curves[0] is not None:
+                            prof_raw = np.asarray(_curves[0], dtype=np.float64)
+                        else:
+                            lane_arr = _strip.astype(np.float64)
+                            inv      = (lane_arr if self._band_invert
+                                        else self._max_val - lane_arr)
+                            prof_raw = np.sum(inv, axis=1)
+                            _curves = None
+                        prof_sm = prof_raw
                         self._ax2_prof.plot(prof_sm, color='steelblue', lw=1.2,
                                             label='Profile')
 
@@ -14985,13 +15064,13 @@ if __name__ == "__main__":
                             L_p = len(prof_sm)
                             # Build baseline for display
                             try:
-                                L_bg = len(prof_raw)
-                                rb_r = max(1, min(self._band_rb_radius, L_bg // 2 - 1))
-                                bg_display = self._rolling_ball_bg(prof_raw, rb_r)
-                                bg_display = np.clip(bg_display, 0.0, prof_raw)
-                                self._ax2_prof.plot(
-                                    bg_display, color='gray', lw=0.8,
-                                    ls='--', label='Background')
+                                bg_display = (np.asarray(_curves[1], dtype=np.float64)
+                                              if _curves and _curves[1] is not None
+                                              and len(_curves[1]) == len(prof_raw) else None)
+                                if bg_display is not None:
+                                    self._ax2_prof.plot(
+                                        bg_display, color='gray', lw=0.8,
+                                        ls='--', label='Background')
                             except Exception:
                                 bg_display = None
 
@@ -15086,10 +15165,13 @@ if __name__ == "__main__":
 
             def _on_p4_fence_release(self, event):
                 """Persist the dragged fence into overrides."""
-                if self._p4_drag_fence is not None:
+                dragged = self._p4_drag_fence is not None
+                if dragged:
                     self._fence_overrides[self._preview_lane_idx] = [
                         dict(p) for p in self._p4_current_info]
                 self._p4_drag_fence = None
+                if dragged:
+                    self._refresh_band_preview()   # re-integrate the new span
 
             def _p4_reset_fences(self):
                 """Remove manual fence overrides for the current preview lane and re-detect."""
@@ -15579,15 +15661,9 @@ if __name__ == "__main__":
                             if lane_np is None:
                                 continue
                             self._lane_row_maps[i + 1] = _rmap
-                            # Normalise to uint8 for PIL
-                            mn = float(lane_np.min())
-                            mx = float(lane_np.max())
-                            if mx > mn:
-                                lane8 = ((lane_np.astype(np.float32) - mn) /
-                                         (mx - mn) * 255.0).astype(np.uint8)
-                            else:
-                                lane8 = np.zeros(lane_np.shape[:2], dtype=np.uint8)
-                            pil_lane = Image.fromarray(lane8, mode='L')
+                            # Native bit depth, NOT a per-lane 0-255 stretch: wizard areas
+                            # must be on the same scale as the main window's standards.
+                            pil_lane = self._lane_pil_native(lane_np)
                             _lane = {'pil': pil_lane, 'id': i + 1}
                             # MWM-marked lanes carry their MW values so the densitometry
                             # graph shows molecular-weight labels on the detected bands, and
@@ -15602,14 +15678,35 @@ if __name__ == "__main__":
                             lane_dicts.append(_lane)
 
                         if lane_dicts:
+                            # Measure with exactly what Step 4 previewed: the same settings
+                            # and the user's hand-dragged band edges (as manual regions).
+                            _eff = self._effective_band_settings()
+                            _init_bs = {}
+                            for _li, _ov in (self._fence_overrides or {}).items():
+                                _ld = next((d for d in lane_dicts if d['id'] == _li + 1), None)
+                                if not _ov or _ld is None:
+                                    continue
+                                _init_bs[_li + 1] = {
+                                    'peaks': [int(p['original_peak_index']) for p in _ov],
+                                    'peak_regions': [[int(p['fence_left']), int(p['fence_right'])]
+                                                     for p in _ov],
+                                    'regions_are_manual': True,
+                                    'prominence': float(_eff.get('peak_prominence_factor', 0.02)),
+                                    'is_inverted': bool(_eff.get('is_inverted', False)),
+                                    'profile_len': int(_ld['pil'].height),
+                                }
                             dlg = PeakAreaDialog(
                                 cropped_data=lane_dicts,
-                                current_settings=dict(getattr(app, 'peak_dialog_settings', {}) or {},
-                                                      peak_height_factor=0.0),
+                                current_settings=_eff,
                                 persist_checked=getattr(
                                     app, 'persist_peak_settings_enabled', False),
-                                parent=app
+                                parent=app,
+                                initial_band_state=_init_bs or None
                             )
+                            # Same source image as the main window's analysis paths, so it
+                            # honours Settings > Densitometry > Measure raw pixel data too.
+                            dlg.measure_raw_pixel_data = bool(
+                                getattr(app, 'densitometry_raw_data', True))
                             if dlg.exec() == QDialog.Accepted:
                                 all_info = dlg.get_all_lanes_peak_info()
                                 if dlg.should_persist_settings():
@@ -15617,8 +15714,24 @@ if __name__ == "__main__":
                                     app.persist_peak_settings_enabled = True
                                 else:
                                     app.persist_peak_settings_enabled = False
+                                # Keep the bands/per-lane settings like "Analyze as Sample"
+                                # does, so a standard taken from one of these lanes opens on
+                                # the same bands.
+                                try:
+                                    app._store_band_state_from_dialog(dlg)
+                                except Exception:
+                                    log_traceback()
 
-                                # Commit results
+                                # Commit results (quantified when a standard curve exists).
+                                _std_q = list(app.quantities_peak_area_dict.keys())
+                                _std_a = list(app.quantities_peak_area_dict.values())
+                                _model = str(getattr(app, 'latest_standard_curve_model', '')
+                                             or 'Linear')
+                                def _qty(areas):
+                                    if len(_std_q) >= 2 and areas:
+                                        return app._perform_quantification(
+                                            _model, _std_q, _std_a, areas)[0]
+                                    return []
                                 app.latest_multi_lane_peak_areas.clear()
                                 app.latest_multi_lane_peak_details.clear()
                                 app.latest_multi_lane_calculated_quantities.clear()
@@ -15626,13 +15739,13 @@ if __name__ == "__main__":
                                     areas = [float(round(p['area'], 4)) for p in peak_info_list]
                                     app.latest_multi_lane_peak_areas[lid] = areas
                                     app.latest_multi_lane_peak_details[lid] = peak_info_list
-                                    app.latest_multi_lane_calculated_quantities[lid] = []
+                                    app.latest_multi_lane_calculated_quantities[lid] = _qty(areas)
 
                                 if 1 in all_info:
                                     app.latest_peak_areas = [
                                         float(round(p['area'], 4)) for p in all_info[1]]
                                     app.latest_peak_details = all_info[1]
-                                    app.latest_calculated_quantities = []
+                                    app.latest_calculated_quantities = _qty(app.latest_peak_areas)
 
                                 # Summary text
                                 lines = []
@@ -15713,16 +15826,10 @@ if __name__ == "__main__":
                             if lane_np is None:
                                 continue
                             self._lane_row_maps[_mi + 1] = _rmap
-                            mn = float(lane_np.min()); mx = float(lane_np.max())
-                            if mx > mn:
-                                lane8 = ((lane_np.astype(np.float32) - mn) /
-                                         (mx - mn) * 255.0).astype(np.uint8)
-                            else:
-                                lane8 = np.zeros(lane_np.shape[:2], dtype=np.uint8)
                             lbl = (lane_labels[_mi] if _mi < len(lane_labels)
                                    else f"MWM Lane {_mi + 1}")
                             _mv, _mh, _mp = app._mwm_seed_for_dialog()
-                            mwm_lane_dicts.append({'pil': Image.fromarray(lane8, mode='L'),
+                            mwm_lane_dicts.append({'pil': self._lane_pil_native(lane_np),
                                                    'id': _mi + 1, 'label': lbl,
                                                    'is_mwm': True, 'mw_labels': _mv,
                                                    'mw_hidden': _mh, 'mwm_preset': _mp})
@@ -15730,8 +15837,7 @@ if __name__ == "__main__":
                         if mwm_lane_dicts:
                             dlg = PeakAreaDialog(
                                 cropped_data=mwm_lane_dicts,
-                                current_settings=dict(getattr(app, 'peak_dialog_settings', {}) or {},
-                                                      peak_height_factor=0.0),
+                                current_settings=self._effective_band_settings(),
                                 persist_checked=getattr(
                                     app, 'persist_peak_settings_enabled', False),
                                 parent=app
