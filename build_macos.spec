@@ -72,6 +72,11 @@ hiddenimports = [
     # PySide6 essentials
     'PySide6.QtSvg',  # For SVG icon support
 
+    # AI control (MCP) modules — imported lazily from inside the app / --mcp-stdio mode.
+    'gba_ai_bridge',
+    'gba_mcp_server',
+    'gba_mcp_schema',
+
     # Matplotlib backend for Qt
     'matplotlib.backends.backend_qtagg',
 
@@ -200,8 +205,8 @@ app = BUNDLE(
     info_plist={
         'NSHighResolutionCapable': 'True',                     # Enables support for Retina displays.
         'LSMinimumSystemVersion': '10.15',                     # Sets minimum supported OS to macOS Catalina.
-        'CFBundleShortVersionString': '9.4',                   # Must track APP_VERSION in the script.
-        'CFBundleVersion': '9.4',                              # Build number.
+        'CFBundleShortVersionString': '9.8.0',                   # Must track APP_VERSION in the script.
+        'CFBundleVersion': '9.8.0',                              # Build number.
         'NSHumanReadableCopyright': 'Copyright © 2025 Anindya Karmaker. All rights reserved.',
     }
 )

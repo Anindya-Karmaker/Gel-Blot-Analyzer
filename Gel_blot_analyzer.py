@@ -1,4 +1,19 @@
 import sys
+
+# --- AI control (MCP) stdio mode -------------------------------------------------------------
+# `Gel_blot_analyzer.py --mcp-stdio` (or the packaged app with --mcp-stdio) runs ONLY the tiny
+# stdio MCP server that AI clients launch; it relays to the running app (see gba_mcp_server.py).
+# Handled before any Qt import so nothing else starts and stdout stays a clean protocol channel.
+if __name__ == "__main__" and "--mcp-stdio" in sys.argv[1:]:
+    for _fd, _name, _mode in ((0, "stdin", "r"), (1, "stdout", "w"), (2, "stderr", "w")):
+        if getattr(sys, _name, None) is None:          # windowed (no-console) builds
+            try:
+                setattr(sys, _name, open(_fd, _mode, encoding="utf-8", closefd=False))
+            except Exception:
+                pass
+    import gba_mcp_server
+    sys.exit(gba_mcp_server.main())
+
 import re
 import os
 import math
@@ -42,7 +57,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.7.1"
+APP_VERSION = "9.8.0"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -17396,7 +17411,12 @@ if __name__ == "__main__":
                 digits change."""
                 for lbl, widest in ((getattr(self, 'image1_resize_label', None), "300.00%"),
                                     (getattr(self, 'image2_resize_label', None), "300.00%"),
-                                    (getattr(self, 'blend_value_label', None), "100%")):
+                                    (getattr(self, 'blend_value_label', None), "100%"),
+                                    # 16-bit levels need 5 digits: a clipped "20564" read as
+                                    # "2056", a completely different (all-white) white point.
+                                    (getattr(self, 'black_point_value_label', None), "65535"),
+                                    (getattr(self, 'white_point_value_label', None), "65535"),
+                                    (getattr(self, 'gamma_value_label', None), "10.00")):
                     if lbl is None:
                         continue
                     try:
@@ -18402,34 +18422,23 @@ if __name__ == "__main__":
 
             def _auto_fit_ui_to_screen(self):
                 """On smaller desktops (low resolution, or a high DPI setting that shrinks the
-                logical work area) automatically pick a smaller UI Scale and narrow the
-                Program UI Width so the whole window fits without clipping.
+                logical work area) narrow the Program UI Width so the window fits without
+                clipping. The UI Scale itself is left alone: 100% by default, or the user's
+                own choice from the Settings tab.
 
-                Only ever shrinks (caps) — never enlarges past the user's setting — and is
-                idempotent: re-running on the same screen produces the same result. Runs at
-                startup (from load_config); manual changes in the Settings tab are left alone."""
+                Only ever shrinks (caps) and is idempotent. Runs at startup (from
+                load_config)."""
                 try:
                     geo = QGuiApplication.primaryScreen().availableGeometry()
                     sw, sh = geo.width(), geo.height()
 
-                    # 1) UI Scale — 1280x720 (the supported minimum) is the reference for
-                    #    100%, because the layout already fits there at full scale. Only
-                    #    desktops SMALLER than that need a proportionally smaller scale.
-                    #    On desktops LARGER than the reference, the user's preference
-                    #    (which may be >1.0, e.g. 1.25 or 1.5) is honoured as-is.
-                    rec = min(sw / 1280.0, sh / 720.0)
-                    options = sorted({v for (_t, v) in getattr(self, 'scale_options',
-                                      [("", 0.5), ("", 0.75), ("", 1.0)]) if v and v >= 0.5})
-                    if not options:
-                        options = [0.5, 0.75, 1.0]
-                    # Find the largest scale option the screen can support.
-                    snapped = options[0]
-                    for v in options:
-                        if v <= rec + 1e-6:
-                            snapped = v
-                    cur_scale = float(getattr(self, 'ui_scale_preference', 1.0) or 1.0)
-                    # Cap only: respect a user who already chose an even smaller scale.
-                    self.ui_scale_preference = min(cur_scale, snapped)
+                    # 1) UI Scale is NEVER changed automatically. It stays at 100% (the
+                    #    default) or whatever the user picked in Settings. Auto-shrinking it
+                    #    here was persisted by the next settings save as if the user had chosen
+                    #    it, and because the cap only ever lowered the value, one launch on a
+                    #    small (or virtual/headless) display left every later launch stuck at
+                    #    50%. Small desktops are handled by the width cap below and by
+                    #    _fit_window_to_screen instead.
 
                     # 2) Program UI Width — on-screen controls width is
                     #    safe_content_width * ui_scale_factor; keep it within the desktop.
@@ -28805,6 +28814,12 @@ if __name__ == "__main__":
                 exp_layout.addWidget(exp_note)
                 layout.addWidget(exp_group)
 
+                # --- AI Assistant Control (MCP) ---
+                # Filled in by gba_ai_bridge.install() once the window exists. Off by default.
+                self.ai_settings_container = QVBoxLayout()
+                self.ai_settings_container.setContentsMargins(0, 0, 0, 0)
+                layout.addLayout(self.ai_settings_container)
+
                 # --- Viewer Dimensions ---
                 dim_group = QGroupBox("Application Dimensions (Requires Restart)")
                 dim_layout = QGridLayout(dim_group)
@@ -39055,6 +39070,13 @@ if __name__ == "__main__":
 
         _splash("Building main window...", 98)
         main_window = CombinedSDSApp()
+        # AI assistant control (MCP): Settings tab group + Tools menu entries. The local
+        # server starts only if the USER has enabled it in Settings (off by default).
+        try:
+            import gba_ai_bridge
+            gba_ai_bridge.install(main_window)
+        except Exception:
+            log_traceback()
         _splash("Ready.", 100)
 
         # --- Close Loading Screen and Show Main Window ---

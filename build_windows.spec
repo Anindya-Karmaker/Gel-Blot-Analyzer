@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import re
 import sys
 import subprocess
 from PySide6 import QtCore
@@ -9,7 +10,60 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 # --- Configuration ---
 APP_NAME = "Gel Blot Analyzer"
 SCRIPT_FILE = "Gel_blot_analyzer.py"
-ICON_FILE = "icon.ico"
+COMPANY_NAME = "Anindya Karmaker"
+COPYRIGHT = "Copyright © 2025 Anindya Karmaker. All rights reserved."
+
+# Prefer a hand-made multi-resolution icon.ico; otherwise let PyInstaller convert Icon.png
+# (needs Pillow in the build env). Either way the build no longer fails on a missing .ico.
+ICON_FILE = next((f for f in ("icon.ico", "Icon.ico", "Icon.png")
+                  if os.path.exists(os.path.join(SPECPATH, f))), None)
+
+
+def _read_app_version():
+    """APP_VERSION from the script, so the .exe version can never drift from the app."""
+    with open(os.path.join(SPECPATH, SCRIPT_FILE), encoding="utf-8") as fh:
+        m = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', fh.read(), re.M)
+    if not m:
+        raise SystemExit("[spec] FATAL: APP_VERSION not found in %s" % SCRIPT_FILE)
+    return m.group(1)
+
+
+APP_VERSION = _read_app_version()
+
+
+def _write_version_file():
+    """Write a VSVersionInfo resource (Explorer > Properties > Details; MSIX tooling reads it)."""
+    nums = [int(p) for p in re.findall(r"\d+", APP_VERSION)[:4]]
+    nums += [0] * (4 - len(nums))
+    tup = tuple(nums)
+    dotted = ".".join(str(n) for n in tup)
+    text = f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers={tup}, prodvers={tup}, mask=0x3f, flags=0x0,
+                    OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', {COMPANY_NAME!r}),
+      StringStruct('FileDescription', {APP_NAME!r}),
+      StringStruct('FileVersion', {dotted!r}),
+      StringStruct('InternalName', {APP_NAME!r}),
+      StringStruct('LegalCopyright', {COPYRIGHT!r}),
+      StringStruct('OriginalFilename', {APP_NAME + '.exe'!r}),
+      StringStruct('ProductName', {APP_NAME!r}),
+      StringStruct('ProductVersion', {APP_VERSION!r})])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
+    path = os.path.join(workpath, "file_version_info.txt")
+    os.makedirs(workpath, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return path
+
+
+VERSION_FILE = _write_version_file()
+print(f"[spec] Building {APP_NAME} {APP_VERSION} (icon: {ICON_FILE})")
 
 
 # --- Code Signing Configuration (Optional - Edit for your needs) ---
@@ -51,9 +105,9 @@ datas = [
     # _internal so it is found at runtime via sys._MEIPASS (see _resource_candidates).
     (os.path.join(SPECPATH, "Icon.png"), "."),
 ]
-# NOTE: unlike the macOS spec there is no collect_data_files('PySide6') here — the
-# Windows build relies on PyInstaller's own PySide6 hook to lay out the Qt plugins.
-# This is the ONLY intentional dependency difference between the two spec files.
+# NOTE: no collect_data_files('PySide6') here (nor in the macOS spec any more) — the
+# per-module PySide6 hooks collect only the Qt pieces actually imported. Adding it
+# copies ~1 GB of PySide6-Addons (WebEngine, QML, ...) the app never uses.
 
 # =============================================================================
 # SHARED LIBRARY DEPENDENCIES
@@ -89,6 +143,11 @@ datas.extend(collect_data_files('pptx'))
 hiddenimports = [
     # PySide6 essentials
     'PySide6.QtSvg',  # For SVG icon support
+
+    # AI control (MCP) modules — imported lazily from inside the app / --mcp-stdio mode.
+    'gba_ai_bridge',
+    'gba_mcp_server',
+    'gba_mcp_schema',
 
     # Matplotlib backend for Qt
     'matplotlib.backends.backend_qtagg',
@@ -200,7 +259,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON_FILE,
-    version=None, # Embed version info from our file
+    version=VERSION_FILE,  # VSVersionInfo generated from APP_VERSION above
 )
 
 coll = COLLECT(
