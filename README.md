@@ -34,7 +34,7 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 
 | Feature                  | Description                                                                                                                               |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **AI Agent Control** *(New in v9.8.0)* | The full application can be automatically controlled by AI agents such as Claude Code, Cursor, Ollama, and others. Open images, adjust contrast, crop, place markers, annotate, run densitometry, and export results through natural-language instructions. |
+| **AI Agent Control** *(New in v9.8.0)* | The full application can be automatically controlled by AI agents such as Claude Code, Cursor, Ollama, and others. Open images, adjust contrast, crop, place markers, annotate, run densitometry, and export results through natural-language instructions. (NEW RELEASE COMING SOON!) |
 | **Broad Format Support** | Works with most common image formats (TIFF, PNG, BMP, JPG) from any imaging device.                                                       |
 | **Image Transformation** | Integrated toolkit for cropping, rotation, alignment, and perspective (skew) correction.                                                  |
 | **Advanced Adjustments** | Fine-tune image levels (black/white points) and gamma to visualize faint bands without altering raw data for analysis.                      |
