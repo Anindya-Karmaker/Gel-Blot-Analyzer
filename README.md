@@ -4,6 +4,8 @@
 
 From precise labeling and molecular weight prediction to powerful densitometric analysis, Gel Blot Analyzer combines essential imaging tools into a single, intuitive workflow.
 
+> 🤖 **New in v9.8.0 — AI Agent Control:** Starting from version 9.8.0, the full application can be automatically controlled by AI agents such as **Claude Code**, **Cursor**, **Ollama**, and others. Just describe what you want in plain language (e.g., *"crop the gel, label the lanes, add Precision Plus markers on both sides, and point an arrow at the band in lane 3"*) and the agent will operate Gel Blot Analyzer for you.
+
 <!-- Badges -->
 ![GitHub Downloads](https://img.shields.io/github/downloads/Anindya-Karmaker/Gel-Blot-Analyzer/total)
 ![Page Views](https://komarev.com/ghpvc/?username=Anindya-Karmaker&repo=Gel-Blot-Analyzer&label=Page%20Views&color=brightgreen&style=flat-square)
@@ -32,6 +34,7 @@ From precise labeling and molecular weight prediction to powerful densitometric 
 
 | Feature                  | Description                                                                                                                               |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **AI Agent Control** *(New in v9.8.0)* | The full application can be automatically controlled by AI agents such as Claude Code, Cursor, Ollama, and others. Open images, adjust contrast, crop, place markers, annotate, run densitometry, and export results through natural-language instructions. |
 | **Broad Format Support** | Works with most common image formats (TIFF, PNG, BMP, JPG) from any imaging device.                                                       |
 | **Image Transformation** | Integrated toolkit for cropping, rotation, alignment, and perspective (skew) correction.                                                  |
 | **Advanced Adjustments** | Fine-tune image levels (black/white points) and gamma to visualize faint bands without altering raw data for analysis.                      |
@@ -235,14 +238,14 @@ The authors gratefully acknowledge financial support from the National Science F
 
 ## Citation
 
-If you are using this software for poster/paper publication, please cite it using the Zenode ID:
+If you are using this software for poster/paper publication, please cite it using the Zenodo DOI:
 
 [![DOI](https://zenodo.org/badge/908003915.svg)](https://doi.org/10.5281/zenodo.21963676)
 
 
 OR (APA Style)
 
-Karmaker, A., McDonald, K.& Nandi, S. (2026). Gel-Blot-Analyzer [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.21963676
+Karmaker, A., McDonald, K., & Nandi, S. (2026). Gel-Blot-Analyzer [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.21963676
 
 ---
 
@@ -255,7 +258,5 @@ I am grateful to the McDonald-Nandi and Zhao lab at UC Davis for their input and
 ## Disclaimer
 
 AI (Claude Opus and Google Gemini) was used to improve the code and expedite bug fixing!
-
----
 
 ---
