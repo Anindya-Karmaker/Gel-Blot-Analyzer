@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider,
                                QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
-                               QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+                               QPlainTextEdit, QProgressDialog, QPushButton, QRadioButton, QScrollArea,
                                QScrollBar, QSpinBox, QStackedWidget, QTabBar, QTableView,
                                QTabWidget, QTextEdit, QVBoxLayout, QWidget,
                                QFileDialog, QMenu)
@@ -57,7 +57,10 @@ except Exception:  # pragma: no cover
     _is_valid = lambda o: o is not None
     _cpp_ptr = id
 
+import numpy as np
+
 import gba_mcp_schema as S
+import gba_ai_gel as GEL
 
 AI_COLOR = QColor("#7C3AED")          # violet: everything the AI draws on screen
 OVERLAY_OBJECT_NAME = "GBA_AIOverlay"
@@ -97,8 +100,48 @@ def load_settings():
     return data
 
 
+def _read_settings_file():
+    try:
+        with open(S.settings_path(), "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _merge_runtime_keys(data):
+    """Return a copy of ``data`` whose active_port/pid never clobber ANOTHER live instance.
+
+    Two app instances can overlap (the stdio relay launches a fresh copy while the user is
+    quitting the old one). Each one keeps its own in-memory settings dict, so the old
+    instance's stop() used to write back its stale copy — with active_port/pid popped —
+    and erase the port the new instance had just recorded. The relay then polled a dead
+    port forever ("did not become ready within 90s").
+
+    Rule: the runtime keys are written only by the process they describe. If this process is
+    not advertising itself (pid != os.getpid()), whatever another *live* process recorded on
+    disk is preserved; a record left by a dead process (crash) or by this process is cleared.
+    """
+    out = dict(data)
+    me = os.getpid()
+    if out.get("pid") == me and out.get("active_port"):
+        return out                                   # we are the running server: ours wins
+    out.pop("active_port", None)
+    out.pop("pid", None)
+    disk = _read_settings_file()
+    dpid, dport = disk.get("pid"), disk.get("active_port")
+    if dport and dpid and dpid != me and S.pid_alive(dpid):
+        out["active_port"] = dport
+        out["pid"] = dpid
+    return out
+
+
 def save_settings(data):
     path = S.settings_path()
+    try:
+        data = _merge_runtime_keys(data)
+    except Exception:
+        pass
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
@@ -349,6 +392,96 @@ _INPUT_TYPES = (QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox, Q
                 QTextEdit, QPlainTextEdit, QTabWidget, QListWidget, QTableView, QGroupBox)
 
 
+def _median3(x):
+    x = np.asarray(x, dtype=float)
+    if x.size < 3:
+        return x
+    return np.median(np.stack([np.r_[x[:1], x[:-1]], x, np.r_[x[1:], x[-1:]]]), axis=0)
+
+
+class _Pilot(QObject):
+    """Answers the app's own dialogs on behalf of a high-level AI tool (GUI thread).
+
+    handlers: list of (match(widget) -> bool, handle(widget) -> None | "release").
+    A matched top-level window is claimed once; its handler runs from a single-shot timer
+    so a handler that opens a nested modal loop (wizard -> densitometry dialog) never
+    blocks the polling. "release" hands the window back to the AI (it is then reported
+    as dialog_open)."""
+
+    def __init__(self, bridge, handlers, timeout_s=600):
+        super().__init__(bridge.win)
+        self.bridge = bridge
+        self.handlers = list(handlers)
+        self.claimed, self.released = set(), set()
+        self.report, self.errors = {}, []
+        self.t_end = time.time() + timeout_s
+        self.timer = QTimer(self)
+        self.timer.setInterval(120)
+        self.timer.timeout.connect(self._tick)
+
+    def start(self):
+        self.bridge._pilots.append(self)
+        self.timer.start()
+
+    def stop(self):
+        self.timer.stop()
+        if self in self.bridge._pilots:
+            self.bridge._pilots.remove(self)
+
+    def owns(self, w):
+        ptr = _cpp_ptr(w)
+        if ptr in self.released:
+            return False
+        if ptr in self.claimed:
+            return True
+        for m, _ in self.handlers:
+            try:
+                if m(w):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _tick(self):
+        if time.time() > self.t_end:
+            self.stop()
+            return
+        for w in QApplication.topLevelWidgets():
+            try:
+                if not _is_valid(w) or not w.isVisible():
+                    continue
+                ptr = _cpp_ptr(w)
+            except RuntimeError:
+                continue
+            if ptr in self.claimed or ptr in self.released:
+                continue
+            for m, fn in self.handlers:
+                try:
+                    hit = m(w)
+                except Exception:
+                    hit = False
+                if hit:
+                    self.claimed.add(ptr)
+                    QTimer.singleShot(self.bridge.step_delay() + 200,
+                                      lambda w=w, fn=fn, ptr=ptr: self._run(w, fn, ptr))
+                    break
+
+    def _run(self, w, fn, ptr):
+        b = self.bridge
+        b.ai_depth += 1
+        try:
+            if not _is_valid(w):
+                return
+            if fn(w) == "release":
+                self.claimed.discard(ptr)
+                self.released.add(ptr)
+        except Exception as e:  # noqa: BLE001
+            self.errors.append("%s: %s" % (type(e).__name__, e))
+            b.dispatcher.log.emit("error", "   pilot: %s" % traceback.format_exc(limit=4))
+        finally:
+            b.ai_depth -= 1
+
+
 class _ImageResult:
     def __init__(self, png, meta):
         self.png = png
@@ -375,6 +508,10 @@ class AIBridge(QObject):
         self._ctl_seq = 0
         self._cursor = None
         self._pin = None
+        self._pilots = []                 # active _Pilot objects (dialogs answered by smart tools)
+        self._last_inspection = None
+        self._preset_warning = None
+        self._last_ladder_lanes = set()
         self.panel = None                  # AIActivityWindow (created on demand)
         self.settings_group = None
         self.settings_widgets = {}
@@ -572,6 +709,12 @@ class AIBridge(QObject):
         extra = "" if self.settings.get("enabled") else (
             "\n\nAI control is still OFF — tick 'Allow AI assistants to control Gel Blot Analyzer' "
             "when you want the AI to connect.")
+        if name == "LM Studio":
+            # LM Studio loads mcp.json servers as plugins but enables them PER CHAT — without
+            # this the model never receives the tools and claims it has no MCP access.
+            extra += ("\n\nIn LM Studio, switch the tools on in each chat: click the plug "
+                      "(Integrations) button next to the message box and enable "
+                      "'mcp/gel-blot-analyzer'. Use a model with the Tool use badge.")
         self._info("Connect %s" % name,
                    "Gel Blot Analyzer was added to %s.\n\nRestart %s, then ask it something like "
                    '"Use Gel Blot Analyzer to show me the open image".%s' % (name, name, extra))
@@ -726,7 +869,21 @@ class AIBridge(QObject):
         return out
 
     def _modal_probe(self):
-        return [w for w in self._windows_info() if w.get("modal")]
+        """Modal dialogs the AI must answer. Progress dialogs (they close by themselves) and
+        dialogs a smart tool's _Pilot is answering are not reported."""
+        out = []
+        for w in self._top_windows():
+            try:
+                if w is self.win or isinstance(w, QProgressDialog):
+                    continue
+                if any(p.owns(w) for p in list(self._pilots)):
+                    continue
+                info = self._window_info(w)
+            except RuntimeError:
+                continue
+            if info.get("modal"):
+                out.append(info)
+        return out
 
     def _collect_background(self):
         done = []
@@ -1080,6 +1237,8 @@ class AIBridge(QObject):
     def call_tool(self, name, args):
         """Entry point for one MCP tools/call. Returns (content_list, is_error)."""
         args = args or {}
+        if name in _SMART_TOOLS:
+            args = _clean_smart_args(args)
         fn = getattr(self, "t_" + str(name), None)
         if fn is None or name not in {t["name"] for t in S.TOOLS}:
             return [_text({"error": "Unknown tool '%s'." % name})], True
@@ -2073,6 +2232,8 @@ class AIBridge(QObject):
             self.gui(clear)
         drawn = []
         for i, lane in enumerate(lanes):
+            if not isinstance(lane, dict):
+                raise ToolError("lane %d must be an object: {x, y, width, height} or {corners: [[x, y] x4]}." % i)
             if "corners" in lane:
                 pts = lane["corners"]
                 if len(pts) != 4:
@@ -2135,6 +2296,950 @@ class AIBridge(QObject):
         except ToolError:
             res["windows"] = "app busy"
         return res
+
+    # ---- smart gel tools (v9.8.1) ----------------------------------------------------
+    # High-level tools that do a whole job the way an expert would, so that even a small
+    # local model can analyse a gel/blot correctly: understand the image first
+    # (inspect_gel), fix band polarity, label the ladder with the app's own Auto Lane
+    # analysis, run the Auto Gel wizard end-to-end, gate out noise bands, quantify with
+    # standards, and combine a gel with a western blot. The app's own dialogs are driven by
+    # a _Pilot, so the numbers come from exactly the same code a person would run.
+
+    def _analysis_region(self, region=None):
+        """(gray, max_val, (x0, y0), content_box, image_size) of the ANALYSIS image (what
+        densitometry measures — inversion included), cropped to `region` or to the content
+        inside the transparent padding. GUI thread."""
+        win = self.win
+        if not win._has_image():
+            raise ToolError("No image is loaded. Call open_image first.")
+        adj = win._get_fully_adjusted_image_for_analysis()
+        if adj is None or adj.isNull():
+            raise ToolError("Could not build the analysis image.")
+        pil = win.convert_qimage_to_grayscale_pil(adj)
+        if pil is None:
+            raise ToolError("Could not convert the image to grayscale.")
+        arr = np.asarray(pil, dtype=np.float64)
+        if arr.ndim == 3:
+            arr = arr[..., :3].mean(axis=2)
+        mode = getattr(pil, "mode", "L")
+        max_val = 65535.0 if (mode.startswith("I") or arr.max() > 255) else 255.0
+        H, W = arr.shape
+        try:
+            margins = win._measure_transparent_margins()
+        except Exception:
+            margins = (0, 0, 0, 0)
+        cb = GEL.content_box(arr.shape, margins)
+        if region:
+            try:
+                x, y = float(region["x"]), float(region["y"])
+                w, h = float(region["width"]), float(region["height"])
+            except (KeyError, TypeError, ValueError):
+                raise ToolError("region needs x, y, width, height (image pixels).")
+            x0, y0 = max(0, int(round(x))), max(0, int(round(y)))
+            x1, y1 = min(W, int(round(x + w))), min(H, int(round(y + h)))
+        else:
+            x0, y0, x1, y1 = cb
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            raise ToolError("The region is too small or outside the image (%dx%d)." % (W, H))
+        return arr[y0:y1, x0:x1].copy(), max_val, (x0, y0), cb, (W, H)
+
+    def _image_key(self):
+        def run():
+            win = self.win
+            img = win.image
+            return (getattr(win, "_image_load_serial", 0), img.width() if img else 0,
+                    img.height() if img else 0, bool(getattr(win, "main_image_is_inverted", False)),
+                    len(getattr(win, "undo_stack", []) or []))
+        return self.gui(run)
+
+    def _ladder_count(self):
+        def run():
+            vals = [str(v).strip() for v in (getattr(self.win, "marker_values", []) or [])]
+            return len([v for v in vals if v])
+        return self.gui(run)
+
+    def _inspect(self, a):
+        region = a.get("region")
+        snr = float(a.get("min_snr") or GEL.DEFAULT_SNR_MIN)
+        rel = float(a.get("min_relative_intensity") if a.get("min_relative_intensity") is not None
+                    else GEL.DEFAULT_REL_MIN)
+        gray, max_val, origin, cb, size = self.gui(lambda: self._analysis_region(region), timeout=60)
+        ladder_n = a.get("ladder_bands") or self._ladder_count() or None
+        res = GEL.analyze(gray, max_val, origin=origin, gel_type=a.get("gel_type") or "auto",
+                          expected_lanes=a.get("expected_lanes"), ladder_count=ladder_n,
+                          snr_min=snr, rel_min=rel)
+        res["image_size"] = {"width": size[0], "height": size[1]}
+        res["content_box"] = {"x": cb[0], "y": cb[1], "width": cb[2] - cb[0], "height": cb[3] - cb[1]}
+        reg = res["region"]
+        res["suggested_lane_regions"] = [
+            {"x": ln["x0"], "y": reg["y"], "width": max(2, ln["x1"] - ln["x0"]), "height": reg["height"]}
+            for ln in res["lanes"]]
+        self._last_inspection = {"key": self._image_key(), "region": region, "result": res}
+        return res
+
+    def _cached_inspection(self, a=None):
+        a = a or {}
+        c = getattr(self, "_last_inspection", None)
+        if (c and c.get("key") == self._image_key() and c.get("region") == a.get("region")
+                and not a.get("expected_lanes")):
+            return c["result"]
+        return self._inspect(a)
+
+    def t_inspect_gel(self, a):
+        res = self._inspect(a)
+        gel_type = (a.get("gel_type") or "auto").lower()
+        pol = res["polarity"]["polarity"]
+        advice, questions = [], []
+        if pol == "light_bands":
+            advice.append("Bands are LIGHT on a dark background (typical of DNA/RNA gels with "
+                          "EtBr/SYBR, stain-free and fluorescent gels, and raw chemiluminescence). "
+                          "Densitometry needs WHITE lanes with BLACK bands: call fix_band_polarity "
+                          "first (the analysis tools also do this automatically).")
+        elif pol == "ambiguous":
+            questions.append("I can't tell whether the bands are dark or light. Are the bands "
+                             "darker than the background (e.g. Coomassie) or brighter (e.g. "
+                             "ethidium-bromide DNA gel / fluorescent blot)?")
+        else:
+            advice.append("Bands are dark on a light background — correct polarity for analysis.")
+        if gel_type in ("dna", "rna", "agarose") and pol == "dark_bands":
+            advice.append("DNA/RNA gel already shows dark bands on white — it has already been "
+                          "inverted; do NOT invert again.")
+        W = res["image_size"]["width"]
+        lad = res["ladder_lanes"]
+        if lad:
+            for n in lad:
+                ln = res["lanes"][n - 1]
+                side = "left" if ln["center_x"] < res["region"]["x"] + res["region"]["width"] / 2.0 else "right"
+                advice.append("Lane %d looks like the molecular-weight ladder (%d bands). Label it with "
+                              "label_mw_ladder(lane=%d, side='%s', preset=...)." % (n, ln["n_bands"], n, side))
+            lc = self._ladder_count()
+            if lc and any(abs(res["lanes"][n - 1]["n_bands"] - lc) > 1 for n in lad):
+                questions.append("The ladder lane shows %s bands but the selected marker preset has %d "
+                                 "labels. Which ladder (marker preset) was loaded on this gel?"
+                                 % ("/".join(str(res["lanes"][n - 1]["n_bands"]) for n in lad), lc))
+        else:
+            questions.append("I could not identify a molecular-weight ladder lane. Which lane number "
+                             "(1-%d, left to right) is the ladder, and which ladder/marker preset was "
+                             "used? (Answer 'none' if there is no ladder.)" % res["n_lanes"])
+        for c in res["standard_series_candidates"]:
+            if c["confidence"] < 0.5:
+                continue
+            questions.append(
+                "Lanes %s have a band at the same position (y≈%d) and of similar size, but with "
+                "different intensities (%s× relative to the weakest; %s). This looks like a "
+                "dilution series of a standard. Are these standards with known amounts? If yes, "
+                "tell me the amount loaded in each of these lanes (e.g. ng or µg) and I will "
+                "quantify the other samples against them with quantify_with_standards."
+                % (", ".join(str(x) for x in c["lanes"]), c["y"],
+                   ":".join(str(r) for r in c["ratio_to_weakest"]), c["trend"]))
+            break
+        if res.get("lane_count_estimated"):
+            questions.insert(0, "Lane detection was uncertain, so I estimated %d lanes from the "
+                                "lane spacing. Is that right (counting ladder lanes)? If not, tell me "
+                                "the number and I will use expected_lanes=<number>."
+                             % res["lane_count_estimated"])
+        if res.get("lane_warning"):
+            questions.insert(0, "I found %d lanes but the %s, so some lanes may be split or merged. "
+                                "How many lanes does this gel have (counting ladder lanes)? I will "
+                                "re-run with expected_lanes=<that number>."
+                             % (res["n_lanes"], res["lane_warning"]))
+        if not a.get("expected_lanes") and not res.get("lane_count_estimated") and not res.get("lane_warning"):
+            questions.append("I found %d lanes (counting ladder lanes). Is that the right number? "
+                             "(If not, tell me and I will use expected_lanes=<number>.)" % res["n_lanes"])
+        empty = [ln["lane"] for ln in res["lanes"] if ln["role_guess"] == "empty"]
+        if empty:
+            advice.append("Lane(s) %s contain no band above the noise floor (empty or blank lanes)."
+                          % ", ".join(str(e) for e in empty))
+        res["advice"] = advice
+        res["questions_for_user"] = questions
+        # One concrete call for small models to make next.
+        if pol == "light_bands":
+            nxt = {"tool": "fix_band_polarity", "arguments": {"mode": "auto"}}
+        elif lad:
+            nxt = {"tool": "label_mw_ladder", "arguments": {"lane": lad[0]}}
+        else:
+            nxt = {"tool": "auto_analyze_gel", "arguments": {"densitometry": True}}
+        res["recommended_next_call"] = nxt
+        bits = ["%d lanes (%s)." % (res["n_lanes"], res["lane_detection"])]
+        bits.append({"dark_bands": "Bands are DARK on a LIGHT background: correct for analysis, do not invert.",
+                     "light_bands": "Bands are LIGHT on a DARK background: call fix_band_polarity first.",
+                     "ambiguous": "Band polarity is unclear."}[pol])
+        bits.append("Ladder lane(s): %s." % (", ".join(map(str, lad)) if lad else "not found"))
+        bits.append("Bands per lane: %s." % ", ".join("L%d=%d" % (ln["lane"], ln["n_bands"]) for ln in res["lanes"]))
+        if questions:
+            bits.append("ASK THE USER: " + " | ".join(questions))
+        bits.append("NEXT CALL: %s(%s)." % (nxt["tool"], ", ".join("%s=%s" % kv for kv in nxt["arguments"].items())))
+        res = dict([("summary", " ".join(bits))] + list(res.items()))
+        res["next_steps"] = [
+            "1. If questions_for_user is not empty, ASK THE USER those questions before quantifying.",
+            "2. fix_band_polarity (only if polarity is light_bands).",
+            "3. label_mw_ladder for MW labels only, OR auto_analyze_gel(densitometry=true) for "
+            "lanes + ladder labels + band quantification in one go.",
+            "4. quantify_with_standards if the user confirms standards and gives their amounts.",
+            "5. screenshot(target='image') to check, then save_image / export_pptx.",
+        ]
+        return res
+
+    # ...................................................................... polarity
+    def _ensure_dark_bands(self, mode="auto"):
+        """Make the analysis image show DARK bands on a LIGHT background (white lanes,
+        black bands). GUI thread. Returns a report dict."""
+        win = self.win
+        gray, max_val, origin, cb, size = self._analysis_region(None)
+        before = GEL.band_polarity(gray, max_val)
+        rep = {"before": before["polarity"], "background_level": before["background_level"],
+               "inverted": False}
+        do = (mode == "invert") or (mode == "auto" and before["polarity"] == "light_bands")
+        if do:
+            cbx = getattr(win, "adjustment_context_combo", None)
+            if cbx is not None and cbx.currentText() != "Main Image":
+                cbx.setCurrentText("Main Image")
+            win.invert_image()
+            gray, max_val, *_ = self._analysis_region(None)
+            rep["inverted"] = True
+            rep["after"] = GEL.band_polarity(gray, max_val)["polarity"]
+        else:
+            rep["after"] = before["polarity"]
+        # The densitometry engine must then read the image as-is (dark band = signal).
+        try:
+            s = getattr(win, "peak_dialog_settings", None)
+            if isinstance(s, dict) and s.get("is_inverted"):
+                s["is_inverted"] = False
+                rep["densitometry_is_inverted_reset"] = True
+        except Exception:
+            pass
+        if rep["after"] == "light_bands":
+            rep["warning"] = "Bands are still light on dark. Check the image (screenshot)."
+        return rep
+
+    def t_fix_band_polarity(self, a):
+        mode = a.get("mode") or "auto"
+        if mode not in ("auto", "invert", "check"):
+            raise ToolError("mode must be auto, invert or check.")
+
+        def run():
+            if mode == "check":
+                gray, mv, *_ = self._analysis_region(None)
+                return {"polarity": GEL.band_polarity(gray, mv)}
+            return self._ensure_dark_bands(mode)
+        res = self._with_status(self.action(run, "fix_band_polarity", timeout=90))
+        res["rule"] = ("Analysis needs white lanes with black bands. DNA/RNA (EtBr/SYBR), stain-free, "
+                       "fluorescent and raw chemiluminescence images are light-on-dark and must be "
+                       "inverted; Coomassie/silver gels and exported blot images usually are not.")
+        return res
+
+    # ...................................................................... dialog pilot
+    def _start_pilot(self, handlers, timeout_s=600):
+        p = _Pilot(self, handlers, timeout_s)
+        p.start()
+        return p
+
+    def _stop_pilots(self):
+        def run():
+            for p in list(self._pilots):
+                p.stop()
+        try:
+            self.gui(run, timeout=5)
+        except ToolError:
+            pass
+
+    def _true_peaks(self, dlg, snr_min, rel_min, min_width, is_ladder, abs_floor=0.0):
+        """Peaks of the dialog's CURRENT lane that are real bands. Returns (kept, heights)."""
+        peaks = np.asarray(dlg.peaks if dlg.peaks is not None else [], dtype=int)
+        prof = getattr(dlg, "profile_original_inverted", None)
+        if prof is None or len(peaks) == 0 or len(prof) < 8:
+            return [int(p) for p in peaks], {}
+        prof = np.asarray(prof, dtype=float)
+        try:
+            arr = np.asarray(dlg.intensity_array_original_range, dtype=float)
+            sig2 = arr if dlg.is_inverted else float(dlg.original_max_value) - arr
+            raw = sig2.sum(axis=1) if sig2.ndim == 2 else sig2
+            raw = _median3(raw)
+            sigma = GEL.robust_noise_sigma(raw)
+        except Exception:
+            sigma = GEL.robust_noise_sigma(prof)
+        net = prof - GEL.baseline(prof, max(15, int(len(prof) * 0.12)))
+        # Slow background wander (smears, uneven staining) is invisible to the first-difference
+        # estimate; the robust spread of the baseline-subtracted trace catches it.
+        sigma = max(sigma, GEL.background_sigma(net))
+        peaks = peaks[(peaks >= 0) & (peaks < len(prof))]
+        # The dialog stores band POSITIONS (apex / centroid / FWHM midpoint ...), which need
+        # not sit exactly on the trace's local maximum; measure each band at its apex.
+        rad = max(2, int(len(prof) * 0.006))
+        apex = np.array([int(max(0, p - rad) + np.argmax(net[max(0, p - rad):p + rad + 1]))
+                         for p in peaks], dtype=int) if len(peaks) else peaks
+        h = net[apex] if len(apex) else np.array([])
+        try:
+            import warnings
+            from scipy.signal import peak_widths
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                w = peak_widths(net, apex, rel_height=0.5)[0]
+        except Exception:
+            w = np.full(len(peaks), 99.0)
+        ok = (h >= snr_min * sigma) & (w >= min_width)
+        if not is_ladder and ok.any():
+            ok &= h >= rel_min * float(h[ok].max())
+            ok &= h >= abs_floor
+        return [int(p) for p in peaks[ok]], {int(p): float(v) for p, v in zip(peaks, h)}
+
+    def _clean_peak_dialog(self, dlg, opts):
+        """Noise gate + ladder-count check on every lane of an open PeakAreaDialog, using the
+        dialog's own profiles. Removed peaks are deleted the same way the dialog's
+        'Delete Peak' button does it, so areas/regions stay consistent."""
+        snr = float(opts.get("snr_min", GEL.DEFAULT_SNR_MIN))
+        rel = float(opts.get("rel_min", GEL.DEFAULT_REL_MIN))
+        mw = float(opts.get("min_width", GEL.DEFAULT_MIN_WIDTH))
+        report = []
+        try:
+            cur = dlg.current_lane_id
+            dlg._save_current_lane_state()
+        except Exception:
+            cur = None
+        # Gel-wide floor: a sample band must reach rel_min of the strongest SAMPLE band on the
+        # gel, so a nearly empty lane cannot promote its own background ripples to "bands".
+        gel_max = 0.0
+        ladders = getattr(dlg, "mwm_lane_ids", set()) or set()
+        for lane in list(getattr(dlg, "lanes_data", [])):
+            if lane["id"] in ladders:
+                continue
+            try:
+                dlg._load_lane_state(lane["id"])
+                _k, _h = self._true_peaks(dlg, snr, 0.0, mw, False)
+                if _k:
+                    gel_max = max(gel_max, max(_h.get(p, 0.0) for p in _k))
+            except Exception:
+                pass
+        floor = rel * gel_max if len(dlg.lanes_data) > 1 else 0.0
+        for lane in list(getattr(dlg, "lanes_data", [])):
+            lid = lane["id"]
+            try:
+                dlg._load_lane_state(lid)
+                is_ladder = lid in (getattr(dlg, "mwm_lane_ids", set()) or set())
+                labels = [str(v) for v in (getattr(dlg, "lane_mw_labels", {}) or {}).get(lid, [])] \
+                    if is_ladder else []
+                orig_prom = dlg.peak_prominence_factor
+                info = {"lane": lid, "ladder": is_ladder, "detected": int(len(dlg.peaks))}
+                keep, heights = self._true_peaks(dlg, snr, rel, mw, is_ladder, floor)
+                prom_changed = False
+                if is_ladder and labels and opts.get("fix_ladder", True):
+                    n_lab = len(labels)
+                    if len(keep) < n_lab:
+                        for f in (0.6, 0.35, 0.2, 0.1):
+                            dlg.peak_prominence_factor = max(0.002, float(orig_prom) * f)
+                            dlg.detect_peaks()
+                            prom_changed = True
+                            keep, heights = self._true_peaks(dlg, snr, rel, mw, True)
+                            if len(keep) >= n_lab:
+                                break
+                    info["ladder_labels"] = n_lab
+                    info["ladder_bands_found"] = len(keep)
+                    if len(keep) > n_lab:
+                        keep, how = GEL.choose_ladder_bands(keep, heights, labels)
+                        info["ladder_band_choice"] = how
+                        info["needs_user_check"] = True
+                        info["warning"] = (
+                            "The ladder lane shows %d bands but the preset has %d values. Labels were "
+                            "put on the %d bands that %s. ASK THE USER to confirm the ladder (preset) "
+                            "and the labels on the screenshot; re-run with review=true or another "
+                            "preset if wrong." % (info["ladder_bands_found"], n_lab, n_lab, how))
+                    elif len(keep) < n_lab:
+                        info["needs_user_check"] = True
+                        info["warning"] = (
+                            "Only %d ladder bands found but the preset has %d values: labels are "
+                            "assigned top→bottom, so the lowest values may be missing or shifted. "
+                            "ASK THE USER which ladder was used / check the screenshot."
+                            % (len(keep), n_lab))
+                current = [int(p) for p in dlg.peaks]
+                new = sorted(int(p) for p in keep)
+                if new != current:
+                    dlg._carry_regions = dlg._snapshot_regions_by_peak()
+                    dlg.peaks = np.array(new, dtype=int)
+                    dlg._recalculate_all_regions()
+                    dlg.regions_are_manual = True
+                    info["removed_as_noise"] = len([p for p in current if p not in new])
+                if prom_changed:
+                    dlg.peak_prominence_factor = orig_prom
+                    dlg.regions_are_manual = True
+                info["bands"] = len(new)
+                dlg._save_current_lane_state()
+                report.append(info)
+            except Exception as e:  # noqa: BLE001
+                report.append({"lane": lid, "error": "%s: %s" % (type(e).__name__, e)})
+        try:
+            if cur is not None:
+                dlg._load_lane_state(cur)
+            dlg.update_plot()
+            if hasattr(dlg, "_update_quality_readout"):
+                dlg._update_quality_readout()
+        except Exception:
+            pass
+        return report
+
+    def _peak_dialog_handler(self, pilot, opts):
+        PAD = _app_global(self.win, "PeakAreaDialog")
+
+        def match(w):
+            return PAD is not None and isinstance(w, PAD)
+
+        def handle(dlg):
+            if opts.get("clean", True):
+                pilot.report.setdefault("band_cleanup", []).extend(self._clean_peak_dialog(dlg, opts))
+            if opts.get("review"):
+                pilot.report["review_dialog"] = self._wid(dlg)
+                return "release"         # leave it open for the AI / user to check and press OK
+            dlg.accept_and_close()
+            pilot.report["densitometry_dialog"] = "accepted"
+            return None
+        return match, handle
+
+    # ...................................................................... ladder (Auto Lane)
+    def _lane_from_args(self, a, insp):
+        """Image-px (x0, x1) of the ladder lane from lane number / x0,x1 / inspection."""
+        if a.get("x0") is not None and a.get("x1") is not None:
+            return float(a["x0"]), float(a["x1"]), None
+        lanes = insp["lanes"]
+        n = a.get("lane")
+        if n is None:
+            if not insp["ladder_lanes"]:
+                raise ToolError("No ladder lane could be identified automatically. Ask the user which "
+                                "lane is the ladder and pass lane=<number> (see inspect_gel lanes).")
+            n = insp["ladder_lanes"][0]
+        n = int(n)
+        if not 1 <= n <= len(lanes):
+            raise ToolError("lane must be 1..%d (from inspect_gel)." % len(lanes))
+        ln = lanes[n - 1]
+        return float(ln["x0"]), float(ln["x1"]), n
+
+    def _apply_preset(self, preset, strict=False):
+        """Select a ladder preset by (partial / word) match. Unknown names keep the current
+        preset (small models invent names) unless strict."""
+        cb = self.win.combo_box
+        items = [cb.itemText(i) for i in range(cb.count())]
+        want = str(preset or "").strip().lower()
+        m = [t for t in items if t.lower() == want] or [t for t in items if want and want in t.lower()]
+        if not m and want:
+            words = [w for w in re.split(r"[^a-z0-9]+", want) if len(w) > 2]
+            scored = sorted(((sum(w in t.lower() for w in words), t) for t in items), reverse=True)
+            if scored and scored[0][0] >= max(1, len(words) // 2 + (1 if len(words) > 2 else 0)):
+                m = [scored[0][1]]
+        if not m:
+            if strict:
+                raise ToolError("No marker preset '%s'. Available: %s" % (preset, items))
+            self._preset_warning = ("No ladder preset called '%s'; kept '%s'. Available presets: %s"
+                                    % (preset, cb.currentText(), "; ".join(items)))
+            return cb.currentText()
+        cb.setCurrentText(m[0])
+        return m[0]
+
+    def t_label_mw_ladder(self, a):
+        if a.get("fix_polarity", True):
+            self.action(lambda: self._ensure_dark_bands("auto"), "fix_band_polarity", timeout=90)
+        insp = self._cached_inspection({"region": a.get("region")})
+        x0, x1, lane_no = self._lane_from_args(a, insp)
+        reg = insp["region"]
+        y0 = float(a["y0"]) if a.get("y0") is not None else reg["y"]
+        y1 = float(a["y1"]) if a.get("y1") is not None else reg["y"] + reg["height"]
+        side = a.get("side") or "auto"
+        if side == "auto":
+            side = "left" if (x0 + x1) / 2.0 < reg["x"] + reg["width"] / 2.0 else "right"
+        if side not in ("left", "right"):
+            raise ToolError("side must be left, right or auto.")
+        opts = {"review": bool(a.get("review")), "snr_min": a.get("min_snr", GEL.DEFAULT_SNR_MIN),
+                "rel_min": 0.0, "fix_ladder": True}
+        holder = {}
+        self._preset_warning = None
+
+        def run():
+            win = self.win
+            if a.get("preset"):
+                holder["preset"] = self._apply_preset(a["preset"])
+            adj = win._get_fully_adjusted_image_for_analysis()
+            W, H = adj.width(), adj.height()
+            rx0, ry0 = max(0, int(round(x0))), max(0, int(round(y0)))
+            rx1, ry1 = min(W, int(round(x1))), min(H, int(round(y1)))
+            if rx1 - rx0 < 2 or ry1 - ry0 < 8:
+                raise ToolError("Ladder lane rectangle is outside the image.")
+            rect = (rx0, ry0, rx1 - rx0, ry1 - ry0)
+            region = adj.copy(*rect)
+            win._cancel_all_interaction_modes()
+            win.auto_marker_side = side
+            win._auto_lane_apply_padding = bool(a.get("padding", True))
+            pilot = self._start_pilot([])
+            pilot.handlers.append(self._peak_dialog_handler(pilot, opts))
+            holder["pilot"] = pilot
+            self.reveal(win.live_view_label, "AI: Auto Lane (MW ladder)")
+            win.process_auto_lane_region(region, rect, False)
+            return {"lane_rect": list(rect), "side": side}
+        res = self.action(run, "label_mw_ladder", timeout=240, auto_ok_info=True)
+        pilot = holder.get("pilot")
+        if res.get("status") == "done":
+            self._stop_pilots()
+            time.sleep(0.8)              # Auto Lane applies padding on the next event-loop pass
+        out = {"status": res.get("status"), "method": "Auto Lane (app's Automatic Lane Markers)",
+               "ladder_lane": lane_no, "side": side, "preset": holder.get("preset")}
+        if self._preset_warning:
+            out["preset_warning"] = self._preset_warning
+        out.update({k: v for k, v in res.items() if k not in ("status",)})
+        if pilot is not None:
+            out.update(pilot.report)
+            if pilot.errors:
+                out["pilot_errors"] = pilot.errors
+        if res.get("status") == "done":
+            out["markers"] = self.gui(lambda: [{"y": _r(p), "label": l}
+                                               for p, l in getattr(self.win, side + "_markers")])
+            if not out["markers"]:
+                out["warning"] = "No MW markers were placed — no bands found in that lane. Check lane/region."
+            chk = [c for c in out.get("band_cleanup", []) if c.get("warning")]
+            out["summary"] = ("Labelled %d ladder bands on the %s side: %s.%s%s"
+                              % (len(out["markers"]), side,
+                                 ", ".join(m["label"] for m in out["markers"] if m["label"]),
+                                 (" CHECK: " + chk[0]["warning"]) if chk else "",
+                                 (" NOTE: " + self._preset_warning) if self._preset_warning else ""))
+            out = dict([("summary", out.pop("summary"))] + list(out.items()))
+        elif res.get("status") == "dialog_open":
+            out["note"] = ("Noise bands were removed. Review the densitometry dialog (screenshot target="
+                           "'dialog') and press OK with respond_to_dialog to place the MW labels.")
+        return self._with_status(out)
+
+    # ...................................................................... Auto Gel wizard
+    def t_auto_analyze_gel(self, a):
+        if a.get("fix_polarity", True):
+            pol = self.action(lambda: self._ensure_dark_bands("auto"), "fix_band_polarity", timeout=90)
+        else:
+            pol = None
+        self._preset_warning = None
+        if a.get("preset"):
+            self.action(lambda: self._apply_preset(a["preset"]), "set_marker_preset")
+        insp = self._inspect({"region": a.get("region"), "expected_lanes": a.get("expected_lanes")})
+        reg = insp["region"]
+        n_insp = insp["n_lanes"]
+        # Ladder lanes (1-based, in inspect_gel numbering)
+        if a.get("ladder_lanes") is not None:
+            ladders = [int(x) for x in a["ladder_lanes"]]
+        else:
+            ladders = list(insp["ladder_lanes"])
+        dens = bool(a.get("densitometry", True))
+        labels = a.get("lane_labels")
+        markers = bool(a.get("label_lanes", True)) or bool(ladders)
+        explicit = a.get("lanes")
+        if explicit:
+            try:
+                lanes_img = [[float(l[0]), float(l[1])] for l in explicit]
+            except Exception:
+                raise ToolError("lanes must be a list of [x0, x1] pairs in image pixels.")
+        else:
+            lanes_img = None
+        expected = a.get("expected_lanes")
+        insp_bounds = [[ln["x0"], ln["x1"]] for ln in insp["lanes"]]
+        insp_centres = [ln["center_x"] for ln in insp["lanes"]]
+        opts = {"review": bool(a.get("review")),
+                "snr_min": a.get("min_snr", GEL.DEFAULT_SNR_MIN),
+                "rel_min": a.get("min_relative_intensity", GEL.DEFAULT_REL_MIN),
+                "clean": bool(a.get("remove_noise_bands", True)), "fix_ladder": True}
+        holder = {}
+
+        def drive_wizard(pilot):
+            AGD = _app_global(self.win, "AutoGelAnalysisDialog")
+
+            def match(w):
+                return AGD is not None and isinstance(w, AGD)
+
+            def handle(wz):
+                rep = pilot.report.setdefault("wizard", {})
+
+                def fail(msg):
+                    rep["error"] = msg
+                    pilot.errors.append(msg)
+                    wz.reject()
+
+                def step_lanes():
+                    try:
+                        wz._band_invert = False           # image polarity was fixed above
+                        wz._band_height = 0.0
+                        wz._lock_geometry_and_go_to_lanes()
+                        gx = reg["x"]
+
+                        def set_bounds(bounds):
+                            wz._lane_bounds = [[int(max(0, b0 - gx)), int(max(1, b1 - gx))] for b0, b1 in bounds]
+                            wz._lane_peaks = np.array([(b[0] + b[1]) // 2 for b in wz._lane_bounds], dtype=int)
+                            wz._lane_skew = [[0.0, 0.0] for _ in wz._lane_bounds]
+                            wz._lane_quads = [None for _ in wz._lane_bounds]
+                            try:
+                                wz._p1_count_lbl.setText("Lanes: %d" % len(wz._lane_bounds))
+                                wz._redraw_lanes_keep()
+                            except Exception:
+                                pass
+                        if lanes_img:
+                            set_bounds(lanes_img)
+                            rep["lanes_source"] = "given by caller"
+                        elif expected and len(insp_bounds) == int(expected):
+                            # inspect_gel already fitted exactly that many lanes (peaks if they
+                            # are regular, else a grid snapped to the gaps between lanes)
+                            set_bounds(insp_bounds)
+                            rep["lanes_source"] = "inspect_gel: %s" % insp["lane_detection"]
+                        else:
+                            wiz = [[b0 + gx, b1 + gx] for b0, b1 in wz._lane_bounds]
+                            if (GEL.lane_layout_warning(wiz) and insp_bounds
+                                    and not GEL.lane_layout_warning(insp_bounds)):
+                                set_bounds(insp_bounds)
+                                rep["lanes_source"] = ("inspect_gel (wizard lanes were uneven): %s"
+                                                       % insp["lane_detection"])
+                            else:
+                                rep["lanes_source"] = "Auto Gel lane detection"
+                        n = len(wz._lane_bounds)
+                        rep["lanes"] = [[int(b0 + gx), int(b1 + gx)] for b0, b1 in wz._lane_bounds]
+                        if n == 0:
+                            fail("No lanes were found. Pass expected_lanes or lanes=[[x0,x1],...].")
+                            return
+                        QTimer.singleShot(250, lambda: step_labels(n))
+                    except Exception as e:  # noqa: BLE001
+                        fail("lane step failed: %s" % e)
+
+                def step_labels(n):
+                    try:
+                        centres = [(b0 + b1) / 2.0 + reg["x"] for b0, b1 in wz._lane_bounds]
+                        # map inspect_gel ladder lanes onto the wizard's lanes by position
+                        lad_idx = set()
+                        for L in ladders:
+                            if lanes_img or len(insp_centres) != n:
+                                if 1 <= L <= len(insp_centres):
+                                    cx = insp_centres[L - 1]
+                                    lad_idx.add(int(np.argmin([abs(c - cx) for c in centres])))
+                            elif 1 <= L <= n:
+                                lad_idx.add(L - 1)
+                        rep["ladder_lanes"] = sorted(i + 1 for i in lad_idx)
+                        if not markers:
+                            QTimer.singleShot(0, wz._p2_go_next)     # runs the analysis (blocks)
+                            return
+                        wz._p2_go_next()                              # → Labels & MWM page
+                        k = 0
+                        for i, chk in enumerate(wz._mwm_checkboxes):
+                            chk.setChecked(i in lad_idx)
+                        for i, edt in enumerate(wz._lane_label_edits):
+                            if labels and i < len(labels) and str(labels[i]).strip():
+                                edt.setText(str(labels[i]))
+                            elif i in lad_idx:
+                                edt.setText("MWM")
+                            else:
+                                k += 1
+                                edt.setText("L%d" % k)
+                        rep["lane_labels"] = [e.text() for e in wz._lane_label_edits]
+                        QTimer.singleShot(self.step_delay() + 250, wz._p3_go_next)   # blocks in dialog
+                    except Exception as e:  # noqa: BLE001
+                        fail("label step failed: %s" % e)
+
+                try:
+                    wz._p0_markers_chk.setChecked(markers)
+                    wz._p0_density_chk.setChecked(dens)
+                    wz._p0_crop_chk.setChecked(bool(a.get("padding", True)))
+                    wz._go_to_phase1()
+                    QTimer.singleShot(400, step_lanes)
+                except Exception as e:  # noqa: BLE001
+                    fail("start failed: %s" % e)
+                return None
+            return match, handle
+
+        def run():
+            win = self.win
+            adj = win._get_fully_adjusted_image_for_analysis()
+            W, H = adj.width(), adj.height()
+            x0, y0 = max(0, reg["x"]), max(0, reg["y"])
+            x1, y1 = min(W, reg["x"] + reg["width"]), min(H, reg["y"] + reg["height"])
+            rect = (int(x0), int(y0), int(x1 - x0), int(y1 - y0))
+            region_q = adj.copy(*rect)
+            pil = win.convert_qimage_to_grayscale_pil(region_q)
+            color_np = win.qimage_to_numpy(region_q)
+            win._cancel_all_interaction_modes()
+            pilot = self._start_pilot([])
+            pilot.handlers.append(drive_wizard(pilot))
+            if dens or ladders:
+                pilot.handlers.append(self._peak_dialog_handler(pilot, opts))
+            holder["pilot"] = pilot
+            self.reveal(win.live_view_label, "AI: Auto Analyze Gel")
+            win._aag_open_wizard(pil, rect, is_quad=False, color_np=color_np)
+            return {"gel_region": list(rect)}
+        res = self.action(run, "auto_analyze_gel", timeout=300, auto_ok_info=True)
+        pilot = holder.get("pilot")
+        if res.get("status") == "done":
+            self._stop_pilots()
+            time.sleep(1.0)              # padding + results window are applied on the next pass
+        out = {"status": res.get("status"),
+               "method": "Auto Analyze Gel wizard (app) + noise-gated band cleanup",
+               "polarity": (pol or {}).get("result")}
+        out.update({k: v for k, v in res.items() if k != "status"})
+        if pilot is not None:
+            out.update(pilot.report)
+            if pilot.errors:
+                out["pilot_errors"] = pilot.errors
+        if res.get("status") == "done":
+            self._last_ladder_lanes = set((out.get("wizard") or {}).get("ladder_lanes") or [])
+            out["results"] = self._results_summary()
+            if not ladders:
+                out["note"] = ("No ladder lane was marked, so no MW labels were placed. If there is a "
+                               "ladder, ask the user which lane and run label_mw_ladder or re-run with "
+                               "ladder_lanes=[n].")
+            cands = [c for c in insp["standard_series_candidates"] if c["confidence"] >= 0.5]
+            if cands and not out["results"].get("standards"):
+                c = cands[0]
+                out["question_for_user"] = (
+                    "Lanes %s have a similar-size band at y≈%d with intensities %s× the weakest "
+                    "(looks like a standard series). If the user ALREADY told you the amounts, call "
+                    "quantify_with_standards now with standards=[{lane, quantity}, ...]; otherwise "
+                    "ask the user for the amount in each lane."
+                    % (", ".join(map(str, c["lanes"])), c["y"], ":".join(map(str, c["ratio_to_weakest"]))))
+        elif res.get("status") == "dialog_open":
+            out["note"] = ("Noise bands were removed. Review the densitometry dialog, then press OK "
+                           "with respond_to_dialog; afterwards call get_analysis_results.")
+        if self._preset_warning:
+            out["preset_warning"] = self._preset_warning
+        if res.get("status") == "done":
+            lanes = out["results"]["lanes"]
+            wz = out.get("wizard") or {}
+            bits = ["Densitometry done on %d lanes (%s)." % (len(lanes), wz.get("lanes_source", "?")),
+                    "Ladder lanes: %s." % (", ".join(map(str, wz.get("ladder_lanes") or [])) or "none"),
+                    "Bands per lane: %s." % ", ".join("L%s=%d" % (k, v["bands"]) for k, v in lanes.items())]
+            chk = [c for c in out.get("band_cleanup", []) if c.get("warning")]
+            if chk:
+                bits.append("CHECK: " + chk[0]["warning"])
+            if out.get("question_for_user"):
+                bits.append("ASK THE USER: " + out["question_for_user"])
+            if self._preset_warning:
+                bits.append("NOTE: " + self._preset_warning)
+            out = dict([("summary", " ".join(bits))] + list(out.items()))
+        return self._with_status(out)
+
+    def _results_summary(self):
+        def run():
+            win = self.win
+            areas = getattr(win, "latest_multi_lane_peak_areas", {}) or {}
+            qty = getattr(win, "latest_multi_lane_calculated_quantities", {}) or {}
+            lanes = {}
+            for lid, ar in areas.items():
+                tot = float(sum(ar)) or 0.0
+                lanes[str(lid)] = {"bands": len(ar), "areas": [round(float(x), 3) for x in ar],
+                                   "percent_of_lane": [round(100.0 * x / tot, 2) if tot else 0.0 for x in ar],
+                                   "quantities": [round(float(q), 4) for q in (qty.get(lid) or [])]}
+            std = getattr(win, "quantities_peak_area_dict", {}) or {}
+            return {"lanes": lanes,
+                    "standards": {str(k): round(float(v), 3) for k, v in std.items()},
+                    "left_markers": len(getattr(win, "left_markers", []) or []),
+                    "right_markers": len(getattr(win, "right_markers", []) or []),
+                    "top_labels": [str(l) for _, l in (getattr(win, "top_markers", []) or [])]}
+        return self.gui(run)
+
+    # ...................................................................... standards
+    def t_quantify_with_standards(self, a):
+        stds = a.get("standards") or []
+        if len(stds) < 2:
+            raise ToolError("Give at least 2 standards: [{lane: <lane id>, quantity: <amount>}, ...].")
+        model = a.get("model") or "Linear"
+        band = a.get("band") or "strongest"
+
+        def run():
+            win = self.win
+            areas_by = getattr(win, "latest_multi_lane_peak_areas", {}) or {}
+            if not areas_by:
+                raise ToolError("No densitometry results yet. Run auto_analyze_gel (densitometry=true) "
+                                "or define_lane_regions + analyze_lanes first.")
+            keyed = {str(k): (k, v) for k, v in areas_by.items()}
+            pairs, used = {}, []
+            for s in stds:
+                try:
+                    lid, q = str(int(s["lane"])), float(s["quantity"])
+                except (KeyError, TypeError, ValueError):
+                    raise ToolError("Each standard needs lane (number) and quantity (number).")
+                if lid not in keyed or not keyed[lid][1]:
+                    with_bands = sorted((k for k, (_, v) in keyed.items() if v), key=lambda x: (len(x), x))
+                    raise ToolError("Lane %s has no measured bands%s. Lanes with at least one band: %s. "
+                                    "Pick standards among those lanes, or re-run the analysis with lower "
+                                    "min_snr / min_relative_intensity if the band was removed as noise."
+                                    % (lid, " (it is empty after noise cleanup)" if lid in keyed else
+                                       " (no such lane)", ", ".join(with_bands) or "none"))
+                ar = [float(x) for x in keyed[lid][1]]
+                if band == "total":
+                    area, which = sum(ar), "all bands"
+                elif isinstance(band, int) or (isinstance(band, str) and band.isdigit()):
+                    bi = int(band) - 1
+                    if not 0 <= bi < len(ar):
+                        raise ToolError("Lane %s has only %d bands." % (lid, len(ar)))
+                    area, which = ar[bi], "band %d" % (bi + 1)
+                else:
+                    bi = int(np.argmax(ar))
+                    area, which = ar[bi], "band %d (strongest)" % (bi + 1)
+                pairs.setdefault(q, []).append(area)
+                used.append({"lane": int(lid), "quantity": q, "area": round(area, 3), "band": which})
+            std = {q: float(np.mean(v)) for q, v in pairs.items()}
+            if len(std) < 2:
+                raise ToolError("Need at least 2 DIFFERENT quantities.")
+            if not a.get("replace", True):
+                merged = dict(getattr(win, "quantities_peak_area_dict", {}) or {})
+                merged.update(std)
+                std = merged
+            win.save_state()
+            win.quantities_peak_area_dict = std
+            win.latest_standard_curve_model = model
+            win.standard_protein_values.setText(", ".join("%.2f" % q for q in std))
+            win.standard_protein_areas_text.setText(", ".join("%.3f" % v for v in std.values()))
+            win._requantify_loaded_results(only_existing=False)
+            for fn in ("_refresh_sample_results_text", "_sync_table_window_standards"):
+                try:
+                    getattr(win, fn)()
+                except Exception:
+                    pass
+            win.is_modified = True
+            fit_fn = _app_global(win, "fit_quant_standard_curve")
+            fit = fit_fn(model, list(std.keys()), list(std.values())) if fit_fn else None
+            q_by = getattr(win, "latest_multi_lane_calculated_quantities", {}) or {}
+            std_lanes = {u["lane"] for u in used}
+            lanes = {}
+            qmin, qmax = min(std), max(std)
+            for lid, ar in areas_by.items():
+                qs = [round(float(x), 4) for x in (q_by.get(lid) or [])]
+                role = ("standard" if int(lid) in std_lanes else
+                        "ladder" if int(lid) in (getattr(self, "_last_ladder_lanes", None) or set())
+                        else "sample")
+                lanes[str(lid)] = {"role": role,
+                                   "areas": [round(float(x), 3) for x in ar], "quantities": qs,
+                                   "outside_standard_range": [i + 1 for i, x in enumerate(qs)
+                                                              if x < qmin or x > qmax]}
+            out = {"standards_used": used, "model": model, "unit": a.get("unit") or "",
+                   "lanes": lanes}
+            if fit:
+                out["fit"] = {"equation": fit.get("equation"), "r_squared": round(float(fit["r_squared"]), 5)}
+                if fit["r_squared"] < 0.95:
+                    alt = "Polynomial (Deg 2)" if "Power" in model else "Power (Log-Log)"
+                    out["warning"] = ("Standard curve R² = %.3f is poor. Usually the highest standards are "
+                                      "saturated (see is_saturated in get_analysis_results): leave them out, "
+                                      "or try model='%s'." % (fit["r_squared"], alt))
+            unit = (" " + out["unit"]) if out["unit"] else ""
+            samp = ["lane %s: %s" % (k, ", ".join("%g%s" % (q, unit) for q in v["quantities"]))
+                    for k, v in lanes.items() if v["role"] == "sample" and v["quantities"]]
+            out = dict([("summary", "Standard curve %s (R²=%s). Sample amounts — %s.%s"
+                         % (model, out.get("fit", {}).get("r_squared", "?"), "; ".join(samp) or "no sample lanes",
+                            (" WARNING: " + out["warning"]) if out.get("warning") else ""))]
+                       + list(out.items()))
+            return out
+        return self._with_status(self.action(run, "quantify_with_standards"))
+
+    # ...................................................................... combine gel + blot
+    def t_combine_images(self, a):
+        path = os.path.abspath(os.path.expanduser(str(a.get("path") or "")))
+        if not os.path.isfile(path):
+            raise ToolError("File not found: %s" % path)
+        placement = a.get("placement") or "below"
+        if placement not in ("below", "above", "right", "left"):
+            raise ToolError("placement must be below, above, right or left.")
+        gap = max(0, int(a.get("gap") or 20))
+        ext = os.path.splitext(path)[1].lower()
+        self.file_answers = []
+
+        def run():
+            win = self.win
+            if not win._has_image():
+                raise ToolError("Open the first image (the gel) before combining.")
+            ov = QImage(path)
+            if ov.isNull():
+                try:
+                    from PIL import Image as _PIL
+                    ov = win.numpy_to_qimage(np.array(_PIL.open(path)))
+                except Exception as e:  # noqa: BLE001
+                    raise ToolError("Could not read %s: %s" % (path, e))
+            bw, bh = ov.width(), ov.height()
+            img = win.image
+            W, H = img.width(), img.height()
+            l, r, t, b = (int(v) for v in win._measure_transparent_margins())
+            cw, ch = W - l - r, H - t - b
+            if a.get("scale_percent"):
+                s = float(a["scale_percent"]) / 100.0
+            elif a.get("fit", True):
+                s = (cw / float(bw)) if placement in ("below", "above") else (ch / float(bh))
+            else:
+                s = 1.0
+            s_req = s
+            s = max(0.10, min(3.0, s))
+            sw, sh = int(np.ceil(bw * s)), int(np.ceil(bh * s))
+            nl, nr, nt, nb = l, r, t, b
+            if placement == "below":
+                nb = b + gap + sh
+            elif placement == "above":
+                nt = t + gap + sh
+            elif placement == "right":
+                nr = r + gap + sw
+            else:
+                nl = l + gap + sw
+            for side, v in (("left", nl), ("right", nr), ("top", nt), ("bottom", nb)):
+                getattr(win, side + "_padding_input").setText(str(int(v)))
+            win.finalize_image()
+            img = win.image
+            W2, H2 = img.width(), img.height()
+            cx0, cy0 = nl, nt
+            cx1, cy1 = W2 - nr, H2 - nb
+            if placement == "below":
+                px, py = cx0 + (cw - sw) / 2.0, cy1 + b + gap
+            elif placement == "above":
+                px, py = cx0 + (cw - sw) / 2.0, cy0 - t - gap - sh
+            elif placement == "right":
+                px, py = cx1 + r + gap, cy0 + (ch - sh) / 2.0
+            else:
+                px, py = cx0 - l - gap - sw, cy0 + (ch - sh) / 2.0
+            px, py = int(round(px)), int(round(py))
+            # load the second image as Overlay 2 through the app's own loader
+            self.file_answers = [(path, _IMAGE_EXT_FILTERS.get(ext, ""))]
+            win.load_overlay_image()
+            self.file_answers = []
+            if getattr(win, "image2_original", None) is None or win.image2_original.isNull():
+                raise ToolError("The app could not load %s as an overlay." % path)
+            # polarity of the second image: show dark bands on light, like the gel
+            pol_mode = a.get("band_polarity") or "auto"
+            pol = None
+            if pol_mode != "as_is":
+                arr = win.qimage_to_numpy(win.image2_original)
+                if arr is not None:
+                    g = arr[..., :3].mean(axis=2) if arr.ndim == 3 else arr
+                    mv = 65535.0 if arr.dtype == np.uint16 else 255.0
+                    pol = GEL.band_polarity(np.asarray(g, dtype=float), mv)["polarity"]
+                    want_inv = (pol == "light_bands") if pol_mode == "auto" else (pol_mode == "invert")
+                    win.image2_adjustments["is_inverted"] = bool(want_inv)
+                    try:
+                        win._update_overlay_preview(2)
+                    except Exception:
+                        pass
+            steps = win.OVERLAY_RESIZE_STEPS_PER_PERCENT
+            win.image2_resize_slider.setValue(int(round(s * 100 * steps)))
+            win._update_overlay_slider_ranges()
+            win.image2_left_slider.setValue(px)
+            win.image2_top_slider.setValue(py)
+            win.image2_position = (px, py)
+            cbx = getattr(win, "adjustment_context_combo", None)
+            if cbx is not None:
+                cbx.setCurrentText("Main Image")
+            win.is_in_dedicated_edit_mode = False
+            win.update_live_view()
+            out = {"placed": path, "placement": placement, "position": [px, py],
+                   "scale_percent": round(s * 100, 2), "size_on_canvas": [sw, sh],
+                   "canvas": [W2, H2], "padding": {"left": nl, "right": nr, "top": nt, "bottom": nb},
+                   "second_image_polarity": pol,
+                   "second_image_inverted": bool(win.image2_adjustments.get("is_inverted"))}
+            if abs(s - s_req) > 1e-6:
+                out["warning"] = "Scale clamped to %.0f%% (allowed 10-300%%)." % (s * 100)
+            if a.get("rasterize"):
+                win.finalize_combined_image()
+                out["rasterized"] = True
+                out["canvas"] = [win.image.width(), win.image.height()]
+            return out
+        res = self.action(run, "combine_images", timeout=180, auto_ok_info=True)
+        self.file_answers = []
+        res["note"] = ("The second image is a separate layer (Overlap Images tab ▸ Image 2) until "
+                       "rasterized; save_image / export_pptx include it either way. Annotate it with "
+                       "add_text / add_shape (its y-range is in 'position' + 'size_on_canvas').")
+        return self._with_status(res)
+
+    # ...................................................................... guide
+    def t_get_workflow_guide(self, a):
+        topic = (a.get("task") or "overview").lower()
+        return {"task": topic, "guide": S.WORKFLOW_GUIDES.get(topic, S.WORKFLOW_GUIDES["overview"]),
+                "topics": sorted(S.WORKFLOW_GUIDES)}
 
     # ---- helpers ----------------------------------------------------------------------
     def _settle(self, res, max_s=2.5):
@@ -2739,7 +3844,10 @@ def _check_user_only(w):
 
 
 def _text(obj):
-    return {"type": "text", "text": json.dumps(obj, indent=1, ensure_ascii=False, default=str)}
+    # _jsonable first: default=str alone turned numpy arrays into truncated "[1 2 ... 9]"
+    # strings and numpy dict keys into a TypeError.
+    return {"type": "text", "text": json.dumps(_jsonable(obj), indent=1, ensure_ascii=False,
+                                                default=str)}
 
 
 def _plain(s):
@@ -2777,8 +3885,13 @@ def _jsonable(v):
             return {str(k): _jsonable(x) for k, x in v.items()}
         if isinstance(v, (list, tuple)):
             return [_jsonable(x) for x in v]
+        if isinstance(v, (set, frozenset)):
+            return [_jsonable(x) for x in sorted(v, key=repr)]
         if hasattr(v, "tolist"):
-            return v.tolist()
+            try:
+                return _jsonable(v.tolist())
+            except Exception:
+                pass
         if isinstance(v, QColor):
             return v.name()
         try:
@@ -3064,10 +4177,81 @@ def _set_value(w, value):
     raise ToolError("Controls of kind '%s' cannot be set." % _kind(w))
 
 
+def _clean_smart_args(a):
+    """Small local models often send numbers as strings and fill every optional field with
+    placeholder values. Coerce what is meaningful, drop what is clearly not."""
+    a = dict(a or {})
+
+    def num(k, lo, hi, as_int=False):
+        v = a.get(k)
+        if v is None or v == "":
+            a.pop(k, None)
+            return
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            a.pop(k, None)
+            return
+        if not (lo <= v <= hi):
+            a.pop(k, None)               # out of range = placeholder, use the default
+            return
+        a[k] = int(round(v)) if as_int else v
+    num("expected_lanes", 2, 60, True)
+    num("lane", 1, 60, True)
+    num("min_snr", 2, 100)
+    num("min_relative_intensity", 0.0005, 0.5)
+    num("gap", 0, 5000, True)
+    num("scale_percent", 10, 300)
+    for k in ("x0", "x1", "y0", "y1"):
+        num(k, -1e6, 1e6)
+    for k in ("ladder_lanes",):
+        v = a.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            v = [v]
+        if isinstance(v, str):
+            v = re.findall(r"\d+", v)          # "[8, 1]", "1 and 8", "1,8" ...
+        if isinstance(v, list):
+            out = []
+            for x in v:
+                try:
+                    out.append(int(float(x)))
+                except (TypeError, ValueError):
+                    pass
+            a[k] = out
+        elif v is not None:
+            a.pop(k, None)
+    for k in ("densitometry", "padding", "review", "fix_polarity", "label_lanes", "fit",
+              "rasterize", "remove_noise_bands", "replace"):
+        v = a.get(k)
+        if isinstance(v, str):
+            a[k] = v.strip().lower() in ("1", "true", "yes", "on")
+    st = a.get("standards")
+    if isinstance(st, str):                  # "[{lane: 2, quantity: 250}, ...]" written as text
+        try:
+            st = json.loads(st)
+        except ValueError:
+            st = [{"lane": int(l), "quantity": float(q)} for l, q in
+                  re.findall(r"lane\W*(\d+)\W+(?:quantity|qty|amount)\W*([0-9.]+)", st, re.I)]
+        a["standards"] = st
+    if isinstance(a.get("standards"), dict):     # {"2": 250, "3": 500}
+        a["standards"] = [{"lane": k, "quantity": v} for k, v in a["standards"].items()]
+    for k in ("preset", "region", "lanes", "lane_labels"):
+        if a.get(k) in ("", None, [], {}, "none", "None", "null"):
+            a.pop(k, None)
+    r = a.get("region")
+    if r is not None and not (isinstance(r, dict) and all(k in r for k in ("x", "y", "width", "height"))):
+        a.pop("region", None)
+    return a
+
+
+_SMART_TOOLS = {"inspect_gel", "fix_band_polarity", "label_mw_ladder", "auto_analyze_gel",
+                "quantify_with_standards", "combine_images", "get_workflow_guide"}
+
+
 def _summarize_args(args):
     parts = []
     for k, v in (args or {}).items():
-        s = json.dumps(v, ensure_ascii=False, default=str)
+        s = json.dumps(_jsonable(v), ensure_ascii=False, default=str)
         if len(s) > 40:
             s = s[:37] + "…"
         parts.append("%s=%s" % (k, s))

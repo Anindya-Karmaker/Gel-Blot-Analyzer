@@ -57,7 +57,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.8.0"
+APP_VERSION = "9.8.1"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -170,11 +170,77 @@ def _retry_file_op(fn, retries=6, delay_s=0.15):
     return result
 
 
+def _json_safe(obj, _depth=0):
+    """Return a copy of `obj` that json.dumps can always write.
+
+    Analysis state is full of numpy values (band arrays, np.int64 positions, np.float64
+    areas, numpy bools) plus tuples, sets and the odd Qt value type. json refuses all of
+    those ("Object of type ndarray is not JSON serializable") — and refuses numpy/tuple
+    dict KEYS too — which used to abort the whole config save on complex images.
+    Arrays become nested lists and numpy scalars plain Python numbers, so the saved
+    config reloads exactly as before; anything truly unknown falls back to str()."""
+    if obj is None or isinstance(obj, (str, bool, int, float)):
+        return obj
+    if _depth > 200:
+        return None
+    try:
+        import numpy as _np
+    except Exception:
+        _np = None
+    if _np is not None:
+        if isinstance(obj, _np.ndarray):
+            return _json_safe(obj.tolist(), _depth + 1)
+        if isinstance(obj, _np.generic):
+            return _json_safe(obj.item(), _depth + 1)
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if _np is not None and isinstance(k, _np.generic):
+                k = k.item()
+            if not (k is None or isinstance(k, (str, bool, int, float))):
+                k = str(k)
+            out[k] = _json_safe(v, _depth + 1)
+        return out
+    if isinstance(obj, (list, tuple, set, frozenset)):
+        items = sorted(obj, key=repr) if isinstance(obj, (set, frozenset)) else obj
+        return [_json_safe(v, _depth + 1) for v in items]
+    if isinstance(obj, (bytes, bytearray)):
+        return bytes(obj).decode("utf-8", "replace")
+    if isinstance(obj, os.PathLike):
+        return os.fspath(obj)
+    # Qt value types that end up in analysis state
+    name = type(obj).__name__
+    try:
+        if name == "QColor":
+            return obj.name()
+        if name in ("QPointF", "QPoint"):
+            return [obj.x(), obj.y()]
+        if name in ("QSizeF", "QSize"):
+            return [obj.width(), obj.height()]
+        if name in ("QRectF", "QRect"):
+            return [obj.x(), obj.y(), obj.width(), obj.height()]
+    except Exception:
+        pass
+    if hasattr(obj, "tolist"):
+        try:
+            return _json_safe(obj.tolist(), _depth + 1)
+        except Exception:
+            pass
+    return str(obj)
+
+
+def _json_dumps_safe(data, **kw):
+    """json.dumps that never fails on numpy/tuple/set/Qt values (see _json_safe)."""
+    kw.pop("default", None)
+    return json.dumps(_json_safe(data), **kw)
+
+
 def _atomic_write_json(path, data, indent=4, cls=None):
     """JSON convenience wrapper around _atomic_write_text. Serialising BEFORE touching the
     file also means a json.dump failure (e.g. a non-serialisable value) can no longer leave
-    a half-written config behind."""
-    return _atomic_write_text(path, json.dumps(data, indent=indent, cls=cls))
+    a half-written config behind. Data is passed through _json_safe first, so numpy arrays
+    and scalars anywhere in the analysis state can no longer abort the save."""
+    return _atomic_write_text(path, json.dumps(_json_safe(data), indent=indent, cls=cls))
 
 
 def _gba_settings_filepath():
@@ -891,7 +957,11 @@ if __name__ == "__main__":
         _splash("Loading image analysis modules (scikit-image)...", 78)
         from skimage.restoration import rolling_ball
         _splash("Loading scientific computing modules (SciPy)...", 85)
-        from scipy.signal import find_peaks, peak_widths, cwt, ricker
+        from scipy.signal import find_peaks, peak_widths
+        try:
+            from scipy.signal import cwt, ricker   # removed in SciPy 1.15; not needed to run
+        except ImportError:
+            cwt = ricker = None
         from scipy.ndimage import gaussian_filter1d
         from scipy.ndimage import median_filter as scipy_median_filter
         from scipy.special import erfc
@@ -10688,6 +10758,11 @@ if __name__ == "__main__":
                 self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.setScaledContents(True)
                 self.app_instance = app_instance
+                # Single-lane analysis region state. Normally (re)set by the image-load path,
+                # but get_current_config()/save_state() read them, so they must exist before
+                # any image is opened (e.g. autosave or a config save on an empty window).
+                self.quad_points = []
+                self.bounding_box_preview = None
                 self.setMouseTracking(True)
                 self.setFocusPolicy(Qt.ClickFocus)
 
@@ -18641,7 +18716,7 @@ if __name__ == "__main__":
                 }
 
                 try:
-                    json_data = json.dumps(items_to_copy)
+                    json_data = _json_dumps_safe(items_to_copy)
                     mime_data = QMimeData()
                     mime_data.setData(self.MIME_TYPE_CUSTOM_ITEMS, json_data.encode('utf-8'))
                     
@@ -19205,7 +19280,7 @@ if __name__ == "__main__":
                 if img is None or img.isNull():
                     return None
                 if cfg_text is None:
-                    cfg_text = json.dumps(self.get_current_config(), sort_keys=True, default=str)
+                    cfg_text = _json_dumps_safe(self.get_current_config(), sort_keys=True)
                 h = hashlib.sha1(cfg_text.encode("utf-8", "replace"))
                 h.update(str((img.cacheKey(), img.width(), img.height(), str(img.format()))).encode())
                 return h.hexdigest()
@@ -19246,7 +19321,7 @@ if __name__ == "__main__":
                         return None
                     return {"mode": "empty", "sig": None, "manifest": dict(base_manifest, mode="empty")}
 
-                cfg_text = json.dumps(self.get_current_config(), indent=1, default=str)
+                cfg_text = _json_dumps_safe(self.get_current_config(), indent=1)
                 sig = self._autosave_state_signature(
                     json.dumps(json.loads(cfg_text), sort_keys=True))
                 if sig == self._autosave_last_sig and reason != "restored":
@@ -19353,7 +19428,7 @@ if __name__ == "__main__":
                         if os.path.exists(man_path):
                             os.remove(man_path)
                     else:
-                        _atomic_write_text(man_path, json.dumps(man, indent=2, default=str))
+                        _atomic_write_text(man_path, _json_dumps_safe(man, indent=2))
                     keep = {self.AUTOSAVE_MANIFEST, man.get("image_file"),
                             man.get("config_file"), man.get("thumb_file")}
                     for f in os.listdir(d):
@@ -19676,7 +19751,7 @@ if __name__ == "__main__":
                 try:
                     man["restore_attempts"] = int(man.get("restore_attempts") or 0) + 1
                     _atomic_write_text(os.path.join(d, self.AUTOSAVE_MANIFEST),
-                                       json.dumps(man, indent=2, default=str))
+                                       _json_dumps_safe(man, indent=2))
                 except Exception:
                     pass
                 source = man.get("source_path")
@@ -23422,15 +23497,40 @@ if __name__ == "__main__":
                      
             
             def open_table_window(self):
-                # --- START OF THE FIX ---
-                # Check if an instance exists and is still a valid Qt widget.
-                # The 'isinstance' check prevents errors if the C++ part of the object was deleted.
-                if hasattr(self, 'table_window_instance') and self.table_window_instance and isinstance(self.table_window_instance, QDialog):
-                    # If it exists, bring it to the front instead of creating a new one.
-                    self.table_window_instance.raise_()
-                    self.table_window_instance.activateWindow()
-                    return # Exit the function to prevent creating a duplicate window
-                # --- END OF THE FIX ---
+                # The results window is non-modal and may still be open from an EARLIER analysis
+                # (or an earlier image). Re-raising it unconditionally showed stale numbers: a new
+                # analysis, or "Show results" after opening another file, kept displaying the old
+                # table. Keep the existing window only while it shows the current data; otherwise
+                # replace it (its analysis is already in the saved history, nothing is lost).
+                try:
+                    _fp_src = (self.latest_multi_lane_peak_areas or self.latest_peak_areas,
+                               self.latest_multi_lane_calculated_quantities if self.latest_multi_lane_peak_areas else self.latest_calculated_quantities,
+                               self.quantities_peak_area_dict,
+                               getattr(self, 'latest_multi_lane_settings', None))
+                    data_fingerprint = _json_dumps_safe(_fp_src)
+                except Exception:
+                    data_fingerprint = None
+                existing = getattr(self, 'table_window_instance', None)
+                if existing is not None:
+                    try:
+                        alive = isinstance(existing, QDialog) and existing.isVisible()
+                    except RuntimeError:
+                        alive = False
+                    if alive and data_fingerprint is not None and \
+                            getattr(existing, '_gba_data_fingerprint', None) == data_fingerprint:
+                        existing.raise_()
+                        existing.activateWindow()
+                        return
+                    if alive:
+                        try:
+                            existing.finished.disconnect(self._on_table_window_closed)
+                        except Exception:
+                            pass
+                        try:
+                            existing.close()
+                        except Exception:
+                            pass
+                    self.table_window_instance = None
                 
                 # The rest of the logic to gather data and create the window is correct.
                 is_multi_lane_results = bool(self.latest_multi_lane_peak_areas)
@@ -23461,6 +23561,7 @@ if __name__ == "__main__":
                     peak_settings_data=getattr(self, 'latest_multi_lane_settings', None)
                 )
 
+                self.table_window_instance._gba_data_fingerprint = data_fingerprint
                 self.table_window_instance.finished.connect(self._on_table_window_closed)
                 self.table_window_instance.show()
             
@@ -23543,6 +23644,8 @@ if __name__ == "__main__":
                 self.update_live_view()
 
             def process_standard(self):
+                if not self._require_image("lane analysis"):
+                    return
                 extracted_qimage = None
                 region_type_for_message = ""
                 
@@ -23612,6 +23715,8 @@ if __name__ == "__main__":
                 self._reset_to_selection_mode()
             
             def process_sample(self):
+                if not self._require_image("lane analysis"):
+                    return
                 extracted_qimage = None
                 
                 adjusted_master = self._get_fully_adjusted_image_for_analysis()
@@ -28424,6 +28529,13 @@ if __name__ == "__main__":
                 lines = [f"Could not save {what}:", f"{path}", ""]
                 if err is not None:
                     lines += [f"Reason: {err}", ""]
+                if isinstance(err, (TypeError, ValueError)) and not isinstance(err, OSError):
+                    # A data problem, not the folder — don't send the user chasing Box/Drive.
+                    lines += ["This is an internal data problem, not a folder or permission "
+                              "issue. Please report it together with the steps that led here."]
+                    if extra:
+                        lines += ["", extra]
+                    return "\n".join(lines)
                 lines += [
                     "This folder is usually the cause. Cloud-sync folders (Box, Google "
                     "Drive, OneDrive, Dropbox) and scanner-watched folders such as "
@@ -31849,6 +31961,9 @@ if __name__ == "__main__":
 
                 clipboard = QApplication.clipboard()
                 mime_data = clipboard.mimeData()
+                if mime_data is None:
+                    QMessageBox.information(self, "Paste", "The clipboard is empty.")
+                    return
                 loaded_image = None
                 source_info = "Clipboard" # Default source
                 config_loaded_from_paste = False # Flag to track if config was loaded
@@ -31902,6 +32017,10 @@ if __name__ == "__main__":
 
                 # --- PRIORITY 2: Raw image data (if no valid file was loaded) ---
                 if loaded_image is None:
+                    # Pasted pixels have no file behind them. Leaving image_path pointing at the
+                    # PREVIOUSLY opened file made Save suggest that file's name and folder (one
+                    # click overwrote its _original/_modified/_config) and showed it as "Source".
+                    self.image_path = None
                     # 2a: Prefer a full-resolution PNG payload if present. Many Windows
                     #     apps put a downscaled CF_DIB *and* a full-res "PNG" format;
                     #     QClipboard.image() returns the low-res DIB (and drops alpha),
@@ -39054,7 +39173,7 @@ if __name__ == "__main__":
                         return qimage # Return original if unsupported dimensions
 
                     # Convert back to original data type
-                    img_array_final = img_array_final_float.astype(original_dtype)
+                    img_array_final = img_array_final_float.astype(img_array.dtype)
 
                     # Convert back to QImage using the helper function
                     result_qimage = self.numpy_to_qimage(img_array_final)

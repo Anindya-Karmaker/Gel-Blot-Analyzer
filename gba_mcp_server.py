@@ -68,11 +68,48 @@ def _settings():
         return {}
 
 
+_resolved = {"port": None}          # port that last answered /health (see _app_alive)
+
+
 def _endpoint():
     st = _settings()
-    port = int(os.environ.get("GBA_PORT") or st.get("active_port") or st.get("port") or S.DEFAULT_PORT)
+    port = int(os.environ.get("GBA_PORT") or _resolved["port"] or st.get("active_port")
+               or st.get("port") or S.DEFAULT_PORT)
     token = os.environ.get("GBA_TOKEN") or st.get("token") or ""
     return port, token
+
+
+def _candidate_ports(st):
+    """Recorded port first, then every port the app may fall back to (DEFAULT_PORT..+PORT_TRIES-1)."""
+    out = []
+    for p in (os.environ.get("GBA_PORT"), _resolved["port"], st.get("active_port"), st.get("port")):
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            continue
+        if p > 0 and p not in out:
+            out.append(p)
+    base = int(st.get("port") or S.DEFAULT_PORT)
+    for b in (base, S.DEFAULT_PORT):
+        for p in range(b, b + S.PORT_TRIES):
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def _probe(port, token, timeout=1.5):
+    """Return the pid reported by /health on this port, or None when nothing (of ours) answers."""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%d/health" % port, method="GET")
+        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("User-Agent", "gba-mcp-stdio/1.0")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = json.loads(r.read().decode("utf-8") or "{}")
+        if r.status == 200 and isinstance(body, dict) and body.get("ok") and body.get("app") == S.SERVER_TITLE:
+            return int(body.get("pid") or -1)
+    except Exception:
+        pass
+    return None
 
 
 def _http(method, path, body=None, timeout=330):
@@ -91,11 +128,40 @@ def _http(method, path, body=None, timeout=330):
 
 
 def _app_alive():
-    try:
-        status, body = _http("GET", "/health", timeout=2)
-        return status == 200 and bool(body and body.get("ok"))
-    except Exception:
+    """Find the running app. The recorded port is tried first; if it is dead (the record can
+    be stale after a crash, or after two instances overlapped) every port the app may have
+    fallen back to is probed with the token. Prefers the instance whose pid matches the
+    record, otherwise the first one that answers."""
+    st = _settings()
+    token = os.environ.get("GBA_TOKEN") or st.get("token") or ""
+    if not token:
         return False
+    rec_pid = st.get("pid")
+    try:
+        rec_pid = int(rec_pid) if rec_pid else None
+    except (TypeError, ValueError):
+        rec_pid = None
+    first = None
+    for port in _candidate_ports(st):
+        pid = _probe(port, token)
+        if pid is None:
+            continue
+        if rec_pid is None or pid == rec_pid or not S.pid_alive(rec_pid):
+            _set_resolved(port)
+            return True
+        if first is None:
+            first = port
+    if first is not None:                      # recorded pid is alive but answers nowhere: use what works
+        _set_resolved(first)
+        return True
+    _resolved["port"] = None
+    return False
+
+
+def _set_resolved(port):
+    if _resolved["port"] != port:
+        _resolved["port"] = port
+        _log("app endpoint: http://127.0.0.1:%d" % port)
 
 
 def _launch_command():
@@ -186,6 +252,7 @@ def _forward(msg):
             text = str(e)
         return _tool_error(mid, "Gel Blot Analyzer refused the request (%s): %s" % (e.code, text))
     except Exception as e:
+        _resolved["port"] = None               # re-discover the endpoint on the next call
         return _tool_error(mid, "Lost connection to Gel Blot Analyzer: %s" % e)
 
 

@@ -76,6 +76,7 @@ hiddenimports = [
     'gba_ai_bridge',
     'gba_mcp_server',
     'gba_mcp_schema',
+    'gba_ai_gel',
 
     # Matplotlib backend for Qt
     'matplotlib.backends.backend_qtagg',
@@ -205,8 +206,8 @@ app = BUNDLE(
     info_plist={
         'NSHighResolutionCapable': 'True',                     # Enables support for Retina displays.
         'LSMinimumSystemVersion': '10.15',                     # Sets minimum supported OS to macOS Catalina.
-        'CFBundleShortVersionString': '9.8.0',                   # Must track APP_VERSION in the script.
-        'CFBundleVersion': '9.8.0',                              # Build number.
+        'CFBundleShortVersionString': '9.8.1',                   # Must track APP_VERSION in the script.
+        'CFBundleVersion': '9.8.1',                              # Build number.
         'NSHumanReadableCopyright': 'Copyright © 2025 Anindya Karmaker. All rights reserved.',
     }
 )

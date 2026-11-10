@@ -34,6 +34,9 @@ When a button writes to an app's settings file:
 - A file it can't read is never overwritten.
 - If the app isn't installed, the settings are copied to the clipboard instead.
 
+**LM Studio:** also switch the tools on in each chat. Click the **🔌 plug (Integrations)** button
+next to the message box and enable **mcp/gel-blot-analyzer**; otherwise the model never sees the tools.
+
 That's it. Ask the AI something like *"Use Gel Blot Analyzer to show me the open image."*
 
 If Gel Blot Analyzer isn't open when the AI first needs it, it starts automatically. This only
@@ -115,9 +118,39 @@ Notes:
 - If Open WebUI runs in Docker and is added as an *admin* (server-side) tool server, use
   `http://host.docker.internal:47615`.
 
-**Option B: any MCP-capable Ollama client** (mcphost, ollmcp, Continue, Cline, …)
+**Option B: AnythingLLM (desktop app, MCP built in)**
+
+1. In AnythingLLM, go to **Settings ▸ AI Providers ▸ LLM**, choose **Ollama** and pick a model
+   that calls tools reliably (see the model list below).
+2. Open `~/Library/Application Support/anythingllm-desktop/storage/plugins/anythingllm_mcp_servers.json`
+   (Windows: `%APPDATA%\anythingllm-desktop\storage\plugins\…`) and add the `mcpServers` block
+   from 3.1. Then go to **Settings ▸ Agent Skills ▸ MCP Servers** and click **Refresh**.
+3. Tools run only in **agent mode**: start your message with `@agent`, for example
+   `@agent inspect the gel open in Gel Blot Analyzer`.
+
+**Option C: any other MCP-capable Ollama client** (mcphost, ollmcp, Continue, Cline, …)
 
 Use the `mcpServers` block from 3.1.
+
+**Which Ollama model?** (tested with v9.8.1)
+
+| Model | Result |
+|---|---|
+| `qwen3:8b` / `qwen3:14b`, `qwen2.5:7b`/`14b` (instruct), `llama3.1:8b`, `mistral-small` | Recommended: general instruct models with reliable tool calling |
+| `llama3.2` (3B) | Works for `inspect_gel` / `auto_analyze_gel`, but often asks instead of acting and sometimes writes calls as text. Fine for simple tasks. |
+| `qwen2.5-coder` | **Doesn't work.** Writes the tool call as a ```json block instead of calling it, so nothing happens. |
+| `deepseek-r1` | Slow (it thinks first) and unreliable at calling tools |
+
+**Ollama "doesn't work" checklist**
+
+1. Ollama is running: `ollama serve`, or open the Ollama app, then check with `curl http://127.0.0.1:11434/api/tags`.
+2. Gel Blot Analyzer AI control is **on** (Settings ▸ AI Assistant Control). The status line shows *listening*.
+3. You are using a **front-end** (A, B or C above). The Ollama chat window alone can't use tools.
+4. The model supports tools (`ollama show <model>` lists *tools* under Capabilities) and is not a *coder* model.
+5. The front-end really calls the tools: open **Tools ▸ AI Activity Log…** in Gel Blot Analyzer. If
+   nothing appears when you ask, the front-end or model isn't calling tools.
+6. The configured command points at the build you are running. An older installed app won't
+   have the v9.8.1 tools.
 
 ### 3.4 Reference
 
@@ -129,7 +162,7 @@ Use the `mcpServers` block from 3.1.
 | Auth | `Authorization: Bearer <token>`. Alternatives: `X-GBA-Token: <token>`, or `?token=` |
 | Health check | `GET /health` |
 | MCP protocol versions | 2025-06-18, 2025-03-26, 2024-11-05 |
-| Port | 47615. If it is busy, the next free port up to 47624 is used and recorded for the connector. |
+| Port | 47615. If it is busy, the next free port up to 47624 is used and recorded for the connector. If the recorded port does not answer (stale record), the connector probes 47615–47624 with the token and uses the copy of GBA that answers, preferring the recorded process id. |
 
 Environment overrides for the connector:
 
@@ -147,6 +180,21 @@ Environment overrides for the connector:
 All coordinates are **image pixels** (origin at the top-left of the current image). The AI
 usually starts with `screenshot(target="image", grid=true)`, which returns the figure with a
 labelled pixel grid.
+
+**Start with the smart tools.** They do a whole job the way an expert would, with the app's own
+analysis code, and suit small local models best:
+
+| Tool | What it does |
+|---|---|
+| `inspect_gel` | Reads the gel first: band polarity (is inversion needed?), lanes, real bands per lane, ladder lane, empty lanes, possible standards. Returns a summary, **questions to ask you**, and the next call. |
+| `fix_band_polarity` | Inverts only when bands are light on dark (DNA/RNA, stain-free, fluorescence, chemiluminescence), so lanes are white and bands black |
+| `label_mw_ladder` | Labels the ladder with the app's **Auto Lane** analysis, then adds padding |
+| `auto_analyze_gel` | Runs the **Auto Analyze Gel** wizard end to end: lanes, labels, ladder MW labels and densitometry, keeping only true bands |
+| `quantify_with_standards` | Quantifies all bands against standards whose amounts **you** give (`[{lane, quantity}]`), and reports R² |
+| `combine_images` | Puts a western blot below, above or beside the gel, adding the padding and matching the size |
+| `get_workflow_guide` | Recipes: protein gel, DNA gel, western blot, densitometry, standards, combine |
+
+Lower-level tools:
 
 | Area | Tools |
 |---|---|
@@ -170,6 +218,13 @@ the Auto Analyze wizard, the AI gets its text and buttons and answers it the way
 
 ## 5. Example prompts
 
+- *"Analyze the open gel. It's an SDS-PAGE gel with the Precision Plus ladder. Label the ladder
+  and run densitometry."* The AI inspects first and may ask you for the lane count, the ladder
+  lane or whether some lanes are standards.
+- *"This is an agarose DNA gel with a 1 kb Plus ladder in lane 1. Make the bands black on white
+  and label the ladder."*
+- *"Lanes 2–6 are BSA standards: 125, 250, 500, 1000 and 2000 ng. Quantify the other lanes."*
+- *"Open ~/Blots/actin_wb.tif and put it under the gel with a 30 px gap."*
 - *"Open ~/Gels/western_0412.tif, invert it if the bands are white, optimize the levels, and show
   me the result."*
 - *"Put MW markers at the ladder bands on the left lane and label the lanes Ctrl, siRNA-1,
@@ -187,12 +242,14 @@ the Auto Analyze wizard, the AI gets its text and buttons and answers it the way
 | Symptom | Fix |
 |---|---|
 | The AI says "AI control is turned OFF" | Tick **Allow AI assistants…** in **Settings ▸ AI Assistant Control (MCP)**. |
+| **LM Studio:** the model says it has no access to MCP servers or tools | The integration is off for that chat. In the chat, click the **🔌 plug (Integrations)** button next to the message box and switch on **mcp/gel-blot-analyzer**. LM Studio turns integrations on per chat, so do this in every new chat. A loaded model with the **Tool use** badge (🔨) is also required. |
 | The app doesn't appear in the AI app | Restart the AI app after clicking its Connect button, then check its MCP or developer log. On macOS the command must point inside the `.app` (`…/Contents/MacOS/Gel Blot Analyzer`). |
 | "Missing or wrong token" | Apps connected by URL need the current token from **Ollama / other apps…**. **New Token** invalidates the old one. |
 | "PAUSED" or "VIEW ONLY" errors | Untick **Pause the AI**, or set **Permission** to **Full control**. |
 | Clicks land in the wrong place | Ask the AI to use `screenshot(target="image", grid=true)`. Coordinates are image pixels, not screen pixels. |
 | A file chooser opened and nothing happened | Native file dialogs can't be operated remotely. The AI must call `answer_file_dialog(path)` first. `open_image`, `save_image` and `export_pptx` already do this. |
 | A local model calls tools badly | Use a larger model with tool calling, and ask for a few steps at a time. |
+| "Gel Blot Analyzer did not become ready within 90s" although GBA is open | Fixed in 9.8.1: a quitting copy of GBA could erase the running copy's port from `ai_control.json`, and the connector kept polling the dead port. The connector now finds the running copy by itself. If it still happens, quit every copy of GBA, open it once with AI control on, and retry; `GBA_PORT` forces a port. |
 
 ---
 

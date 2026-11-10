@@ -148,6 +148,7 @@ hiddenimports = [
     'gba_ai_bridge',
     'gba_mcp_server',
     'gba_mcp_schema',
+    'gba_ai_gel',
 
     # Matplotlib backend for Qt
     'matplotlib.backends.backend_qtagg',

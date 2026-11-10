@@ -33,40 +33,286 @@ def settings_path():
     return os.path.join(state_dir(), "ai_control.json")
 
 
+def pid_alive(pid):
+    """True if a process with this id is still running (never signals it).
+
+    Used to decide whether the ``active_port``/``pid`` recorded in ai_control.json still
+    describes a live app instance. On Windows ``os.kill(pid, 0)`` would TERMINATE the
+    process, so the handle-based query is used there.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return False
+                return code.value == 259          # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(h)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+
+
 SERVER_INSTRUCTIONS = """\
-You are operating Gel Blot Analyzer, a desktop app for annotating gel/western-blot images
-(molecular-weight markers, labels, arrows) and band densitometry. Every action you take
-happens live in the user's window, with a purple AI cursor and highlight so they can watch.
+You operate Gel Blot Analyzer, a desktop app for gel / western-blot images: molecular-weight
+(MW) ladder labels, lane labels, arrows, band densitometry and quantification. Every action
+happens live in the user's window (purple AI cursor).
 
-COORDINATES: all x/y values are IMAGE pixels of the current image (origin top-left,
-see get_status -> image.width/height). Use screenshot(target="image", grid=true) to see
-the image with a labelled pixel grid before clicking or placing anything. Coordinates may
-lie outside the image (e.g. negative) to annotate the padding area.
+ALWAYS START WITH: get_status -> (open_image) -> inspect_gel. inspect_gel tells you the band
+polarity, lanes, ladder lane, real bands per lane, possible standards, and QUESTIONS to ask
+the user. If questions_for_user is not empty, ask the user before quantifying.
 
-TYPICAL WORKFLOW
- 1. get_status -> open_image(path) if nothing is loaded.
- 2. screenshot(target="image", grid=true) to look at the gel.
- 3. Clean up: image_operation (invert, optimize_levels, flip...), crop, set_padding.
- 4. Annotate: set_marker_preset + place_markers (MW ladder), add_text, add_shape.
- 5. Quantify: define_lane_regions then analyze_lanes; a densitometry dialog opens —
-    inspect it with list_controls(window_id=...) / screenshot(target="dialog") and
-    finish with respond_to_dialog or click_control. Read numbers with get_analysis_results.
- 6. save_image(path) / export_pptx(path).
+GOLDEN RULES
+ 1. Analysis needs WHITE lanes with BLACK bands. DNA/RNA agarose gels (EtBr/SYBR), stain-free
+    and fluorescent gels and raw chemiluminescence blots show LIGHT bands on a DARK background:
+    call fix_band_polarity (it inverts only when needed; never invert twice).
+ 2. MW labels: use label_mw_ladder (the app's Auto Lane analysis). It finds the ladder bands
+    and writes the preset's values top->bottom. Choose the preset first (set_marker_preset or
+    preset=...). Do NOT click markers by hand unless the user asks.
+ 3. Densitometry / lane quantification: use auto_analyze_gel (the app's Auto Analyze Gel
+    wizard). It finds lanes, labels the ladder, measures every band and removes noise peaks
+    (only bands >= 5x the noise and >= 1% of the lane's strongest band are kept).
+ 4. Standards: if inspect_gel reports a standard-series candidate (same band position, similar
+    size, different intensity), ASK the user whether those lanes are standards and their
+    amounts. Then quantify_with_standards(standards=[{lane, quantity}, ...]).
+ 5. Gel + western blot in one figure: combine_images(path, placement='below' | 'right' | ...)
+    adds the padding and places the second image for you.
+ 6. Check your work with screenshot(target='image') and read numbers with get_analysis_results.
 
-ANYTHING ELSE: every button, slider, checkbox, combo box and text field in every window
-is reachable with list_controls -> set_control / click_control (controls on other tabs are
-switched to automatically). Menu commands: list_menu_actions -> trigger_menu_action.
-Interactive tools are armed with click_control and then driven with viewer_click /
-viewer_drag. When an action opens a dialog the result says status="dialog_open" with the
-dialog's window_id, text and buttons; answer it before continuing. When a button would
-open a file chooser, call answer_file_dialog(path) first (native file choosers can't be
-operated otherwise). Every action returns the app's status-bar message — read it.
-Prefer small verified steps: act, then check with get_status / screenshot.
+COORDINATES are IMAGE pixels (origin top-left, see get_status image.width/height);
+screenshot(target='image', grid=true) shows a pixel grid. Negative values reach the padding.
+
+LOW-LEVEL CONTROL (only when the smart tools don't cover it): list_controls -> set_control /
+click_control; list_menu_actions -> trigger_menu_action; viewer_click / viewer_drag for armed
+tools. When a result says status='dialog_open', answer that dialog (respond_to_dialog) before
+anything else. Call answer_file_dialog(path) before a click that opens a file chooser.
+Unsure what to do? Call get_workflow_guide(task).
 """
+
+WORKFLOW_GUIDES = {
+    "overview": [
+        "get_status; if image is null -> open_image(path).",
+        "inspect_gel(gel_type='protein'|'dna'|'rna'|'western').",
+        "Ask the user every item in questions_for_user (ladder lane? standards and amounts?).",
+        "fix_band_polarity if inspect_gel says polarity = light_bands.",
+        "Only MW labels needed -> label_mw_ladder(lane=<ladder lane>, preset=<ladder name>).",
+        "Densitometry needed -> auto_analyze_gel(densitometry=true, ladder_lanes=[...], lane_labels=[...]).",
+        "Standards confirmed -> quantify_with_standards(standards=[{lane: n, quantity: q}, ...]).",
+        "screenshot(target='image') to check, then save_image(path) or export_pptx(path).",
+    ],
+    "protein_gel": [
+        "SDS-PAGE (Coomassie/silver): bands are dark on light - no inversion needed.",
+        "Stain-free gels are light on dark - fix_band_polarity first.",
+        "set_marker_preset to the ladder that was loaded (e.g. 'Precision Plus Protein').",
+        "label_mw_ladder(lane=<ladder lane>) or auto_analyze_gel(...) for densitometry.",
+    ],
+    "dna_gel": [
+        "DNA/RNA agarose gels (EtBr, SYBR, GelRed) are LIGHT bands on a DARK background.",
+        "fix_band_polarity -> lanes become white and bands black (required for densitometry).",
+        "set_marker_preset to the DNA ladder (e.g. '1 kb', 'GeneRuler'); labels are in bp.",
+        "label_mw_ladder(lane=<ladder lane>) then auto_analyze_gel for band intensities.",
+    ],
+    "western_blot": [
+        "Raw chemiluminescence/fluorescence exports are light on dark -> fix_band_polarity.",
+        "A prestained ladder is often invisible on the chemiluminescence image: if inspect_gel finds "
+        "no ladder, ask the user for the ladder lane, or label from the colorimetric/marker image.",
+        "auto_analyze_gel(densitometry=true) for band intensities; normalise to a loading control by "
+        "dividing each lane's target area by its loading-control area (get_analysis_results).",
+    ],
+    "densitometry": [
+        "auto_analyze_gel(densitometry=true, expected_lanes=<n if known>, ladder_lanes=[...]).",
+        "Noise is removed automatically: min_snr (default 5) and min_relative_intensity (default 0.01).",
+        "Raise min_snr (e.g. 8) for very noisy blots; lower min_relative_intensity to 0.002 for "
+        "purity/impurity analysis where faint bands matter.",
+        "review=true leaves the densitometry dialog open so you can screenshot it before OK.",
+        "get_analysis_results for areas, % of lane, saturation flags.",
+        "Saturated bands (is_saturated) under-report - tell the user to re-image with shorter exposure.",
+    ],
+    "standards": [
+        "Standards = same protein/DNA loaded at known, different amounts (dilution series).",
+        "inspect_gel lists standard_series_candidates: same band position, similar size, intensity changes.",
+        "ASK the user: 'Are lanes X-Y standards? What amount is in each lane?' Never guess amounts.",
+        "Run densitometry first (auto_analyze_gel), then "
+        "quantify_with_standards(standards=[{lane: 2, quantity: 50}, {lane: 3, quantity: 100}, ...], unit='ng').",
+        "Use model='Power (Log-Log)' if R2 < 0.95 with 'Linear' (slightly saturating standards).",
+        "Sample amounts outside the standards' range are flagged: report them as estimates.",
+    ],
+    "combine": [
+        "Open the gel first (open_image), finish its labels.",
+        "combine_images(path=<blot file>, placement='below') puts the blot under the gel at the gel's "
+        "width, adding the bottom padding automatically; placement='right' puts it side by side at the "
+        "gel's height. gap sets the white space in px.",
+        "band_polarity='auto' shows the blot with dark bands on light, like the gel.",
+        "rasterize=true merges it into one image (needed before analysing the blot itself).",
+        "Add labels for the blot with add_text / add_shape (coordinates from the result's position).",
+    ],
+}
 
 _XY = {"type": "number"}
 
 TOOLS = [
+    # ------------------------------------------------------------------ smart gel tools
+    {
+        "name": "inspect_gel",
+        "description": "START HERE for any gel or blot. Reads the image like an expert: band "
+                       "polarity (dark or light bands, i.e. whether inversion is needed), lanes "
+                       "with their x-ranges, real bands per lane (noise removed), which lane is the "
+                       "MW ladder, empty lanes, and possible standard (dilution) series. Returns "
+                       "advice, questions_for_user (ASK them) and next_steps. Read-only.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "gel_type": {"type": "string", "enum": ["auto", "protein", "dna", "rna", "western"],
+                             "default": "auto"},
+                "expected_lanes": {"type": "integer", "minimum": 2,
+                                   "description": "ONLY if the user said how many lanes. Otherwise omit."},
+            },        },
+        "readOnly": True,
+    },
+    {
+        "name": "fix_band_polarity",
+        "description": "Make the image show BLACK bands on WHITE lanes, as densitometry requires. "
+                       "mode='auto' inverts only if the bands are currently light on dark (DNA/RNA "
+                       "gels, stain-free, fluorescence, raw chemiluminescence); 'check' only reports; "
+                       "'invert' always toggles.",
+        "inputSchema": {"type": "object", "properties": {
+            "mode": {"type": "string", "enum": ["auto", "check", "invert"], "default": "auto"}}},
+    },
+    {
+        "name": "label_mw_ladder",
+        "description": "Label the molecular-weight ladder with the app's Auto Lane analysis: finds "
+                       "the ladder bands in one lane and places the preset's MW values beside them "
+                       "(top to bottom), then adds padding so labels fit. Fixes polarity first and "
+                       "removes noise peaks; if the band count differs from the preset it retries / "
+                       "warns. Usually only lane (from inspect_gel) and preset are needed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "lane": {"type": "integer", "minimum": 1,
+                         "description": "Ladder lane number from inspect_gel (default: detected ladder)."},
+                "x0": _XY, "x1": _XY,
+                "y0": _XY, "y1": _XY,
+                "side": {"type": "string", "enum": ["auto", "left", "right"], "default": "auto",
+                         "description": "Which side the labels go (auto = nearest edge)."},
+                "preset": {"type": "string", "description": "Ladder preset name (see get_annotations "
+                           "marker_presets). Default: the current preset."},
+                "padding": {"type": "boolean", "default": True},
+                "review": {"type": "boolean", "default": False,
+                           "description": "Leave the band dialog open for checking before OK."},
+                "fix_polarity": {"type": "boolean", "default": True},
+            },
+        },
+    },
+    {
+        "name": "auto_analyze_gel",
+        "description": "Full analysis with the app's Auto Analyze Gel wizard (call with NO arguments unless the user gave values): detects lanes, labels "
+                       "lanes (top labels), places MW labels from the ladder lane(s), and (if "
+                       "densitometry=true) measures every band of every lane. Polarity is fixed first "
+                       "and noise peaks are removed, so only true bands are reported. Results open "
+                       "in the results window; numbers are returned.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "densitometry": {"type": "boolean", "default": True},
+                "ladder_lanes": {"type": "array", "items": {"type": "integer"},
+                                 "description": "Ladder lane numbers (inspect_gel numbering). Default: "
+                                                "auto-detected. [] = no ladder."},
+                "lane_labels": {"type": "array", "items": {"type": "string"},
+                                "description": "Top label for each lane, left to right."},
+                "label_lanes": {"type": "boolean", "default": True},
+                "preset": {"type": "string", "description": "Ladder preset name."},
+                "expected_lanes": {"type": "integer", "minimum": 1},
+                "lanes": {"type": "array", "items": {"type": "array", "items": {"type": "number"}},
+                          "description": "Optional explicit lanes [[x0,x1],...] in image px."},
+                "padding": {"type": "boolean", "default": True},
+                "min_snr": {"type": "number", "default": 5,
+                            "description": "Bands must be this many times above the lane noise."},
+                "min_relative_intensity": {"type": "number", "default": 0.01,
+                                           "description": "Sample bands below this fraction of the "
+                                                          "lane's strongest band are dropped."},
+                "remove_noise_bands": {"type": "boolean", "default": True},
+                "review": {"type": "boolean", "default": False},
+                "fix_polarity": {"type": "boolean", "default": True},
+            },
+        },
+    },
+    {
+        "name": "quantify_with_standards",
+        "description": "Quantify all bands against standards of known amount, after densitometry. "
+                       "standards = [{lane: <lane id from results>, quantity: <amount>}, ...] (>= 2 "
+                       "different amounts). Uses each standard lane's strongest band (band='total' "
+                       "for the whole lane, or a band number). Returns the curve (R²) and every "
+                       "lane's calculated amounts. ONLY use amounts the user gave you.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "standards": {"type": "array", "minItems": 2, "items": {
+                    "type": "object", "properties": {"lane": {"type": "integer"},
+                                                     "quantity": {"type": "number"}},
+                    "required": ["lane", "quantity"]}},
+                "unit": {"type": "string", "description": "e.g. ng, ug, pmol (for the report)."},
+                "model": {"type": "string", "enum": ["Linear", "Power (Log-Log)", "Polynomial (Deg 2)",
+                                                     "Polynomial (Deg 3)", "4-PL Sigmoidal"],
+                          "default": "Linear"},
+                "band": {"description": "'strongest' (default), 'total', or a band number (1 = top)."},
+                "replace": {"type": "boolean", "default": True,
+                            "description": "false = add to the existing standards."},
+            },
+            "required": ["standards"],
+        },
+    },
+    {
+        "name": "combine_images",
+        "description": "Put a second image (e.g. the western blot) next to the current one (e.g. the "
+                       "gel) in one figure: adds the needed padding and places it below / above / "
+                       "right / left, scaled to the same width (below/above) or height (left/right). "
+                       "Shows its bands dark on light automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "placement": {"type": "string", "enum": ["below", "above", "right", "left"],
+                              "default": "below"},
+                "gap": {"type": "integer", "minimum": 0, "default": 20},
+                "fit": {"type": "boolean", "default": True},
+                "scale_percent": {"type": "number", "minimum": 10, "maximum": 300},
+                "band_polarity": {"type": "string", "enum": ["auto", "as_is", "invert"],
+                                  "default": "auto"},
+                "rasterize": {"type": "boolean", "default": False},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "get_workflow_guide",
+        "description": "Step-by-step recipe for a task: overview, protein_gel, dna_gel, western_blot, "
+                       "densitometry, standards, combine.",
+        "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "enum": [
+            "overview", "protein_gel", "dna_gel", "western_blot", "densitometry", "standards",
+            "combine"]}}},
+        "readOnly": True,
+    },
     # ------------------------------------------------------------------ observe
     {
         "name": "get_status",
@@ -390,7 +636,7 @@ TOOLS = [
     },
     {
         "name": "place_markers",
-        "description": "Place standard MW markers by clicking with the real marker tool. side "
+        "description": "MANUAL placement (prefer label_mw_ladder). Place standard MW markers by clicking with the real marker tool. side "
                        "'left'/'right': positions are band y-values (one per ladder band, top to "
                        "bottom) and x is the ladder lane's x. side 'top': positions are lane "
                        "x-values and y is the label row. Labels come from the active preset / "
@@ -466,7 +712,7 @@ TOOLS = [
     },
     {
         "name": "analyze_lanes",
-        "description": "Run densitometry on the defined regions: as='sample' (Analyze as Sample(s)) "
+        "description": "Manual densitometry (prefer auto_analyze_gel). Run densitometry on the defined regions: as='sample' (Analyze as Sample(s)) "
                        "or as='standard' (Process Selected as Standard). This opens the interactive "
                        "densitometry dialog — check it with screenshot/list_controls, then press "
                        "its OK/Accept button with respond_to_dialog.",
