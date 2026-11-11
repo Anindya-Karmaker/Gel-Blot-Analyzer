@@ -2141,15 +2141,125 @@ class AIBridge(QObject):
                 raise ToolError("Invalid color '%s'." % a.get("color"))
             font = a.get("font") or win.custom_font_type_dropdown.currentText()
             size = int(a.get("font_size") or win.custom_font_size_spinbox.value())
-            win.save_state()
+            anchor = str(a.get("anchor") or "center").lower()
+            if anchor not in ("center", "left", "right"):
+                raise ToolError("anchor must be center, left or right.")
             win.custom_markers = getattr(win, "custom_markers", [])
-            win.custom_markers.append([float(a["x"]), float(a["y"]), str(a["text"]), col, font, size,
-                                       bool(a.get("bold")), bool(a.get("italic"))])
+            rec = [float(a["x"]), float(a["y"]), str(a["text"]), col, font, size,
+                   bool(a.get("bold")), bool(a.get("italic"))]
+            if anchor != "center":
+                rec.append(anchor)      # the 9th element exists only for left/right anchors
+            win.custom_markers.append(rec)
+            win.save_state()            # AFTER the change (undo restores the entry below)
             win.is_modified = True
             win.update_live_view()
             self._point_at(a["x"], a["y"])
-            return {"index": len(win.custom_markers) - 1, "font": font, "font_size": size}
+            return {"index": len(win.custom_markers) - 1, "font": font, "font_size": size,
+                    "anchor": anchor}
         return self._with_status(self.action(run, "add_text"))
+
+    def t_add_table(self, a):
+        def run():
+            win = self.win
+            if not win._has_image():
+                raise ToolError("No image is loaded.")
+            cells = a.get("cells")
+            if (not isinstance(cells, list) or not cells
+                    or not all(isinstance(r, list) for r in cells)):
+                raise ToolError("cells must be a list of rows, each a list of strings, "
+                                "e.g. [[\"IL-2\", \"-\", \"+\"], [\"AAT\", \"+\", \"-\"]].")
+            if len(cells) > 60 or max(len(r) for r in cells) > 60:
+                raise ToolError("A table can have at most 60 rows and 60 columns.")
+            cells = [["" if c is None else str(c) for c in r] for r in cells]
+            st = {"cells": cells}
+            for key, typ in (("font", str), ("font_size", int),
+                             ("thickness", float), ("first_lane", int), ("auto_pad", bool)):
+                if a.get(key) is not None:
+                    st[key] = typ(a[key])
+            nr = len(cells); nc = max(len(r) for r in cells)
+
+            def _idx(key, n):
+                v = a.get(key) or []
+                if not isinstance(v, list):
+                    raise ToolError("%s must be a list of 1-based numbers." % key)
+                return {int(x) - 1 for x in v if 1 <= int(x) <= n}
+            b_rows, b_cols = _idx("bold_rows", nr), _idx("bold_columns", nc)
+            u_rows, i_rows = _idx("underline_rows", nr), _idx("italic_rows", nr)
+            if a.get("bold_first_row"):
+                b_rows.add(0)
+            if a.get("bold_first_col"):
+                b_cols.add(0)
+            st["fmt"] = [[("b" if (a.get("bold") or r in b_rows or c in b_cols) else "")
+                          + ("i" if (a.get("italic") or r in i_rows) else "")
+                          + ("u" if r in u_rows else "")
+                          for c in range(nc)] for r in range(nr)]
+            spans = []
+            for m in (a.get("merge") or []):
+                try:
+                    spans.append([int(m["row"]) - 1, int(m["col"]) - 1,
+                                  int(m.get("rowspan", 1)), int(m.get("colspan", 1))])
+                except Exception:
+                    raise ToolError("Each merge entry needs row and col (1-based) plus rowspan and/or "
+                                    "colspan, e.g. {\"row\": 1, \"col\": 2, \"colspan\": 3}.")
+            if spans:
+                st["spans"] = spans
+            for key, dst in (("color", "text_color"), ("line_color", "color")):
+                if a.get(key):
+                    c = QColor(str(a[key]))
+                    if not c.isValid():
+                        raise ToolError("Invalid %s '%s'." % (key, a[key]))
+                    st[dst] = c.name()
+            if a.get("align") is not None:
+                if a["align"] not in ("left", "center", "right"):
+                    raise ToolError("align must be left, center or right.")
+                st["align"] = a["align"]
+            if a.get("outline") is not None:
+                st["border"] = bool(a["outline"])
+            if a.get("inner_lines") is not None:
+                st["grid"] = bool(a["inner_lines"])
+            if a.get("first_column_is_labels") is not None:
+                st["label_col"] = bool(a["first_column_is_labels"])
+            n_lanes = len(getattr(win, "top_markers", []) or [])
+            mode = a.get("column_widths_mode")
+            if mode is None:
+                mode = "lanes" if n_lanes >= 2 else "fit"
+            if mode not in ("fit", "equal", "lanes"):
+                raise ToolError("column_widths_mode must be fit, equal or lanes.")
+            note = None
+            if mode == "lanes" and n_lanes < 2:
+                mode = "fit"
+                note = ("No top (lane) labels are placed, so the columns fit their text instead of "
+                        "snapping to lanes. Place top labels first (place_markers side='top', or "
+                        "auto_analyze_gel) to line the table up with the lanes.")
+            st["width_mode"] = mode
+
+            def _sizes(key):
+                v = a.get(key)
+                if v is None:
+                    return None
+                if not isinstance(v, list):
+                    raise ToolError("%s must be a list of numbers (null = automatic)." % key)
+                return [None if x is None else float(x) for x in v]
+            cw, rh = _sizes("column_widths"), _sizes("row_heights")
+            if cw is not None:
+                st["col_w"] = cw
+            if rh is not None:
+                st["row_h"] = rh
+            origin = None
+            if a.get("x") is not None or a.get("y") is not None:
+                origin = (a.get("x"), a.get("y"))
+            info = win.add_table_from_settings(st, convert=bool(a.get("convert_to_items")),
+                                               origin=origin)
+            if note:
+                info["note"] = note
+            try:
+                r = info.get("rect") or {}
+                self._point_at(r.get("x", 0) + r.get("width", 0) / 2.0,
+                               r.get("y", 0) + r.get("height", 0) / 2.0)
+            except Exception:
+                pass
+            return info
+        return self._with_status(self.action(run, "add_table"))
 
     def t_add_shape(self, a):
         typ = a.get("type")
@@ -2821,6 +2931,10 @@ class AIBridge(QObject):
             ladders = list(insp["ladder_lanes"])
         dens = bool(a.get("densitometry", True))
         labels = a.get("lane_labels")
+        # label_lanes=False means "keep the lane names the user already has". A detected
+        # ladder still needs the wizard's Labels & MWM page (to mark the ladder lane and
+        # place MW labels), so that page may run — but it must not rename the lanes.
+        rename_lanes = bool(a.get("label_lanes", True)) or bool(labels)
         markers = bool(a.get("label_lanes", True)) or bool(ladders)
         explicit = a.get("lanes")
         if explicit:
@@ -2913,9 +3027,19 @@ class AIBridge(QObject):
                             QTimer.singleShot(0, wz._p2_go_next)     # runs the analysis (blocks)
                             return
                         wz._p2_go_next()                              # → Labels & MWM page
+                        # The page is seeded from the app's current top labels; ticking an
+                        # MWM box rewrites its edit ("MWM" / "L#"), so remember the seeds.
+                        seeded = [e.text() for e in wz._lane_label_edits]
                         k = 0
                         for i, chk in enumerate(wz._mwm_checkboxes):
                             chk.setChecked(i in lad_idx)
+                        if not rename_lanes:
+                            for edt, txt in zip(wz._lane_label_edits, seeded):
+                                edt.setText(txt)
+                            rep["lane_labels"] = [e.text() for e in wz._lane_label_edits]
+                            rep["lane_labels_kept"] = True
+                            QTimer.singleShot(self.step_delay() + 250, wz._p3_go_next)
+                            return
                         for i, edt in enumerate(wz._lane_label_edits):
                             if labels and i < len(labels) and str(labels[i]).strip():
                                 edt.setText(str(labels[i]))

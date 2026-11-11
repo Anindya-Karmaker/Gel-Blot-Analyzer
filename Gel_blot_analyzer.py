@@ -57,7 +57,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.8.1"
+APP_VERSION = "9.8.2"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -919,7 +919,7 @@ if __name__ == "__main__":
         import io
         _splash("Loading user interface components...", 35)
         from PySide6.QtWidgets import (
-            QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle, QRadioButton, QButtonGroup,
+            QSpacerItem, QDialogButtonBox,QTableWidget, QTableWidgetItem,QToolBar,QStyle, QRadioButton, QButtonGroup, QBoxLayout,
             QScrollArea, QInputDialog, QFrame, QApplication, QSizePolicy,
             QMainWindow, QTabWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
@@ -2111,6 +2111,19 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
+        def _clone_shape_dict(shape):
+            """Independent copy of one custom-shape dict (a table shape carries a nested
+            'table' spec, which a plain dict() copy would still share)."""
+            d = dict(shape)
+            t = d.get('table')
+            if isinstance(t, dict):
+                t = dict(t)
+                for k, v in list(t.items()):
+                    if isinstance(v, list):
+                        t[k] = [list(x) if isinstance(x, list) else x for x in v]
+                d['table'] = t
+            return d
+
         class ManagedDialog(QDialog):
             """QDialog that releases itself (and its matplotlib figures) once closed.
 
@@ -3287,14 +3300,16 @@ if __name__ == "__main__":
         
                 # Rebuild the working `self.markers` list from the pristine `_original_markers_data`
                 for i, original_marker_tuple in enumerate(self._original_markers_data):
-                    orig_x, orig_y, text, qcolor, font_family, orig_font_size, is_bold, is_italic = original_marker_tuple
+                    orig_x, orig_y, text, qcolor, font_family, orig_font_size, is_bold, is_italic = original_marker_tuple[:8]
                     
                     final_x = (orig_x * rel_x_scale_factor) + abs_x_shift_pixels
                     final_y = (orig_y * rel_y_scale_factor) + abs_y_shift_pixels
                     final_font_size = max(1, int(round(orig_font_size * font_size_scale_factor)))
                     
                     # Rebuild the entire marker entry to ensure all properties are preserved
-                    self.markers[i] = [final_x, final_y, text, qcolor, font_family, final_font_size, is_bold, is_italic]
+                    # (elements past the 8th -- the optional text anchor -- are carried over)
+                    self.markers[i] = ([final_x, final_y, text, qcolor, font_family, final_font_size, is_bold, is_italic]
+                                       + list(original_marker_tuple[8:]))
 
                 # Rebuild the working `self.shapes` list from the pristine `_original_shapes_data`,
                 # applying the same Shift/Scale, and scaling thickness by the Font Scale slider.
@@ -3334,7 +3349,7 @@ if __name__ == "__main__":
 
                 # --- Populate Markers (Unchanged) ---
                 for i, marker_data in enumerate(self.markers):
-                    x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data
+                    x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_data[:8]
                     
                     type_item = QTableWidgetItem("Marker")
                     type_item.setData(Qt.UserRole, {'type': 'marker', 'original_index': i})
@@ -10749,6 +10764,9 @@ if __name__ == "__main__":
         class LiveViewLabel(QLabel):
             mouseMovedInLabel = Signal(QPointF, QPointF, bool)
             CORNER_HANDLE_BASE_RADIUS = 6.0
+            # Handles of a selected custom marker / shape (Move/Resize). Smaller than the
+            # lane-region handles so items placed close together stay individually reachable.
+            ITEM_HANDLE_RADIUS = 4.0
             # Zoom range. Below 1.0 the whole image shrinks inside the viewer, leaving empty
             # space around it to annotate (e.g. custom markers/shapes above the gel).
             MIN_ZOOM = 0.1
@@ -11311,15 +11329,15 @@ if __name__ == "__main__":
                 if self.app_instance and self.app_instance.moving_custom_item_info:
                     # (This block remains unchanged)
                     info = self.app_instance.moving_custom_item_info; is_resizing = self.app_instance.current_selection_mode == "resizing_custom_item"
-                    selection_pen = QPen(Qt.magenta, max(0.5, 2.0 / self.zoom_level), Qt.DotLine); handle_pen = QPen(Qt.red, max(0.5, 2.0 / self.zoom_level))
-                    handle_brush = QBrush(Qt.red); handle_radius = self.CORNER_HANDLE_BASE_RADIUS / self.zoom_level if self.zoom_level > 0 else self.CORNER_HANDLE_BASE_RADIUS
+                    selection_pen = QPen(Qt.magenta, max(0.5, 1.5 / self.zoom_level), Qt.DotLine); handle_pen = QPen(Qt.red, max(0.5, 1.0 / self.zoom_level))
+                    handle_brush = QBrush(Qt.red); handle_radius = self.ITEM_HANDLE_RADIUS / self.zoom_level if self.zoom_level > 0 else self.ITEM_HANDLE_RADIUS
                     selection_shape = None
                     if info['type'] == 'marker': selection_shape = self.app_instance._get_marker_bounding_box_in_label_space(info['index'])
                     elif info['type'] in ['left_marker', 'right_marker', 'top_marker']: selection_shape = self.app_instance._get_standard_marker_bounding_box_in_label_space(info['type'], info['index'])
                     elif info['type'] == 'shape':
                         body_ls, handles_ls = self.app_instance._get_shape_bounding_box_and_handles_in_label_space(info['index'])
                         if body_ls:
-                            painter.setPen(selection_pen); painter.drawRect(body_ls.adjusted(-2,-2,2,2)); painter.setPen(handle_pen); painter.setBrush(handle_brush)
+                            painter.setPen(selection_pen); painter.drawRect(body_ls.adjusted(-1,-1,1,1)); painter.setPen(handle_pen); painter.setBrush(handle_brush)
                             for idx, handle_pt in enumerate(handles_ls or []):
                                 if is_resizing and idx == self.app_instance.resizing_corner_index: painter.drawEllipse(handle_pt, handle_radius * 1.2, handle_radius * 1.2)
                                 else: painter.drawEllipse(handle_pt, handle_radius, handle_radius)
@@ -11345,7 +11363,7 @@ if __name__ == "__main__":
                 if self.app_instance and len(getattr(self.app_instance, 'multi_selected_items', []) or []) > 1:
                     app = self.app_instance
                     prim = app.moving_custom_item_info or {}
-                    group_pen = QPen(Qt.magenta, max(0.5, 2.0 / self.zoom_level), Qt.DotLine)
+                    group_pen = QPen(Qt.magenta, max(0.5, 1.5 / self.zoom_level), Qt.DotLine)
                     painter.save(); painter.setPen(group_pen); painter.setBrush(Qt.NoBrush)
                     for it in app._move_resize_selection():
                         if it.get('type') == prim.get('type') and it.get('index') == prim.get('index'):
@@ -11354,12 +11372,59 @@ if __name__ == "__main__":
                             shp = app._get_marker_bounding_box_in_label_space(it['index'])
                         elif it['type'] == 'shape':
                             shp, _h = app._get_shape_bounding_box_and_handles_in_label_space(it['index'])
-                            shp = shp.adjusted(-2, -2, 2, 2) if shp is not None else None
+                            shp = shp.adjusted(-1, -1, 1, 1) if shp is not None else None
                         else:
                             shp = app._get_standard_marker_bounding_box_in_label_space(it['type'], it['index'])
                         if isinstance(shp, QPolygonF): painter.drawPolygon(shp)
                         elif isinstance(shp, QRectF): painter.drawRect(shp)
                     painter.restore()
+
+                # --- Table editor preview: the canvas as it will be once the top padding the
+                # new table needs has been added (dashed), so the preview shows the real result.
+                try:
+                    cpr = getattr(self.app_instance, '_canvas_preview_rect', None) if self.app_instance else None
+                    if cpr and _image_to_label_space_valid:
+                        _zc = self.zoom_level if self.zoom_level > 0 else 1.0
+                        a = _app_image_coords_to_unzoomed_label_space((cpr[0], cpr[1]))
+                        b = _app_image_coords_to_unzoomed_label_space((cpr[0] + cpr[2], cpr[1] + cpr[3]))
+                        painter.save()
+                        painter.setPen(QPen(QColor(255, 0, 255), max(0.5, 1.5 / _zc), Qt.DashLine))
+                        painter.setBrush(Qt.NoBrush)
+                        painter.drawRect(QRectF(a, b))
+                        painter.restore()
+                except Exception:
+                    log_traceback()
+
+                # --- Selection rectangle (marquee) and smart alignment guides ---
+                if self.app_instance and self.app_instance.current_selection_mode in (
+                        "select_custom_item", "dragging_custom_item"):
+                    try:
+                        app = self.app_instance
+                        _z = self.zoom_level if self.zoom_level > 0 else 1.0
+                        mq_rect = app._marquee_rect_ls() if getattr(app, '_marquee', None) else None
+                        if mq_rect is not None and (mq_rect.width() > 0 or mq_rect.height() > 0):
+                            painter.save()
+                            painter.setPen(QPen(QColor(30, 120, 220), max(0.5, 1.0 / _z), Qt.DashLine))
+                            painter.setBrush(QColor(30, 120, 220, 40))
+                            painter.drawRect(mq_rect)
+                            painter.restore()
+                        guides = getattr(app, '_smart_guides', None)
+                        if guides and _image_to_label_space_valid:
+                            painter.save()
+                            painter.setPen(QPen(QColor(255, 120, 0), max(0.5, 1.0 / _z), Qt.DashLine))
+                            ext = 6.0 / _z
+                            for g in guides:
+                                if g[0] == 'v':
+                                    a = _app_image_coords_to_unzoomed_label_space((g[1], g[2]))
+                                    b = _app_image_coords_to_unzoomed_label_space((g[1], g[3]))
+                                    painter.drawLine(QPointF(a.x(), a.y() - ext), QPointF(b.x(), b.y() + ext))
+                                else:
+                                    a = _app_image_coords_to_unzoomed_label_space((g[2], g[1]))
+                                    b = _app_image_coords_to_unzoomed_label_space((g[3], g[1]))
+                                    painter.drawLine(QPointF(a.x() - ext, a.y()), QPointF(b.x() + ext, b.y()))
+                            painter.restore()
+                    except Exception:
+                        log_traceback()
 
                 # --- Crop and Custom Shape Drawing Previews ---
                 preview_pen_crop = QPen(Qt.red); effective_pen_width_crop = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 0.5); preview_pen_crop.setWidthF(effective_pen_width_crop)
@@ -15272,14 +15337,21 @@ if __name__ == "__main__":
             # Run Full Analysis
             # ─────────────────────────────────────────────────────────
             def _collect_lane_labels(self):
-                """Return list of label strings, one per lane."""
+                """Return list of label strings, one per lane.
+
+                Lanes without a Labels-page entry (e.g. the page was skipped because
+                "Place Molecular Weight Markers" was off) keep the main window's existing
+                top label for that lane instead of being renamed to L1, L2..."""
+                app_labels = [str(x).strip() for x in
+                              (getattr(self.parent_app, 'top_label', []) or [])]
                 labels = []
                 for i in range(len(self._lane_bounds)):
+                    txt = ""
                     if i < len(self._lane_label_edits):
                         txt = self._lane_label_edits[i].text().strip()
-                        labels.append(txt if txt else f"L{i+1}")
-                    else:
-                        labels.append(f"L{i+1}")
+                    elif i < len(app_labels):
+                        txt = app_labels[i]
+                    labels.append(txt if txt else f"L{i+1}")
                 return labels
 
             def _mwm_lane_indices(self):
@@ -16144,6 +16216,598 @@ if __name__ == "__main__":
                             QTableWidgetItem(f"{qty:.2f}" if qty is not None else "—"))
 
                 self._table.resizeColumnsToContents()
+
+        class TableEditorDialog(ManagedDialog):
+            """Editor for an on-image table: a grid of cells you type or paste into, with
+            font, alignment, line and column-width options. It only collects settings
+            (settings()); the main window builds the table from them and previews it on the
+            image through the `_live_preview` hook it installs."""
+
+            WIDTH_MODES = (("Fit the text", 'fit'),
+                           ("Equal widths", 'equal'),
+                           ("Snap to lanes (top labels)", 'lanes'),
+                           ("Keep current size", 'keep'))
+
+            def __init__(self, app, settings, is_new, parent=None):
+                super().__init__(parent)
+                self.app = app
+                self.is_new = bool(is_new)
+                self.convert_requested = False
+                self._live_preview = lambda *_a: None
+                self._loading = True
+                self.setWindowTitle("Insert Table" if is_new else "Edit Table")
+                apply_dialog_geometry(self, "table_editor", 900, 760, min_w=560, min_h=440)
+                st = dict(settings)
+                live = self._changed
+                root = QVBoxLayout(self)
+
+                # --- size + paste row ---
+                top = _FlowLayout(None, 8, 6)
+                self.rows_spin = QSpinBox(); self.rows_spin.setRange(1, 60)
+                self.rows_spin.setToolTip("Number of rows. Cells keep their text when the table grows or shrinks.")
+                self.cols_spin = QSpinBox(); self.cols_spin.setRange(1, 60)
+                self.cols_spin.setToolTip("Number of columns. For a lane table: one column per lane, "
+                                          "plus one for the row labels.")
+                self.paste_btn = QPushButton("Paste from Clipboard")
+                self.paste_btn.setToolTip(
+                    "Replace the whole grid with the cells on the clipboard — copy a block of "
+                    "cells in Excel (or tab- / comma-separated text) and press this.\n"
+                    "Ctrl+V inside the grid pastes at the selected cell instead.")
+                self.clear_btn = QPushButton("Clear Cells")
+                self.clear_btn.setToolTip("Empty every cell (the table keeps its size).")
+                self.rows_spin.setPrefix("Rows: "); self.cols_spin.setPrefix("Columns: ")
+                # (a wrapping row: on a narrow dialog the buttons drop to a second line
+                # instead of being squeezed)
+                for w_ in (self.rows_spin, self.cols_spin, self.paste_btn, self.clear_btn):
+                    top.addWidget(w_)
+                root.addLayout(top)
+
+                # --- cell tools: style + merge (act on the selected cells) ---
+                tools = QHBoxLayout()
+                tools.setSpacing(6)
+                self.style_btns = {}
+                for key, label, tip in (('b', "B", "Bold"), ('i', "I", "Italic"), ('u', "U", "Underline")):
+                    btn = QPushButton(label)
+                    btn.setCheckable(True)
+                    f = btn.font()
+                    f.setBold(key == 'b'); f.setItalic(key == 'i'); f.setUnderline(key == 'u')
+                    btn.setFont(f)
+                    side = max(28, QFontMetrics(f).height() + 12)
+                    btn.setFixedSize(side + 6, side)
+                    btn.setToolTip(f"{tip} — applies to the selected cells (select a whole row or column "
+                                   "by clicking its header; with nothing selected it applies to every cell).")
+                    btn.clicked.connect(lambda checked, k=key: self._apply_style(k, checked))
+                    self.style_btns[key] = btn
+                    tools.addWidget(btn)
+                self.merge_btn = QPushButton("Merge Cells")
+                self.merge_btn.setToolTip(
+                    "Merge the selected block of cells into one cell — for example a heading that "
+                    "spans several lanes. The merged cell shows the text of its top-left cell, "
+                    "centered across the block; the lines inside it are not drawn.")
+                self.merge_btn.clicked.connect(self._merge_selected)
+                self.unmerge_btn = QPushButton("Unmerge")
+                self.unmerge_btn.setToolTip("Split the selected merged cell(s) back into single cells.")
+                self.unmerge_btn.clicked.connect(self._unmerge_selected)
+                tools.addSpacing(12)
+                tools.addWidget(self.merge_btn); tools.addWidget(self.unmerge_btn)
+                tools.addSpacing(12)
+                _tl = QLabel("Select cells, then style or merge them.")
+                _tl.setStyleSheet("color: palette(mid);")
+                # never widens the dialog: it is simply cut short when there is no room
+                _tl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                tools.addWidget(_tl, 1)
+                root.addLayout(tools)
+
+                self.grid = QTableWidget()
+                self.grid.setToolTip("The table's cells — double-click (or just type) to edit one. "
+                                     "Empty cells stay empty on the image.")
+                self.grid.setMinimumHeight(110)
+                self.grid.horizontalHeader().setDefaultSectionSize(70)
+                self.grid.itemSelectionChanged.connect(self._sync_style_buttons)
+                root.addWidget(self.grid, 3)
+                self._paste_shortcut = QShortcut(QKeySequence(QKeySequence.Paste), self.grid)
+                self._paste_shortcut.setContext(Qt.WidgetShortcut)
+                self._paste_shortcut.activated.connect(lambda: self.paste_clipboard(at_current=True))
+
+                # --- options: two groups, side by side (stacked on a screen too narrow) ---
+                # Every form row holds ONE control (or two small ones) and the dialog's
+                # minimum size is left to the layout -- so nothing can overlap or be cut at
+                # any UI scale or font. (Rows are NOT allowed to wrap: a wrapped row needs
+                # more height than the layout's minimum accounts for, and rows then overlap.)
+                def _form(group):
+                    f = QFormLayout(group)
+                    f.setRowWrapPolicy(QFormLayout.DontWrapRows)
+                    f.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+                    f.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    return f
+
+                def _pair(*widgets):
+                    h = QHBoxLayout(); h.setContentsMargins(0, 0, 0, 0)
+                    for w_ in widgets:
+                        h.addWidget(w_)
+                    h.addStretch(1)
+                    return h
+                opts = QBoxLayout(QBoxLayout.LeftToRight)
+                self._opts_layout = opts
+                # --- text + lines ---
+                text_group = QGroupBox("Text and Lines")
+                tf = _form(text_group)
+                self.font_box = QFontComboBox(); self.font_box.setCurrentFont(QFont(str(st.get('font', 'Arial'))))
+                self.font_box.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                self.font_box.setMinimumContentsLength(10)
+                self.font_box.setToolTip("Font family of every cell.")
+                self.size_spin = QSpinBox(); self.size_spin.setRange(1, 150); self.size_spin.setValue(int(st.get('font_size', 12)))
+                self.size_spin.setToolTip("Font size in points — the same scale as custom markers.")
+                self.text_color_btn, self._get_text_color = app._color_button(
+                    self, QColor(st.get('text_color', '#000000')), "Table Text Color",
+                    "Color of the cell text.", live)
+                self.align_box = QComboBox()
+                for lbl, key in (("Center", 'center'), ("Left", 'left'), ("Right", 'right')):
+                    self.align_box.addItem(lbl, key)
+                self.align_box.setCurrentIndex(max(0, self.align_box.findData(st.get('align', 'center'))))
+                self.align_box.setToolTip("How the text sits in its cell.")
+                self.border_cb = QCheckBox("Outline"); self.border_cb.setChecked(bool(st.get('border', True)))
+                self.border_cb.setToolTip("Draw the rectangle around the whole table.")
+                self.grid_cb = QCheckBox("Inner lines"); self.grid_cb.setChecked(bool(st.get('grid', True)))
+                self.grid_cb.setToolTip("Draw the lines between the rows and columns.")
+                self.thick_spin = QDoubleSpinBox(); self.thick_spin.setDecimals(1); self.thick_spin.setRange(0.5, 50.0)
+                self.thick_spin.setSingleStep(0.5); self.thick_spin.setSuffix(" px")
+                self.thick_spin.setValue(float(st.get('thickness', 1.0)))
+                self.thick_spin.setToolTip("Thickness of the outline and inner lines, in image pixels.")
+                self.line_color_btn, self._get_line_color = app._color_button(
+                    self, QColor(st.get('color', '#000000')), "Table Line Color",
+                    "Color of the outline and inner lines.", live)
+                self.pad_spin = QSpinBox(); self.pad_spin.setRange(0, 300); self.pad_spin.setSuffix(" %")
+                self.pad_spin.setValue(int(round(float(st.get('pad_pct', 35)))))
+                self.pad_spin.setToolTip("Space left and right of the text in a cell, as a percentage of the text height.")
+                self.rowh_spin = QSpinBox(); self.rowh_spin.setRange(60, 600); self.rowh_spin.setSuffix(" %")
+                self.rowh_spin.setValue(int(round(float(st.get('row_h_pct', 130)))))
+                self.rowh_spin.setToolTip("Row height as a percentage of the text height.")
+                tf.addRow("Font:", self.font_box)
+                tf.addRow("Size:", _pair(self.size_spin))
+                tf.addRow("Text color:", _pair(self.text_color_btn))
+                tf.addRow("Alignment:", _pair(self.align_box))
+                tf.addRow("Draw:", _pair(self.border_cb, self.grid_cb))
+                tf.addRow("Line width:", _pair(self.thick_spin))
+                tf.addRow("Line color:", _pair(self.line_color_btn))
+                tf.addRow("Cell padding:", _pair(self.pad_spin))
+                tf.addRow("Row height:", _pair(self.rowh_spin))
+                opts.addWidget(text_group, 1)
+
+                # --- size + position ---
+                line_group = QGroupBox("Size and Position")
+                lf = _form(line_group)
+                self.width_box = QComboBox()
+                for lbl, key in self.WIDTH_MODES:
+                    if key == 'keep' and is_new:
+                        continue
+                    self.width_box.addItem(lbl, key)
+                self.width_box.setCurrentIndex(max(0, self.width_box.findData(st.get('width_mode', 'fit'))))
+                self.width_box.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                self.width_box.setMinimumContentsLength(12)
+                self.width_box.setToolTip(
+                    "How wide the columns are.\n• Fit the text — each column as wide as its "
+                    "longest cell.\n• Equal widths — all as wide as the widest.\n• Snap to lanes — "
+                    "each column is centered on a lane (the positions of the top labels), so the "
+                    "table lines up with the gel.\n• Keep current size — leave the size you "
+                    "dragged it to on the image.")
+                self.label_col_cb = QCheckBox("First column holds row labels")
+                self.label_col_cb.setChecked(bool(st.get('label_col', True)))
+                self.label_col_cb.setToolTip("Snap to lanes: the first column is not a lane — it sits to "
+                                             "the left of the first lane column and fits its text.")
+                self.first_lane_spin = QSpinBox(); self.first_lane_spin.setRange(1, 99)
+                self.first_lane_spin.setValue(max(1, int(st.get('first_lane', 1))))
+                self.first_lane_spin.setToolTip("Snap to lanes: which lane (top label, counted from the "
+                                                "left) the first lane column belongs to — use 2 to skip "
+                                                "a ladder in lane 1.")
+                _size_tip = (
+                    "Set sizes by hand, in image pixels. Leave it empty for automatic sizes.\n"
+                    "• A list sets them in order — blank = automatic:  150, , , 90\n"
+                    "• Or name the ones you want:  first: 150   last: 90   3: 120   all: 80\n"
+                    "  (first / last / a number counted from 1 / all; separate with commas).\n"
+                    "“Show Current Sizes” fills in the sizes the table has right now so you can edit them.\n"
+                    "On the image you can also drag a line of the selected table.")
+                self.col_w_edit = QLineEdit(); self.col_w_edit.setPlaceholderText("automatic")
+                self.col_w_edit.setToolTip("Column widths. " + _size_tip)
+                self.row_h_edit = QLineEdit(); self.row_h_edit.setPlaceholderText("automatic")
+                self.row_h_edit.setToolTip("Row heights. " + _size_tip)
+                self.show_sizes_btn = QPushButton("Show Current Sizes")
+                self.show_sizes_btn.setToolTip("Fill both boxes with the table's current column widths and "
+                                               "row heights (image pixels), ready to edit.")
+                self.show_sizes_btn.clicked.connect(self._fill_current_sizes)
+                self._current_sizes = ([], [])
+                self.dx_spin = QSpinBox(); self.dy_spin = QSpinBox()
+                for sp_, tip_ in ((self.dx_spin, "Move the table right (negative = left), in image pixels."),
+                                  (self.dy_spin, "Move the table down (negative = up), in image pixels — for "
+                                                 "example to change the gap between the table and the lane labels.")):
+                    sp_.setRange(-20000, 20000); sp_.setSingleStep(5); sp_.setSuffix(" px"); sp_.setValue(0)
+                    sp_.setToolTip(tip_ + "\nThe preview on the image shows exactly where it will be. "
+                                          "You can also simply drag the table after inserting it.")
+                lf.addRow("Column widths:", self.width_box)
+                lf.addRow(self.label_col_cb)
+                lf.addRow("First lane:", _pair(self.first_lane_spin))
+                lf.addRow("Widths (px):", self.col_w_edit)
+                lf.addRow("Heights (px):", self.row_h_edit)
+                lf.addRow(_pair(self.show_sizes_btn))
+                lf.addRow("Move right:", _pair(self.dx_spin))
+                lf.addRow("Move down:", _pair(self.dy_spin))
+                opts.addWidget(line_group, 1)
+                self._opt_groups = (text_group, line_group)
+                root.addLayout(opts)
+
+                self.lane_note = QLabel("")
+                self.lane_note.setWordWrap(True)
+                self.lane_note.setStyleSheet("color: palette(mid);")
+                root.addWidget(self.lane_note)
+                self.auto_pad_cb = QCheckBox("Add top padding if the table does not fit above the labels")
+                self.auto_pad_cb.setChecked(bool(st.get('auto_pad', True)))
+                self.auto_pad_cb.setToolTip(
+                    "A new table is placed above the top labels. When the image has no room "
+                    "there, the top padding is extended by what is missing as the table is "
+                    "inserted (one Ctrl+Z undoes both). Un-tick to keep the canvas as it is — "
+                    "the table then starts at the top edge, over the labels.")
+                self.auto_pad_cb.setVisible(self.is_new)
+                self._room_need = 0
+                root.addWidget(self.auto_pad_cb)
+
+                brow = _FlowLayout(None, 8, 6)
+                self.convert_btn = QPushButton("Convert to Markers and Shapes")
+                self.convert_btn.setToolTip(
+                    "Finish the table as separate items: every cell becomes a custom marker and "
+                    "every line a line / rectangle shape, so each can be moved, restyled or deleted "
+                    "on its own in Move/Resize. This cannot be turned back into a table (Ctrl+Z "
+                    "undoes it).")
+                self.convert_btn.clicked.connect(self._convert)
+                self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                self.buttons.button(QDialogButtonBox.Ok).setText("Insert" if is_new else "OK")
+                self.buttons.button(QDialogButtonBox.Ok).setToolTip(
+                    "Put the table on the image (undoable with Ctrl+Z). Then drag it into place.")
+                self.buttons.button(QDialogButtonBox.Cancel).setToolTip("Discard and leave the image as it was.")
+                self.buttons.accepted.connect(self.accept); self.buttons.rejected.connect(self.reject)
+                brow.addWidget(self.convert_btn); brow.addWidget(self.buttons)
+                root.addLayout(brow)
+
+                # --- fill + wire ---
+                cells = [list(map(str, r)) for r in (st.get('cells') or [[""]])]
+                _nr0 = max(1, len(cells)); _nc0 = max(1, max((len(r) for r in cells), default=1))
+                self._set_cells(cells, app._table_norm_fmt(st, _nr0, _nc0),
+                                app._table_norm_spans(st.get('spans'), _nr0, _nc0))
+                self.rows_spin.valueChanged.connect(self._resize_grid)
+                self.cols_spin.valueChanged.connect(self._resize_grid)
+                self.grid.itemChanged.connect(live)
+                self.paste_btn.clicked.connect(lambda *_a: self.paste_clipboard(at_current=False))
+                self.clear_btn.clicked.connect(self._clear_cells)
+                for sig in (self.font_box.currentFontChanged, self.size_spin.valueChanged,
+                            self.align_box.currentIndexChanged,
+                            self.border_cb.toggled, self.grid_cb.toggled,
+                            self.thick_spin.valueChanged, self.width_box.currentIndexChanged,
+                            self.label_col_cb.toggled, self.first_lane_spin.valueChanged,
+                            self.pad_spin.valueChanged, self.rowh_spin.valueChanged,
+                            self.auto_pad_cb.toggled, self.col_w_edit.textChanged,
+                            self.row_h_edit.textChanged, self.dx_spin.valueChanged,
+                            self.dy_spin.valueChanged):
+                    sig.connect(live)
+                self._loading = False
+                self._sync_enabled()
+                self._fit_to_screen()
+
+            def _fit_to_screen(self):
+                """Let the LAYOUT decide the dialog's minimum size (a fixed minimum smaller
+                than the contents is what allowed controls to overlap), stack the two option
+                groups when the screen is too narrow for them side by side, and make sure
+                the dialog opens at least as large as it needs."""
+                try:
+                    self.setMinimumSize(0, 0)          # hand the minimum back to the layout
+                    scr = self.screen() or QApplication.primaryScreen()
+                    avail = scr.availableGeometry() if scr is not None else None
+                    lay = self.layout()
+                    self._opts_layout.setDirection(QBoxLayout.LeftToRight)
+                    lay.invalidate()
+                    need = lay.minimumSize()
+                    if avail is not None and need.width() > avail.width() - 24:
+                        self._opts_layout.setDirection(QBoxLayout.TopToBottom)
+                        lay.invalidate()
+                        need = lay.minimumSize()
+                    w = max(self.width(), need.width()); h = max(self.height(), need.height())
+                    if avail is not None:
+                        w = min(w, avail.width()); h = min(h, avail.height())
+                    if w != self.width() or h != self.height():
+                        self.resize(w, h)
+                except Exception:
+                    log_traceback()
+
+            # -- helpers --
+            def _changed(self, *_a):
+                if self._loading:
+                    return
+                self._sync_enabled()
+                try:
+                    self._live_preview()
+                except Exception:
+                    log_traceback()
+
+            def _sync_enabled(self):
+                lanes_mode = (self.width_box.currentData() == 'lanes')
+                self.label_col_cb.setEnabled(lanes_mode)
+                self.first_lane_spin.setEnabled(lanes_mode)
+                n_lanes = len(getattr(self.app, 'top_markers', []) or [])
+                if lanes_mode and n_lanes < 2:
+                    self.lane_note.setText("Snap to lanes needs at least two top labels placed on the image "
+                                           "(Markers tab ▸ Place Top, or Auto Lane) — the columns fit the "
+                                           "text until then.")
+                elif lanes_mode:
+                    nd = self.cols_spin.value() - (1 if self.label_col_cb.isChecked() and self.cols_spin.value() >= 2 else 0)
+                    self.lane_note.setText(f"{nd} lane column(s) over lanes {self.first_lane_spin.value()}–"
+                                           f"{self.first_lane_spin.value() + nd - 1} of the {n_lanes} top labels.")
+                else:
+                    self.lane_note.setText("Changes preview live on the image. Cancel restores it.")
+
+            @staticmethod
+            def parse_sizes(text, n):
+                """Manual sizes from a text box -> list of n values (None = automatic).
+                Positional ('150, , 90') and named ('first: 150, last: 90, 3: 120, all: 80')
+                entries can be mixed; named ones win, 'all' is applied first."""
+                out = [None] * max(0, int(n))
+                named = []; pos = 0
+                for tok in str(text or "").replace(";", ",").split(","):
+                    tok = tok.strip()
+                    if ":" in tok or "=" in tok:
+                        k, _sep, v = tok.replace("=", ":").partition(":")
+                        named.append((k.strip().lower(), v.strip()))
+                        continue
+                    if tok and tok.lower() not in ("auto", "-"):
+                        try:
+                            if pos < len(out) and float(tok) > 0:
+                                out[pos] = float(tok)
+                        except ValueError:
+                            pass
+                    pos += 1
+                for want_all in (True, False):
+                    for k, v in named:
+                        try:
+                            val = float(v)
+                        except ValueError:
+                            continue
+                        if val <= 0 or not out:
+                            continue
+                        if k == 'all':
+                            if want_all:
+                                out = [val] * len(out)
+                        elif not want_all:
+                            idx = 0 if k == 'first' else (len(out) - 1 if k == 'last' else
+                                                          (int(k) - 1 if k.isdigit() else -1))
+                            if 0 <= idx < len(out):
+                                out[idx] = val
+                return out
+
+            def set_current_sizes(self, widths, heights):
+                """Told by the main window what the previewed table's sizes are (image px)."""
+                self._current_sizes = (list(widths), list(heights))
+
+            def _fill_current_sizes(self):
+                w, h = self._current_sizes
+                fmt = lambda vals: ", ".join(("%.1f" % v).rstrip("0").rstrip(".") for v in vals)
+                self._loading = True
+                try:
+                    self.col_w_edit.setText(fmt(w)); self.row_h_edit.setText(fmt(h))
+                finally:
+                    self._loading = False
+                self._changed()
+
+            def set_room_note(self, need_px):
+                """Told by the main window how much top padding the table needs (0 = fits)."""
+                self._room_need = int(need_px or 0)
+                if self._room_need > 0:
+                    self.auto_pad_cb.setText(
+                        f"Add {self._room_need} px of top padding so the table fits above the labels")
+                else:
+                    self.auto_pad_cb.setText("Add top padding if the table does not fit above the labels")
+
+            def cells(self):
+                out = []
+                for r in range(self.grid.rowCount()):
+                    row = []
+                    for c in range(self.grid.columnCount()):
+                        it = self.grid.item(r, c)
+                        row.append(it.text() if it is not None else "")
+                    out.append(row)
+                return out
+
+            def fmt(self):
+                """Per-cell style letters ('b', 'i', 'u'), read back from the grid's fonts."""
+                out = []
+                for r in range(self.grid.rowCount()):
+                    row = []
+                    for c in range(self.grid.columnCount()):
+                        it = self.grid.item(r, c)
+                        f = it.font() if it is not None else None
+                        row.append("" if f is None else (("b" if f.bold() else "") + ("i" if f.italic() else "")
+                                                         + ("u" if f.underline() else "")))
+                    out.append(row)
+                return out
+
+            def spans(self):
+                out = []
+                for r in range(self.grid.rowCount()):
+                    for c in range(self.grid.columnCount()):
+                        rs_, cs_ = self.grid.rowSpan(r, c), self.grid.columnSpan(r, c)
+                        if rs_ > 1 or cs_ > 1:
+                            if not any(a <= r < a + x and b <= c < b + y and (a, b) != (r, c) for a, b, x, y in out):
+                                out.append([r, c, rs_, cs_])
+                return out
+
+            def _selected_cells(self):
+                cells = sorted({(i.row(), i.column()) for i in self.grid.selectedIndexes()})
+                if not cells:
+                    cells = [(r, c) for r in range(self.grid.rowCount()) for c in range(self.grid.columnCount())]
+                return cells
+
+            def _apply_style(self, key, on):
+                self.grid.blockSignals(True)
+                try:
+                    for r, c in self._selected_cells():
+                        it = self.grid.item(r, c)
+                        if it is None:
+                            it = QTableWidgetItem(""); self.grid.setItem(r, c, it)
+                        f = it.font()
+                        if key == 'b': f.setBold(bool(on))
+                        elif key == 'i': f.setItalic(bool(on))
+                        else: f.setUnderline(bool(on))
+                        it.setFont(f)
+                finally:
+                    self.grid.blockSignals(False)
+                self._changed()
+
+            def _sync_style_buttons(self):
+                """B / I / U show the style of the selection (on = every selected cell has it)."""
+                try:
+                    idx = {(i.row(), i.column()) for i in self.grid.selectedIndexes()}
+                    fm_ = self.fmt()
+                    for key, btn in self.style_btns.items():
+                        on = bool(idx) and all(key in fm_[r][c] for r, c in idx)
+                        btn.blockSignals(True); btn.setChecked(on); btn.blockSignals(False)
+                except Exception:
+                    pass
+
+            def _merge_selected(self):
+                idx = [(i.row(), i.column()) for i in self.grid.selectedIndexes()]
+                if len(idx) < 2:
+                    self.lane_note.setText("Select two or more neighboring cells (drag across them), then click Merge Cells.")
+                    return
+                r0 = min(r for r, _c in idx); r1 = max(r for r, _c in idx)
+                c0 = min(c for _r, c in idx); c1 = max(c for _r, c in idx)
+                # grow the block to swallow any merged cell it touches
+                for a, b, x, y in self.spans():
+                    if a <= r1 and a + x - 1 >= r0 and b <= c1 and b + y - 1 >= c0:
+                        r0, r1 = min(r0, a), max(r1, a + x - 1)
+                        c0, c1 = min(c0, b), max(c1, b + y - 1)
+                keep = [sp for sp in self.spans()
+                        if not (sp[0] >= r0 and sp[0] <= r1 and sp[1] >= c0 and sp[1] <= c1)]
+                cells = self.cells()
+                # the merged cell keeps the first non-empty text of the block
+                first = next((cells[r][c] for r in range(r0, r1 + 1) for c in range(c0, c1 + 1)
+                              if cells[r][c].strip()), "")
+                for r in range(r0, r1 + 1):
+                    for c in range(c0, c1 + 1):
+                        cells[r][c] = ""
+                cells[r0][c0] = first
+                self._set_cells(cells, self.fmt(), keep + [[r0, c0, r1 - r0 + 1, c1 - c0 + 1]])
+                self.grid.setCurrentCell(r0, c0)
+                self._changed()
+
+            def _unmerge_selected(self):
+                idx = {(i.row(), i.column()) for i in self.grid.selectedIndexes()}
+                cur = self.spans()
+                keep = [sp for sp in cur if (sp[0], sp[1]) not in idx] if idx else []
+                if len(keep) == len(cur):
+                    return
+                self._set_cells(self.cells(), self.fmt(), keep)
+                self._changed()
+
+            def _set_cells(self, cells, fmt=None, spans=None):
+                was = self._loading
+                self._loading = True
+                try:
+                    self.grid.blockSignals(True)
+                    nr = max(1, len(cells)); nc = max(1, max((len(r) for r in cells), default=1))
+                    nr = min(nr, 60); nc = min(nc, 60)
+                    self.grid.clearSpans()
+                    self.grid.setRowCount(nr); self.grid.setColumnCount(nc)
+                    for r in range(nr):
+                        for c in range(nc):
+                            txt = cells[r][c] if (r < len(cells) and c < len(cells[r])) else ""
+                            it = QTableWidgetItem(str(txt))
+                            try:
+                                st_ = str(fmt[r][c]) if fmt is not None else ""
+                            except Exception:
+                                st_ = ""
+                            if st_:
+                                f = it.font()
+                                f.setBold('b' in st_); f.setItalic('i' in st_); f.setUnderline('u' in st_)
+                                it.setFont(f)
+                            self.grid.setItem(r, c, it)
+                    for sp in self.app._table_norm_spans(spans, nr, nc):
+                        self.grid.setSpan(sp[0], sp[1], sp[2], sp[3])
+                    self.grid.blockSignals(False)
+                    for sp, v in ((self.rows_spin, nr), (self.cols_spin, nc)):
+                        sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+                finally:
+                    self._loading = was
+
+            def _resize_grid(self, *_a):
+                cur = self.cells(); fm_ = self.fmt(); sp_ = self.spans()
+                nr, nc = self.rows_spin.value(), self.cols_spin.value()
+                self._set_cells([[(cur[r][c] if (r < len(cur) and c < len(cur[r])) else "")
+                                  for c in range(nc)] for r in range(nr)], fm_, sp_)
+                self._changed()
+
+            def _clear_cells(self):
+                self._set_cells([[""] * self.grid.columnCount() for _ in range(self.grid.rowCount())],
+                                self.fmt(), self.spans())
+                self._changed()
+
+            @staticmethod
+            def parse_table_text(text):
+                """Rows of cells from clipboard text: tab-separated (Excel, Sheets, Word
+                tables) when it contains tabs, otherwise comma-separated (quotes honoured)."""
+                text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+                lines = text.split("\n")
+                while lines and not lines[-1].strip():
+                    lines.pop()
+                if not lines:
+                    return []
+                if any("\t" in ln for ln in lines):
+                    rows = [ln.split("\t") for ln in lines]
+                else:
+                    import csv as _csv
+                    rows = [row for row in _csv.reader(lines)]
+                return [[str(c).strip() for c in row] for row in rows]
+
+            def paste_clipboard(self, at_current=False):
+                rows = self.parse_table_text(QApplication.clipboard().text())
+                if not rows:
+                    return False
+                if at_current and self.grid.currentRow() >= 0:
+                    r0 = max(0, self.grid.currentRow()); c0 = max(0, self.grid.currentColumn())
+                    cur = self.cells()
+                    nr = max(len(cur), r0 + len(rows))
+                    nc = max(max((len(r) for r in cur), default=1), c0 + max(len(r) for r in rows))
+                    new = [[(cur[r][c] if (r < len(cur) and c < len(cur[r])) else "") for c in range(nc)]
+                           for r in range(nr)]
+                    for i, row in enumerate(rows):
+                        for j, val in enumerate(row):
+                            if r0 + i < 60 and c0 + j < 60:
+                                new[r0 + i][c0 + j] = val
+                    self._set_cells(new, self.fmt(), self.spans())
+                else:
+                    self._set_cells(rows)
+                self._changed()
+                return True
+
+            def settings(self):
+                return {
+                    'cells': self.cells(),
+                    'font': self.font_box.currentFont().family(),
+                    'font_size': int(self.size_spin.value()),
+                    'fmt': self.fmt(), 'spans': self.spans(),
+                    'text_color': self._get_text_color().name(),
+                    'align': self.align_box.currentData() or 'center',
+                    'border': bool(self.border_cb.isChecked()), 'grid': bool(self.grid_cb.isChecked()),
+                    'color': self._get_line_color().name(),
+                    'thickness': round(float(self.thick_spin.value()), 2),
+                    'width_mode': self.width_box.currentData() or 'fit',
+                    'label_col': bool(self.label_col_cb.isChecked()),
+                    'first_lane': int(self.first_lane_spin.value()),
+                    'pad_pct': int(self.pad_spin.value()), 'row_h_pct': int(self.rowh_spin.value()),
+                    'auto_pad': bool(self.auto_pad_cb.isChecked()),
+                    'col_w': self.parse_sizes(self.col_w_edit.text(), self.grid.columnCount()),
+                    'row_h': self.parse_sizes(self.row_h_edit.text(), self.grid.rowCount()),
+                    'dx': int(self.dx_spin.value()), 'dy': int(self.dy_spin.value()),
+                }
+
+            def _convert(self):
+                self.convert_requested = True
+                self.accept()
 
         class CombinedSDSApp(QMainWindow):
             # Thresholds for the adaptive live-view render quality (see _begin_render_timing).
@@ -18074,7 +18738,7 @@ if __name__ == "__main__":
                 self.pan_right_action.setToolTip("Pan the view right (when zoomed) (Arrow key right or mouse right click")
                 self.pan_up_action.setToolTip("Pan the view up (when zoomed) (Arrow key up or mouse right click)")
                 self.pan_down_action.setToolTip("Pan the view down (when zoomed) (Arrow key down or mouse right click")
-                self.draw_bounding_box_action.setToolTip("Draw a bounding rectangle on the image. Use the marker tab, custom marker options for color and size")
+                self.draw_bounding_box_action.setToolTip("Draw a bounding rectangle on the image. Use the marker tab, custom marker options for color and size.\nDOUBLE-CLICK: draw a rectangle exactly around the gel/blot itself (not the padding or labels).")
                 self.draw_line_action.setToolTip("Draw a line on the image. Use the marker tab, custom marker options for color and size")
                 self.copy_custom_items_action.setToolTip("Copy all custom markers and shapes to the clipboard.")
                 self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
@@ -18812,6 +19476,14 @@ if __name__ == "__main__":
                          depth_str = "8-bit Indexed"
                     elif img_format == QImage.Format_Mono:
                          depth_str = "1-bit Mono"
+                    elif img_format in (QImage.Format_RGBA64, QImage.Format_RGBA64_Premultiplied):
+                         depth_str = "16-bit RGBA (64 bpp)"
+                    elif img_format == QImage.Format_RGBX64:
+                         depth_str = "16-bit RGB (64 bpp)"
+                    elif img_format in (getattr(QImage, 'Format_RGBA16FPx4', None),
+                                        getattr(QImage, 'Format_RGBX16FPx4', None),
+                                        getattr(QImage, 'Format_RGBA16FPx4_Premultiplied', None)):
+                         depth_str = "16-bit float RGB(A)"
                     else:
                         # Fallback to depth() if format is unusual
                         depth_val = self.image.depth()
@@ -19933,6 +20605,141 @@ if __name__ == "__main__":
                 self.show_mode_status("Drawing a RECTANGLE — click and drag on the image. Hold "
                                       "Shift for a perfect square. Press Esc to cancel.",
                                       active_button=getattr(self, 'draw_rect_button', None))
+
+            # ---- double-click the rectangle tool: box around the gel itself -------------
+            def _gel_content_rect(self):
+                """(x, y, w, h), in image px, of the actual gel/blot picture inside the
+                canvas -- i.e. without the padding that holds the labels.
+
+                1. Transparent padding (what Apply Padding adds): the box of the opaque pixels.
+                2. Otherwise read it from the picture: columns / rows that are mostly the
+                   page color (the corner pixel) are margin, even with label text in them;
+                   the gel is the longest run of columns and rows that are mostly NOT.
+                3. Otherwise a plain uniform border, as measured by
+                   _measure_transparent_margins; failing that, the whole image."""
+                img = self.image_master if (self.image_master and not self.image_master.isNull()) else self.image
+                if img is None or img.isNull():
+                    return None
+                W, H = int(img.width()), int(img.height())
+                whole = (0.0, 0.0, float(W), float(H))
+                try:
+                    np_img = self.qimage_to_numpy(img)
+                    if np_img is None:
+                        return whole
+                    if np_img.ndim == 2:
+                        np_img = np_img[:, :, np.newaxis]
+                    ch = np_img.shape[2]
+
+                    def _span(mask):
+                        idx = np.flatnonzero(mask)
+                        return (int(idx[0]), int(idx[-1]) + 1) if idx.size else (0, 0)
+
+                    # 1) Transparent padding: the gel is the box of the non-transparent pixels.
+                    if ch >= 4:
+                        opaque = np_img[:, :, 3] > 0
+                        if opaque.any() and not opaque.all():
+                            x0, x1 = _span(opaque.any(axis=0)); y0, y1 = _span(opaque.any(axis=1))
+                            if x1 - x0 >= 2 and y1 - y0 >= 2 and (x1 - x0 < W or y1 - y0 < H):
+                                return (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
+
+                    # 2) Padding flattened to an opaque page color (possibly with the labels
+                    #    drawn into it): margin columns / rows are MOSTLY page color, the gel's
+                    #    are not. Accepted only when the box found is solidly non-page inside,
+                    #    so a blot whose own background is the page color is not mis-boxed.
+                    rgb = np_img[:, :, :min(3, ch)].astype(np.int64)
+                    max_v = 65535 if np_img.dtype == np.uint16 else 255
+                    tol = max(1, int(max_v * 0.01))
+                    corners = [rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]]
+                    page = max(corners, key=lambda c: sum(int(np.all(np.abs(c - k) <= tol)) for k in corners))
+                    bg = np.all(np.abs(rgb - page) <= tol, axis=2)
+
+                    def _longest_run(mask):
+                        best = (0, 0); start = None
+                        for i, v in enumerate(list(mask) + [False]):
+                            if v and start is None:
+                                start = i
+                            elif not v and start is not None:
+                                if i - start > best[1] - best[0]:
+                                    best = (start, i)
+                                start = None
+                        return best
+                    x0, x1 = _longest_run(bg.mean(axis=0) < 0.5)
+                    if x1 - x0 >= 2:
+                        y0, y1 = _longest_run(bg[:, x0:x1].mean(axis=1) < 0.5)
+                        if y1 - y0 >= 2:
+                            # Columns again, inside those rows only (labels above/below the
+                            # gel no longer dilute the measurement).
+                            xa, xb = _longest_run(bg[y0:y1, :].mean(axis=0) < 0.5)
+                            if xb - xa >= 2:
+                                x0, x1 = xa, xb
+                            if ((x1 - x0) >= 0.2 * W and (y1 - y0) >= 0.2 * H
+                                    and (x1 - x0 < W or y1 - y0 < H)
+                                    and float(bg[y0:y1, x0:x1].mean()) < 0.10):
+                                return (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
+
+                    # 3) A plain uniform border (what Apply Padding itself strips).
+                    l, r, t, b = self._measure_transparent_margins()
+                    if (l or r or t or b) and W - l - r >= 2 and H - t - b >= 2:
+                        return (float(l), float(t), float(W - l - r), float(H - t - b))
+                except Exception:
+                    log_traceback()
+                return whole
+
+            def add_gel_border_rectangle(self):
+                """Draw a rectangle exactly around the gel/blot picture (not the padding or
+                the label area). Triggered by DOUBLE-CLICKING the rectangle tool; uses the
+                current custom Color and Size, like a hand-drawn rectangle. One undo step."""
+                if not self._require_image("the gel border rectangle"):
+                    return False
+                try:
+                    # The double-click's first click armed the Draw Rectangle tool: leave it.
+                    self._cancel_all_interaction_modes()
+                    rect = self._gel_content_rect()
+                    if rect is None:
+                        return False
+                    x, y, w, h = rect
+                    for sd in getattr(self, 'custom_shapes', []) or []:
+                        if sd.get('type') == 'rectangle' and not sd.get('table'):
+                            try:
+                                if all(abs(float(a) - float(b)) <= 1.0 for a, b in zip(sd['rect'], rect)):
+                                    self.show_mode_status("The gel already has a border rectangle — use "
+                                                          "Move/Resize to change it (double-click it to edit).")
+                                    self.update_live_view()
+                                    return False
+                            except Exception:
+                                continue
+                    self.custom_shapes.append({
+                        'type': 'rectangle', 'rect': (x, y, w, h),
+                        'color': QColor(self.custom_marker_color).name(),
+                        'thickness': self.custom_font_size_spinbox.value()})
+                    self.save_state()      # AFTER the change (undo restores the entry below)
+                    self.is_modified = True
+                    self.update_live_view()
+                    self.show_mode_status(
+                        f"Border rectangle drawn around the gel ({int(round(w))} × {int(round(h))} px) — "
+                        "Ctrl+Z to undo. Use Move/Resize to adjust it, or double-click it there to "
+                        "change its color and thickness.")
+                    return True
+                except Exception:
+                    log_traceback()
+                    return False
+
+            def _rect_tool_buttons(self):
+                """The widgets whose double-click draws the gel border rectangle."""
+                out = []
+                try:
+                    b = getattr(self, 'draw_rect_button', None)
+                    if b is not None:
+                        out.append(b)
+                    tb = getattr(self, 'tool_bar', None)
+                    act = getattr(self, 'draw_bounding_box_action', None)
+                    if tb is not None and act is not None:
+                        w = tb.widgetForAction(act)
+                        if w is not None:
+                            out.append(w)
+                except Exception:
+                    pass
+                return out
 
             def enable_arrow_drawing_mode(self):
                 if not self._require_image("Draw Arrow"):
@@ -21663,10 +22470,97 @@ if __name__ == "__main__":
                 if not getattr(self, '_is_restoring_state', False):
                     self._analysis_dirty_since_load = True
 
+                state = self._snapshot_state()
+                # Nothing changed since the last snapshot: this is a "before" snapshot taken
+                # by code that saves FIRST and changes afterwards (tool arming, the item
+                # editors, Place Custom ...). Pushing it only made Ctrl+Z "do nothing" once;
+                # the change itself is picked up by _commit_undo_if_changed below.
+                if self.undo_stack and self._undo_states_equal(self.undo_stack[-1], state, strict=True):
+                    self._schedule_undo_commit()
+                    return
+                self._push_undo_state(state)
+                self._schedule_undo_commit()
+
+            def _push_undo_state(self, state):
                 UNDO_LIMIT = 20
                 while len(self.undo_stack) >= UNDO_LIMIT:
                     self.undo_stack.pop(0)
+                self.undo_stack.append(state)
+                self.redo_stack.clear()
+                self._trim_undo_memory()
 
+            # Undo restores the snapshot BELOW the top of the stack, so the top must always be
+            # the CURRENT state -- i.e. snapshots have to be taken AFTER a change. Much of the
+            # older code takes them BEFORE instead. Left alone, such a change is never on the
+            # stack: Redo cannot bring it back, and the next undoable action is recorded
+            # together with it, so one Ctrl+Z undoes both. Instead of trusting every caller,
+            # each save_state() schedules this check for when the current event has finished:
+            # if what is on screen differs from the top snapshot, it is recorded as its own
+            # step. Undo / Redo run the check first, so it can never be missed.
+            def _schedule_undo_commit(self):
+                self._undo_commit_pending = True
+                try:
+                    QTimer.singleShot(0, self._commit_undo_if_changed)
+                except Exception:
+                    pass
+
+            def _commit_undo_if_changed(self, force=False):
+                try:
+                    if not getattr(self, '_undo_commit_pending', False):
+                        return
+                    busy = (getattr(self, '_is_restoring_state', False)
+                            or getattr(self, '_suppress_state_save', False))
+                    if not force and not busy:
+                        # A modal editor previews its changes live in the model, and a drag is
+                        # only complete on release: wait until neither is in progress.
+                        busy = (QApplication.activeModalWidget() is not None
+                                or QApplication.mouseButtons() != Qt.NoButton)
+                    if busy:
+                        if not force:
+                            QTimer.singleShot(300, self._commit_undo_if_changed)
+                        return
+                    self._undo_commit_pending = False
+                    if not self.undo_stack or not self.image_master or self.image_master.isNull():
+                        return
+                    cur = self._snapshot_state(copy_image=False)
+                    if not self._undo_states_equal(self.undo_stack[-1], cur, strict=False):
+                        cur["image_master"] = self.image_master.copy()
+                        self._push_undo_state(cur)
+                except Exception:
+                    log_traceback()
+
+            _UNDO_LABEL_SPACE_KEYS = ("single_quad_points", "single_bounding_box")
+
+            def _undo_states_equal(self, a, b, strict=True):
+                """True when two undo snapshots describe the same state. `strict` compares
+                everything; otherwise viewer-space coordinates (which change when the window
+                is resized, not when the figure is edited) are ignored."""
+                try:
+                    for k in set(a.keys()) | set(b.keys()):
+                        if k in ("image_master", "_image_key"):
+                            continue
+                        va, vb = a.get(k), b.get(k)
+                        if not strict:
+                            if k in self._UNDO_LABEL_SPACE_KEYS:
+                                continue
+                            if k == "multi_lane_definitions":
+                                norm = lambda lst: [(d.get('type'), d.get('id'),
+                                                     d.get('points_image') or d.get('points_label'))
+                                                    for d in (lst or [])]
+                                va, vb = norm(va), norm(vb)
+                        if va != vb:
+                            return False
+                    ia, ib = a.get("image_master"), b.get("image_master")
+                    if ia is None or ib is None:
+                        return ia is ib
+                    if a.get("_image_key") is not None and a.get("_image_key") == b.get("_image_key"):
+                        return True
+                    return ia == ib
+                except Exception:
+                    return False
+
+            def _snapshot_state(self, copy_image=True):
+                """The undo snapshot of the current state (see save_state)."""
                 # NOTE: do NOT call _capture_multilane_anchors() here. save_state is invoked
                 # mid-operation (e.g. finalize_image -> apply_all_adjustments -> save_state)
                 # AFTER a box's image anchor has been shifted for padding but BEFORE the
@@ -21678,7 +22572,10 @@ if __name__ == "__main__":
                 state = {
                     "selected_preset": self.combo_box.currentText() if hasattr(self, 'combo_box') else "Custom",
                     # --- Core Image ---
-                    "image_master": self.image_master.copy(),
+                    # (_image_key: QImage.cacheKey() changes whenever the pixels do, so two
+                    # snapshots with the same key hold the same image without comparing them.)
+                    "image_master": self.image_master.copy() if copy_image else self.image_master,
+                    "_image_key": self.image_master.cacheKey(),
                     "font_reference_size": getattr(self, 'font_reference_size', None),
                     "rotation_wedges": bool(getattr(self, '_master_has_rotation_wedges', False)),
 
@@ -21687,7 +22584,7 @@ if __name__ == "__main__":
                     "right_markers": [list(m) for m in self.right_markers],
                     "top_markers": [list(m) for m in self.top_markers],
                     "custom_markers": [list(m) for m in self.custom_markers],
-                    "custom_shapes": [dict(s) for s in self.custom_shapes],
+                    "custom_shapes": [_clone_shape_dict(s) for s in self.custom_shapes],
 
                     # --- Marker Alignment ---
                     "left_marker_shift_added": self.left_marker_shift_added,
@@ -21749,10 +22646,7 @@ if __name__ == "__main__":
                     "single_bounding_box": self.live_view_label.bounding_box_preview,
                     # --- END OF FIX ---
                 }
-                
-                self.undo_stack.append(state)
-                self.redo_stack.clear()
-                self._trim_undo_memory()
+                return state
 
             # --- Undo-history memory budget -------------------------------------- #
             # Each undo entry carries a FULL-RESOLUTION copy of image_master, so a plain
@@ -21810,11 +22704,18 @@ if __name__ == "__main__":
                 try:
                     # 1. Restore Data Variables
                     self.image_master = state_dict['image_master'].copy()
-                    self.left_markers = state_dict['left_markers']
-                    self.right_markers = state_dict['right_markers']
-                    self.top_markers = state_dict['top_markers']
-                    self.custom_markers = state_dict['custom_markers']
-                    self.custom_shapes = state_dict['custom_shapes']
+                    # COPIES, never the snapshot's own lists/dicts. The snapshot stays on the
+                    # undo/redo stack, and nearly every edit changes these in place (a drag
+                    # writes marker[0], shape['rect'], lst[i] = ...). Handing out the stack's
+                    # own objects meant the first edit after an Undo silently rewrote the
+                    # snapshot it had just been restored from, so the NEXT Undo "did nothing"
+                    # (it restored the already-edited state) and Redo could come back wrong.
+                    self.left_markers = [list(m) for m in state_dict['left_markers']]
+                    self.right_markers = [list(m) for m in state_dict['right_markers']]
+                    self.top_markers = [list(m) for m in state_dict['top_markers']]
+                    self.custom_markers = [list(m) for m in state_dict['custom_markers']]
+                    self.custom_shapes = [_clone_shape_dict(sd) for sd in state_dict['custom_shapes']]
+                    self.moving_custom_item_info = None   # its index may be gone now
                     # Keep the overlay checkbox truthful after undo/redo of an overlay change.
                     if hasattr(self, 'show_oligomer_glyco_overlay_checkbox'):
                         self.show_oligomer_glyco_overlay_checkbox.blockSignals(True)
@@ -21871,9 +22772,9 @@ if __name__ == "__main__":
                     self._sync_marker_symbol_ui_from_value()
 
                     self.main_image_is_inverted = state_dict['main_image_is_inverted']
-                    self.channel_mixer_data = state_dict['channel_mixer_data']
-                    self.unsharp_mask_data = state_dict['unsharp_mask_data']
-                    self.clahe_data = state_dict['clahe_data']
+                    self.channel_mixer_data = dict(state_dict['channel_mixer_data'])
+                    self.unsharp_mask_data = dict(state_dict['unsharp_mask_data'])
+                    self.clahe_data = dict(state_dict['clahe_data'])
                     self.image_padded = state_dict['image_padded']
 
                     # Overlay layer placement (see save_state). Only restored for layers that
@@ -22003,6 +22904,8 @@ if __name__ == "__main__":
             
             def undo_action_m(self):
                 """Undo the last action by restoring the previous state."""
+                # Record any change that is not on the stack yet, so it is what gets undone.
+                self._commit_undo_if_changed(force=True)
                 if len(self.undo_stack) > 1: # Need at least one state to revert TO
                     current_state = self.undo_stack.pop()
                     self.redo_stack.append(current_state)
@@ -22013,6 +22916,8 @@ if __name__ == "__main__":
 
             def redo_action_m(self):
                 """Redo the last undone action by restoring the next state."""
+                # A change made since the last Undo starts a new history (clears Redo).
+                self._commit_undo_if_changed(force=True)
                 if self.redo_stack:
                     state_to_restore = self.redo_stack.pop()
                     self.undo_stack.append(state_to_restore) # Push it back onto the undo stack
@@ -24966,7 +25871,7 @@ if __name__ == "__main__":
                         x, y = mp(m[0], m[1])
                         size = int(round(max(lo, min(hi, float(m[5]) * size_f))))
                         self.custom_markers.append([x, y, m[2], QColor(m[3]), m[4], size,
-                                                    bool(m[6]), bool(m[7])])
+                                                    bool(m[6]), bool(m[7])] + list(m[8:9]))
                         n += 1
                     except Exception:
                         continue
@@ -27224,15 +28129,122 @@ if __name__ == "__main__":
                 
                 return fully_adjusted_image
             
+            @staticmethod
+            def _levels_feet_from_array(np_img, inverted=False, clip_percent=0.25):
+                """(black, white) feet of the MAIN intensity distribution of an image array.
+
+                What Optimize Levels uses. Robust to the things that used to pin the black
+                point at 0 (or the white point at the maximum):
+
+                * transparent pixels (alpha == 0: the padding around a padded gel) are not
+                  image data and are ignored -- on a padded 16-bit gel they were a third of
+                  all pixels, all reading 0, so the 0.25 % tail clip never got past them;
+                * an isolated spike at pure 0 or pure maximum that is separated from the rest
+                  of the data by an empty gap (flattened opaque padding, clipped/saturated
+                  areas, scanner borders) is ignored the same way;
+                * after clipping `clip_percent` of the remaining pixels at each tail (stray
+                  hot/dark pixels), each foot is walked OUTWARD along the histogram for as
+                  long as the curve stays populated, so it lands where the curve the user
+                  sees meets the baseline instead of cutting into the darkest/brightest
+                  0.25 % of the real data (band cores).
+
+                `inverted` mirrors the Levels histogram (Invert active). Returns None when
+                there is nothing to measure."""
+                try:
+                    if np_img is None or np_img.size == 0:
+                        return None
+                    max_v = 65535 if np_img.dtype == np.uint16 else 255
+                    valid = None
+                    if np_img.ndim == 3:
+                        if np_img.shape[2] >= 4:
+                            alpha = np_img[..., 3]
+                            opaque = alpha > 0
+                            if not opaque.all() and opaque.any():
+                                valid = opaque
+                        gray = (cv2.cvtColor(np.ascontiguousarray(np_img[..., :3]), cv2.COLOR_BGR2GRAY)
+                                if np_img.shape[2] >= 3 else np_img[..., 0])
+                    else:
+                        gray = np_img
+                    flat = gray[valid] if valid is not None else gray.reshape(-1)
+                    if flat.size == 0:
+                        return None
+                    if inverted:
+                        # Same inversion the histogram uses, so the sliders match the shown curve.
+                        flat = max_v - flat
+                    n_bins = 256
+                    step = (max_v + 1) // n_bins            # 256 for 16-bit, 1 for 8-bit
+                    counts = np.bincount((flat.astype(np.int64) // step), minlength=n_bins)[:n_bins].astype(np.int64)
+
+                    # --- isolated spikes at pure 0 / pure maximum -----------------------------
+                    gap_bins = 4                             # >= 1.5 % of the range must be empty
+                    n_total = int(flat.size)
+                    n_zero = int(np.count_nonzero(flat == 0))
+                    n_max = int(np.count_nonzero(flat == max_v))
+                    drop_zero = drop_max = False
+                    if n_zero and n_zero < n_total:
+                        rest0 = int(counts[0]) - n_zero      # other values sharing display bin 0
+                        if rest0 + int(counts[1:1 + gap_bins].sum()) <= max(1, int(n_zero * 1e-3)):
+                            drop_zero = True
+                    if n_max and n_max < n_total:
+                        restm = int(counts[-1]) - n_max
+                        if restm + int(counts[-1 - gap_bins:-1].sum()) <= max(1, int(n_max * 1e-3)):
+                            drop_max = True
+                    if drop_zero or drop_max:
+                        keep = np.ones(flat.shape, dtype=bool)
+                        if drop_zero:
+                            keep &= (flat != 0)
+                        if drop_max:
+                            keep &= (flat != max_v)
+                        # Only when real data remains (a two-level image keeps both levels).
+                        if int(keep.sum()) >= max(16, int(0.01 * n_total)):
+                            flat = flat[keep]
+                            if drop_zero:
+                                counts[0] -= n_zero
+                            if drop_max:
+                                counts[-1] -= n_max
+                    n = int(flat.size)
+
+                    # --- robust core, then walk out to the feet of the curve ------------------
+                    lo = float(np.percentile(flat, clip_percent))
+                    hi = float(np.percentile(flat, 100.0 - clip_percent))
+                    if hi <= lo:  # near-flat image -- fall back to true min/max
+                        lo = float(flat.min()); hi = float(flat.max())
+                        if hi <= lo:
+                            hi = lo + 1.0
+                        return lo, hi
+                    # A histogram bin belongs to the body of the curve while it holds at least
+                    # 0.005 % of the pixels; sparser bins are outliers / a thin tail and stay
+                    # clipped, so this can only ever clip LESS than the percentile did.
+                    thr = max(2.0, n * 5e-5)
+                    b_lo = int(lo // step); b_hi = int(hi // step)
+                    j = b_lo
+                    while j - 1 >= 0 and counts[j - 1] >= thr:
+                        j -= 1
+                    if j < b_lo:
+                        # The empty histogram bin just outside the first populated one: where
+                        # the drawn curve meets the baseline.
+                        lo = float(max(0, (j - 1) * step))
+                    j = b_hi
+                    while j + 1 < n_bins and counts[j + 1] >= thr:
+                        j += 1
+                    if j > b_hi:
+                        hi = float(min(max_v, (j + 2) * step - 1))
+                    return lo, hi
+                except Exception:
+                    log_traceback()
+                    return None
+
             def optimize_levels(self):
                 """Auto-set the Black/White points to the histogram's feet (troughs) so the used
                 tonal range fills the full scale — one-click 'auto levels'.
 
                 The intensity is read from the SAME source the Levels histogram shows and with
                 the SAME inversion applied (so the sliders land exactly on the curve the user
-                sees, whether or not Invert is active). The feet are found robustly by clipping a
-                tiny fraction of pixels at each tail (outliers/hot pixels) rather than using the
-                raw min/max. Purely a display adjustment — Reset Image or the sliders undo it."""
+                sees, whether or not Invert is active). The feet are found by
+                _levels_feet_from_array: transparent padding and isolated pure-0 / pure-max
+                spikes are ignored, stray hot/dark pixels are clipped, and each point is then
+                moved out to where the curve meets the baseline. Purely a display adjustment —
+                Reset Image or the sliders undo it."""
                 try:
                     # Mirror _update_levels_histogram's source + inversion selection.
                     if self.adjustment_context == "Overlay 1 (Base)":
@@ -27249,27 +28261,10 @@ if __name__ == "__main__":
                     np_img = self.qimage_to_numpy(source)
                     if np_img is None:
                         return
-                    max_v = 65535 if np_img.dtype == np.uint16 else 255
-                    if inv:
-                        # Same inversion the histogram uses, so the sliders match the shown curve.
-                        np_img = max_v - np_img
-                    if np_img.ndim == 3:
-                        gray = (cv2.cvtColor(np_img[..., :3], cv2.COLOR_BGR2GRAY)
-                                if np_img.shape[2] >= 3 else np_img[..., 0])
-                    else:
-                        gray = np_img
-                    flat = gray.reshape(-1)
-                    if flat.size == 0:
+                    feet = self._levels_feet_from_array(np_img, inv)
+                    if feet is None:
                         return
-                    # Feet of the curve: clip 0.25% of pixels at each tail so a few stray hot/dark
-                    # pixels don't stretch the range past the real data.
-                    clip = 0.25
-                    lo = float(np.percentile(flat, clip))
-                    hi = float(np.percentile(flat, 100.0 - clip))
-                    if hi <= lo:  # near-flat image — fall back to true min/max
-                        lo = float(flat.min()); hi = float(flat.max())
-                        if hi <= lo:
-                            hi = lo + 1.0
+                    lo, hi = feet
 
                     s_max = int(self.black_point_slider.maximum())
                     bp = int(np.clip(round(lo), 0, s_max - 1))
@@ -28400,8 +29395,23 @@ if __name__ == "__main__":
                 row1_layout.addWidget(self.custom_marker_text_entry, 1)
                 row1_layout.addLayout(arrow_layout)
                 row1_layout.addWidget(self.custom_font_type_dropdown, 0)
+                self.custom_marker_align_combo = QComboBox()
+                for _lbl, _key in (("Anchor: Center", 'center'), ("Anchor: Left", 'left'),
+                                   ("Anchor: Right", 'right')):
+                    self.custom_marker_align_combo.addItem(_lbl, _key)
+                self.custom_marker_align_combo.setToolTip(
+                    "Text anchor for NEW custom markers — the point that lands on your click and "
+                    "stays fixed when the text is edited later.\n"
+                    "• Center — the middle of the text (default).\n"
+                    "• Left — the left edge (e.g. “← AAT”: the arrow tip stays on the band).\n"
+                    "• Right — the right edge (e.g. “AAT →”).\n"
+                    "Change it for an existing marker by double-clicking it in Move/Resize.")
+                self.custom_marker_align_combo.currentIndexChanged.connect(
+                    lambda *_a: self.live_view_label.update())
+
                 row1_layout.addWidget(self.custom_font_size_spinbox)
                 row1_layout.addWidget(self.custom_marker_color_button)
+                row1_layout.addWidget(self.custom_marker_align_combo)
                 row1_layout.addStretch(1)
                 custom_layout.addLayout(row1_layout)
 
@@ -28422,7 +29432,9 @@ if __name__ == "__main__":
                 self._register_action_button(self.draw_line_button)
 
                 self.draw_rect_button = self._make_icon_button(
-                    "shape_rect", "Draw Rectangle.\nHold Shift for perfect square.")
+                    "shape_rect", "Draw Rectangle.\nHold Shift for perfect square.\n"
+                    "DOUBLE-CLICK: draw a rectangle exactly around the gel/blot itself "
+                    "(not the padding or labels).")
                 self.draw_rect_button.clicked.connect(self.enable_rectangle_drawing_mode)
                 self._register_action_button(self.draw_rect_button)
 
@@ -28509,6 +29521,17 @@ if __name__ == "__main__":
                 row2_layout.addWidget(self.snap_enabled_checkbox)
                 row2_layout.addWidget(self.grid_size_input)
                 row2_layout.addStretch(1)
+                self.table_button = QPushButton("Table…")
+                self.table_button.setToolTip(
+                    "Insert a table on the image — e.g. a +/− grid of what was loaded in each lane.\n"
+                    "Type or paste the cells (copy them straight from Excel), choose fonts, "
+                    "alignment and grid lines, and let the columns snap to the lanes (the top "
+                    "label positions).\nThe table is one object: drag it, resize it by a corner, "
+                    "double-click it in Move/Resize to edit it — or convert it to separate "
+                    "custom markers and lines.")
+                self.table_button.clicked.connect(lambda *_a: self.open_table_dialog())
+
+                row2_layout.addWidget(self.table_button)
                 row2_layout.addWidget(self.move_resize_button)
                 row2_layout.addWidget(self.modify_custom_marker_button)
                 
@@ -28647,13 +29670,19 @@ if __name__ == "__main__":
                 for marker_tuple in custom_markers_list:
                     try:
                         # Ensure the tuple has the expected 8 elements
-                        if len(marker_tuple) == 8:
-                            x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_tuple
-                            serialized_list.append({
+                        if len(marker_tuple) >= 8:
+                            x, y, text, qcolor, font_family, font_size, is_bold, is_italic = marker_tuple[:8]
+                            entry = {
                                 "x": x, "y": y, "text": text, "color": qcolor.name(), # Store color name
                                 "font_family": font_family, "font_size": font_size,
                                 "bold": is_bold, "italic": is_italic
-                            })
+                            }
+                            # Text anchor (v9.8.2): only written when not the default centre,
+                            # so older versions read these files unchanged.
+                            _al = self._marker_align(marker_tuple)
+                            if _al != 'center':
+                                entry["align"] = _al
+                            serialized_list.append(entry)
                         else:
                             # Handle older format or malformed data gracefully if necessary
                             # For now, we'll skip markers not matching the 8-element structure
@@ -28680,16 +29709,22 @@ if __name__ == "__main__":
                             pass # print(f"Warning: Invalid color string '{color_str}' for marker, using black.")
                             qcolor = QColor(0,0,0) # Fallback to black
 
-                        deserialized_list.append([
+                        # The image config writes the family as "font", presets as
+                        # "font_family" -- accept both (reading only "font_family" silently
+                        # reset every reloaded custom marker to Arial).
+                        rec = [
                             float(marker_conf.get("x", 0.0)),
                             float(marker_conf.get("y", 0.0)),
                             str(marker_conf.get("text", "")),
                             qcolor,
-                            str(marker_conf.get("font_family", "Arial")),
+                            str(marker_conf.get("font_family", marker_conf.get("font", "Arial"))),
                             int(marker_conf.get("font_size", 16)),
                             bool(marker_conf.get("bold", False)),
                             bool(marker_conf.get("italic", False))
-                        ])
+                        ]
+                        if marker_conf.get("align") in ('left', 'right'):
+                            rec.append(str(marker_conf.get("align")))
+                        deserialized_list.append(rec)
                     except (ValueError, TypeError, KeyError) as e:
                         pass # print(f"Warning: Skipping marker during deserialization: {marker_conf}, Error: {e}")
                 return deserialized_list
@@ -29506,6 +30541,15 @@ if __name__ == "__main__":
                 except Exception:
                     pass
                 try:
+                    # Double-click on a rectangle tool button: box around the gel itself.
+                    if (event.type() == QEvent.MouseButtonDblClick
+                            and event.button() == Qt.LeftButton
+                            and any(obj is b for b in self._rect_tool_buttons())):
+                        self.add_gel_border_rectangle()
+                        return True
+                except Exception:
+                    pass
+                try:
                     if (event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride)
                             and event.key() == Qt.Key_Escape
                             # `None` covers a transient no-active-window state (seen on macOS
@@ -29839,13 +30883,24 @@ if __name__ == "__main__":
                         "• Double-click any text — custom marker, left/right MW label or top "
                         "label — to edit it, or any line/arrow/rectangle to set its color, "
                         "thickness and coordinates. Changes preview live on the image.\n"
-                        "• Shift+click to select several items, then drag any of them to move "
-                        "them all together (arrow keys nudge them, Delete removes them).\n\n"
+                        "• Drag a rectangle on empty space to select every custom marker and "
+                        "shape inside it, or Shift+click (Ctrl/Cmd+click) items one by one; then "
+                        "drag any of them to move them all together (arrow keys nudge them, "
+                        "Delete removes them).\n"
+                        "• The cursor shows what a press will do: a cross on empty space (drag a "
+                        "selection rectangle), four arrows over an item (move it), resize arrows "
+                        "on a red handle. Handles belong to the selected item — click it first.\n"
+                        "• Hold Shift while dragging to move in a straight line. While you drag a "
+                        "custom marker, orange guide lines show when it lines up with another "
+                        "marker (hold Alt to switch that off).\n\n"
                         "Press ESC or un-check the button to exit this mode.")
-                    self.show_mode_status("MOVE/RESIZE items — click a marker/shape, drag to move or "
-                                          "use a handle to resize; Shift+click to select several; "
-                                          "double-click any item to edit it. Press Esc to exit.",
-                                          active_button=getattr(self, 'move_resize_button', None))
+                    self._marquee = None; self._pending_toggle = None
+                    self._smart_guides = []; self._snap_targets = None
+                    self._move_resize_hover_key = None
+                    # The cursor shows the mode: a cross on empty space (drag a selection
+                    # rectangle), the move arrows over an item, resize arrows on a handle.
+                    self.live_view_label.setCursor(Qt.CrossCursor)
+                    self._announce_multi_selection(0)
                     self.update_live_view()
                 else:
                     self.cancel_custom_item_interaction_mode()
@@ -29868,6 +30923,8 @@ if __name__ == "__main__":
                 self.multi_selected_items = []
                 self.resizing_corner_index = -1
                 self.shape_points_at_drag_start_label = []
+                self._marquee = None; self._pending_toggle = None
+                self._smart_guides = []; self._snap_targets = None
 
                 self._reset_live_view_label_custom_handlers()
                 self.clear_mode_status()
@@ -29888,6 +30945,10 @@ if __name__ == "__main__":
                     r = self._get_marker_bounding_box_in_label_space(i)
                     if r is not None and r.contains(point_ls):
                         return {'type': 'marker', 'index': i}
+                # A table is drawn over the standard labels (and under custom markers), so a
+                # point inside one belongs to the table, not to a label it happens to cover.
+                if self._table_at_ls(point_ls) is not None:
+                    return None
                 for kind, lst in (('left_marker', getattr(self, 'left_markers', [])),
                                   ('right_marker', getattr(self, 'right_markers', [])),
                                   ('top_marker', getattr(self, 'top_markers', []))):
@@ -29897,6 +30958,19 @@ if __name__ == "__main__":
                             return {'type': kind, 'index': i}
                         if isinstance(shp, QRectF) and shp.contains(point_ls):
                             return {'type': kind, 'index': i}
+                return None
+
+            def _table_at_ls(self, point_ls):
+                """Index of the topmost TABLE shape containing the point, or None."""
+                shapes = getattr(self, 'custom_shapes', []) or []
+                for i in range(len(shapes) - 1, -1, -1):
+                    if shapes[i].get('type') == 'rectangle' and isinstance(shapes[i].get('table'), dict):
+                        try:
+                            body, _h = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                            if body is not None and body.contains(point_ls):
+                                return i
+                        except Exception:
+                            continue
                 return None
 
             def _shape_at_ls(self, point_ls):
@@ -29957,12 +31031,28 @@ if __name__ == "__main__":
                                 how = ("Drag the line to move the whole callout (label included) · drag "
                                        "the red handle to re-aim the arrow tip · drag the label alone "
                                        "and the line follows.")
+                            elif stype.lower() == 'rectangle' and self.custom_shapes[si].get('table'):
+                                stype = "Table"
+                                how = ("Drag it (a cell or its frame) to move · once selected: drag a corner to "
+                                       "scale everything, a line between two columns or rows to move that "
+                                       "border, or the red handle on the middle of an edge to resize the "
+                                       "first / last row or column · double-click to edit its cells, fonts "
+                                       "and lines, or to convert it to separate markers and lines.")
                             elif stype.lower() == 'rectangle':
-                                how = "Drag to move · drag a corner to resize · handle above the top edge sets the border thickness."
+                                how = ("Drag its border to move (anywhere inside once it is selected) · drag a "
+                                       "corner to resize · handle above the top edge sets the border thickness.")
                             else:
                                 how = "Drag to move · drag an end to re-aim · side handles set the thickness."
                             tip = (f"{stype}\n{how}\nDouble-click to edit its color, thickness and "
                                    "exact coordinates.\nDelete / Backspace removes the selected item.")
+                    # Cursor = what a press here would do (see _move_resize_cursor_at).
+                    if not getattr(self.live_view_label, 'is_panning', False):
+                        _hov = None
+                        if key is not None:
+                            _hov = {'type': key[0], 'index': key[1]}
+                        _cur = self._move_resize_cursor_at(pt, _hov)
+                        if self.live_view_label.cursor().shape() != _cur:
+                            self.live_view_label.setCursor(_cur)
                     if key != getattr(self, '_move_resize_hover_key', None):
                         self._move_resize_hover_key = key
                         if tip:
@@ -30009,8 +31099,8 @@ if __name__ == "__main__":
                 Every change in the dialog is written straight into the item and the view
                 repaints, so the image updates as you type / pick. Cancel (or closing the
                 dialog) restores `original`. OK restores the original first, records ONE undo
-                snapshot, then applies the final values -- so Ctrl+Z returns to exactly what
-                was there before the dialog opened. Returns True if something was committed."""
+                snapshot of the final values -- so Ctrl+Z returns to exactly what
+                was there before the dialog opened (and Ctrl+Y re-applies the edit). Returns True if something was committed."""
                 state = {'busy': False}
 
                 def _preview(*_a):
@@ -30032,11 +31122,13 @@ if __name__ == "__main__":
                 if not accepted or final == original:
                     self.update_live_view()
                     return False
-                self.save_state()
                 apply_values(final)
                 if on_commit is not None:
                     on_commit(final)
                 self.is_modified = True
+                # Snapshot AFTER the change (Undo restores the entry below the top): the edit
+                # is its own undo step and Redo can bring it back.
+                self.save_state()
                 self.update_live_view()
                 return True
 
@@ -30086,7 +31178,7 @@ if __name__ == "__main__":
                 form.addRow("Text:", text_edit)
 
                 if is_custom:
-                    _x, _y, _txt, color0, family0, size0, bold0, italic0 = self.custom_markers[i]
+                    _x, _y, _txt, color0, family0, size0, bold0, italic0 = self.custom_markers[i][:8]
                     scope = "this marker only"
                 else:
                     family0 = self.font_family; size0 = self.font_size
@@ -30119,6 +31211,27 @@ if __name__ == "__main__":
                 form.addRow("Style:", style_row)
                 form.addRow("Color:", color_btn)
 
+                # Text anchor (custom markers): which point of the text stays fixed when the
+                # text, font or size changes. Picking another anchor does not move the text.
+                align_box = None
+                marker0 = list(self.custom_markers[i]) if is_custom else None
+                if is_custom:
+                    align_box = QComboBox()
+                    for _lbl, _key in (("Center (text grows both ways)", 'center'),
+                                       ("Left edge (text grows to the right)", 'left'),
+                                       ("Right edge (text grows to the left)", 'right')):
+                        align_box.addItem(_lbl, _key)
+                    align_box.setCurrentIndex(max(0, align_box.findData(self._marker_align(marker0))))
+                    align_box.setToolTip(
+                        "Which part of the text stays where it is when you change the text, font "
+                        "or size.\n• Left edge — e.g. “← AAT”: the arrow tip stays on the band and "
+                        "the text grows to the right.\n• Right edge — e.g. “AAT →”: the right end "
+                        "stays put.\n• Center — the middle stays put (how markers have always "
+                        "behaved).\nChanging the anchor does not move the text. While you drag a "
+                        "marker in Move/Resize, its edges and center snap to those of other markers.")
+                    form.addRow("Anchor:", align_box)
+                    align_box.currentIndexChanged.connect(live)
+
                 hint = QLabel("Changes preview live on the image. Cancel restores the original.")
                 hint.setStyleSheet("color: palette(mid);")
                 form.addRow(hint)
@@ -30141,17 +31254,26 @@ if __name__ == "__main__":
 
                 def read_values():
                     return (text_edit.text(), font_box.currentFont().family(), int(size_spin.value()),
-                            bool(bold_cb.isChecked()), bool(italic_cb.isChecked()), get_color().name())
+                            bool(bold_cb.isChecked()), bool(italic_cb.isChecked()), get_color().name(),
+                            (align_box.currentData() if align_box is not None else 'center'))
 
                 original = (self._text_item_value(info), str(family0), int(size0), bool(bold0),
-                            bool(italic0), QColor(color0).name())
+                            bool(italic0), QColor(color0).name(),
+                            (self._marker_align(marker0) if is_custom else 'center'))
 
                 def apply_values(v):
-                    text, fam, size, bold, italic, cname = v
+                    text, fam, size, bold, italic, cname, align = v
                     if is_custom:
-                        m = list(self.custom_markers[i])
+                        # Always rebuilt from the marker as it was when the dialog opened:
+                        # first re-anchored (its ORIGINAL text does not move), then the new
+                        # text / font applied about that anchor. Leader lines attached to the
+                        # label follow the anchor.
+                        _prev = (self.custom_markers[i][0], self.custom_markers[i][1])
+                        m = self._marker_realigned(marker0, align)
                         m[2] = text; m[3] = QColor(cname); m[4] = fam; m[5] = size; m[6] = bold; m[7] = italic
                         self.custom_markers[i] = m
+                        if (m[0], m[1]) != _prev:
+                            self._follow_marker_links(_prev, (m[0], m[1]))
                     else:
                         lst[i] = (lst[i][0], text)
                         self.font_family, self.font_size = fam, size
@@ -30185,6 +31307,8 @@ if __name__ == "__main__":
                 """Editor for a custom line / arrow / rectangle (double-click it in
                 Move/Resize): color, thickness and exact coordinates in image pixels.
                 Changes preview live on the image; Cancel restores the original."""
+                if isinstance(self.custom_shapes[index].get('table'), dict):
+                    return self.open_table_dialog(index)
                 sd0 = dict(self.custom_shapes[index])
                 stype = sd0.get('type', 'line')
                 name = {'line': "Line", 'arrow': "Arrow", 'rectangle': "Rectangle",
@@ -30362,11 +31486,25 @@ if __name__ == "__main__":
                 cx, cy = ax + t * dx, ay + t * dy
                 return math.hypot(px - cx, py - cy)
 
+            RECT_INTERIOR_GRAB_MAX_PX = 48.0   # smaller rectangles are grabbed anywhere inside
+
+            def _hit_px(self, screen_px):
+                """A click tolerance of `screen_px` SCREEN pixels, in the (unzoomed) label space
+                hit-testing works in. The tolerances used to be fixed label-space amounts, so
+                zooming in to separate two neighbouring items made their grab areas grow with
+                them; now zooming in really does make close items easier to pick apart."""
+                try:
+                    z = float(self.live_view_label.zoom_level or 1.0)
+                except Exception:
+                    z = 1.0
+                return float(screen_px) / (z if z > 1e-6 else 1.0)
+
             def _shape_body_hit_ls(self, shape_index, body_ls, handles_ls, point_ls):
                 """True when `point_ls` should count as clicking a shape's BODY (to move it).
                 For lines/arrows this is a thin band hugging the actual segment — NOT the whole
                 diagonal bounding box — so the shaft is easy to grab and doesn't hijack clicks
-                meant for other items. Rectangles keep the filled-box behaviour."""
+                meant for other items. Rectangles are grabbed by their border (see below);
+                tables anywhere inside."""
                 try:
                     stype = self.custom_shapes[shape_index].get('type')
                     if stype == 'leader':
@@ -30380,7 +31518,7 @@ if __name__ == "__main__":
                             if r is not None and r.contains(point_ls):
                                 return False
                         return min(self._point_segment_distance_ls(point_ls, pts[i], pts[i + 1])
-                                   for i in range(len(pts) - 1)) <= 6.0
+                                   for i in range(len(pts) - 1)) <= self._hit_px(4.0)
                     if stype in ('line', 'arrow') and handles_ls and len(handles_ls) >= 2:
                         # Band width = the drawn half-thickness (in label space) + a small margin.
                         label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
@@ -30389,8 +31527,34 @@ if __name__ == "__main__":
                         scale = (min(label_w / img_w, label_h / img_h)
                                  if (img_w > 0 and img_h > 0 and label_w > 0 and label_h > 0) else 1.0)
                         half_th_ls = float(self.custom_shapes[shape_index].get('thickness', 1)) * scale / 2.0
-                        tol = max(6.0, half_th_ls + 3.0)
+                        tol = max(self._hit_px(4.0), half_th_ls + self._hit_px(2.0))
                         return self._point_segment_distance_ls(point_ls, handles_ls[0], handles_ls[1]) <= tol
+                    if stype == 'rectangle' and body_ls is not None and not self.custom_shapes[shape_index].get('table'):
+                        # A plain rectangle is an OUTLINE: it is grabbed by its border, like in
+                        # PowerPoint, so a box drawn around the gel no longer swallows every
+                        # click inside it (which made it impossible to start a selection
+                        # rectangle, or to reach anything, inside such a box). Its inside
+                        # still counts while the rectangle is selected (drag it from anywhere)
+                        # and for small boxes, which are hard to hit by their border alone.
+                        label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
+                        img_w = float(self.image.width()) if self.image else 0.0
+                        img_h = float(self.image.height()) if self.image else 0.0
+                        scale = (min(label_w / img_w, label_h / img_h)
+                                 if (img_w > 0 and img_h > 0 and label_w > 0 and label_h > 0) else 1.0)
+                        tol = max(self._hit_px(4.0), float(self.custom_shapes[shape_index].get('thickness', 1)) * scale / 2.0 + self._hit_px(2.0))
+                        if not body_ls.adjusted(-tol, -tol, tol, tol).contains(point_ls):
+                            return False
+                        inner = body_ls.adjusted(tol, tol, -tol, -tol)
+                        if inner.width() <= 0 or inner.height() <= 0 or not inner.contains(point_ls):
+                            return True
+                        if min(body_ls.width(), body_ls.height()) <= self.RECT_INTERIOR_GRAB_MAX_PX:
+                            return True
+                        return {'type': 'shape', 'index': shape_index} in self._move_resize_selection()
+                    if stype == 'rectangle' and body_ls is not None:
+                        # a table: anywhere inside, plus a band around its frame (grab the
+                        # border to move it, as in PowerPoint)
+                        g = self._hit_px(6.0)
+                        return body_ls.adjusted(-g, -g, g, g).contains(point_ls)
                     return bool(body_ls and body_ls.contains(point_ls))
                 except Exception:
                     return bool(body_ls and body_ls.contains(point_ls))
@@ -30422,7 +31586,7 @@ if __name__ == "__main__":
                     rect = shape.boundingRect() if isinstance(shape, QPolygonF) else shape
                     if not isinstance(rect, QRectF) or rect.isNull():
                         return None, None
-                    gap = 5.0
+                    gap = self._hit_px(4.0)
                     return (QPointF(rect.right() + gap, rect.bottom() + gap), rect.center())
                 except Exception:
                     return None, None
@@ -30468,7 +31632,7 @@ if __name__ == "__main__":
                 si = self._shape_at_ls(point_ls)
                 return {'type': 'shape', 'index': si} if si is not None else None
 
-            def _group_member_at_ls(self, group, point_ls, slack=4.0):
+            def _group_member_at_ls(self, group, point_ls, slack=2.0):
                 """The selected item under the point (topmost first), with a few px of slack
                 around each outline so a slightly-off press still grabs the group."""
                 for it in reversed(group):
@@ -30517,7 +31681,7 @@ if __name__ == "__main__":
                 self._group_drag = {'applied_x': 0.0, 'applied_y': 0.0}
                 self.current_selection_mode = "dragging_custom_item"
                 self.live_view_label.mode = "dragging_custom_item"
-                self.live_view_label.setCursor(Qt.CrossCursor)
+                self.live_view_label.setCursor(Qt.SizeAllCursor)
                 self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_custom_item_drag
                 self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_custom_item_drag_release
                 self.update_live_view()
@@ -30542,6 +31706,182 @@ if __name__ == "__main__":
                                           "Shift+click adds or removes an item.",
                                           active_button=getattr(self, 'move_resize_button', None))
                 self.update_live_view()
+
+            DRAG_START_THRESHOLD_PX = 4.0     # screen px before a Shift/Ctrl press counts as a drag
+
+            def _announce_multi_selection(self, n):
+                if n > 1:
+                    self.show_mode_status(f"MOVE/RESIZE — {n} items selected. Drag any of them to move "
+                                          "them together; arrow keys nudge, Delete removes them. "
+                                          "Shift+click adds or removes an item.",
+                                          active_button=getattr(self, 'move_resize_button', None))
+                else:
+                    self.show_mode_status("MOVE/RESIZE items — click a marker/shape, drag to move or "
+                                          "use a handle to resize; drag on empty space to select "
+                                          "several; double-click any item to edit it. Press Esc to exit.",
+                                          active_button=getattr(self, 'move_resize_button', None))
+
+            # ---- selection rectangle (marquee) ---------------------------------------
+            def _start_marquee(self, point_ls, base):
+                """Press on empty space in Move/Resize: start dragging a selection rectangle.
+                `base` is the selection to ADD to (Shift/Ctrl held), else empty."""
+                base = [dict(it) for it in (base or [])]
+                self._marquee = {'start': QPointF(point_ls), 'cur': QPointF(point_ls), 'base': base}
+                self.multi_selected_items = [dict(it) for it in base] if len(base) > 1 else []
+                self.moving_custom_item_info = dict(base[-1]) if base else None
+                self.live_view_label._custom_mouseMoveEvent_from_app = self._marquee_drag
+                self.live_view_label._custom_mouseReleaseEvent_from_app = self._marquee_release
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self.update_live_view()
+
+            def _marquee_rect_ls(self):
+                mq = getattr(self, '_marquee', None)
+                if not mq:
+                    return None
+                return QRectF(mq['start'], mq['cur']).normalized()
+
+            def _items_in_rect_ls(self, rect_ls):
+                """Custom markers and shapes lying completely inside a label-space rectangle
+                (PowerPoint's rule). Fixed oligomer/glyco arrows are skipped -- their labels
+                carry them. Standard left/right/top labels are band-tied and are left to
+                Shift+click."""
+                out = []
+                if rect_ls is None or rect_ls.width() <= 0 or rect_ls.height() <= 0:
+                    return out
+                for i in range(len(getattr(self, 'custom_shapes', []) or [])):
+                    try:
+                        sd = self.custom_shapes[i]
+                        if sd.get('type') == 'leader' and self._is_locked_leader(sd):
+                            continue
+                        body, _h = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                        if body is None:
+                            continue
+                        if sd.get('type') in ('line', 'arrow'):
+                            body = body.adjusted(3, 3, -3, -3)     # undo the click tolerance
+                        if rect_ls.contains(body.topLeft()) and rect_ls.contains(body.bottomRight()):
+                            out.append({'type': 'shape', 'index': i})
+                    except Exception:
+                        continue
+                for i in range(len(getattr(self, 'custom_markers', []) or [])):
+                    try:
+                        box = self._annotation_outline_ls('marker', i, pad_ls=0.0)
+                        if box is None or box.isEmpty():
+                            continue
+                        br = box.boundingRect()
+                        if rect_ls.contains(br.topLeft()) and rect_ls.contains(br.bottomRight()):
+                            out.append({'type': 'marker', 'index': i})
+                    except Exception:
+                        continue
+                return out
+
+            def _marquee_selection(self):
+                mq = getattr(self, '_marquee', None)
+                if not mq:
+                    return []
+                sel = [dict(it) for it in mq.get('base', [])]
+                for it in self._items_in_rect_ls(self._marquee_rect_ls()):
+                    if it not in sel:
+                        sel.append(it)
+                return sel
+
+            def _marquee_drag(self, event):
+                mq = getattr(self, '_marquee', None)
+                if not mq or not (event.buttons() & Qt.LeftButton):
+                    return
+                mq['cur'] = self.live_view_label.transform_point(event.position())
+                sel = self._marquee_selection()
+                self.multi_selected_items = sel if len(sel) > 1 else []
+                self.moving_custom_item_info = dict(sel[-1]) if sel else None
+                self.live_view_label.update()
+                event.accept()
+
+            def _marquee_release(self, event):
+                if event.button() != Qt.LeftButton:
+                    return
+                mq = getattr(self, '_marquee', None)
+                sel = []
+                if mq:
+                    try:
+                        mq['cur'] = self.live_view_label.transform_point(event.position())
+                    except Exception:
+                        pass
+                    sel = self._marquee_selection()
+                self._marquee = None
+                self.live_view_label._custom_mouseMoveEvent_from_app = None
+                self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                self.multi_selected_items = sel if len(sel) > 1 else []
+                self.moving_custom_item_info = dict(sel[-1]) if sel else None
+                self.resizing_corner_index = -1
+                self._announce_multi_selection(len(sel))
+                self.update_live_view()
+                event.accept()
+
+            # ---- smart guides (marker-to-marker alignment while dragging) --------------
+            def _smart_guide_targets(self, moving):
+                """Alignment targets from every custom marker that is NOT being moved:
+                (left, center, right, y, top, bottom) in image px. Cached for one drag."""
+                cached = getattr(self, '_snap_targets', None)
+                if cached is not None:
+                    return cached
+                skip = {it['index'] for it in moving if it.get('type') == 'marker'}
+                out = []
+                for i, m in enumerate(getattr(self, 'custom_markers', []) or []):
+                    if i in skip or not str(m[2]).strip():
+                        continue
+                    box = self._marker_box_img(m)
+                    if box is None:
+                        continue
+                    l, t, r, b = box
+                    out.append((l, (l + r) / 2.0, r, float(m[1]), t, b))
+                self._snap_targets = out
+                return out
+
+            def _smart_guide_adjust(self, marker_index, anchor_img, tol_img, lock_x, lock_y):
+                """Where the dragged marker would sit with its anchor at `anchor_img`, find
+                the nearest alignment with another marker (same kind of edge: left-left,
+                center-center, right-right; and same height) within `tol_img` image px.
+                Returns the (dx, dy) correction in image px, or None; the guide lines to draw
+                are left in self._smart_guides as ('v', x, y0, y1) / ('h', y, x0, x1)."""
+                try:
+                    m = self.custom_markers[marker_index]
+                    box = self._marker_box_img(m)
+                    if box is None:
+                        return None
+                    ox = float(anchor_img.x()) - float(m[0]); oy = float(anchor_img.y()) - float(m[1])
+                    l, t, r, b = box[0] + ox, box[1] + oy, box[2] + ox, box[3] + oy
+                    own = {'left': 0, 'center': 1, 'right': 2}[self._marker_align(m)]
+                    src_x = (l, (l + r) / 2.0, r)
+                    moving = self._move_resize_selection() if getattr(self, '_group_drag', None) is not None \
+                        else [{'type': 'marker', 'index': marker_index}]
+                    targets = self._smart_guide_targets(moving)
+                    best_x = best_y = None
+                    for tg in targets:
+                        if not lock_x:
+                            for k in range(3):
+                                d = tg[k] - src_x[k]
+                                # The marker's own anchor edge wins a near-tie.
+                                score = abs(d) * (0.9 if k == own else 1.0)
+                                if abs(d) <= tol_img and (best_x is None or score < best_x[0]):
+                                    best_x = (score, d, tg[k], tg)
+                        if not lock_y:
+                            d = tg[3] - float(anchor_img.y())
+                            if abs(d) <= tol_img and (best_y is None or abs(d) < best_y[0]):
+                                best_y = (abs(d), d, tg[3], tg)
+                    if best_x is None and best_y is None:
+                        return None
+                    dx = best_x[1] if best_x else 0.0
+                    dy = best_y[1] if best_y else 0.0
+                    guides = []
+                    if best_x:
+                        tg = best_x[3]
+                        guides.append(('v', best_x[2], min(t + dy, tg[4]), max(b + dy, tg[5])))
+                    if best_y:
+                        tg = best_y[3]
+                        guides.append(('h', best_y[2], min(l + dx, tg[0]), max(r + dx, tg[2])))
+                    self._smart_guides = guides
+                    return dx, dy
+                except Exception:
+                    return None
 
             def _translate_custom_items(self, items, dx, dy):
                 """Move several items by (dx, dy) image px, with the same rules as moving
@@ -30628,12 +31968,21 @@ if __name__ == "__main__":
                 clicked_point_ls = self.live_view_label.transform_point(event.position())
                 item_selected = False
 
-                # Shift+click builds a multi-selection instead of starting a drag.
-                if event.modifiers() & Qt.ShiftModifier:
-                    self._toggle_multi_selection(clicked_point_ls)
-                    return
+                # Shift (or Ctrl/Cmd) + click adds an item to / removes it from the selection.
+                # The press itself must still START A DRAG, though: handling it as a pure
+                # "toggle and return" meant that holding Shift BEFORE pressing an item (to
+                # constrain the move to a straight line) did nothing at all -- the item only
+                # moved if the drag was started first and Shift pressed afterwards. So the
+                # press now grabs the item like any other press, and the add/remove is
+                # decided on RELEASE: only when the mouse did not actually move.
+                toggle_mod = bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
                 group_before = self._move_resize_selection()
                 self._group_drag = None
+                self._table_divider_drag = None
+                self._pending_toggle = None
+                self._smart_guides = []
+                self._snap_targets = None
+                self._marquee = None
 
                 # Several items selected (Shift+click) and the press lands on ONE OF THEM:
                 # drag the whole group, like PowerPoint. This must win over the normal
@@ -30644,6 +31993,9 @@ if __name__ == "__main__":
                     member = self._group_member_at_ls(group_before, clicked_point_ls)
                     if member is not None:
                         self._start_group_drag(group_before, member, clicked_point_ls)
+                        if toggle_mod:
+                            # Released without moving: take this item out of the selection.
+                            self._pending_toggle = {'remove': dict(member), 'before': group_before}
                         return
 
                 # A text item's font handle is offered only once that item is selected, so an
@@ -30653,7 +32005,7 @@ if __name__ == "__main__":
                 if sel_info and sel_info['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
                     handle_pt, centre_pt = self._get_text_item_font_handle_ls(sel_info)
                     if handle_pt is not None:
-                        grab = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 2.0
+                        grab = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * 2.0)
                         if (clicked_point_ls - handle_pt).manhattanLength() < grab:
                             self.resizing_corner_index = 0   # text items have a single handle
                             self.shape_points_at_drag_start_label = [centre_pt, handle_pt]
@@ -30667,20 +32019,34 @@ if __name__ == "__main__":
                             self.update_live_view()
                             return
 
-                # Iterate in reverse to select topmost items first
-                # Check shape handles first (higher priority than body)
-                for i in range(len(self.custom_shapes) - 1, -1, -1):
+                # Shape handles first (higher priority than a body) -- but only the handles of
+                # the shape that is SELECTED, i.e. the ones actually drawn. The invisible
+                # handles of every other shape used to be live too, so a click near the end
+                # of an unselected line, or near a rectangle corner, resized that shape
+                # instead of selecting what was clicked -- a trap wherever items sit close
+                # together (a converted table is all line ends). Same rule as text items:
+                # click to select, then drag a red handle.
+                for i in self._active_handle_shape_indices():
                     stype_i = self.custom_shapes[i].get('type')
                     _body, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
                     # Tighter grab radius for line/arrow handles: their endpoint + thickness
                     # handles sit right on the shaft, so a large radius turned every on-line
                     # click into a resize and made the shape hard to MOVE. Rectangles keep the
                     # roomier radius for easy corner grabbing.
-                    handle_threshold = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * (
-                        1.0 if stype_i in ('line', 'arrow', 'leader') else 1.5)
+                    _is_table_i = isinstance(self.custom_shapes[i].get('table'), dict)
+                    handle_threshold = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * (
+                        1.25 if stype_i in ('line', 'arrow', 'leader') else (2.5 if _is_table_i else 1.75)))
                     if handles_ls:
                         for corner_idx, handle_pt in enumerate(handles_ls):
                             if (clicked_point_ls - handle_pt).manhattanLength() < handle_threshold:
+                                if _is_table_i and corner_idx >= 4:
+                                    # edge handle: resize the first / last row or column
+                                    t = self.custom_shapes[i]['table']
+                                    div = {4: ('row', 0), 5: ('col', len(t['col_fracs'])),
+                                           6: ('row', len(t['row_fracs'])), 7: ('col', 0)}[corner_idx]
+                                    self._begin_table_divider_drag(i, div, clicked_point_ls)
+                                    item_selected = True
+                                    break
                                 self.moving_custom_item_info = {'type': 'shape', 'index': i}
                                 self.resizing_corner_index = corner_idx
                                 self.shape_points_at_drag_start_label = handles_ls
@@ -30691,6 +32057,16 @@ if __name__ == "__main__":
                                 item_selected = True
                                 break
                     if item_selected: break
+
+                # A line of the SELECTED table (a column / row divider, or one of its edges):
+                # drag it to resize that column or row.
+                if not item_selected:
+                    for i in self._active_handle_shape_indices():
+                        div = self._table_divider_at_ls(i, clicked_point_ls)
+                        if div is not None:
+                            self._begin_table_divider_drag(i, div, clicked_point_ls)
+                            item_selected = True
+                            break
 
                 # Check shape bodies if no handle was clicked
                 # Text is drawn ON TOP of shapes, so a label sitting inside a rectangle wins
@@ -30766,7 +32142,8 @@ if __name__ == "__main__":
                         self.current_selection_mode = "dragging_custom_item"
                         self.live_view_label.mode = "dragging_custom_item"
 
-                    self.live_view_label.setCursor(Qt.CrossCursor)
+                    if self.resizing_corner_index == -1:
+                        self.live_view_label.setCursor(Qt.SizeAllCursor)
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_custom_item_drag
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_custom_item_drag_release
                     # Grabbing the BODY of an item that is part of a multi-selection drags the
@@ -30777,14 +32154,168 @@ if __name__ == "__main__":
                             and self.resizing_corner_index == -1):
                         self.multi_selected_items = [dict(it) for it in group_before if it != clicked] + [clicked]
                         self._group_drag = {'applied_x': 0.0, 'applied_y': 0.0}
+                        if toggle_mod:
+                            self._pending_toggle = {'remove': dict(clicked), 'before': group_before}
+                    elif toggle_mod and self.resizing_corner_index == -1:
+                        if clicked in group_before:
+                            # The only selected item, pressed again with Shift: a click
+                            # deselects it, a drag moves it (constrained).
+                            self.multi_selected_items = []
+                            self._pending_toggle = {'remove': dict(clicked), 'before': group_before}
+                        else:
+                            # Shift+press on another item: it joins the selection right away
+                            # and the whole selection can be dragged from it.
+                            self.multi_selected_items = [dict(it) for it in group_before] + [clicked]
+                            if len(self.multi_selected_items) > 1:
+                                self._group_drag = {'applied_x': 0.0, 'applied_y': 0.0}
+                                self._announce_multi_selection(len(self.multi_selected_items))
                     else:
                         self.multi_selected_items = []
                 else:
-                    self.moving_custom_item_info = None
-                    self.multi_selected_items = []
+                    # Empty space: start a selection rectangle (marquee). Released without
+                    # dragging it simply deselects, as a click on empty space always did.
                     self.resizing_corner_index = -1
+                    self._start_marquee(clicked_point_ls, group_before if toggle_mod else [])
+                    return
 
                 self.update_live_view()
+
+            # ---- table: drag a divider to resize one column / row ----------------------
+            TABLE_MIN_CELL_PX = 4.0     # image px a column / row can be squeezed to
+
+            def _begin_table_divider_drag(self, shape_index, div, point_ls):
+                sd = self.custom_shapes[shape_index]
+                x, y, w, h = [float(v) for v in sd['rect']]
+                t = sd['table']
+                self._table_divider_drag = {
+                    'index': shape_index, 'kind': div[0], 'k': div[1], 'rect0': (x, y, w, h),
+                    'cols0': [float(f) * w for f in t['col_fracs']],
+                    'rows0': [float(f) * h for f in t['row_fracs']]}
+                self.moving_custom_item_info = {'type': 'shape', 'index': shape_index}
+                self.resizing_corner_index = 99      # "a table line"
+                self.shape_points_at_drag_start_label = [point_ls]
+                self.live_view_label.setCursor(Qt.SplitHCursor if div[0] == 'col' else Qt.SplitVCursor)
+
+            def _table_divider_at_ls(self, shape_index, point_ls):
+                """('col', k) / ('row', k) when the point is on an INNER vertical / horizontal
+                line of this table (k = 1 .. n-1), else None. The outer edges are not
+                dividers: pressing the frame moves the table (as in PowerPoint) and the
+                first / last row or column is resized with the handle on the middle of that
+                edge. The grab width is 4 screen px but never more than a fifth of the
+                smaller neighboring cell, so most of every cell stays a "move" area."""
+                try:
+                    sd = self.custom_shapes[shape_index]
+                    t = sd.get('table')
+                    if sd.get('type') != 'rectangle' or not isinstance(t, dict):
+                        return None
+                    body, _h = self._get_shape_bounding_box_and_handles_in_label_space(shape_index)
+                    if body is None or body.width() <= 0 or body.height() <= 0:
+                        return None
+                    tol = self._hit_px(4.0)
+                    px, py = point_ls.x(), point_ls.y()
+                    if not (body.left() <= px <= body.right() and body.top() <= py <= body.bottom()):
+                        return None
+                    best = None
+                    for kind, fracs, origin, extent, pos in (
+                            ('col', t.get('col_fracs') or [], body.left(), body.width(), px),
+                            ('row', t.get('row_fracs') or [], body.top(), body.height(), py)):
+                        tot = sum(float(f) for f in fracs) or 1.0
+                        acc = 0.0; edges = [origin]
+                        for f in fracs:
+                            acc += float(f); edges.append(origin + extent * acc / tot)
+                        for k in range(1, len(edges) - 1):
+                            e = edges[k]
+                            d = abs(pos - e)
+                            lim = min(tol, 0.2 * min(e - edges[k - 1], edges[k + 1] - e))
+                            if d <= lim and (best is None or d < best[0]):
+                                best = (d, kind, k)
+                    return (best[1], best[2]) if best else None
+                except Exception:
+                    return None
+
+            def _drag_table_divider(self, mouse_img):
+                """Move the grabbed table line to the mouse (image px). An inner divider
+                trades size between its two neighbors (the table keeps its size, as in
+                PowerPoint); the right / bottom edge resizes the last column / row and the
+                left / top edge the first one, the table growing or shrinking with it."""
+                dd = getattr(self, '_table_divider_drag', None)
+                if not dd:
+                    return
+                try:
+                    sd = self.custom_shapes[dd['index']]
+                    x, y, w, h = dd['rect0']
+                    is_col = dd['kind'] == 'col'
+                    sizes = list(dd['cols0'] if is_col else dd['rows0'])
+                    n = len(sizes); k = dd['k']; mn = self.TABLE_MIN_CELL_PX
+                    origin = x if is_col else y
+                    pos = float(mouse_img.x() if is_col else mouse_img.y())
+                    edge0 = origin + sum(sizes[:k])            # where the line was
+                    if k <= 0:                                  # left / top edge
+                        delta = min(pos - edge0, sizes[0] - mn)
+                        sizes[0] -= delta; origin += delta
+                    elif k >= n:                                # right / bottom edge
+                        sizes[-1] = max(mn, sizes[-1] + (pos - edge0))
+                    else:                                       # inner divider
+                        delta = max(-(sizes[k - 1] - mn), min(pos - edge0, sizes[k] - mn))
+                        sizes[k - 1] += delta; sizes[k] -= delta
+                    total = sum(sizes)
+                    t = dict(sd['table'])                       # never edit the shared spec in place
+                    t['col_fracs' if is_col else 'row_fracs'] = [v / total for v in sizes]
+                    new = dict(sd); new['table'] = t
+                    new['rect'] = (origin, y, total, h) if is_col else (x, origin, w, total)
+                    self.custom_shapes[dd['index']] = new
+                except Exception:
+                    log_traceback()
+
+            def _active_handle_shape_indices(self):
+                """Indices of the shapes whose resize handles are live: the selected one."""
+                sel = getattr(self, 'moving_custom_item_info', None)
+                if (sel and sel.get('type') == 'shape'
+                        and 0 <= sel.get('index', -1) < len(getattr(self, 'custom_shapes', []) or [])):
+                    return [sel['index']]
+                return []
+
+            def _move_resize_cursor_at(self, point_ls, hovered=None):
+                """Cursor that says what a press at this point would do in Move/Resize:
+                a resize arrow on a handle of the selected item, the four-way move arrow on
+                an item, and a cross on empty space (drag = selection rectangle). `hovered`
+                is the item under the point when the caller already knows it."""
+                try:
+                    sel = getattr(self, 'moving_custom_item_info', None)
+                    if sel and self._custom_item_valid(sel):
+                        if sel['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
+                            handle_pt, _c = self._get_text_item_font_handle_ls(sel)
+                            if handle_pt is not None and (point_ls - handle_pt).manhattanLength() < \
+                                    self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * 2.0):
+                                return Qt.SizeFDiagCursor
+                        for i in self._active_handle_shape_indices():
+                            sd = self.custom_shapes[i]; st = sd.get('type')
+                            _b, handles = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                            _tbl = isinstance(sd.get('table'), dict)
+                            thr = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * (
+                                1.25 if st in ('line', 'arrow', 'leader') else (2.5 if _tbl else 1.75)))
+                            for k, hp in enumerate(handles or []):
+                                if (point_ls - hp).manhattanLength() < thr:
+                                    if _tbl and k >= 4:
+                                        return Qt.SplitVCursor if k in (4, 6) else Qt.SplitHCursor
+                                    if st == 'rectangle':
+                                        return (Qt.SizeVerCursor if k == 4 else
+                                                Qt.SizeFDiagCursor if k in (0, 2) else Qt.SizeBDiagCursor)
+                                    if st in ('line', 'arrow') and k in (2, 3):
+                                        return Qt.SizeVerCursor      # thickness
+                                    return Qt.PointingHandCursor     # re-aim an end / the tip
+                            div = self._table_divider_at_ls(i, point_ls)
+                            if div is not None:
+                                return Qt.SplitHCursor if div[0] == 'col' else Qt.SplitVCursor
+                    if hovered is None:
+                        hovered = self._item_under_point_ls(point_ls)
+                    if hovered is None:
+                        group = self._move_resize_selection()
+                        if len(group) > 1:
+                            hovered = self._group_member_at_ls(group, point_ls)
+                    return Qt.SizeAllCursor if hovered is not None else Qt.CrossCursor
+                except Exception:
+                    return Qt.ArrowCursor
 
             def _set_marker_set_shift(self, side, value):
                 """Move a whole left / right / top label set to `value` (image px) -- the same
@@ -30853,14 +32384,46 @@ if __name__ == "__main__":
                 # --- DRAG LOGIC ---
                 if self.current_selection_mode == "dragging_custom_item":
                     raw_delta_ls = current_mouse_pos_ls - self.initial_mouse_pos_for_shape_drag_label
-                    
-                    if QApplication.keyboardModifiers() == Qt.ShiftModifier:
-                        if abs(raw_delta_ls.x()) > abs(raw_delta_ls.y()): raw_delta_ls.setY(0)
-                        else: raw_delta_ls.setX(0)
-                    
+
+                    # Shift = move in a straight line. The modifier is read from the mouse
+                    # event itself (plus the global state), and the axis is only chosen once
+                    # the mouse has travelled a few screen pixels: with Shift already down at
+                    # the press there is no direction yet, and a press that turns out to be a
+                    # Shift+click (select / deselect) must not nudge the item.
+                    _mods = event.modifiers() | QApplication.keyboardModifiers()
+                    _shift = bool(_mods & Qt.ShiftModifier)
+                    _zoom = float(self.live_view_label.zoom_level or 1.0)
+                    _lock_x = _lock_y = False
+                    if _shift or getattr(self, '_pending_toggle', None) is not None:
+                        if raw_delta_ls.manhattanLength() * _zoom < self.DRAG_START_THRESHOLD_PX:
+                            raw_delta_ls = QPointF(0.0, 0.0)
+                            _lock_x = _lock_y = True
+                        else:
+                            self._pending_toggle = None      # a real drag, not a click
+                    if _shift and not (_lock_x and _lock_y):
+                        if abs(raw_delta_ls.x()) > abs(raw_delta_ls.y()):
+                            raw_delta_ls.setY(0); _lock_y = True
+                        else:
+                            raw_delta_ls.setX(0); _lock_x = True
+
                     target_ref_point_ls = self.shape_points_at_drag_start_label[0] + raw_delta_ls
                     snapped_target_ref_point_ls = self.snap_point_to_grid(target_ref_point_ls)
                     effective_delta_ls = snapped_target_ref_point_ls - self.shape_points_at_drag_start_label[0]
+
+                    # Smart guides: a dragged custom marker snaps its left edge / center /
+                    # right edge (and its height) to those of the other custom markers.
+                    self._smart_guides = []
+                    if (info['type'] == 'marker' and scale and not (_mods & Qt.AltModifier)
+                            and not (_lock_x and _lock_y)
+                            and snapped_target_ref_point_ls == target_ref_point_ls):
+                        _adj = self._smart_guide_adjust(
+                            info['index'], label_to_image(snapped_target_ref_point_ls),
+                            5.0 / (scale * _zoom), _lock_x, _lock_y)
+                        if _adj is not None:
+                            snapped_target_ref_point_ls = QPointF(
+                                snapped_target_ref_point_ls.x() + _adj[0] * scale,
+                                snapped_target_ref_point_ls.y() + _adj[1] * scale)
+                            effective_delta_ls = snapped_target_ref_point_ls - self.shape_points_at_drag_start_label[0]
 
                     gd = getattr(self, '_group_drag', None)
                     if gd is not None and scale:
@@ -30911,7 +32474,12 @@ if __name__ == "__main__":
                         new_points_img = [label_to_image(p) for p in new_points_ls]
                         shape_data = self.custom_shapes[info['index']]
                         if shape_data['type'] == 'rectangle':
-                            xs = [p.x() for p in new_points_img]; ys = [p.y() for p in new_points_img]
+                            # The four CORNERS only. The handle list also carries the handles
+                            # that float outside the box (border thickness / table edges);
+                            # taking the bounding box of all of them made a rectangle -- and a
+                            # table -- grow a little every time it was merely moved.
+                            _c = new_points_img[:4]
+                            xs = [p.x() for p in _c]; ys = [p.y() for p in _c]
                             shape_data['rect'] = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
                         elif shape_data['type'] == 'leader':
                             # Move the whole callout (tip, line and its label) together.
@@ -30925,6 +32493,10 @@ if __name__ == "__main__":
                 # --- RESIZE LOGIC ---
                 elif self.current_selection_mode == "resizing_custom_item":
                     snapped_mouse_ls = self.snap_point_to_grid(current_mouse_pos_ls)
+                    if getattr(self, '_table_divider_drag', None) is not None:
+                        self._drag_table_divider(label_to_image(snapped_mouse_ls))
+                        self.update_live_view()
+                        return
                     if info['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
                         # Text items resize by FONT SIZE: drag the handle away from the text
                         # centre to grow it, towards the centre to shrink. Scaling by the
@@ -30953,7 +32525,7 @@ if __name__ == "__main__":
                         fixed_corner_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 2) % 4]
 
                         # Constrain to square if Shift is pressed
-                        if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                        if (event.modifiers() | QApplication.keyboardModifiers()) & Qt.ShiftModifier:
                             delta_x = snapped_mouse_ls.x() - fixed_corner_ls.x()
                             delta_y = snapped_mouse_ls.y() - fixed_corner_ls.y()
                             max_delta = max(abs(delta_x), abs(delta_y))
@@ -30972,7 +32544,7 @@ if __name__ == "__main__":
                             fixed_endpoint_ls = self.shape_points_at_drag_start_label[(self.resizing_corner_index + 1) % 2]
 
                             # Snap to 45° angles if Shift is pressed
-                            if QApplication.keyboardModifiers() == Qt.ShiftModifier:
+                            if (event.modifiers() | QApplication.keyboardModifiers()) & Qt.ShiftModifier:
                                 delta = snapped_mouse_ls - fixed_endpoint_ls
                                 angle_deg = np.degrees(np.arctan2(delta.y(), delta.x()))
                                 snapped_angle_rad = np.radians(round(angle_deg / 45.0) * 45.0)
@@ -31105,6 +32677,20 @@ if __name__ == "__main__":
                                   - self.initial_mouse_pos_for_shape_drag_label).manhattanLength() > 0.5
                     except Exception:
                         _moved = True
+                    _pend = getattr(self, '_pending_toggle', None)
+                    self._pending_toggle = None
+                    self._smart_guides = []
+                    self._snap_targets = None
+                    if _pend is not None:
+                        # Shift/Ctrl+click that never became a drag: nothing moved (the drag
+                        # handler holds the item still inside the click threshold) -- finish
+                        # the click by taking the pressed item out of the selection.
+                        _moved = False
+                        sel = [dict(it) for it in _pend.get('before', []) if it != _pend.get('remove')]
+                        sel = [it for it in sel if self._custom_item_valid(it)]
+                        self.multi_selected_items = sel if len(sel) > 1 else []
+                        self.moving_custom_item_info = dict(sel[-1]) if sel else None
+                        self._announce_multi_selection(len(sel))
                     if _moved:
                         self.save_state()
                         self.is_modified = True
@@ -31112,10 +32698,16 @@ if __name__ == "__main__":
                     self.initial_mouse_pos_for_shape_drag_label = QPointF()
                     self.resizing_corner_index = -1
                     self._group_drag = None
+                    self._table_divider_drag = None
                     self.current_selection_mode = "select_custom_item"
                     self.live_view_label.mode = "select_custom_item"
                     self.live_view_label._custom_mouseMoveEvent_from_app = None
                     self.live_view_label._custom_mouseReleaseEvent_from_app = None
+                    try:
+                        self.live_view_label.setCursor(self._move_resize_cursor_at(
+                            self.live_view_label.transform_point(event.position())))
+                    except Exception:
+                        pass
                     self.update_live_view()
             
             def _get_marker_bounding_box_in_label_space(self, marker_index):
@@ -31151,10 +32743,17 @@ if __name__ == "__main__":
                         thickness_handle = QPointF(body.center().x(), body.top() - offset_ls)
                         handles = [body.topLeft(), body.topRight(), body.bottomRight(),
                                    body.bottomLeft(), thickness_handle]
+                        if isinstance(shape_data.get('table'), dict):
+                            # A table has no thickness handle (set it in the table editor).
+                            # Handles 4-7 sit on the middle of its top / right / bottom / left
+                            # edge and resize the first / last row or column.
+                            c = body.center()
+                            handles = handles[:4] + [QPointF(c.x(), body.top()), QPointF(body.right(), c.y()),
+                                                     QPointF(c.x(), body.bottom()), QPointF(body.left(), c.y())]
                     elif shape_type in ('line', 'arrow'):
                         p1 = img_to_label(shape_data['start']); p2 = img_to_label(shape_data['end'])
                         # The "body" for clicking a line needs tolerance
-                        body = QRectF(p1, p2).normalized().adjusted(-5, -5, 5, 5)
+                        body = QRectF(p1, p2).normalized().adjusted(-3, -3, 3, 3)
                         # Handles 0,1 are the endpoints (re-aim / re-length the shape).
                         # Handles 2,3 sit perpendicular to the shaft at its midpoint and
                         # control the THICKNESS (drag out = thicker, in = thinner).
@@ -31273,6 +32872,12 @@ if __name__ == "__main__":
                     pass # print("No custom markers or shapes to reset.")
                 
             
+            def _new_marker_align(self):
+                """Anchor chosen for NEW custom markers (the 'Anchor' box next to Place Custom)."""
+                cb = getattr(self, 'custom_marker_align_combo', None)
+                a = cb.currentData() if cb is not None else 'center'
+                return a if a in ('left', 'right') else 'center'
+
             def place_custom_marker(self, event, custom_text):
                 """Place a custom marker at the cursor location."""
                 # The click can land after the image was closed/replaced (or while the viewer
@@ -31305,7 +32910,11 @@ if __name__ == "__main__":
                     
                 # Store the custom marker's position and text
                 self.custom_markers = getattr(self, "custom_markers", [])
-                self.custom_markers.append([image_x, image_y, custom_text, self.custom_marker_color, self.custom_font_type_dropdown.currentText(), self.custom_font_size_spinbox.value(),False,False])
+                self.custom_markers.append(self._marker_with_align(
+                    [image_x, image_y, custom_text, self.custom_marker_color,
+                     self.custom_font_type_dropdown.currentText(),
+                     self.custom_font_size_spinbox.value(), False, False],
+                    self._new_marker_align()))
                 self.is_modified = True
                 self.update_live_view()
                 
@@ -31397,8 +33006,9 @@ if __name__ == "__main__":
                 if left_border is None or right_border is None:
                     QMessageBox.warning(self, "Border Detection Failed", 
                                         "Could not detect image content borders. Please ensure image has padding or clear boundaries.")
-                    # Revert state if we can't proceed
-                    if self.undo_stack: self.undo_stack.pop()
+                    # Nothing was changed. (The "before" snapshot taken above is not pushed
+                    # when it equals the top of the undo stack, so there is nothing to pop --
+                    # popping here would now discard a real undo step.)
                     return
 
                 if marker_type == 'left' and self.right_markers:
@@ -32567,7 +34177,8 @@ if __name__ == "__main__":
                             QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
                     # --- End Config File Loading ---
                     
-                    self.is_modified = True # Mark as modified when loading new image
+                    # (is_modified is cleared at the END of this method: a freshly opened
+                    # file matches what is on disk, so switching away must not ask to save.)
                     
                     # --- ADDED: Apply adjustments ---
                     # Ensure the display reflects the inversion (or config settings) immediately
@@ -32625,6 +34236,11 @@ if __name__ == "__main__":
                 # Same for autosave: until something changes, a crash only needs to reopen
                 # this file, not a copy of it.
                 self._autosave_mark_clean()
+                # Nothing has been edited yet. Everything above (apply_config, adjustments,
+                # marker re-assert, baseline save_state) may have flipped the flag as a side
+                # effect, so clear it last. Callers that open a NOT-yet-saved copy (crash
+                # recovery) set it back to True themselves afterwards.
+                self.is_modified = False
 
             def apply_config(self, config_data,load_analysis=False):
                 # --- 1. Load data from config_data into self attributes ---
@@ -33090,11 +34706,15 @@ if __name__ == "__main__":
                 custom_markers_data = []
                 for marker_tuple in getattr(self, "custom_markers", []):
                     try:
-                        x, y, text, color, font, font_size, is_bold, is_italic = marker_tuple
-                        custom_markers_data.append({
-                            "x": x, "y": y, "text": text, "color": color.name(),
+                        x, y, text, color, font, font_size, is_bold, is_italic = marker_tuple[:8]
+                        _entry = {
+                            "x": x, "y": y, "text": text, "color": QColor(color).name(),
                             "font": font, "font_size": font_size, "bold": is_bold, "italic": is_italic
-                        })
+                        }
+                        _al = self._marker_align(marker_tuple)
+                        if _al != 'center':
+                            _entry["align"] = _al
+                        custom_markers_data.append(_entry)
                     except (ValueError, TypeError, IndexError): pass
                 config["custom_markers"] = custom_markers_data
                 config["custom_shapes"] = [dict(s) for s in getattr(self, "custom_shapes", [])]
@@ -35723,12 +37343,12 @@ if __name__ == "__main__":
                 mi = self._leader_linked_marker_index(shape)
                 if mi is not None:
                     try:
-                        mx, my, text, _c, fam, size, bold, italic = self.custom_markers[mi]
+                        mx, my, text, _c, fam, size, bold, italic = self.custom_markers[mi][:8]
                         f = QFont(fam)
                         f.setPixelSize(max(1, int(float(size) * fsf)))
                         f.setBold(bool(bold)); f.setItalic(bool(italic))
                         r = QFontMetrics(f).boundingRect(str(text))
-                        ox = float(mx) * rs - r.center().x()
+                        ox = float(mx) * rs - self._marker_rect_ref_x(r, self._marker_align(self.custom_markers[mi]))
                         lo, hi = ox + r.left(), ox + r.right()
                         half_h = r.height() / 2.0
                         ey = float(my) * rs
@@ -36619,6 +38239,73 @@ if __name__ == "__main__":
                 f.setItalic(bool(getattr(self, 'font_italic', False)))
                 return f
 
+            # ---- custom-marker text anchor (v9.8.2) -------------------------------------
+            # A custom marker is the list [x, y, text, color, family, size, bold, italic].
+            # A 9th element, 'left' or 'right', is present ONLY when the marker is anchored
+            # by that edge instead of its centre -- so every marker saved by an earlier
+            # version (and every default one) keeps the exact 8-element record and renders
+            # where it always did.
+            @staticmethod
+            def _marker_align(marker):
+                try:
+                    a = marker[8] if len(marker) > 8 else 'center'
+                except Exception:
+                    return 'center'
+                return a if a in ('left', 'right') else 'center'
+
+            @staticmethod
+            def _marker_with_align(marker, align):
+                """Copy of a marker record carrying `align` ('center' drops the 9th element)."""
+                m = list(marker[:8])
+                if align in ('left', 'right'):
+                    m.append(align)
+                return m
+
+            @staticmethod
+            def _marker_rect_ref_x(rect, align):
+                """x, inside the text's own bounding rect, that is drawn on the anchor."""
+                if align == 'left':
+                    return float(rect.left())
+                if align == 'right':
+                    return float(rect.left() + rect.width())
+                return float(rect.center().x())      # historical (integer) centre
+
+            def _marker_box_img(self, marker):
+                """(left, top, right, bottom) of a custom marker's text box in IMAGE px, laid
+                out exactly as the shared renderer draws it, or None."""
+                try:
+                    if not (self.image and not self.image.isNull()):
+                        return None
+                    rs = float(self.EXPORT_RENDER_SCALE)
+                    fsf = self._export_font_scale_factor(rs, float(self.image.width()), float(self.image.height()))
+                    it = self._annotation_text_item('marker', None, None, rs, fsf, marker=marker)
+                    if it is None:
+                        return None
+                    r = QRectF(QFontMetrics(it['font']).boundingRect(it['text']))
+                    r.translate(it['paint_pt'])
+                    return (r.left() / rs, r.top() / rs, r.right() / rs, r.bottom() / rs)
+                except Exception:
+                    return None
+
+            def _marker_realigned(self, marker, align):
+                """The same marker re-anchored to `align` WITHOUT moving its text on screen
+                (the stored x moves to the chosen edge / centre of the current text box)."""
+                cur = self._marker_align(marker)
+                m = self._marker_with_align(marker, align)
+                if cur == (align if align in ('left', 'right') else 'center'):
+                    return m
+                try:
+                    rs = float(self.EXPORT_RENDER_SCALE)
+                    fsf = self._export_font_scale_factor(rs, float(self.image.width()), float(self.image.height()))
+                    f = QFont(m[4]); f.setPixelSize(max(1, int(float(m[5]) * fsf)))
+                    f.setBold(bool(m[6])); f.setItalic(bool(m[7]))
+                    rect = QFontMetrics(f).boundingRect(str(m[2]))
+                    m[0] = float(m[0]) + (self._marker_rect_ref_x(rect, self._marker_align(m))
+                                          - self._marker_rect_ref_x(rect, cur)) / rs
+                except Exception:
+                    log_traceback()
+                return m
+
             def _annotation_text_item(self, kind, coord, text, render_scale, font_scale_factor,
                                       index=-1, anchor=None, marker=None):
                 """Layout of ONE text annotation, in export-canvas units — the single source
@@ -36627,10 +38314,10 @@ if __name__ == "__main__":
                 kind 'left_marker' / 'right_marker': coord = image y, anchor = image x of the
                 column; 'top_marker': coord = image x, anchor = image y of the row; 'marker':
                 `marker` = the custom-marker record [x, y, text, color, family, size, bold,
-                italic]. Returns the item dict (see _annotation_text_items) or None."""
+                italic(, anchor)]. Returns the item dict (see _annotation_text_items) or None."""
                 rs = float(render_scale)
                 if kind == 'marker':
-                    x, y, text, color, family, size, is_bold, is_italic = marker
+                    x, y, text, color, family, size, is_bold, is_italic = marker[:8]
                     f = QFont(family)
                     f.setPixelSize(max(1, int(float(size) * font_scale_factor)))
                     f.setBold(bool(is_bold)); f.setItalic(bool(is_italic))
@@ -36638,7 +38325,11 @@ if __name__ == "__main__":
                     c = color if isinstance(color, QColor) else QColor(color)
                     if not c.isValid():
                         c = QColor(Qt.black)
-                    pt = QPointF(float(x) * rs - rect.center().x(),
+                    # The stored (x, y) is the text's ANCHOR: the centre of its box by default
+                    # (every marker made before v9.8.2), or the middle of its left / right
+                    # edge when the marker is left- / right-anchored -- that edge then stays
+                    # put when the text or its size changes.
+                    pt = QPointF(float(x) * rs - self._marker_rect_ref_x(rect, self._marker_align(marker)),
                                  float(y) * rs - rect.center().y())
                     return {'kind': 'marker', 'index': index, 'text': str(text),
                             'font': f, 'color': c, 'transform': QTransform.fromTranslate(pt.x(), pt.y()),
@@ -36727,9 +38418,11 @@ if __name__ == "__main__":
                 item = None
                 if lv.preview_marker_enabled and lv.preview_marker_position:
                     ix, iy = _to_img(lv.preview_marker_position)
-                    record = [ix, iy, lv.preview_marker_text, self.custom_marker_color,
-                              self.custom_font_type_dropdown.currentText(),
-                              self.custom_font_size_spinbox.value(), False, False]
+                    record = self._marker_with_align(
+                        [ix, iy, lv.preview_marker_text, self.custom_marker_color,
+                         self.custom_font_type_dropdown.currentText(),
+                         self.custom_font_size_spinbox.value(), False, False],
+                        self._new_marker_align())
                     item = self._annotation_text_item('marker', None, None, rs, fsf, marker=record)
                 elif lv.standard_marker_preview_enabled and lv.standard_marker_preview_position:
                     ix, iy = _to_img(lv.standard_marker_preview_position)
@@ -36802,6 +38495,26 @@ if __name__ == "__main__":
                                                         _cv(shape_data['end']), pen_w)
                         elif stype == 'leader':
                             self._draw_leader_on_painter(painter, shape_data, rs, font_scale_factor)
+                        elif stype == 'rectangle' and isinstance(shape_data.get('table'), dict):
+                            # A table is drawn as exactly the rectangle, lines and custom
+                            # markers it converts to (_table_expand), so converting it -- or
+                            # exporting it to PowerPoint -- cannot change how it looks.
+                            t_markers, t_shapes = self._table_expand(shape_data)
+                            for sd in t_shapes:
+                                # each part with its own pen (an underline is thinner and
+                                # text-colored), exactly as it is drawn once converted
+                                painter.setPen(QPen(QColor(sd.get('color', '#000000')),
+                                                    max(1.0, float(sd.get('thickness', 1.0) or 1.0) * rs)))
+                                if sd['type'] == 'line':
+                                    painter.drawLine(_cv(sd['start']), _cv(sd['end']))
+                                else:
+                                    x, y, w, h = sd['rect']
+                                    painter.drawRect(QRectF(_cv((x, y)), QSizeF(float(w) * rs, float(h) * rs)))
+                            for rec in t_markers:
+                                it = self._annotation_text_item('marker', None, None, render_scale,
+                                                                font_scale_factor, marker=rec)
+                                if it is not None:
+                                    _draw_text_item(it)
                         elif stype == 'rectangle':
                             x, y, w, h = shape_data['rect']
                             painter.drawRect(QRectF(_cv((x, y)), QSizeF(float(w) * rs, float(h) * rs)))
@@ -36813,7 +38526,7 @@ if __name__ == "__main__":
                     _draw_text_item(it)
                 painter.restore()
 
-            def _annotation_outline_ls(self, kind, index, pad_ls=4.0):
+            def _annotation_outline_ls(self, kind, index, pad_ls=1.5):
                 """Clickable outline (QPolygonF, label space, unzoomed) of one text
                 annotation, measured from the SAME layout _paint_annotations draws, or
                 None."""
@@ -37038,6 +38751,631 @@ if __name__ == "__main__":
 
                 painter.end()
                 return render_canvas
+
+            # ------------------------------------------------------------------ #
+            # Tables                                                              #
+            # ------------------------------------------------------------------ #
+            # A table is a custom RECTANGLE shape that also carries a 'table' spec (cells,
+            # column/row fractions, font, alignment, which lines to draw). Being a rectangle
+            # it is moved, resized, cropped, padded, rotated, saved, undone and copied by
+            # the code that already does that for rectangles; the spec only adds what is
+            # drawn inside. _table_expand turns it into plain custom markers + lines, which
+            # is what the renderer paints, what PowerPoint export writes and what "Convert
+            # to Markers and Shapes" leaves behind -- one layout, so they cannot disagree.
+            _LADDER_LABEL_WORDS = ("mwm", "mw", "m", "marker", "markers", "ladder", "std", "standard", "l")
+
+            def _table_default_settings(self):
+                lanes = [str(t) for _x, t in (getattr(self, 'top_markers', []) or [])]
+                # Font: the standard labels' (the table sits among them). NOT the custom "Size:"
+                # box -- that one doubles as the line thickness and is often 1 or 2.
+                st = {'font': str(getattr(self, 'font_family', "Arial") or "Arial"),
+                      'font_size': max(6, int(getattr(self, 'font_size', 12) or 12)),
+                      'bold': False, 'italic': False,
+                      'text_color': QColor(getattr(self, 'custom_marker_color', QColor(Qt.black))).name(),
+                      'align': 'center', 'border': True, 'grid': True,
+                      'color': '#000000', 'thickness': 1.0,
+                      'width_mode': 'fit', 'label_col': True, 'first_lane': 1,
+                      'pad_pct': 35, 'row_h_pct': 130, 'auto_pad': True}
+                last = getattr(self, '_last_table_settings', None)
+                if isinstance(last, dict):
+                    for k in ('font', 'font_size', 'text_color', 'align', 'border', 'grid',
+                              'color', 'thickness', 'pad_pct', 'row_h_pct', 'auto_pad'):
+                        if k in last:
+                            st[k] = last[k]
+                n_rows = 3
+                if len(lanes) >= 2:
+                    # Columns over the lanes: a label column, then one column per sample lane
+                    # (a leading ladder lane is left to the label column).
+                    first = 2 if lanes[0].strip().lower() in self._LADDER_LABEL_WORDS else 1
+                    n_data = len(lanes) - (first - 1)
+                    st.update(width_mode='lanes', label_col=True, first_lane=first)
+                    n_cols = n_data + 1
+                else:
+                    n_cols = 5
+                st['cells'] = [[f"Row {r + 1}" if c == 0 else "+" for c in range(n_cols)] for r in range(n_rows)]
+                return st
+
+            def _table_settings_from_shape(self, shape):
+                t = dict(shape.get('table') or {})
+                st = self._table_default_settings()
+                st.update({k: v for k, v in t.items() if k not in ('col_fracs', 'row_fracs', 'pad_px')})
+                st['cells'] = [list(map(str, row)) for row in (t.get('cells') or [[""]])]
+                _nr = len(st['cells']); _nc = max((len(r) for r in st['cells']), default=1)
+                st['fmt'] = self._table_norm_fmt(t, _nr, _nc)      # (translates older flags)
+                st['spans'] = self._table_norm_spans(t.get('spans'), _nr, _nc)
+                for _k in ('bold', 'italic', 'bold_first_row', 'bold_first_col'):
+                    st.pop(_k, None)
+                st['color'] = QColor(shape.get('color', '#000000')).name()
+                st['thickness'] = float(shape.get('thickness', 1.0) or 1.0)
+                st['width_mode'] = 'keep'
+                return st
+
+            def _table_default_origin(self, total_w, total_h):
+                """Top-left for a NEW table: centred over the gel, just above the top labels
+                (or above the gel when there are none). y is NOT clamped to the canvas."""
+                iw = float(self.image.width()); ih = float(self.image.height())
+                cx, cy, cw, ch = self._gel_content_rect() or (0.0, 0.0, iw, ih)
+                top = cy
+                try:
+                    rs = float(self.EXPORT_RENDER_SCALE)
+                    fsf = self._export_font_scale_factor(rs, iw, ih)
+                    for it in self._annotation_text_items(rs, fsf, kinds=('top_marker',)):
+                        box = it['transform'].map(QPolygonF(QRectF(QFontMetrics(it['font']).boundingRect(it['text'])))).boundingRect()
+                        top = min(top, box.top() / rs)
+                except Exception:
+                    pass
+                gap = max(2.0, total_h / max(1, 6))
+                y = top - total_h - gap          # may be above the canvas: see open_table_dialog
+                x = cx + (cw - total_w) / 2.0
+                return max(2.0, min(x, max(2.0, iw - total_w - 2.0))), y
+
+            def _table_build_shape(self, st, base_shape=None):
+                """The table shape for dialog settings `st`. `base_shape` (when editing)
+                supplies the position to keep -- and, in 'keep' mode, the size too."""
+                iw = float(self.image.width()); ih = float(self.image.height())
+                rs = float(self.EXPORT_RENDER_SCALE)
+                fsf = self._export_font_scale_factor(rs, iw, ih)
+                cells = [list(map(str, row)) for row in (st.get('cells') or [[""]])]
+                nr = max(1, len(cells)); nc = max(1, max((len(r) for r in cells), default=1))
+                cells = [(r + [""] * nc)[:nc] for r in cells] or [[""] * nc]
+                size = max(1, int(st.get('font_size', 12)))
+
+                _fm_cache = {}
+
+                def _fm(bold, italic=False):
+                    key = (bool(bold), bool(italic))
+                    if key not in _fm_cache:
+                        f = QFont(str(st.get('font', 'Arial')))
+                        f.setPixelSize(max(1, int(size * fsf)))
+                        f.setBold(key[0]); f.setItalic(key[1])
+                        _fm_cache[key] = QFontMetrics(f)
+                    return _fm_cache[key]
+                fm_n = _fm(False)
+                fmt = self._table_norm_fmt(st, nr, nc)
+                spans = self._table_norm_spans(st.get('spans'), nr, nc)
+                _anchors, _owner = self._table_span_maps(spans, nr, nc)
+                line_h = fm_n.height() / rs
+                pad_px = max(0.0, float(st.get('pad_pct', 35))) / 100.0 * line_h
+                row_h = max(0.5, float(st.get('row_h_pct', 130)) / 100.0) * line_h
+                def _text_w(r, c):
+                    txt = cells[r][c].strip()
+                    if not txt:
+                        return 0.0
+                    return _fm('b' in fmt[r][c], 'i' in fmt[r][c]).boundingRect(txt).width() / rs
+                fit = []
+                for c in range(nc):
+                    wmax = 0.0
+                    for r in range(nr):
+                        # merged cells are fitted across their columns below; hidden ones not at all
+                        if _owner[r][c] != (r, c) or _anchors.get((r, c), (1, 1))[1] > 1:
+                            continue
+                        wmax = max(wmax, _text_w(r, c))
+                    fit.append(max(row_h, wmax + 2.0 * pad_px))
+                for (r, c), (_rs, cs) in _anchors.items():
+                    if cs > 1:
+                        short = _text_w(r, c) + 2.0 * pad_px - sum(fit[c:c + cs])
+                        if short > 0:
+                            for k in range(c, c + cs):
+                                fit[k] += short / cs
+
+                mode = st.get('width_mode', 'fit')
+                bt = (base_shape or {}).get('table') if isinstance(base_shape, dict) else None
+                x = y = None
+                if base_shape is not None:
+                    try:
+                        x, y = float(base_shape['rect'][0]), float(base_shape['rect'][1])
+                    except Exception:
+                        x = y = None
+                widths = None; heights = [row_h] * nr
+                kept = False; lane_x_fixed = False
+                if (mode == 'keep' and isinstance(bt, dict) and base_shape is not None
+                        and len(bt.get('col_fracs') or []) == nc and len(bt.get('row_fracs') or []) == nr):
+                    bw, bh = float(base_shape['rect'][2]), float(base_shape['rect'][3])
+                    widths = [float(f) * bw for f in bt['col_fracs']]
+                    heights = [float(f) * bh for f in bt['row_fracs']]
+                    kept = True
+                    # ...but a column never stays narrower than its (edited) text.
+                    grown = [max(w, f) for w, f in zip(widths, fit)]
+                    if any(g > w + 0.5 for g, w in zip(grown, widths)):
+                        widths = grown; kept = False
+                elif mode == 'lanes':
+                    lanes = sorted(float(xx) for xx, _t in (getattr(self, 'top_markers', []) or []))
+                    label_col = bool(st.get('label_col', True)) and nc >= 2
+                    nd = nc - (1 if label_col else 0)
+                    if len(lanes) >= 2 and nd >= 1:
+                        first = max(1, int(st.get('first_lane', 1))) - 1
+                        step = lanes[-1] - lanes[-2]
+                        ctr = [lanes[i] if i < len(lanes) else lanes[-1] + (i - len(lanes) + 1) * step
+                               for i in range(first, first + nd)]
+                        if nd == 1:
+                            half = max(fit[-1], abs(step)) / 2.0
+                            bounds = [ctr[0] - half, ctr[0] + half]
+                        else:
+                            bounds = ([ctr[0] - (ctr[1] - ctr[0]) / 2.0]
+                                      + [(ctr[i] + ctr[i + 1]) / 2.0 for i in range(nd - 1)]
+                                      + [ctr[-1] + (ctr[-1] - ctr[-2]) / 2.0])
+                        widths = [bounds[i + 1] - bounds[i] for i in range(nd)]
+                        x = bounds[0]; lane_x_fixed = True
+                        if label_col:
+                            widths = [fit[0]] + widths
+                            x -= fit[0]
+                if widths is None:
+                    widths = [max(fit)] * nc if mode == 'equal' else list(fit)
+                # Manual sizes typed in the dialog win over whatever the mode worked out.
+                n_lead = 1 if (lane_x_fixed and bool(st.get('label_col', True)) and nc >= 2) else 0
+                w_before = sum(widths[:n_lead])
+                manual = False
+                for lst, key in ((widths, 'col_w'), (heights, 'row_h')):
+                    for i, v in enumerate((st.get(key) or [])[:len(lst)]):
+                        try:
+                            if v is not None and float(v) > 0:
+                                lst[i] = float(v); manual = True
+                        except (TypeError, ValueError):
+                            pass
+                if lane_x_fixed and x is not None:
+                    x += w_before - sum(widths[:n_lead])   # the first lane column stays on its lane
+                widths = [max(1.0, float(w)) for w in widths]
+                heights = [max(1.0, float(h)) for h in heights]
+                total_w, total_h = sum(widths), sum(heights)
+                if kept and not manual:
+                    total_w, total_h = float(base_shape['rect'][2]), float(base_shape['rect'][3])
+                if x is None or y is None:
+                    dx, dy = self._table_default_origin(total_w, total_h)
+                    x = dx if x is None else x
+                    y = dy if y is None else y
+                # "Move right / Move down" from the dialog (relative to the automatic place
+                # of a new table, or to where an existing one sits).
+                try:
+                    x += float(st.get('dx', 0) or 0); y += float(st.get('dy', 0) or 0)
+                except (TypeError, ValueError):
+                    pass
+                table = {
+                    'cells': cells,
+                    'col_fracs': (list(bt['col_fracs']) if (kept and not manual) else [w / total_w for w in widths]),
+                    'row_fracs': (list(bt['row_fracs']) if (kept and not manual) else [h / total_h for h in heights]),
+                    'font': str(st.get('font', 'Arial')), 'font_size': size,
+                    'text_color': QColor(st.get('text_color', '#000000')).name(),
+                    'align': st.get('align', 'center') if st.get('align') in ('left', 'center', 'right') else 'center',
+                    'border': bool(st.get('border', True)), 'grid': bool(st.get('grid', True)),
+                    # per-cell style ('b', 'i', 'u' letters) and merged cells [row, col, rows, cols]
+                    'fmt': fmt, 'spans': spans,
+                    'pad_px': float(pad_px),
+                    # kept so the editor reopens with the same choices
+                    'label_col': bool(st.get('label_col', True)), 'first_lane': int(st.get('first_lane', 1)),
+                    'pad_pct': float(st.get('pad_pct', 35)), 'row_h_pct': float(st.get('row_h_pct', 130)),
+                }
+                return {'type': 'rectangle', 'rect': (float(x), float(y), float(total_w), float(total_h)),
+                        'color': QColor(st.get('color', '#000000')).name(),
+                        'thickness': max(0.5, float(st.get('thickness', 1.0))), 'table': table}
+
+            @staticmethod
+            def _table_norm_fmt(t, nr, nc):
+                """Per-cell style grid (nr x nc strings made of 'b', 'i', 'u'). Table specs
+                written before per-cell styles (bold / italic / bold_first_row / bold_first_col
+                flags) are translated."""
+                src = t.get('fmt') if isinstance(t.get('fmt'), list) else None
+                out = []
+                for r in range(nr):
+                    row = []
+                    for c in range(nc):
+                        v = ""
+                        try:
+                            if src is not None:
+                                v = "".join(ch for ch in "biu" if ch in str(src[r][c]))
+                        except Exception:
+                            v = ""
+                        if src is None:
+                            if t.get('bold') or (t.get('bold_first_row') and r == 0) or (t.get('bold_first_col') and c == 0):
+                                v += "b"
+                            if t.get('italic'):
+                                v += "i"
+                        row.append(v)
+                    out.append(row)
+                return out
+
+            @staticmethod
+            def _table_norm_spans(spans, nr, nc):
+                """Valid, non-overlapping merged cells as [row, col, rows, cols] (0-based)."""
+                out = []; used = set()
+                for sp in (spans or []):
+                    try:
+                        r, c, rs_, cs_ = [int(v) for v in sp[:4]]
+                    except Exception:
+                        continue
+                    if r < 0 or c < 0 or r >= nr or c >= nc:
+                        continue
+                    rs_ = max(1, min(rs_, nr - r)); cs_ = max(1, min(cs_, nc - c))
+                    if rs_ == 1 and cs_ == 1:
+                        continue
+                    block = {(i, j) for i in range(r, r + rs_) for j in range(c, c + cs_)}
+                    if block & used:
+                        continue
+                    used |= block
+                    out.append([r, c, rs_, cs_])
+                return out
+
+            @staticmethod
+            def _table_span_maps(spans, nr, nc):
+                """({anchor (r, c): (rows, cols)}, owner grid: owner[r][c] = anchor of the
+                merged cell that covers (r, c), or (r, c) itself)."""
+                anchors = {}
+                owner = [[(r, c) for c in range(nc)] for r in range(nr)]
+                for r, c, rs_, cs_ in spans:
+                    anchors[(r, c)] = (rs_, cs_)
+                    for i in range(r, r + rs_):
+                        for j in range(c, c + cs_):
+                            owner[i][j] = (r, c)
+                return anchors, owner
+
+            def _table_expand(self, shape):
+                """(custom-marker records, shape dicts) that draw this table: one marker per
+                non-empty cell, the outer rectangle (if on) and one line per inner grid line
+                (if on). Used by the renderer, PowerPoint export and Convert."""
+                t = shape.get('table') or {}
+                x, y, w, h = [float(v) for v in shape['rect']]
+                cells = t.get('cells') or []
+                nr = len(cells); nc = max((len(r) for r in cells), default=0)
+                if nr < 1 or nc < 1:
+                    return [], []
+
+                def _edges(fracs, n, origin, extent):
+                    try:
+                        fr = [max(0.0, float(f)) for f in fracs]
+                    except Exception:
+                        fr = []
+                    if len(fr) != n or sum(fr) <= 0:
+                        fr = [1.0] * n
+                    tot = sum(fr); out = [origin]; acc = 0.0
+                    for f in fr:
+                        acc += f
+                        out.append(origin + extent * acc / tot)
+                    return out
+                xs = _edges(t.get('col_fracs'), nc, x, w)
+                ys = _edges(t.get('row_fracs'), nr, y, h)
+                color = shape.get('color', '#000000'); th = shape.get('thickness', 1.0)
+                shapes = []
+                if t.get('border', True):
+                    shapes.append({'type': 'rectangle', 'rect': (x, y, w, h), 'color': color, 'thickness': th})
+                fmt = self._table_norm_fmt(t, nr, nc)
+                spans = self._table_norm_spans(t.get('spans'), nr, nc)
+                anchors, owner = self._table_span_maps(spans, nr, nc)
+                if t.get('grid', True):
+                    # One line per unbroken run: a grid line stops where it would cross a
+                    # merged cell.
+                    for c in range(1, nc):
+                        start = None
+                        for r in range(nr + 1):
+                            on = r < nr and owner[r][c - 1] != owner[r][c]
+                            if on and start is None:
+                                start = r
+                            elif not on and start is not None:
+                                shapes.append({'type': 'line', 'start': (xs[c], ys[start]), 'end': (xs[c], ys[r]),
+                                               'color': color, 'thickness': th})
+                                start = None
+                    for r in range(1, nr):
+                        start = None
+                        for c in range(nc + 1):
+                            on = c < nc and owner[r - 1][c] != owner[r][c]
+                            if on and start is None:
+                                start = c
+                            elif not on and start is not None:
+                                shapes.append({'type': 'line', 'start': (xs[start], ys[r]), 'end': (xs[c], ys[r]),
+                                               'color': color, 'thickness': th})
+                                start = None
+                markers = []
+                align = t.get('align', 'center'); pad = float(t.get('pad_px', 0.0) or 0.0)
+                tcol = QColor(t.get('text_color', '#000000'))
+                if not tcol.isValid():
+                    tcol = QColor(Qt.black)
+                fam = str(t.get('font', 'Arial')); size = int(t.get('font_size', 12))
+                u_rs = u_fsf = None
+                for r in range(nr):
+                    for c in range(nc):
+                        txt = str(cells[r][c]).strip() if c < len(cells[r]) else ""
+                        if not txt or owner[r][c] != (r, c):
+                            continue          # empty, or hidden inside a merged cell
+                        rs_, cs_ = anchors.get((r, c), (1, 1))
+                        x0, x1 = xs[c], xs[c + cs_]
+                        cy = (ys[r] + ys[r + rs_]) / 2.0
+                        rec = [(x0 + x1) / 2.0, cy, txt, QColor(tcol), fam, size,
+                               'b' in fmt[r][c], 'i' in fmt[r][c]]
+                        if align == 'left':
+                            rec[0] = x0 + pad; rec.append('left')
+                        elif align == 'right':
+                            rec[0] = x1 - pad; rec.append('right')
+                        markers.append(rec)
+                        if 'u' in fmt[r][c]:
+                            # Underline = a real line under the text (custom markers have no
+                            # underline of their own), so it survives Convert and PowerPoint.
+                            try:
+                                if u_rs is None:
+                                    u_rs = float(self.EXPORT_RENDER_SCALE)
+                                    u_fsf = self._export_font_scale_factor(
+                                        u_rs, float(self.image.width()), float(self.image.height()))
+                                it = self._annotation_text_item('marker', None, None, u_rs, u_fsf, marker=rec)
+                                fm = QFontMetrics(it['font'])
+                                br = fm.boundingRect(it['text'])
+                                uy = (it['paint_pt'].y() + max(1.0, float(fm.underlinePos()))) / u_rs
+                                ux0 = (it['paint_pt'].x() + br.left()) / u_rs
+                                shapes.append({'type': 'line', 'start': (ux0, uy),
+                                               'end': (ux0 + br.width() / u_rs, uy),
+                                               'color': tcol.name(),
+                                               'thickness': max(1.0, float(fm.lineWidth())) / u_rs})
+                            except Exception:
+                                log_traceback()
+                return markers, shapes
+
+            def _expanded_custom_items(self):
+                """(markers, shapes) with every table replaced by the markers and lines it
+                is made of -- for exporters that only know plain markers and shapes."""
+                markers = [list(m) for m in (getattr(self, 'custom_markers', []) or [])]
+                shapes = []
+                for sd in (getattr(self, 'custom_shapes', []) or []):
+                    if sd.get('type') == 'rectangle' and isinstance(sd.get('table'), dict):
+                        try:
+                            tm, ts = self._table_expand(sd)
+                            markers.extend(tm); shapes.extend(ts)
+                        except Exception:
+                            log_traceback()
+                    else:
+                        shapes.append(sd)
+                return markers, shapes
+
+            def open_table_dialog(self, index=None):
+                """Insert a new table (index None) or edit the table shape at `index`.
+                The image previews every change live; Cancel restores it. OK is ONE undo
+                step. Returns True when something was committed."""
+                if not self._require_image("Table"):
+                    return False
+                try:
+                    is_new = index is None
+                    if is_new:
+                        self._cancel_all_interaction_modes()
+                        base = None
+                        settings = self._table_default_settings()
+                    else:
+                        base = _clone_shape_dict(self.custom_shapes[index])
+                        settings = self._table_settings_from_shape(base)
+                    original_shapes = [_clone_shape_dict(sd) for sd in self.custom_shapes]
+                    dlg = TableEditorDialog(self, settings, is_new, self._modal_dialog_parent())
+
+                    def _with(shape):
+                        shapes = [_clone_shape_dict(sd) for sd in original_shapes]
+                        if is_new:
+                            shapes.append(shape)
+                        else:
+                            shapes[index] = shape
+                        return shapes
+
+                    TOP_MARGIN = 2.0
+
+                    def _on_canvas(shape):
+                        """(shape kept on the canvas, top padding it would need to sit where
+                        it wants to: above the labels)."""
+                        x, y, w, h = shape['rect']
+                        need = int(math.ceil(TOP_MARGIN - y)) if y < TOP_MARGIN else 0
+                        if need > 0:
+                            shape = dict(shape); shape['rect'] = (x, TOP_MARGIN, w, h)
+                        return shape, need
+
+                    lv = self.live_view_label
+                    view0 = (float(lv.zoom_level), QPointF(lv.pan_offset))
+
+                    def _preview(*_a):
+                        try:
+                            _st = dlg.settings()
+                            wanted_p = self._table_build_shape(_st, base)
+                            shape, need = _on_canvas(wanted_p)
+                            self._canvas_preview_rect = None
+                            if is_new and need > 0 and _st.get('auto_pad', True):
+                                # Show it where it WILL be: above the labels, on the taller
+                                # canvas that Insert creates (outlined), zoomed out to fit.
+                                shape = wanted_p
+                                self._canvas_preview_rect = (0.0, -float(need), float(self.image.width()),
+                                                             float(self.image.height()) + float(need))
+                            dlg.set_room_note(need if is_new else 0)
+                            _w, _h = shape['rect'][2], shape['rect'][3]
+                            dlg.set_current_sizes([f * _w for f in shape['table']['col_fracs']],
+                                                  [f * _h for f in shape['table']['row_fracs']])
+                            self.custom_shapes = _with(shape)
+                            # keep the whole table (and the future canvas) in view
+                            lv.zoom_level, lv.pan_offset = view0[0], QPointF(view0[1])
+                            rx, ry, rw, rh = shape['rect']
+                            if self._canvas_preview_rect is not None:
+                                ry = min(ry, self._canvas_preview_rect[1])
+                            self._zoom_out_to_show_img_rect(rx, ry, rw, rh)
+                            self.update_live_view()
+                        except Exception:
+                            log_traceback()
+                    dlg._live_preview = _preview
+                    _preview()
+                    try:
+                        accepted = (dlg.exec() == QDialog.Accepted)
+                    finally:
+                        self._canvas_preview_rect = None
+                        lv.zoom_level, lv.pan_offset = view0[0], QPointF(view0[1])
+                    final_settings = dlg.settings()
+                    convert = bool(getattr(dlg, 'convert_requested', False))
+                    self.custom_shapes = original_shapes
+                    if not accepted:
+                        self.update_live_view()
+                        return False
+                    wanted = self._table_build_shape(final_settings, base)
+                    final, need_top = _on_canvas(wanted)
+                    if not (is_new and final_settings.get('auto_pad', True)):
+                        need_top = 0
+                    if need_top > 0:
+                        # Insert it where it WANTS to be (above the canvas); the padding added
+                        # below then moves everything down by exactly what was missing.
+                        final = wanted
+                    self._last_table_settings = dict(final_settings)
+                    if not is_new and not convert and final == base:
+                        self.update_live_view()
+                        return False
+                    selection = []
+                    if convert:
+                        t_markers, t_shapes = self._table_expand(final)
+                        if not is_new:
+                            del self.custom_shapes[index]
+                        m0 = len(self.custom_markers); s0 = len(self.custom_shapes)
+                        self.custom_markers.extend(t_markers)
+                        self.custom_shapes.extend(t_shapes)
+                        selection = ([{'type': 'shape', 'index': s0 + k} for k in range(len(t_shapes))]
+                                     + [{'type': 'marker', 'index': m0 + k} for k in range(len(t_markers))])
+                        msg = (f"Table converted to {len(t_markers)} custom marker(s) and {len(t_shapes)} "
+                               "shape(s) — all selected: drag any of them to move them together, click "
+                               "one to work on it alone. Ctrl+Z to undo.")
+                    else:
+                        self.custom_shapes = _with(final)
+                        selection = [{'type': 'shape', 'index': (len(self.custom_shapes) - 1) if is_new else index}]
+                        msg = (("Table inserted" if is_new else "Table updated")
+                               + " — drag it into place; drag a corner to scale it, an inner line or an "
+                                 "edge handle to resize one column or row; double-click it to edit. "
+                                 "Ctrl+Z to undo.")
+                    if need_top > 0:
+                        # No room above the labels: grow the top padding by what is missing
+                        # (the same as Transform ▸ Padding), as part of this one undo step.
+                        if self._add_top_padding_for_table(need_top):
+                            msg += f" {need_top} px of top padding was added to make room for it."
+                    elif is_new and final['rect'][1] != wanted['rect'][1]:
+                        msg += " It overlaps the labels: add top padding (Transform tab), then drag it up."
+                    self.save_state()          # AFTER the change: one undo step
+                    self.is_modified = True
+                    # Leave the user in Move/Resize with the new item(s) selected.
+                    # (Re-arm it when its click handler is no longer installed, too: padding /
+                    # crop reset the viewer's handlers without leaving the mode.)
+                    if (getattr(self, 'current_selection_mode', None) != "select_custom_item"
+                            or self.live_view_label._custom_left_click_handler_from_app
+                            != self.handle_custom_item_selection_click):
+                        self.toggle_custom_item_interaction_mode(True)
+                    if getattr(self, 'current_selection_mode', None) in self._MOVE_RESIZE_MODES:
+                        self.moving_custom_item_info = dict(selection[-1]) if selection else None
+                        self.multi_selected_items = [dict(it) for it in selection] if len(selection) > 1 else []
+                    self.show_mode_status(msg, active_button=getattr(self, 'move_resize_button', None))
+                    self.update_live_view()
+                    return True
+                except Exception:
+                    log_traceback()
+                    return False
+
+            def _zoom_out_to_show_img_rect(self, x, y, w, h, margin_px=10.0):
+                """Zoom the viewer out (and pan) just enough that the image AND the given
+                image-space rectangle are on screen. Never zooms in."""
+                lbl = getattr(self, 'live_view_label', None)
+                if lbl is None or not (self.image and not self.image.isNull()):
+                    return
+                W = float(self.image.width()); H = float(self.image.height())
+                lw = float(lbl.width()); lh = float(lbl.height())
+                if min(W, H, lw, lh) <= 0:
+                    return
+                sc = min(lw / W, lh / H)
+                ox = (lw - W * sc) / 2.0; oy = (lh - H * sc) / 2.0
+                img_ls = QRectF(ox, oy, W * sc, H * sc)
+                rect = QRectF(ox + float(x) * sc, oy + float(y) * sc, float(w) * sc, float(h) * sc)
+                rect = rect.united(img_ls).adjusted(-margin_px, -margin_px, margin_px, margin_px)
+                z = float(lbl.zoom_level) if lbl.zoom_level > 1e-9 else 1.0
+                pan = lbl.pan_offset
+                vis = QRectF(-pan.x() / z, -pan.y() / z, lw / z, lh / z)
+                if vis.contains(rect):
+                    return
+                new_z = max(lbl.MIN_ZOOM, min(1.0, z, lw / rect.width(), lh / rect.height()))
+                lbl.zoom_level = new_z
+                c = rect.center()
+                lbl.pan_offset = QPointF(lw / 2.0 - c.x() * new_z, lh / 2.0 - c.y() * new_z)
+
+            def add_table_from_settings(self, settings, convert=False, origin=None):
+                """Insert a table without the dialog (used by the AI tools). `settings` are
+                TableEditorDialog-style settings laid over the defaults; `origin` = (x, y)
+                top-left in image px, else above the top labels (top padding is extended
+                when settings['auto_pad'] and there is no room). `convert` leaves separate
+                custom markers + shapes instead of a table object. ONE undo step.
+                Returns a summary dict."""
+                st = self._table_default_settings()
+                default_cells = st.get('cells')
+                st.update({k: v for k, v in (settings or {}).items() if v is not None})
+                if not st.get('cells'):
+                    st['cells'] = default_cells
+                wanted = self._table_build_shape(st, None)
+                x, y, w, h = wanted['rect']
+                need_top = 0
+                if origin is not None:
+                    ox = x if origin[0] is None else float(origin[0])
+                    oy = y if origin[1] is None else float(origin[1])
+                    if st.get('width_mode') == 'lanes' and origin[0] is None:
+                        ox = x
+                    wanted['rect'] = (ox, oy, w, h); x, y = ox, oy
+                if origin is None or origin[1] is None:
+                    if y < 2.0:
+                        if st.get('auto_pad', True):
+                            need_top = int(math.ceil(2.0 - y))
+                        else:
+                            wanted['rect'] = (x, 2.0, w, h)
+                info = {"rows": len(wanted['table']['cells']), "columns": len(wanted['table']['cells'][0]),
+                        "converted": bool(convert)}
+                if convert:
+                    t_markers, t_shapes = self._table_expand(wanted)
+                    m0 = len(self.custom_markers); s0 = len(self.custom_shapes)
+                    self.custom_markers.extend(t_markers); self.custom_shapes.extend(t_shapes)
+                    info.update(text_indices=list(range(m0, m0 + len(t_markers))),
+                                shape_indices=list(range(s0, s0 + len(t_shapes))))
+                    ref = None
+                else:
+                    self.custom_shapes.append(wanted)
+                    info["shape_index"] = len(self.custom_shapes) - 1
+                    ref = self.custom_shapes[-1]
+                if need_top > 0 and self._add_top_padding_for_table(need_top):
+                    info["top_padding_added"] = need_top
+                    y += need_top
+                if ref is not None and info["shape_index"] < len(self.custom_shapes):
+                    x, y, w, h = self.custom_shapes[info["shape_index"]]['rect']
+                info["rect"] = {"x": round(x, 1), "y": round(y, 1), "width": round(w, 1), "height": round(h, 1)}
+                info["column_widths"] = [round(f * w, 1) for f in wanted['table']['col_fracs']]
+                info["row_heights"] = [round(f * h, 1) for f in wanted['table']['row_fracs']]
+                self.save_state()          # AFTER the change: one undo step
+                self.is_modified = True
+                self.update_live_view()
+                return info
+
+            def _add_top_padding_for_table(self, need_top):
+                """Grow the top padding by `need_top` px (exactly what Transform ▸ Padding
+                does, so every label and shape moves down with the gel) to make room for a
+                new table that was placed above the canvas. Takes no undo snapshot of its
+                own -- the caller records table + padding as one step."""
+                try:
+                    cl, cr, ct, cb = self._measure_transparent_margins()
+                    prev = getattr(self, '_suppress_state_save', False)
+                    self._suppress_state_save = True
+                    try:
+                        for w, v in ((self.left_padding_input, cl), (self.right_padding_input, cr),
+                                     (self.top_padding_input, ct + int(need_top)), (self.bottom_padding_input, cb)):
+                            w.setText(str(int(v)))
+                        self.finalize_image()
+                    finally:
+                        self._suppress_state_save = prev
+                    return True
+                except Exception:
+                    log_traceback()
+                    return False
 
             def _clone_selected_custom_item_if_any(self):
                 """If a custom MARKER or SHAPE is currently selected in Move/Resize mode,
@@ -38919,11 +41257,14 @@ if __name__ == "__main__":
                                   bold=std_bold, italic=std_italic)
 
                     # --- Custom markers (own font/size/weight/style/color), centred on (x,y) ---
-                    for marker_tuple in getattr(self, "custom_markers", []):
+                    # Tables are exported as what they convert to: one text box per cell and
+                    # native lines / a rectangle for the grid.
+                    _pptx_markers, _pptx_shapes = self._expanded_custom_items()
+                    for marker_tuple in _pptx_markers:
                         try:
                             is_bold = False; is_italic = False
-                            if len(marker_tuple) == 8:
-                                x_pos, y_pos, mtext, color, fam, fsize, is_bold, is_italic = marker_tuple
+                            if len(marker_tuple) >= 8:
+                                x_pos, y_pos, mtext, color, fam, fsize, is_bold, is_italic = marker_tuple[:8]
                             elif len(marker_tuple) == 6:
                                 x_pos, y_pos, mtext, color, fam, fsize = marker_tuple
                             else:
@@ -38943,7 +41284,9 @@ if __name__ == "__main__":
                             # line box — that assumption is what drifted custom markers.
                             brect = fm_c.boundingRect(str(mtext))
                             base_y = y_pos - brect.center().y()
-                            origin_x = x_pos - brect.center().x()
+                            # (left / right anchored markers pin that edge of the box instead)
+                            _m_align = self._marker_align(marker_tuple)
+                            origin_x = x_pos - self._marker_rect_ref_x(brect, _m_align)
                             adv_cx = origin_x + adv / 2.0     # centre of the advance box
                             segments = _split_arrow_segments(mtext)
                             n_arrows = sum(1 for k, _t, _d in segments if k == 'arrow')
@@ -38988,7 +41331,7 @@ if __name__ == "__main__":
                             continue
 
                     # --- Custom shapes: lines and rectangles ---
-                    for shape_data in getattr(self, "custom_shapes", []):
+                    for shape_data in _pptx_shapes:
                         try:
                             stype = shape_data.get('type')
                             color = shape_data.get('color', '#000000')

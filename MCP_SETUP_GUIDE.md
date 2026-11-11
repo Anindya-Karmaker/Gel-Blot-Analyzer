@@ -201,7 +201,7 @@ Lower-level tools:
 | **Look** | `get_status`, `get_annotations`, `get_analysis_results`, `screenshot`, `list_windows` |
 | **Files** | `open_image`, `save_image` (with config), `export_pptx` |
 | **Image** | `image_operation` (invert, flip, grayscale, 8-bit, optimize levels, reset), `adjust_levels`, `crop`, `set_padding` |
-| **Annotate** | `set_marker_preset`, `place_markers`, `add_text`, `add_shape`, `remove_custom_items`, `history` |
+| **Annotate** | `set_marker_preset`, `place_markers`, `add_text`, `add_shape`, `add_table`, `remove_custom_items`, `history` |
 | **Quantify** | `define_lane_regions`, `analyze_lanes`, `get_analysis_results`, `read_table` |
 | **Any control** | `list_controls`, `set_control`, `click_control`, `select_tab`, `list_menu_actions`, `trigger_menu_action`, `press_keys` |
 | **Viewer** | `viewer_click`, `viewer_drag`, `set_view` |

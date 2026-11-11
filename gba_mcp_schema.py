@@ -166,6 +166,7 @@ WORKFLOW_GUIDES = {
         "band_polarity='auto' shows the blot with dark bands on light, like the gel.",
         "rasterize=true merges it into one image (needed before analysing the blot itself).",
         "Add labels for the blot with add_text / add_shape (coordinates from the result's position).",
+        "A lane table (what was loaded per lane) goes above the gel with add_table.",
     ],
 }
 
@@ -657,11 +658,16 @@ TOOLS = [
     },
     {
         "name": "add_text",
-        "description": "Add a custom text label (or arrow glyph like '←') at IMAGE coordinates "
-                       "(x,y is the text anchor). Color as '#RRGGBB' or a name.",
+        "description": "Add a custom text label (or arrow glyph like '←') at IMAGE coordinates. "
+                       "x,y is the text ANCHOR: the middle of the text (anchor='center', default), "
+                       "of its left edge ('left' - use for '← name' labels so the arrow tip sits at "
+                       "x and labels line up in a column) or of its right edge ('right'). "
+                       "Color as '#RRGGBB' or a name.",
         "inputSchema": {
             "type": "object",
             "properties": {"x": _XY, "y": _XY, "text": {"type": "string"},
+                           "anchor": {"type": "string", "enum": ["center", "left", "right"],
+                                      "default": "center"},
                            "color": {"type": "string", "default": "#000000"},
                            "font": {"type": "string"},
                            "font_size": {"type": "integer", "minimum": 2, "maximum": 400},
@@ -682,6 +688,71 @@ TOOLS = [
                            "color": {"type": "string", "default": "#000000"},
                            "thickness": {"type": "number", "default": 2, "minimum": 0.5}},
             "required": ["type"],
+        },
+    },
+    {
+        "name": "add_table",
+        "description": "Add a table to the figure - e.g. a +/- grid above the gel saying what was "
+                       "loaded in each lane. cells is a list of rows (each a list of strings). By "
+                       "default, when top (lane) labels exist, the columns snap to the lanes: the "
+                       "first column holds the row labels and each further column sits over one "
+                       "lane, starting at first_lane (2 skips a ladder in lane 1). Without x/y the "
+                       "table goes above the top labels and top padding is added if there is no "
+                       "room. One undo step. The table is ONE object (a rectangle shape; remove it "
+                       "with remove_custom_items kind='shape'); convert_to_items=true makes "
+                       "separate text items and lines instead.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cells": {"type": "array", "items": {"type": "array", "items": {"type": "string"}},
+                          "description": "Rows of cell texts, e.g. [[\"IL-2\",\"-\",\"+\"],[\"AAT\",\"+\",\"-\"]]. "
+                                         "Empty string = empty cell."},
+                "column_widths_mode": {"type": "string", "enum": ["lanes", "fit", "equal"],
+                                       "description": "lanes = one column per lane (needs top labels); "
+                                                      "fit = fit the text; equal = all as wide as the "
+                                                      "widest. Default: lanes if top labels exist, else fit."},
+                "first_column_is_labels": {"type": "boolean", "default": True,
+                                           "description": "lanes mode: first column is row labels, not a lane."},
+                "first_lane": {"type": "integer", "minimum": 1,
+                               "description": "lanes mode: lane number of the first lane column "
+                                              "(default 1, or 2 when lane 1 is labeled as a ladder)."},
+                "x": _XY, "y": _XY,
+                "font": {"type": "string"},
+                "font_size": {"type": "integer", "minimum": 2, "maximum": 150},
+                "bold": {"type": "boolean", "description": "Bold every cell."},
+                "italic": {"type": "boolean", "description": "Italic every cell."},
+                "bold_rows": {"type": "array", "items": {"type": "integer", "minimum": 1},
+                              "description": "Rows to make bold (1-based), e.g. [1] for a header row."},
+                "bold_columns": {"type": "array", "items": {"type": "integer", "minimum": 1},
+                                 "description": "Columns to make bold (1-based), e.g. [1] for the row labels."},
+                "italic_rows": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                "underline_rows": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                "merge": {"type": "array",
+                          "description": "Merged cells, e.g. a heading spanning several lanes: "
+                                         "[{\"row\": 1, \"col\": 2, \"colspan\": 4}]. row/col are 1-based "
+                                         "(top-left cell of the block); its text is shown centered "
+                                         "across the block.",
+                          "items": {"type": "object",
+                                    "properties": {"row": {"type": "integer", "minimum": 1},
+                                                   "col": {"type": "integer", "minimum": 1},
+                                                   "rowspan": {"type": "integer", "minimum": 1},
+                                                   "colspan": {"type": "integer", "minimum": 1}},
+                                    "required": ["row", "col"]}},
+                "color": {"type": "string", "description": "Text color."},
+                "align": {"type": "string", "enum": ["left", "center", "right"]},
+                "outline": {"type": "boolean", "default": True},
+                "inner_lines": {"type": "boolean", "default": True},
+                "line_color": {"type": "string"},
+                "thickness": {"type": "number", "minimum": 0.5, "description": "Line thickness in image px."},
+                "column_widths": {"type": "array", "items": {"type": ["number", "null"]},
+                                  "description": "Manual widths in image px, in order; null = automatic."},
+                "row_heights": {"type": "array", "items": {"type": ["number", "null"]},
+                                "description": "Manual heights in image px, in order; null = automatic."},
+                "auto_pad": {"type": "boolean", "default": True,
+                             "description": "Extend the top padding when the table does not fit above the labels."},
+                "convert_to_items": {"type": "boolean", "default": False},
+            },
+            "required": ["cells"],
         },
     },
     {
