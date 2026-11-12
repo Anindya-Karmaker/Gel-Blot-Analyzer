@@ -57,7 +57,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.8.2"
+APP_VERSION = "9.8.3"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -925,13 +925,13 @@ if __name__ == "__main__":
             QHBoxLayout, QCheckBox, QGroupBox, QGridLayout, QWidget, QFileDialog,
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, QListWidgetItem,
-            QStackedWidget, QProgressDialog, QSplitter, QToolTip, QFormLayout, QLayout,
+            QStackedWidget, QProgressDialog, QSplitter, QSplitterHandle, QToolTip, QFormLayout, QLayout,
             QAbstractSpinBox,
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
             QPen, QTransform,QFontMetrics,QDesktopServices, QAction, QShortcut, QIntValidator, QFocusEvent, QDoubleValidator, QActionGroup,
-            QKeyEvent,
+            QKeyEvent, QCursor,
         )
         from PySide6.QtCore import (
             Qt, QBuffer, QPoint, QPointF, QRect, QRectF, QUrl, QSize, QSizeF, QMimeData, Signal, QTimer, QEventLoop, QEvent,
@@ -10761,12 +10761,181 @@ if __name__ == "__main__":
                 continue
             setattr(_PeakEngine, _pe_name, _pe_val)
 
+        # ─────────────────────────────────────────────────────────────────────
+        # Hover cursors that STAY (resize / move feedback)
+        # ─────────────────────────────────────────────────────────────────────
+        class _HoverCursor(QObject):
+            """Keeps a "you can resize / move this now" cursor on screen for as long as the
+            pointer is on the target, and a little longer.
+
+            A widget cursor (QWidget.setCursor) proved unreliable for this: it flashed for a
+            split second and fell back to the arrow whenever a tooltip popped up next to the
+            pointer, the view repainted, or the pointer sat on a strip only a few pixels
+            wide. This uses the APPLICATION override cursor instead, which nothing else can
+            replace, with three safeguards so it can never get stuck:
+
+              * `still_valid()` is polled every 60 ms; once it is False (pointer left the
+                target) the cursor is kept for LINGER_MS more and then restored;
+              * a pressed mouse button keeps it (the drag in progress owns the cursor);
+              * a modal dialog, or the app losing focus, restores it at once.
+            """
+            LINGER_MS = 450
+
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self._active = False
+                self._shape = None
+                self._still_valid = None
+                self._last_ok = 0.0
+                self._timer = QTimer(self)
+                self._timer.setInterval(60)
+                self._timer.timeout.connect(self._tick)
+
+            def hold(self, shape, still_valid):
+                try:
+                    self._still_valid = still_valid
+                    self._last_ok = time.monotonic()
+                    if not self._active:
+                        QApplication.setOverrideCursor(QCursor(shape))
+                        self._active = True
+                    elif shape != self._shape:
+                        QApplication.changeOverrideCursor(QCursor(shape))
+                    self._shape = shape
+                    if not self._timer.isActive():
+                        self._timer.start()
+                except Exception:
+                    pass
+
+            def release(self):
+                try:
+                    self._timer.stop()
+                    if self._active:
+                        self._active = False
+                        self._shape = None
+                        QApplication.restoreOverrideCursor()
+                except Exception:
+                    pass
+
+            def _tick(self):
+                try:
+                    if (QApplication.activeModalWidget() is not None
+                            or QApplication.applicationState() != Qt.ApplicationActive):
+                        self.release()
+                        return
+                    ok = False
+                    try:
+                        ok = bool(self._still_valid()) if self._still_valid else False
+                    except Exception:
+                        ok = False
+                    now = time.monotonic()
+                    if ok or QApplication.mouseButtons() != Qt.NoButton:
+                        self._last_ok = now
+                        return
+                    if (now - self._last_ok) * 1000.0 >= self.LINGER_MS:
+                        self.release()
+                except Exception:
+                    self.release()
+
+        _HOVER_CURSOR = [None]
+
+        def hover_cursor():
+            """The one shared _HoverCursor (created on first use, after QApplication exists)."""
+            if _HOVER_CURSOR[0] is None:
+                _HOVER_CURSOR[0] = _HoverCursor(QApplication.instance())
+            return _HOVER_CURSOR[0]
+
+        class _GripSplitterHandle(QSplitterHandle):
+            """Divider between the image viewer and the controls: wide enough to hit, drawn
+            with a visible grip, lit up while the pointer is on it, and with a resize cursor
+            that stays (see _HoverCursor) -- so it is obvious that, and when, it can be dragged."""
+            NEAR_PX = 4          # the cursor is kept this far outside the strip as well
+
+            def __init__(self, orientation, parent):
+                super().__init__(orientation, parent)
+                self._hot = False
+                self.setMouseTracking(True)
+                self.setToolTip("Drag to resize the image viewer")
+
+            def _shape(self):
+                return Qt.SplitVCursor if self.orientation() == Qt.Vertical else Qt.SplitHCursor
+
+            def _pointer_near(self):
+                try:
+                    if not self.isVisible():
+                        return False
+                    n = self.NEAR_PX
+                    r = QRect(self.mapToGlobal(QPoint(0, 0)), self.size()).adjusted(-n, -n, n, n)
+                    near = r.contains(QCursor.pos())
+                    if near != self._hot:
+                        self._hot = near
+                        self.update()
+                    return near
+                except Exception:
+                    return False
+
+            def _hold(self):
+                try:
+                    self.setCursor(self._shape())
+                    hover_cursor().hold(self._shape(), self._pointer_near)
+                    if not self._hot:
+                        self._hot = True
+                        self.update()
+                except Exception:
+                    pass
+
+            def enterEvent(self, event):
+                self._hold()
+                try:
+                    super().enterEvent(event)
+                except Exception:
+                    pass
+
+            def mouseMoveEvent(self, event):
+                self._hold()
+                try:
+                    super().mouseMoveEvent(event)
+                except Exception:
+                    pass
+
+            def paintEvent(self, _event):
+                try:
+                    p = QPainter(self)
+                    p.setRenderHint(QPainter.Antialiasing, True)
+                    w, h = self.width(), self.height()
+                    accent = QColor("#5D98D4")
+                    if self._hot:
+                        bg = QColor(accent); bg.setAlpha(70)
+                        p.fillRect(self.rect(), bg)
+                    line = QColor(accent) if self._hot else QColor(150, 158, 168)
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(line)
+                    # a rounded grip bar in the middle, flanked by a hairline over the full length
+                    if self.orientation() == Qt.Vertical:      # horizontal strip
+                        gl, gt = min(64.0, w * 0.5), max(3.0, min(5.0, h - 6.0))
+                        p.drawRoundedRect(QRectF((w - gl) / 2.0, (h - gt) / 2.0, gl, gt), gt / 2.0, gt / 2.0)
+                        hair = QColor(line); hair.setAlpha(110 if self._hot else 70)
+                        p.setBrush(hair)
+                        p.drawRect(QRectF(0, (h - 1) / 2.0, w, 1))
+                    else:                                       # vertical strip
+                        gl, gt = min(64.0, h * 0.5), max(3.0, min(5.0, w - 6.0))
+                        p.drawRoundedRect(QRectF((w - gt) / 2.0, (h - gl) / 2.0, gt, gl), gt / 2.0, gt / 2.0)
+                        hair = QColor(line); hair.setAlpha(110 if self._hot else 70)
+                        p.setBrush(hair)
+                        p.drawRect(QRectF((w - 1) / 2.0, 0, 1, h))
+                    p.end()
+                except Exception:
+                    pass
+
+        class _GripSplitter(QSplitter):
+            def createHandle(self):
+                return _GripSplitterHandle(self.orientation(), self)
+
         class LiveViewLabel(QLabel):
             mouseMovedInLabel = Signal(QPointF, QPointF, bool)
             CORNER_HANDLE_BASE_RADIUS = 6.0
             # Handles of a selected custom marker / shape (Move/Resize). Smaller than the
             # lane-region handles so items placed close together stay individually reachable.
-            ITEM_HANDLE_RADIUS = 4.0
+            ITEM_HANDLE_RADIUS = 5.0
             # Zoom range. Below 1.0 the whole image shrinks inside the viewer, leaving empty
             # space around it to annotate (e.g. custom markers/shapes above the gel).
             MIN_ZOOM = 0.1
@@ -11338,8 +11507,14 @@ if __name__ == "__main__":
                         body_ls, handles_ls = self.app_instance._get_shape_bounding_box_and_handles_in_label_space(info['index'])
                         if body_ls:
                             painter.setPen(selection_pen); painter.drawRect(body_ls.adjusted(-1,-1,1,1)); painter.setPen(handle_pen); painter.setBrush(handle_brush)
+                            _hov = getattr(self.app_instance, '_hover_grab', None)
                             for idx, handle_pt in enumerate(handles_ls or []):
                                 if is_resizing and idx == self.app_instance.resizing_corner_index: painter.drawEllipse(handle_pt, handle_radius * 1.2, handle_radius * 1.2)
+                                elif _hov == ('shape', info['index'], idx):
+                                    # pointer is in this handle's grab zone: a press resizes
+                                    painter.setPen(QPen(Qt.white, max(0.5, 2.0 / self.zoom_level)))
+                                    painter.drawEllipse(handle_pt, handle_radius * 1.7, handle_radius * 1.7)
+                                    painter.setPen(handle_pen)
                                 else: painter.drawEllipse(handle_pt, handle_radius, handle_radius)
                             painter.setBrush(Qt.NoBrush)
                         selection_shape = None
@@ -11356,6 +11531,9 @@ if __name__ == "__main__":
                         if handle_pt is not None:
                             painter.setPen(handle_pen); painter.setBrush(handle_brush)
                             r = handle_radius * (1.2 if is_resizing else 1.0)
+                            if not is_resizing and getattr(self.app_instance, '_hover_grab', None) == ('text', 0):
+                                r = handle_radius * 1.7
+                                painter.setPen(QPen(Qt.white, max(0.5, 2.0 / self.zoom_level)))
                             painter.drawEllipse(handle_pt, r, r)
                             painter.setBrush(Qt.NoBrush)
 
@@ -11854,6 +12032,11 @@ if __name__ == "__main__":
                 super().leaveEvent(event)
                 # Emit signal with invalid label coordinates and False for image coordinate validity
                 self.mouseMovedInLabel.emit(QPointF(-1,-1), QPointF(), False)
+                try:    # pointer left the viewer: no resize handle is hovered any more
+                    if self.app_instance is not None and getattr(self.app_instance, '_hover_grab', None) is not None:
+                        self.app_instance._set_hover_grab(None)
+                except Exception:
+                    pass
 
             def keyPressEvent(self, event):
                 if event.key() == Qt.Key_Escape:
@@ -12288,6 +12471,7 @@ if __name__ == "__main__":
                 self._lane_prom       = 0.05
                 self._lane_height     = 0.0    # lane finding: no height floor (prominence filters)
                 self._lane_dist       = 15
+                self._lane_target     = 0      # Target Lanes (0 = Auto: peak detection)
                 self._lane_peaks      = np.array([], dtype=int)
                 self._lane_bounds     = []
                 # Per-lane skew so lanes can be drawn/committed as trapezoids (parallelograms)
@@ -13246,6 +13430,29 @@ if __name__ == "__main__":
                 self._p1_sl_d.valueChanged.connect(self._on_p1_dist_changed)
 
                 count_row = QHBoxLayout()
+                # Target Lanes: the user says how many lanes the gel has; the borders are
+                # then FITTED (equal pitch, snapped to the real gaps) instead of detected.
+                self._p1_target_lbl = QLabel("Target Lanes")
+                self._p1_target_spin = QSpinBox()
+                self._p1_target_spin.setRange(0, 60)
+                self._p1_target_spin.setSpecialValueText("Auto")
+                self._p1_target_spin.setValue(int(self._lane_target))
+                _target_tip = (
+                    "How many lanes the gel has (count the ladder lanes too).\n\n"
+                    "Auto: lanes are found from the peaks of the intensity plot, using the "
+                    "sliders above.\n"
+                    "A number: exactly that many lanes are fitted. They are laid out at an "
+                    "equal distance across the gel and each border is then moved to the real "
+                    "gap between two lanes where one can be seen. Next to faint or empty "
+                    "lanes, where there is no visible gap, the border stays at its "
+                    "equal-distance position.\n\n"
+                    "Crop to the gel in Step 2 first. You can still drag, add or delete "
+                    "lanes afterwards.")
+                self._p1_target_lbl.setToolTip(_target_tip)
+                self._p1_target_spin.setToolTip(_target_tip)
+                self._p1_target_spin.valueChanged.connect(self._on_p1_target_changed)
+                count_row.addWidget(self._p1_target_lbl)
+                count_row.addWidget(self._p1_target_spin)
                 count_row.addStretch()
                 self._p1_count_lbl = QLabel("Lanes: 0")
                 self._p1_count_lbl.setStyleSheet("font-weight:bold; color:#0066cc;")
@@ -13329,6 +13536,48 @@ if __name__ == "__main__":
                 self._lane_dist = v
                 self._p1_lbl_d.setText(f"Min Spacing  {v} px")
                 self._schedule_lane_detection()
+
+            def _on_p1_target_changed(self, v):
+                """Target Lanes box. 0 = Auto (peak detection with the sliders); N >= 1 fits
+                exactly N lanes (see _fit_target_lanes). The peak-detection sliders do not
+                apply to a fitted layout, so they are greyed out while a target is set."""
+                self._lane_target = int(v)
+                auto = self._lane_target <= 0
+                for w in (getattr(self, '_p1_sl_pr', None), getattr(self, '_p1_lbl_pr', None),
+                          getattr(self, '_p1_sl_ht', None), getattr(self, '_p1_lbl_ht', None),
+                          getattr(self, '_p1_sl_d', None), getattr(self, '_p1_lbl_d', None)):
+                    if w is not None:
+                        w.setEnabled(auto)
+                self._schedule_lane_detection()
+
+            def _fit_target_lanes(self, n):
+                """Lane bounds [[x0, x1], ...] for exactly `n` lanes.
+
+                An n-lane comb of equal pitch is fitted to the gel (its borders on the
+                emptiest columns, no band signal left outside it), then every border is
+                snapped to the nearest real gap -- unless there is none (faint / empty
+                lanes), where it keeps its equal-distance position. The maths lives in
+                gba_ai_gel.fit_target_lanes (shared with the AI tools' expected_lanes); if
+                that module is missing the gel width is simply split into n equal lanes."""
+                src = self._inv_arr
+                H, W = np.asarray(src).shape[:2]
+                n = max(1, int(n))
+                try:
+                    import gba_ai_gel as _gel
+                    cached = getattr(self, '_lane_gap_cache', None)
+                    if cached is not None and cached[0] is src:
+                        gap = cached[1]
+                    else:
+                        gap = _gel._gap_profile(src)
+                        self._lane_gap_cache = (src, gap)
+                    res = _gel.fit_target_lanes(src, n, gap_profile=gap)
+                    bounds = [[int(a), int(b)] for a, b in res["bounds"] if b > a]
+                    if len(bounds) == n:
+                        return bounds, [bool(x) for x in res.get("snapped", [])]
+                except Exception:
+                    log_traceback()
+                edges = [int(round(i * (W - 1) / float(n))) for i in range(n + 1)]
+                return [[edges[i], edges[i + 1]] for i in range(n) if edges[i + 1] > edges[i]], []
 
             # ── Page 3: Labels & MWM setup ─────────────────────────────
             def _build_page3(self):
@@ -13861,6 +14110,23 @@ if __name__ == "__main__":
                     self._lane_bounds = []
                     self._lane_skew   = []
                     self._p1_count_lbl.setText("Lanes: 0")
+                    self._draw_phase1_figure(col_norm)
+                    return
+
+                # Target Lanes set: fit exactly that many lanes instead of detecting peaks.
+                if int(getattr(self, '_lane_target', 0) or 0) >= 1:
+                    bounds, snapped = self._fit_target_lanes(self._lane_target)
+                    self._lane_bounds = bounds
+                    self._lane_peaks = np.array([int(round((a + b) / 2.0)) for a, b in bounds], dtype=int)
+                    self._lane_skew = [[0.0, 0.0] for _ in bounds]
+                    self._lane_quads = [None for _ in bounds]
+                    n_fit = sum(1 for x in snapped if x)
+                    self._p1_count_lbl.setText(
+                        f"Lanes: {len(bounds)} (target; {n_fit} of {len(bounds) + 1} borders on a "
+                        f"visible gap, the rest at equal distance)" if snapped
+                        else f"Lanes: {len(bounds)} (target)")
+                    self._selected_lane_idx = -1
+                    if hasattr(self, '_p1_del_btn'): self._p1_del_btn.setEnabled(False)
                     self._draw_phase1_figure(col_norm)
                     return
 
@@ -18920,7 +19186,7 @@ if __name__ == "__main__":
                 self.tab_widget.setMaximumSize(16777215, 16777215)
 
                 is_vertical = position in ["Top", "Bottom"]
-                HANDLE = 8
+                HANDLE = 14      # wide enough to hit; drawn as a visible grip (_GripSplitterHandle)
 
                 # ---- Constraint floors -------------------------------------------------
                 # Neither pane may be squished below these, so placing the viewer to a
@@ -18951,7 +19217,7 @@ if __name__ == "__main__":
                     else QHBoxLayout(new_main_widget)
                 new_layout.setContentsMargins(0, 0, 0, 0)
 
-                splitter = QSplitter(Qt.Vertical if is_vertical else Qt.Horizontal)
+                splitter = _GripSplitter(Qt.Vertical if is_vertical else Qt.Horizontal)
                 splitter.setObjectName("ViewerSplitter")
                 splitter.setChildrenCollapsible(False)   # neither pane can be dragged to zero
                 splitter.setHandleWidth(HANDLE)
@@ -31053,6 +31319,10 @@ if __name__ == "__main__":
                         _cur = self._move_resize_cursor_at(pt, _hov)
                         if self.live_view_label.cursor().shape() != _cur:
                             self.live_view_label.setCursor(_cur)
+                        # On an item or one of its handles: keep that cursor up (it must not
+                        # flash and fall back to the arrow) until the pointer has left it.
+                        if _cur not in (Qt.CrossCursor, Qt.ArrowCursor):
+                            hover_cursor().hold(_cur, self._move_resize_hover_valid)
                     if key != getattr(self, '_move_resize_hover_key', None):
                         self._move_resize_hover_key = key
                         if tip:
@@ -31518,7 +31788,7 @@ if __name__ == "__main__":
                             if r is not None and r.contains(point_ls):
                                 return False
                         return min(self._point_segment_distance_ls(point_ls, pts[i], pts[i + 1])
-                                   for i in range(len(pts) - 1)) <= self._hit_px(4.0)
+                                   for i in range(len(pts) - 1)) <= self._hit_px(6.0)
                     if stype in ('line', 'arrow') and handles_ls and len(handles_ls) >= 2:
                         # Band width = the drawn half-thickness (in label space) + a small margin.
                         label_w = float(self.live_view_label.width()); label_h = float(self.live_view_label.height())
@@ -31527,7 +31797,7 @@ if __name__ == "__main__":
                         scale = (min(label_w / img_w, label_h / img_h)
                                  if (img_w > 0 and img_h > 0 and label_w > 0 and label_h > 0) else 1.0)
                         half_th_ls = float(self.custom_shapes[shape_index].get('thickness', 1)) * scale / 2.0
-                        tol = max(self._hit_px(4.0), half_th_ls + self._hit_px(2.0))
+                        tol = max(self._hit_px(6.0), half_th_ls + self._hit_px(3.0))
                         return self._point_segment_distance_ls(point_ls, handles_ls[0], handles_ls[1]) <= tol
                     if stype == 'rectangle' and body_ls is not None and not self.custom_shapes[shape_index].get('table'):
                         # A plain rectangle is an OUTLINE: it is grabbed by its border, like in
@@ -31541,7 +31811,7 @@ if __name__ == "__main__":
                         img_h = float(self.image.height()) if self.image else 0.0
                         scale = (min(label_w / img_w, label_h / img_h)
                                  if (img_w > 0 and img_h > 0 and label_w > 0 and label_h > 0) else 1.0)
-                        tol = max(self._hit_px(4.0), float(self.custom_shapes[shape_index].get('thickness', 1)) * scale / 2.0 + self._hit_px(2.0))
+                        tol = max(self._hit_px(6.0), float(self.custom_shapes[shape_index].get('thickness', 1)) * scale / 2.0 + self._hit_px(3.0))
                         if not body_ls.adjusted(-tol, -tol, tol, tol).contains(point_ls):
                             return False
                         inner = body_ls.adjusted(tol, tol, -tol, -tol)
@@ -31586,7 +31856,7 @@ if __name__ == "__main__":
                     rect = shape.boundingRect() if isinstance(shape, QPolygonF) else shape
                     if not isinstance(rect, QRectF) or rect.isNull():
                         return None, None
-                    gap = self._hit_px(4.0)
+                    gap = self._hit_px(6.0)
                     return (QPointF(rect.right() + gap, rect.bottom() + gap), rect.center())
                 except Exception:
                     return None, None
@@ -32005,8 +32275,7 @@ if __name__ == "__main__":
                 if sel_info and sel_info['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
                     handle_pt, centre_pt = self._get_text_item_font_handle_ls(sel_info)
                     if handle_pt is not None:
-                        grab = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * 2.0)
-                        if (clicked_point_ls - handle_pt).manhattanLength() < grab:
+                        if self._resize_handle_at_ls(clicked_point_ls) == ('text', 0):
                             self.resizing_corner_index = 0   # text items have a single handle
                             self.shape_points_at_drag_start_label = [centre_pt, handle_pt]
                             self._font_size_at_drag_start = self._get_text_item_font_size(sel_info)
@@ -32026,19 +32295,18 @@ if __name__ == "__main__":
                 # instead of selecting what was clicked -- a trap wherever items sit close
                 # together (a converted table is all line ends). Same rule as text items:
                 # click to select, then drag a red handle.
+                # Which handle (if any) is grabbed is decided by _resize_handle_at_ls -- the
+                # same test the hover cursor uses, so the resize cursor and the click always
+                # agree. Its grab zones are roomy (about 10 screen px around each handle) but
+                # shrink on short lines / small boxes so the body can still be dragged.
+                _grab = self._resize_handle_at_ls(clicked_point_ls)
                 for i in self._active_handle_shape_indices():
                     stype_i = self.custom_shapes[i].get('type')
                     _body, handles_ls = self._get_shape_bounding_box_and_handles_in_label_space(i)
-                    # Tighter grab radius for line/arrow handles: their endpoint + thickness
-                    # handles sit right on the shaft, so a large radius turned every on-line
-                    # click into a resize and made the shape hard to MOVE. Rectangles keep the
-                    # roomier radius for easy corner grabbing.
                     _is_table_i = isinstance(self.custom_shapes[i].get('table'), dict)
-                    handle_threshold = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * (
-                        1.25 if stype_i in ('line', 'arrow', 'leader') else (2.5 if _is_table_i else 1.75)))
                     if handles_ls:
                         for corner_idx, handle_pt in enumerate(handles_ls):
-                            if (clicked_point_ls - handle_pt).manhattanLength() < handle_threshold:
+                            if _grab == ('shape', i, corner_idx):
                                 if _is_table_i and corner_idx >= 4:
                                     # edge handle: resize the first / last row or column
                                     t = self.custom_shapes[i]['table']
@@ -32144,6 +32412,13 @@ if __name__ == "__main__":
 
                     if self.resizing_corner_index == -1:
                         self.live_view_label.setCursor(Qt.SizeAllCursor)
+                    else:
+                        # Keep the handle's own resize cursor for the whole drag, even when
+                        # the press came without a hover first (touch / pen, or a fast click).
+                        try:
+                            self.live_view_label.setCursor(self._move_resize_cursor_at(clicked_point_ls))
+                        except Exception:
+                            pass
                     self.live_view_label._custom_mouseMoveEvent_from_app = self.handle_custom_item_drag
                     self.live_view_label._custom_mouseReleaseEvent_from_app = self.handle_custom_item_drag_release
                     # Grabbing the BODY of an item that is part of a multi-selection drags the
@@ -32201,7 +32476,7 @@ if __name__ == "__main__":
                 line of this table (k = 1 .. n-1), else None. The outer edges are not
                 dividers: pressing the frame moves the table (as in PowerPoint) and the
                 first / last row or column is resized with the handle on the middle of that
-                edge. The grab width is 4 screen px but never more than a fifth of the
+                edge. The grab width is 6 screen px but never more than a fifth of the
                 smaller neighboring cell, so most of every cell stays a "move" area."""
                 try:
                     sd = self.custom_shapes[shape_index]
@@ -32211,7 +32486,8 @@ if __name__ == "__main__":
                     body, _h = self._get_shape_bounding_box_and_handles_in_label_space(shape_index)
                     if body is None or body.width() <= 0 or body.height() <= 0:
                         return None
-                    tol = self._hit_px(4.0)
+                    tol = self._hit_px(6.0)
+                    held = getattr(self, '_hover_grab', None)
                     px, py = point_ls.x(), point_ls.y()
                     if not (body.left() <= px <= body.right() and body.top() <= py <= body.bottom()):
                         return None
@@ -32227,6 +32503,8 @@ if __name__ == "__main__":
                             e = edges[k]
                             d = abs(pos - e)
                             lim = min(tol, 0.2 * min(e - edges[k - 1], edges[k + 1] - e))
+                            if held == ('divider', shape_index, kind, k):
+                                lim *= self._HANDLE_STICKY      # no flicker on the line's rim
                             if d <= lim and (best is None or d < best[0]):
                                 best = (d, kind, k)
                     return (best[1], best[2]) if best else None
@@ -32275,6 +32553,132 @@ if __name__ == "__main__":
                     return [sel['index']]
                 return []
 
+            # Grab-zone radius (SCREEN px) around each kind of resize handle. The drawn dot is
+            # only ITEM_HANDLE_RADIUS px, far too small a target to hit; these are what a
+            # press / the hover cursor actually test (see _resize_handle_at_ls).
+            _HANDLE_STICKY = 1.5
+            _HANDLE_GRAB_PX = {'text': 12.0, 'rect': 11.0, 'rect_thickness': 9.0,
+                               'table': 12.0, 'table_edge': 10.0,
+                               'line_end': 10.0, 'line_thickness': 8.0, 'leader': 10.0}
+
+            def _resize_handle_at_ls(self, point_ls):
+                """The resize handle of the SELECTED item that a press at this label-space point
+                grabs: ('text', 0), ('shape', shape_index, handle_index) or None.
+
+                One hit test for both the click and the hover cursor, so the resize cursor
+                never shows where a press would do something else (and never flips back to the
+                move / cross cursor while the pointer is still on the handle).
+
+                * Distances are Euclidean and in screen px (zoom-independent).
+                * Inside the drawn dot (+2 px) a handle always wins.
+                * In the wider grab zone around it the handle wins unless a text item is under
+                  the pointer (text is drawn on top and must stay clickable / draggable).
+                * On short lines and small boxes the zone shrinks so that the body in between
+                  the handles can still be dragged; the nearest handle wins when zones overlap.
+                """
+                try:
+                    sel = getattr(self, 'moving_custom_item_info', None)
+                    if not sel or not self._custom_item_valid(sel):
+                        return None
+                    core = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS + 2.0)
+                    G = self._HANDLE_GRAB_PX
+                    on_text = None      # computed lazily: is a text item under the pointer?
+                    # Hysteresis: the handle the pointer is already on (see _set_hover_grab)
+                    # keeps a zone HANDLE_STICKY times larger, so the cursor does not flicker
+                    # between "resize" and "move" while the pointer rests on a zone's rim.
+                    held = getattr(self, '_hover_grab', None)
+
+                    def in_zone(handle_pt, outer, key=None):
+                        nonlocal on_text
+                        d = math.hypot(point_ls.x() - handle_pt.x(), point_ls.y() - handle_pt.y())
+                        if d <= core:
+                            return d
+                        if key is not None and key == held:
+                            outer = max(core, outer) * self._HANDLE_STICKY
+                        if d <= max(core, outer):
+                            if on_text is None:
+                                on_text = self._text_item_at_ls(point_ls) is not None
+                            if not on_text:
+                                return d
+                        return None
+
+                    if sel['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
+                        handle_pt, _c = self._get_text_item_font_handle_ls(sel)
+                        if handle_pt is not None and in_zone(handle_pt, self._hit_px(G['text']),
+                                                              ('text', 0)) is not None:
+                            return ('text', 0)
+                        return None
+
+                    best = None
+                    for i in self._active_handle_shape_indices():
+                        sd = self.custom_shapes[i]; st = sd.get('type')
+                        body, handles = self._get_shape_bounding_box_and_handles_in_label_space(i)
+                        if not handles:
+                            continue
+                        is_table = isinstance(sd.get('table'), dict)
+                        for k, hp in enumerate(handles):
+                            if st == 'rectangle':
+                                if k < 4:
+                                    outer = self._hit_px(G['table' if is_table else 'rect'])
+                                    # keep the middle of a small box free for moving it
+                                    if isinstance(body, QRectF):
+                                        outer = min(outer, 0.4 * min(body.width(), body.height()))
+                                else:
+                                    outer = self._hit_px(G['table_edge' if is_table else 'rect_thickness'])
+                                    if is_table and isinstance(body, QRectF):
+                                        outer = min(outer, 0.2 * (body.width() if k in (4, 6) else body.height()))
+                            elif st in ('line', 'arrow'):
+                                if k < 2:
+                                    outer = self._hit_px(G['line_end'])
+                                    seg = math.hypot(handles[1].x() - handles[0].x(),
+                                                     handles[1].y() - handles[0].y())
+                                    outer = min(outer, 0.3 * seg)   # middle 40 % stays "move"
+                                else:
+                                    outer = self._hit_px(G['line_thickness'])
+                            else:                                   # leader tip
+                                outer = self._hit_px(G['leader'])
+                            d = in_zone(hp, outer, ('shape', i, k))
+                            if d is not None and ('shape', i, k) == held:
+                                d *= 0.5                    # the handle already held wins ties
+                            if d is not None and (best is None or d < best[0]):
+                                best = (d, ('shape', i, k))
+                    return best[1] if best else None
+                except Exception:
+                    return None
+
+            def _move_resize_hover_valid(self):
+                """True while the pointer is still on something Move/Resize can move or resize
+                (polled by _HoverCursor to decide how long the move / resize cursor stays)."""
+                try:
+                    if getattr(self, 'current_selection_mode', None) not in self._MOVE_RESIZE_MODES:
+                        return False
+                    lv = self.live_view_label
+                    gp = QCursor.pos()
+                    lp = lv.mapFromGlobal(gp)
+                    if not lv.isVisible() or not lv.rect().contains(lp):
+                        return False
+                    under = QApplication.widgetAt(gp)
+                    if under is not None and under is not lv and not lv.isAncestorOf(under):
+                        return False                   # another window / widget is on top
+                    cur = self._move_resize_cursor_at(lv.transform_point(QPointF(lp)))
+                    if cur in (Qt.CrossCursor, Qt.ArrowCursor):
+                        return False
+                    hover_cursor().hold(cur, self._move_resize_hover_valid)   # follow shape changes
+                    return True
+                except Exception:
+                    return False
+
+            def _set_hover_grab(self, grab):
+                """Remember which resize handle / table line the pointer is on (None = none)
+                and repaint when it changes: the hovered handle is drawn enlarged with a white
+                ring, so it is obvious WHEN a press will resize rather than move."""
+                if grab != getattr(self, '_hover_grab', None):
+                    self._hover_grab = grab
+                    try:
+                        self.live_view_label.update()
+                    except Exception:
+                        pass
+
             def _move_resize_cursor_at(self, point_ls, hovered=None):
                 """Cursor that says what a press at this point would do in Move/Resize:
                 a resize arrow on a handle of the selected item, the four-way move arrow on
@@ -32283,30 +32687,29 @@ if __name__ == "__main__":
                 try:
                     sel = getattr(self, 'moving_custom_item_info', None)
                     if sel and self._custom_item_valid(sel):
-                        if sel['type'] in ('marker', 'left_marker', 'right_marker', 'top_marker'):
-                            handle_pt, _c = self._get_text_item_font_handle_ls(sel)
-                            if handle_pt is not None and (point_ls - handle_pt).manhattanLength() < \
-                                    self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * 2.0):
-                                return Qt.SizeFDiagCursor
+                        grab = self._resize_handle_at_ls(point_ls)
+                        if grab is not None:
+                            self._set_hover_grab(grab)
+                        if grab is not None and grab[0] == 'text':
+                            return Qt.SizeFDiagCursor
                         for i in self._active_handle_shape_indices():
                             sd = self.custom_shapes[i]; st = sd.get('type')
-                            _b, handles = self._get_shape_bounding_box_and_handles_in_label_space(i)
                             _tbl = isinstance(sd.get('table'), dict)
-                            thr = self._hit_px(self.live_view_label.ITEM_HANDLE_RADIUS * (
-                                1.25 if st in ('line', 'arrow', 'leader') else (2.5 if _tbl else 1.75)))
-                            for k, hp in enumerate(handles or []):
-                                if (point_ls - hp).manhattanLength() < thr:
-                                    if _tbl and k >= 4:
-                                        return Qt.SplitVCursor if k in (4, 6) else Qt.SplitHCursor
-                                    if st == 'rectangle':
-                                        return (Qt.SizeVerCursor if k == 4 else
-                                                Qt.SizeFDiagCursor if k in (0, 2) else Qt.SizeBDiagCursor)
-                                    if st in ('line', 'arrow') and k in (2, 3):
-                                        return Qt.SizeVerCursor      # thickness
-                                    return Qt.PointingHandCursor     # re-aim an end / the tip
+                            if grab is not None and grab[0] == 'shape' and grab[1] == i:
+                                k = grab[2]
+                                if _tbl and k >= 4:
+                                    return Qt.SplitVCursor if k in (4, 6) else Qt.SplitHCursor
+                                if st == 'rectangle':
+                                    return (Qt.SizeVerCursor if k == 4 else
+                                            Qt.SizeFDiagCursor if k in (0, 2) else Qt.SizeBDiagCursor)
+                                if st in ('line', 'arrow') and k in (2, 3):
+                                    return Qt.SizeVerCursor      # thickness
+                                return Qt.PointingHandCursor     # re-aim an end / the tip
                             div = self._table_divider_at_ls(i, point_ls)
                             if div is not None:
+                                self._set_hover_grab(('divider', i, div[0], div[1]))
                                 return Qt.SplitHCursor if div[0] == 'col' else Qt.SplitVCursor
+                    self._set_hover_grab(None)
                     if hovered is None:
                         hovered = self._item_under_point_ls(point_ls)
                     if hovered is None:
@@ -32765,7 +33168,7 @@ if __name__ == "__main__":
                         else:
                             ux, uy = dx / seg_len, dy / seg_len
                         perp_x, perp_y = -uy, ux
-                        half_w_ls = max(8.0, float(shape_data.get('thickness', 1)) * scale / 2.0)
+                        half_w_ls = max(11.0, float(shape_data.get('thickness', 1)) * scale / 2.0)
                         h_a = QPointF(mid_x + perp_x * half_w_ls, mid_y + perp_y * half_w_ls)
                         h_b = QPointF(mid_x - perp_x * half_w_ls, mid_y - perp_y * half_w_ls)
                         handles = [p1, p2, h_a, h_b]
