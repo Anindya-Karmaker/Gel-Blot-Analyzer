@@ -2468,16 +2468,30 @@ class AIBridge(QObject):
             return len([v for v in vals if v])
         return self.gui(run)
 
-    def _inspect(self, a):
+    def _inspect(self, a, remember_lanes=False):
+        """Read the gel. With remember_lanes=True a call WITHOUT expected_lanes re-uses the
+        lane count the user gave earlier for this same image and gel region, so that lane
+        numbers stay the same across tools (inspect_gel(expected_lanes=10) followed, after
+        some edit, by label_mw_ladder(lane=7) must still mean the 7th of 10 lanes)."""
         region = a.get("region")
         snr = float(a.get("min_snr") or GEL.DEFAULT_SNR_MIN)
         rel = float(a.get("min_relative_intensity") if a.get("min_relative_intensity") is not None
                     else GEL.DEFAULT_REL_MIN)
         gray, max_val, origin, cb, size = self.gui(lambda: self._analysis_region(region), timeout=60)
         ladder_n = a.get("ladder_bands") or self._ladder_count() or None
+        expected = a.get("expected_lanes")
+        memo_key = (self.gui(lambda: getattr(self.win, "_image_load_serial", 0)),
+                    gray.shape[1], gray.shape[0], json.dumps(region, sort_keys=True, default=str))
+        if expected:
+            self._expected_lanes_memo = (memo_key, int(expected))
+        elif remember_lanes:
+            memo = getattr(self, "_expected_lanes_memo", None)
+            if memo and memo[0] == memo_key:
+                expected = memo[1]
         res = GEL.analyze(gray, max_val, origin=origin, gel_type=a.get("gel_type") or "auto",
-                          expected_lanes=a.get("expected_lanes"), ladder_count=ladder_n,
+                          expected_lanes=expected, ladder_count=ladder_n,
                           snr_min=snr, rel_min=rel)
+        res["expected_lanes_used"] = int(expected) if expected else None
         res["image_size"] = {"width": size[0], "height": size[1]}
         res["content_box"] = {"x": cb[0], "y": cb[1], "width": cb[2] - cb[0], "height": cb[3] - cb[1]}
         reg = res["region"]
@@ -2493,7 +2507,7 @@ class AIBridge(QObject):
         if (c and c.get("key") == self._image_key() and c.get("region") == a.get("region")
                 and not a.get("expected_lanes")):
             return c["result"]
-        return self._inspect(a)
+        return self._inspect(a, remember_lanes=True)
 
     def t_inspect_gel(self, a):
         res = self._inspect(a)
@@ -2921,7 +2935,8 @@ class AIBridge(QObject):
         self._preset_warning = None
         if a.get("preset"):
             self.action(lambda: self._apply_preset(a["preset"]), "set_marker_preset")
-        insp = self._inspect({"region": a.get("region"), "expected_lanes": a.get("expected_lanes")})
+        insp = self._inspect({"region": a.get("region"), "expected_lanes": a.get("expected_lanes")},
+                             remember_lanes=True)
         reg = insp["region"]
         n_insp = insp["n_lanes"]
         # Ladder lanes (1-based, in inspect_gel numbering)
@@ -2945,6 +2960,9 @@ class AIBridge(QObject):
         else:
             lanes_img = None
         expected = a.get("expected_lanes")
+        if not expected:
+            # lane count the user gave earlier for this image (see _inspect remember_lanes)
+            expected = insp.get("expected_lanes_used")
         insp_bounds = [[ln["x0"], ln["x1"]] for ln in insp["lanes"]]
         insp_centres = [ln["center_x"] for ln in insp["lanes"]]
         opts = {"review": bool(a.get("review")),

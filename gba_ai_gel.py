@@ -351,6 +351,95 @@ def _grid_lanes(sig, n):
     return [[int(cuts[i]), int(cuts[i + 1])] for i in range(n)]
 
 
+def _gap_profile(sig):
+    """Column profile in [0, 1] that is LOW in the empty gaps between lanes and HIGH on a
+    lane, with faint and strong lanes on a comparable (log) scale: light 2-D blur, each row's
+    background (10th percentile) removed, 99th percentile per column, log relative to the
+    empty-gap level."""
+    s2 = gaussian_filter(np.asarray(sig, dtype=float), (2, 2))
+    s2 = np.clip(s2 - np.percentile(s2, 10, axis=1, keepdims=True), 0, None)
+    col = gaussian_filter1d(np.percentile(s2, 99, axis=0), 3)
+    col = np.clip(col - col.min(), 0, None)
+    s0 = max(float(np.percentile(col, 10)), 1e-3 * float(col.max()), 1e-9)
+    col = np.log1p(col / s0)
+    return col / (col.max() + 1e-12)
+
+
+def fit_target_lanes(sig, n, snap=0.3, stiffness=1.0, gap_profile=None):
+    """Fit exactly `n` lanes (the user's Target Lanes) to a gel region.
+
+    Two steps:
+
+    1. COMB FIT. Lanes of one gel sit on an even pitch, so an n-lane comb -- n + 1 equally
+       spaced borders, pitch p, left edge L -- is slid and stretched over the gap profile
+       g(x). The comb kept is the one whose inner borders fall on the emptiest columns while
+       (almost) no band signal is left outside it:
+
+           J(p, L) = mean_k g(L + k p)  +  2 * (signal outside [L, L + n p]) / (all signal)
+                     + 0.05 * |comb centre - image centre| / W
+
+    2. BORDER SNAP. Each border may leave its comb position x_k for a nearby real gap:
+
+           b_k = argmin_x  g(x) + stiffness * ((x - x_k) / p)^2 ,  |x - x_k| <= snap * p
+
+       Next to a well-stained lane g has a clear minimum and the border snaps to it; between
+       FAINT or EMPTY lanes g is flat, the quadratic term wins and the border stays at its
+       equal-distance position -- which is the best estimate there is for such lanes.
+
+    `gap_profile` lets a caller that re-fits often (the wizard's Target Lanes box) pass a
+    cached _gap_profile(sig). Returns {"bounds": [[x0, x1], ...], "pitch": p, "left": L,
+    "snapped": [bool, ...]} (snapped[k]: border k moved off its equal-distance position)."""
+    sig = np.asarray(sig)
+    W = sig.shape[1]
+    n = int(n)
+    if n <= 1 or W < 4 * max(1, n):
+        return {"bounds": [[0, W - 1]] if n <= 1 else
+                [[int(round(i * W / n)), int(round((i + 1) * W / n)) - 1] for i in range(n)],
+                "pitch": float(W) / max(1, n), "left": 0.0, "snapped": []}
+    g = _gap_profile(sig) if gap_profile is None else np.asarray(gap_profile, dtype=float)
+    total = float(g.sum()) + 1e-12
+    csum = np.concatenate([[0.0], np.cumsum(g)])
+    xs = np.arange(W, dtype=float)
+    best = None
+    p_hi = W / float(n)
+    for p in np.linspace(0.55 * p_hi, p_hi, 91):
+        span = n * p
+        offs = np.arange(0.0, W - span + 1e-9, max(1.0, p / 40.0))
+        if offs.size == 0:
+            offs = np.array([0.0])
+        # inner borders L + k p, k = 1..n-1 (linear interpolation of g)
+        teeth = offs[:, None] + p * np.arange(1, n)[None, :]
+        gap_cost = np.interp(teeth.ravel(), xs, g).reshape(teeth.shape).mean(axis=1)
+        a = np.clip(np.round(offs).astype(int), 0, W)
+        b = np.clip(np.round(offs + span).astype(int), 0, W)
+        outside = 1.0 - (csum[b] - csum[a]) / total
+        centre = np.abs(offs + span / 2.0 - W / 2.0) / W
+        cost = gap_cost + 2.0 * outside + 0.05 * centre
+        i = int(np.argmin(cost))
+        if best is None or cost[i] < best[0]:
+            best = (float(cost[i]), float(p), float(offs[i]))
+    _c, p, L = best
+    borders, snapped = [], []
+    half = max(1, int(round(snap * p)))
+    for k in range(n + 1):
+        xk = L + k * p
+        lo = int(max(0, np.floor(xk - half)))
+        hi = int(min(W - 1, np.ceil(xk + half)))
+        if hi <= lo:
+            borders.append(int(min(W - 1, max(0, round(xk))))); snapped.append(False)
+            continue
+        xx = np.arange(lo, hi + 1)
+        j = int(np.argmin(g[lo:hi + 1] + stiffness * ((xx - xk) / p) ** 2))
+        borders.append(int(xx[j]))
+        snapped.append(abs(xx[j] - xk) > 0.04 * p)
+    borders[0] = max(0, borders[0]); borders[-1] = min(W - 1, borders[-1])
+    for k in range(1, n + 1):                       # keep them strictly increasing
+        if borders[k] <= borders[k - 1]:
+            borders[k] = min(W - 1, borders[k - 1] + 1)
+    return {"bounds": [[int(borders[k]), int(borders[k + 1])] for k in range(n)],
+            "pitch": p, "left": L, "snapped": snapped}
+
+
 def lane_layout_warning(bounds):
     """Text when the lanes look unreliable (uneven spacing or sliver lanes), else None."""
     if len(bounds) < 3:
@@ -427,7 +516,12 @@ def detect_lanes(sig, expected=None, smooth=5.0, prominence=0.05, distance=None)
 
     expected = int(expected)
     pitch = W / float(max(1, expected))
-    grid = _grid_lanes(sig, expected)
+    try:
+        grid = fit_target_lanes(sig, expected)["bounds"]
+        grid_how = "%d-lane comb fit (equal spacing, borders snapped to the gaps between lanes)" % expected
+    except Exception:
+        grid = _grid_lanes(sig, expected)
+        grid_how = "%d-lane grid snapped to the gaps between lanes" % expected
     reg = lambda b: _regularity([(x0 + x1) / 2.0 for x0, x1 in b]) if len(b) >= 2 else 0.0
     found = None
     for d in sorted({dist, max(3, int(pitch * 0.5)), max(3, int(pitch * 0.7))}):
@@ -435,9 +529,14 @@ def detect_lanes(sig, expected=None, smooth=5.0, prominence=0.05, distance=None)
             bounds = run(prom, d)
             if len(bounds) == expected and (found is None or reg(bounds) > reg(found)):
                 found = bounds
-    if found is not None and reg(found) >= 0.9 * reg(grid):
+    def even_widths(b):
+        # every lane (the outer ones too) within 0.6-1.6x the median lane width
+        w = np.array([x1 - x0 for x0, x1 in b], dtype=float)
+        med = float(np.median(w)) if len(w) else 0.0
+        return med > 0 and float(w.min()) >= 0.6 * med and float(w.max()) <= 1.6 * med
+    if found is not None and even_widths(found) and reg(found) >= 0.9 * reg(grid):
         return {"bounds": found, "method": "peak detection (matched expected count)"}
-    return {"bounds": grid, "method": "%d-lane grid snapped to the gaps between lanes" % expected}
+    return {"bounds": grid, "method": grid_how}
 
 
 # ============================================================================ bands
