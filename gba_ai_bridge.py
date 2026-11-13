@@ -726,6 +726,9 @@ class AIBridge(QObject):
 
     def show_other_clients(self):
         dlg = QDialog(self.win)
+        dlg.setStyleSheet(
+                    "background-color: transparent; color: white;"
+                )
         dlg.setObjectName(PANEL_OBJECT_NAME)
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
         dlg.setWindowTitle("Connect Ollama / other AI apps")
