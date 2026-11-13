@@ -727,7 +727,7 @@ class AIBridge(QObject):
     def show_other_clients(self):
         dlg = QDialog(self.win)
         dlg.setStyleSheet(
-                    "background-color: transparent; color: white;"
+                    "background-color: black; color: white;"
                 )
         dlg.setObjectName(PANEL_OBJECT_NAME)
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
