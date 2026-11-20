@@ -18319,7 +18319,14 @@ if __name__ == "__main__":
                 # the bulk of the stretch so long instructions remain readable.
                 statusbar.addPermanentWidget(self.mode_status_label, 4)
                 self.setWindowTitle(self.window_title)
-                self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
+                # Standard title bar WITH a maximize button. Windows only offers Snap (drag to an
+                # edge, Win+Arrow, Snap Layouts on the maximize button) for windows that have the
+                # maximize box (WS_MAXIMIZEBOX); the earlier flags (CustomizeWindowHint +
+                # minimize + close only) removed it, so Windows never offered to snap the app.
+                # macOS tiles windows regardless, which is why it only failed on Windows.
+                self.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+                                    | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
+                                    | Qt.WindowCloseButtonHint)
                 self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
                 self.undo_stack = []
                 self.redo_stack = []
@@ -19809,6 +19816,12 @@ if __name__ == "__main__":
                 # enforced minimum size would spill off-screen on very small displays.
                 MIN_UI_W = min(MIN_UI_W, max(400, usable_w - MIN_VIEWER_W - HANDLE))
                 MIN_UI_H = min(MIN_UI_H, max(140, usable_h - MIN_VIEWER_H - HANDLE))
+                # Side-by-side layout: the whole window must still fit HALF the screen, or
+                # Windows Snap / macOS tiling cannot make it that narrow (e.g. 1366 px at 125%
+                # scaling = 546 logical px per half, while 420 + 200 + 14 = 634). The tab bar
+                # scrolls and every tab scrolls inside its own area, so a narrower floor is safe.
+                if not is_vertical:
+                    MIN_UI_W = min(MIN_UI_W, max(300, screen_w // 2 - MIN_VIEWER_W - HANDLE - 8))
 
                 # Apply the floors to the widgets so dragging the divider (or shrinking the
                 # window) can't push either pane past them along the split axis.
