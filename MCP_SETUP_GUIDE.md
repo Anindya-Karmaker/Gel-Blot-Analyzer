@@ -50,6 +50,7 @@ happens if AI control is turned on. When it is off, the AI is told to ask you to
 |---|---|
 | **Allow AI assistants to control Gel Blot Analyzer** | Master switch. Off by default. Turning it off disconnects every AI immediately. |
 | **Permission** | *Full control*, or *View only*: the AI can take screenshots and read results, but can't change anything. |
+| **Tools offered** | *All tools* (Claude, ChatGPT and other large models) or *Essential tools* (small local models in Ollama, LM Studio, Open WebUI). *Essential* offers 14 core tools with short instructions, so a small model sees the whole list and picks the right tool. Reconnect the AI app after changing this. |
 | **Step delay** | Pause before each click or change (default 250 ms) so you can follow along. Set to 0 for full speed. |
 | **Show the AI cursor and control highlights** | Shows the live preview: a violet **AI** pointer for clicks and drags on the image, and an outline around each control just before the AI changes it. |
 | **Pause the AI** | Refuses all AI requests until you untick it. |
@@ -105,7 +106,7 @@ For screenshots to be useful, pick a model that also supports **vision**.
 **Option A: Open WebUI (OpenAPI tool server, no MCP needed)**
 
 1. In Open WebUI, go to **Settings ▸ Tools ▸ ➕ Add tool server**.
-2. Set **URL** to `http://127.0.0.1:47615`. The spec is served at `/openapi.json`.
+2. Set **URL** to `http://127.0.0.1:47615`. The spec is served at `/openapi.json` as **OpenAPI 3.2.1** (tools grouped in nested tags). A tool that only reads OpenAPI 3.1 can use `/openapi-3.1.json` (or `/openapi.json?version=3.1`), which describes the same API as OpenAPI 3.1.0.
 3. Set **Auth** to *Bearer* and paste the token from **Ollama / other apps…**.
 4. Enable the tool server in your chat.
 
@@ -137,7 +138,7 @@ Use the `mcpServers` block from 3.1.
 | Model | Result |
 |---|---|
 | `qwen3:8b` / `qwen3:14b`, `qwen2.5:7b`/`14b` (instruct), `llama3.1:8b`, `mistral-small` | Recommended: general instruct models with reliable tool calling |
-| `llama3.2` (3B) | Works for `inspect_gel` / `auto_analyze_gel`, but often asks instead of acting and sometimes writes calls as text. Fine for simple tasks. |
+| `llama3.2` (3B) | Tested with v9.9.1 on raw gels: with *Essential tools*, "analyze <file>, my ladder is …" completes in two calls (it answers the lane question, then analyzes). May still invent an answer to a question before asking you, so check the lane count it reports. |
 | `qwen2.5-coder` | **Doesn't work.** Writes the tool call as a ```json block instead of calling it, so nothing happens. |
 | `deepseek-r1` | Slow (it thinks first) and unreliable at calling tools |
 
@@ -158,7 +159,7 @@ Use the `mcpServers` block from 3.1.
 |---|---|
 | stdio | `gba_mcp_server.py`, or the app with `--mcp-stdio` |
 | Streamable HTTP | `POST /mcp` (JSON responses) |
-| OpenAPI | `GET /openapi.json`, then `POST /tools/<tool_name>` with the arguments as JSON |
+| OpenAPI | `GET /openapi.json` (OpenAPI 3.2.1; `/openapi-3.1.json` = 3.1.0), then `POST /tools/<tool_name>` with the arguments as JSON |
 | Auth | `Authorization: Bearer <token>`. Alternatives: `X-GBA-Token: <token>`, or `?token=` |
 | Health check | `GET /health` |
 | MCP protocol versions | 2025-06-18, 2025-03-26, 2024-11-05 |
@@ -192,17 +193,24 @@ analysis code, and suit small local models best:
 | `auto_analyze_gel` | Runs the **Auto Analyze Gel** wizard end to end: lanes, labels, ladder MW labels and densitometry, keeping only true bands |
 | `quantify_with_standards` | Quantifies all bands against standards whose amounts **you** give (`[{lane, quantity}]`), and reports R² |
 | `combine_images` | Puts a western blot below, above or beside the gel, adding the padding and matching the size |
-| `get_workflow_guide` | Recipes: protein gel, DNA gel, western blot, densitometry, standards, combine |
+| `export_results` | Exports the results with the results window's own **Export All Lanes to Excel** (`.xlsx`), or as CSV, and returns the file's contents. The AI quotes its numbers from this file (new in 9.9) |
+| `read_results_file` | Reads an exported `.xlsx` / `.csv` results file again, also one you exported yourself |
+| `compare_bands` | The **Compare Bands** tool: loading-control normalisation in every lane, every band vs one reference band, or specific pairs. Gives A/B, A−B, % change and log2(A/B) by Band Intensity, Band %, Lane % or Quantity |
+| `export_pdf_report` | Writes the protected **PDF report** (parameters, standard-curve fit, per-lane band tables and images, annotated gel) |
+| `overlay_image` | Full **Overlap Images** control: copy the current image into a slot, load a file, place, move, resize, rotate, opacity, crop, flip, remove, reset, rasterize |
+| `add_results_table` / `edit_table` | Draw the densitometry numbers as a table on the figure. Edit any table's cells, formatting and position, or split it into separate items |
+| `get_workflow_guide` | Recipes: protein gel, DNA gel, western blot, densitometry, compare bands, standards, report, combine, tables |
 
 Lower-level tools:
 
 | Area | Tools |
 |---|---|
 | **Look** | `get_status`, `get_annotations`, `get_analysis_results`, `screenshot`, `list_windows` |
-| **Files** | `open_image`, `save_image` (with config), `export_pptx` |
+| **Files** | `open_image`, `save_image` (with config), `export_pptx`, `export_results`, `read_results_file`, `export_pdf_report` |
 | **Image** | `image_operation` (invert, flip, grayscale, 8-bit, optimize levels, reset), `adjust_levels`, `crop`, `set_padding` |
-| **Annotate** | `set_marker_preset`, `place_markers`, `add_text`, `add_shape`, `add_table`, `remove_custom_items`, `history` |
-| **Quantify** | `define_lane_regions`, `analyze_lanes`, `get_analysis_results`, `read_table` |
+| **Annotate** | `set_marker_preset`, `place_markers`, `add_text`, `add_shape`, `add_table`, `edit_table`, `add_results_table`, `remove_custom_items`, `history` |
+| **Overlap** | `combine_images`, `overlay_image` |
+| **Quantify** | `define_lane_regions`, `analyze_lanes`, `get_analysis_results`, `compare_bands`, `read_table` |
 | **Any control** | `list_controls`, `set_control`, `click_control`, `select_tab`, `list_menu_actions`, `trigger_menu_action`, `press_keys` |
 | **Viewer** | `viewer_click`, `viewer_drag`, `set_view` |
 | **Dialogs** | `respond_to_dialog`, `close_window`, `answer_file_dialog`, `wait` |
@@ -218,6 +226,11 @@ the Auto Analyze wizard, the AI gets its text and buttons and answers it the way
 
 ## 5. Example prompts
 
+- *"Analyze ~/Gels/my_gel.tif."* One call does everything: the AI opens the image, crops it to the
+  gel, straightens it, makes the bands dark on white, labels the ladder and measures every band.
+  If the lanes are unclear it asks you how many lanes the gel has.
+- *"Analyze ~/Gels/my_gel.tif. My ladder is 180, 130, 95, 72, 55, 43, 34, 26, 17 and 10 kDa."*
+  Any ladder works: the AI passes your sizes as `ladder_values`.
 - *"Analyze the open gel. It's an SDS-PAGE gel with the Precision Plus ladder. Label the ladder
   and run densitometry."* The AI inspects first and may ask you for the lane count, the ladder
   lane or whether some lanes are standards.

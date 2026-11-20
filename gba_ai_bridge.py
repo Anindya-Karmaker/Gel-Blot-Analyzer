@@ -26,6 +26,7 @@ Rules this module follows (see the project memory notes):
 
 import base64
 import json
+import math
 import os
 import re
 import secrets
@@ -81,6 +82,7 @@ _DEFAULTS = {
     "step_delay_ms": 250,
     "show_overlays": True,
     "permission": "full",          # "full" | "view"
+    "tool_profile": "full",        # "full" (all tools) | "essential" (small local models)
 }
 
 
@@ -489,6 +491,8 @@ class _ImageResult:
 
 
 class AIBridge(QObject):
+    LOCK_WAIT_S = 240.0                   # how long a 2nd state-changing call queues
+
     def __init__(self, win):
         super().__init__(win)
         self.win = win
@@ -502,6 +506,8 @@ class AIBridge(QObject):
         self.file_answers = []            # queued answers for the next file chooser(s)
         self.file_dialog_requests = []    # choosers the AI triggered without an answer
         self._call_lock = threading.Lock()
+        self._busy_with = None            # name of the state-changing tool now running
+        self._busy_since = None
         self._inflight = {}               # jid -> _Job still running on the GUI thread
         self._bg_finished = []
         self._win_seq = 0
@@ -726,9 +732,7 @@ class AIBridge(QObject):
 
     def show_other_clients(self):
         dlg = QDialog(self.win)
-        dlg.setStyleSheet(
-                    "background-color: black; color: white;"
-                )
+        # No stylesheet of its own: it follows the app's light/dark theme like every window.
         dlg.setObjectName(PANEL_OBJECT_NAME)
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
         dlg.setWindowTitle("Connect Ollama / other AI apps")
@@ -1239,12 +1243,26 @@ class AIBridge(QObject):
     # ----------------------------------------------------------------- tool dispatch
     def call_tool(self, name, args):
         """Entry point for one MCP tools/call. Returns (content_list, is_error)."""
-        args = args or {}
+        real = S.resolve_tool_name(name)
+        fn = getattr(self, "t_" + real, None) if real else None
+        if fn is None:
+            sugg = S.suggest_tools(name)
+            msg = "Unknown tool '%s'." % name
+            if sugg:
+                msg += " Did you mean: %s?" % ", ".join(sugg)
+            msg += " Call tools/list (or get_workflow_guide) for the full list."
+            return [_text({"error": msg})], True
+        name = real
+        if not isinstance(args, dict):
+            args, problem = S.normalize_arguments(name, args)
+            if problem:
+                return [_text({"error": problem})], True
         if name in _SMART_TOOLS:
             args = _clean_smart_args(args)
-        fn = getattr(self, "t_" + str(name), None)
-        if fn is None or name not in {t["name"] for t in S.TOOLS}:
-            return [_text({"error": "Unknown tool '%s'." % name})], True
+        args, problem = S.normalize_arguments(name, args)
+        if problem:
+            self.dispatcher.log.emit("error", "✗ %s  bad arguments: %s" % (name, problem[:160]))
+            return [_text({"error": problem})], True
         if self.paused and name not in ("wait",):
             return [_text({"error": "The user has PAUSED AI control in the app (AI Control panel). "
                                     "Wait for them to resume."})], True
@@ -1255,15 +1273,35 @@ class AIBridge(QObject):
         self.dispatcher.log.emit("call", "▶ %s(%s)" % (name, summary))
         self.dispatcher.activity.emit("%s %s" % (name, summary)[:90])
         t0 = time.time()
-        with self._call_lock:
-            try:
-                res = fn(args)
-                is_error = False
-            except ToolError as e:
-                res, is_error = {"error": str(e)}, True
-            except Exception as e:  # noqa: BLE001
-                res, is_error = {"error": "%s: %s" % (type(e).__name__, e),
-                                 "trace": traceback.format_exc(limit=5)}, True
+        # Read-only tools never wait behind a long action (get_status / screenshot / wait must
+        # answer while auto_analyze_gel runs); they still execute on the GUI thread via gui().
+        # State-changing tools run one at a time; a second one gives up with a clear "busy"
+        # message instead of blocking past the client's request timeout.
+        read_only = name in S.READ_ONLY_TOOLS
+        locked = False
+        if not read_only:
+            locked = self._call_lock.acquire(timeout=self.LOCK_WAIT_S)
+            if not locked:
+                busy = self._busy_with or "another action"
+                msg = ("The app is still busy with '%s' (started %.0fs ago). Call wait (or "
+                       "get_status) and retry '%s' when it has finished."
+                       % (busy, time.time() - (self._busy_since or t0), name))
+                self.dispatcher.log.emit("error", "✗ %s  %s" % (name, msg[:120]))
+                self.dispatcher.activity.emit("")
+                return [_text({"error": msg, "status": "busy"})], True
+            self._busy_with, self._busy_since = name, t0
+        try:
+            res = fn(args)
+            is_error = False
+        except ToolError as e:
+            res, is_error = {"error": str(e)}, True
+        except Exception as e:  # noqa: BLE001
+            res, is_error = {"error": "%s: %s" % (type(e).__name__, e),
+                             "trace": traceback.format_exc(limit=5)}, True
+        finally:
+            if locked:
+                self._busy_with, self._busy_since = None, None
+                self._call_lock.release()
         ms = (time.time() - t0) * 1000
         if isinstance(res, _ImageResult):
             content = [{"type": "image", "data": base64.b64encode(res.png).decode("ascii"),
@@ -1323,6 +1361,9 @@ class AIBridge(QObject):
         inflight = [{"job": j.jid, "action": j.name} for j in self._inflight.values() if not j.event.is_set()]
         if inflight:
             st["actions_waiting_on_dialogs"] = inflight
+        if self._busy_with:
+            st["busy_with"] = {"tool": self._busy_with,
+                               "running_s": round(time.time() - (self._busy_since or time.time()), 1)}
         return st
 
     def t_get_annotations(self, a):
@@ -1392,7 +1433,10 @@ class AIBridge(QObject):
             hidden = self._hide_overlays()
             try:
                 if target == "image":
-                    img = win._render_annotated_gel_qimage(render_scale=1, draw_densitometry_boxes=True)
+                    # Same as the user sees: densitometry boxes only while they are shown
+                    # (Analysis tab > Show / Hide Markers).
+                    img = win._render_annotated_gel_qimage(
+                        render_scale=1, draw_densitometry_boxes=bool(getattr(win, "markers_visible", True)))
                     if img is None or img.isNull():
                         raise ToolError("No image is loaded.")
                     iw, ih = img.width(), img.height()
@@ -1887,10 +1931,45 @@ class AIBridge(QObject):
         return self._with_status(self.action(run, "set_view"))
 
     # ---- files ----------------------------------------------------------------------
+    @staticmethod
+    def _repair_path(path):
+        """Small models retype long paths with typos or the wrong case. Walk the path one component
+        at a time; a missing component is replaced only by a single, clearly closest sibling
+        (case-insensitive equality, or difflib ratio >= 0.85 with a runner-up at least 0.05 lower).
+        Returns the repaired existing path, or None."""
+        import difflib
+        parts = os.path.normpath(path).split(os.sep)
+        cur = os.sep if path.startswith(os.sep) else ""
+        for comp in parts:
+            if comp in ("", "."):
+                continue
+            cand = os.path.join(cur, comp) if cur else comp
+            if os.path.exists(cand):
+                cur = cand
+                continue
+            try:
+                sibs = os.listdir(cur or ".")
+            except OSError:
+                return None
+            exact = [x for x in sibs if x.lower() == comp.lower()]
+            if len(exact) == 1:
+                cur = os.path.join(cur, exact[0]); continue
+            sc = sorted(((difflib.SequenceMatcher(None, comp.lower(), x.lower()).ratio(), x) for x in sibs), reverse=True)
+            if not sc or sc[0][0] < 0.85 or (len(sc) > 1 and sc[0][0] - sc[1][0] < 0.05):
+                return None
+            cur = os.path.join(cur, sc[0][1])
+        return cur if os.path.isfile(cur) else None
+
     def t_open_image(self, a):
         path = os.path.abspath(os.path.expanduser(str(a.get("path") or "")))
+        repaired_from = None
         if not os.path.isfile(path):
-            raise ToolError("File not found: %s" % path)
+            fixed = self._repair_path(path)
+            if not fixed:
+                raise ToolError("File not found: %s. Check the path (copy it exactly); do not continue "
+                                "as if the image were open." % path)
+            repaired_from, path = path, fixed
+        self._path_repaired_from = repaired_from
 
         def run():
             win = self.win
@@ -1900,8 +1979,11 @@ class AIBridge(QObject):
             img = win.image
             if img is None or img.isNull():
                 raise ToolError("The app could not open %s" % path)
-            return {"opened": path, "width": img.width(), "height": img.height(),
-                    "bit_depth": _bit_depth(img)}
+            out = {"opened": path, "width": img.width(), "height": img.height(),
+                   "bit_depth": _bit_depth(img)}
+            if repaired_from:
+                out["note"] = "The path given did not exist; opened the closest match instead: %s" % path
+            return out
         return self._with_status(self.action(run, "open_image", timeout=120))
 
     def t_save_image(self, a):
@@ -1960,12 +2042,55 @@ class AIBridge(QObject):
     _OPS = {"invert": "invert_image", "flip_vertical": "flip_vertical",
             "flip_horizontal": "flip_horizontal", "grayscale": "convert_to_black_and_white",
             "to_8bit": "convert_to_8bit_depth", "optimize_levels": "optimize_levels",
-            "reset_adjustments": "reset_all_adjustments", "reset_image": None}
+            "reset_adjustments": "reset_all_adjustments", "reset_image": None,
+            "straighten": None, "rotate": None}
+
+    def _rotate_image(self, op, a):
+        """straighten: measure the tilt (GEL.estimate_rotation) and rotate by it; rotate: rotate
+        by angle_deg. Both use the Transform tab's real Rotation slider + Apply (align_image),
+        in 0.05 deg steps, so the step shows in the window and is one undo."""
+        est = None
+        if op == "straighten":
+            gray = self.gui(lambda: self._analysis_region(None), timeout=60)[0]
+            est = GEL.estimate_rotation(gray)
+            angle = float(est["angle_deg"])
+        else:
+            if a.get("angle_deg") is None:
+                raise ToolError("rotate needs angle_deg (degrees; + turns the image clockwise).")
+            angle = float(a["angle_deg"])
+        if abs(angle) > 180:
+            raise ToolError("angle_deg must be between -180 and 180.")
+
+        def run():
+            win = self.win
+            if not win._has_image():
+                raise ToolError("No image is loaded.")
+            if win.left_markers or win.right_markers or win.top_markers:
+                raise ToolError("Rotate before labelling: rotation clears the ladder and lane "
+                                "labels (they are aligned to the image axes). Rotate or straighten "
+                                "first, then call label_mw_ladder / auto_analyze_gel.")
+            before = [win.image_master.width(), win.image_master.height()]
+            steps = int(round(angle * 20.0))
+            if steps == 0:
+                return {"operation": op, "angle_deg": 0.0, "rotated": False,
+                        "note": "The image is already level (tilt < 0.05 deg).", "estimate": est}
+            self.reveal(win.orientation_slider, "AI: rotate %+.2f°" % (steps / 20.0))
+            _set_value(win.orientation_slider, steps)
+            win.align_button.click()
+            img = win.image
+            return {"operation": op, "angle_deg": steps / 20.0, "rotated": True,
+                    "image_before": before, "image": [img.width(), img.height()] if img is not None else None,
+                    "estimate": est,
+                    "note": "The canvas grew to hold the rotated image (transparent corners); "
+                            "crop to the gel next. Image coordinates have changed."}
+        return self._with_status(self.action(run, "image_operation", timeout=90))
 
     def t_image_operation(self, a):
         op = a.get("operation")
         if op not in self._OPS:
             raise ToolError("Unknown operation '%s'." % op)
+        if op in ("straighten", "rotate"):
+            return self._rotate_image(op, a)
 
         def run():
             win = self.win
@@ -2035,6 +2160,10 @@ class AIBridge(QObject):
                 win.draw_crop_rect_button.click()
 
             def apply():
+                # the drag is only the visible gesture: screen->image rounding can move its corners by
+                # 1-2 px depending on zoom, so the crop is set to the exact requested pixels (reproducible)
+                win.crop_rectangle_coords = (int(round(x0)), int(round(y0)),
+                                             int(round(x1)) - int(round(x0)), int(round(y1)) - int(round(y0)))
                 win.apply_crop_button.click()
                 im = win.image
                 return {"cropped_to": [im.width(), im.height()]}
@@ -2066,6 +2195,13 @@ class AIBridge(QObject):
 
     def t_set_marker_preset(self, a):
         name = a.get("preset") or ""
+        vals = self._parse_ladder_values(a.get("ladder_values"))
+        if vals:
+            got = self.action(lambda: self._apply_ladder_values(vals), "set_marker_preset")
+            return self._with_status({"preset": "Custom", "values": got,
+                                      "note": "Your ladder values are now used for MW labels (top to bottom)."})
+        if not name:
+            raise ToolError("Give preset (a ladder name) or ladder_values (the band sizes, top to bottom).")
 
         def start(job):
             cb = self.win.combo_box
@@ -2161,6 +2297,98 @@ class AIBridge(QObject):
                     "anchor": anchor}
         return self._with_status(self.action(run, "add_text"))
 
+    def _table_settings_from_args(self, a, cells, keep_fmt=False, base=None):
+        """Table settings (TableEditorDialog keys) from add_table / edit_table arguments.
+        `base` = the existing table's settings (edit_table): unspecified options keep their
+        values; keep_fmt keeps its bold/italic/underline cells."""
+        st = dict(base) if base is not None else {}
+        st["cells"] = cells
+        for key, typ in (("font", str), ("font_size", int),
+                         ("thickness", float), ("first_lane", int), ("auto_pad", bool)):
+            if a.get(key) is not None:
+                st[key] = typ(a[key])
+        nr = len(cells); nc = max(len(r) for r in cells)
+
+        def _idx(key, n):
+            v = a.get(key) or []
+            if not isinstance(v, list):
+                raise ToolError("%s must be a list of 1-based numbers." % key)
+            return {int(x) - 1 for x in v if 1 <= int(x) <= n}
+        b_rows, b_cols = _idx("bold_rows", nr), _idx("bold_columns", nc)
+        keep = keep_fmt and base is not None and base.get("fmt") is not None
+        u_rows, i_rows = _idx("underline_rows", nr), _idx("italic_rows", nr)
+        if a.get("bold_first_row"):
+            b_rows.add(0)
+        if a.get("bold_first_col"):
+            b_cols.add(0)
+        if keep:
+            old = base.get("fmt") or []
+            st["fmt"] = [[(old[r][c] if r < len(old) and c < len(old[r]) else "") for c in range(nc)]
+                         for r in range(nr)]
+        else:
+            st["fmt"] = [[("b" if (a.get("bold") or r in b_rows or c in b_cols) else "")
+                          + ("i" if (a.get("italic") or r in i_rows) else "")
+                          + ("u" if r in u_rows else "")
+                          for c in range(nc)] for r in range(nr)]
+        spans = []
+        for m in (a.get("merge") or []):
+            try:
+                spans.append([int(m["row"]) - 1, int(m["col"]) - 1,
+                              int(m.get("rowspan", 1)), int(m.get("colspan", 1))])
+            except Exception:
+                raise ToolError("Each merge entry needs row and col (1-based) plus rowspan and/or "
+                                "colspan, e.g. {\"row\": 1, \"col\": 2, \"colspan\": 3}.")
+        if spans:
+            st["spans"] = spans
+        for key, dst in (("color", "text_color"), ("line_color", "color")):
+            if a.get(key):
+                c = QColor(str(a[key]))
+                if not c.isValid():
+                    raise ToolError("Invalid %s '%s'." % (key, a[key]))
+                st[dst] = c.name()
+        if a.get("align") is not None:
+            if a["align"] not in ("left", "center", "right"):
+                raise ToolError("align must be left, center or right.")
+            st["align"] = a["align"]
+        if a.get("outline") is not None:
+            st["border"] = bool(a["outline"])
+        if a.get("inner_lines") is not None:
+            st["grid"] = bool(a["inner_lines"])
+        if a.get("first_column_is_labels") is not None:
+            st["label_col"] = bool(a["first_column_is_labels"])
+        win = self.win
+        n_lanes = len(getattr(win, "top_markers", []) or [])
+        mode = a.get("column_widths_mode")
+        if mode is None:
+            mode = (base.get("width_mode") if base is not None else None) or \
+                ("lanes" if n_lanes >= 2 else "fit")
+        if mode not in ("fit", "equal", "lanes") and not (mode == "keep" and base is not None
+                                                          and a.get("column_widths_mode") is None):
+            raise ToolError("column_widths_mode must be fit, equal or lanes.")
+        note = None
+        if mode == "lanes" and n_lanes < 2:
+            mode = "fit"
+            note = ("No top (lane) labels are placed, so the columns fit their text instead of "
+                    "snapping to lanes. Place top labels first (place_markers side='top', or "
+                    "auto_analyze_gel) to line the table up with the lanes.")
+        st["width_mode"] = mode
+
+        def _sizes(key):
+            v = a.get(key)
+            if v is None:
+                return None
+            if not isinstance(v, list):
+                raise ToolError("%s must be a list of numbers (null = automatic)." % key)
+            return [None if x is None else float(x) for x in v]
+        cw, rh = _sizes("column_widths"), _sizes("row_heights")
+        if cw is not None:
+            st["col_w"] = cw
+        if rh is not None:
+            st["row_h"] = rh
+        if note:
+            st["_note"] = note
+        return st
+
     def t_add_table(self, a):
         def run():
             win = self.win
@@ -2174,80 +2402,8 @@ class AIBridge(QObject):
             if len(cells) > 60 or max(len(r) for r in cells) > 60:
                 raise ToolError("A table can have at most 60 rows and 60 columns.")
             cells = [["" if c is None else str(c) for c in r] for r in cells]
-            st = {"cells": cells}
-            for key, typ in (("font", str), ("font_size", int),
-                             ("thickness", float), ("first_lane", int), ("auto_pad", bool)):
-                if a.get(key) is not None:
-                    st[key] = typ(a[key])
-            nr = len(cells); nc = max(len(r) for r in cells)
-
-            def _idx(key, n):
-                v = a.get(key) or []
-                if not isinstance(v, list):
-                    raise ToolError("%s must be a list of 1-based numbers." % key)
-                return {int(x) - 1 for x in v if 1 <= int(x) <= n}
-            b_rows, b_cols = _idx("bold_rows", nr), _idx("bold_columns", nc)
-            u_rows, i_rows = _idx("underline_rows", nr), _idx("italic_rows", nr)
-            if a.get("bold_first_row"):
-                b_rows.add(0)
-            if a.get("bold_first_col"):
-                b_cols.add(0)
-            st["fmt"] = [[("b" if (a.get("bold") or r in b_rows or c in b_cols) else "")
-                          + ("i" if (a.get("italic") or r in i_rows) else "")
-                          + ("u" if r in u_rows else "")
-                          for c in range(nc)] for r in range(nr)]
-            spans = []
-            for m in (a.get("merge") or []):
-                try:
-                    spans.append([int(m["row"]) - 1, int(m["col"]) - 1,
-                                  int(m.get("rowspan", 1)), int(m.get("colspan", 1))])
-                except Exception:
-                    raise ToolError("Each merge entry needs row and col (1-based) plus rowspan and/or "
-                                    "colspan, e.g. {\"row\": 1, \"col\": 2, \"colspan\": 3}.")
-            if spans:
-                st["spans"] = spans
-            for key, dst in (("color", "text_color"), ("line_color", "color")):
-                if a.get(key):
-                    c = QColor(str(a[key]))
-                    if not c.isValid():
-                        raise ToolError("Invalid %s '%s'." % (key, a[key]))
-                    st[dst] = c.name()
-            if a.get("align") is not None:
-                if a["align"] not in ("left", "center", "right"):
-                    raise ToolError("align must be left, center or right.")
-                st["align"] = a["align"]
-            if a.get("outline") is not None:
-                st["border"] = bool(a["outline"])
-            if a.get("inner_lines") is not None:
-                st["grid"] = bool(a["inner_lines"])
-            if a.get("first_column_is_labels") is not None:
-                st["label_col"] = bool(a["first_column_is_labels"])
-            n_lanes = len(getattr(win, "top_markers", []) or [])
-            mode = a.get("column_widths_mode")
-            if mode is None:
-                mode = "lanes" if n_lanes >= 2 else "fit"
-            if mode not in ("fit", "equal", "lanes"):
-                raise ToolError("column_widths_mode must be fit, equal or lanes.")
-            note = None
-            if mode == "lanes" and n_lanes < 2:
-                mode = "fit"
-                note = ("No top (lane) labels are placed, so the columns fit their text instead of "
-                        "snapping to lanes. Place top labels first (place_markers side='top', or "
-                        "auto_analyze_gel) to line the table up with the lanes.")
-            st["width_mode"] = mode
-
-            def _sizes(key):
-                v = a.get(key)
-                if v is None:
-                    return None
-                if not isinstance(v, list):
-                    raise ToolError("%s must be a list of numbers (null = automatic)." % key)
-                return [None if x is None else float(x) for x in v]
-            cw, rh = _sizes("column_widths"), _sizes("row_heights")
-            if cw is not None:
-                st["col_w"] = cw
-            if rh is not None:
-                st["row_h"] = rh
+            st = self._table_settings_from_args(a, cells)
+            note = st.pop("_note", None)
             origin = None
             if a.get("x") is not None or a.get("y") is not None:
                 origin = (a.get("x"), a.get("y"))
@@ -2396,14 +2552,20 @@ class AIBridge(QObject):
 
     def t_wait(self, a):
         ms = int(a.get("ms", 1000))
-        deadline = time.time() + ms / 1000.0
+        t0 = time.time()
+        deadline = t0 + ms / 1000.0
+        busy_at_start = self._busy_with
         while time.time() < deadline:
             if self._inflight and all(j.event.is_set() for j in self._inflight.values()):
                 break
+            if busy_at_start and self._busy_with is None and not self._inflight:
+                break                     # the long action another call started has finished
             time.sleep(0.1)
         bg = self._collect_background()
-        res = {"waited_ms": ms, "finished": bg,
+        res = {"waited_ms": int((time.time() - t0) * 1000), "finished": bg,
                "still_running": [{"job": j.jid, "action": j.name} for j in self._inflight.values()]}
+        if self._busy_with:
+            res["busy_with"] = self._busy_with
         try:
             res["windows"] = self.gui(self._windows_info, timeout=5)
         except ToolError:
@@ -2424,7 +2586,8 @@ class AIBridge(QObject):
         inside the transparent padding. GUI thread."""
         win = self.win
         if not win._has_image():
-            raise ToolError("No image is loaded. Call open_image first.")
+            raise ToolError("No image is loaded. Call open_image(path=<image file>) first, or give "
+                            "auto_analyze_gel the path: auto_analyze_gel(path=<image file>).")
         adj = win._get_fully_adjusted_image_for_analysis()
         if adj is None or adj.isNull():
             raise ToolError("Could not build the analysis image.")
@@ -2434,6 +2597,16 @@ class AIBridge(QObject):
         arr = np.asarray(pil, dtype=np.float64)
         if arr.ndim == 3:
             arr = arr[..., :3].mean(axis=2)
+        try:                                   # rotation corners are transparent: fill them with the
+            if adj.hasAlphaChannel():          # image's own median so they read as plain background
+                a4 = win.qimage_to_numpy(adj)  # (they used to look like a dark surround -> re-invert)
+                if a4 is not None and a4.ndim == 3 and a4.shape[2] == 4 and a4.shape[:2] == arr.shape:
+                    clear = a4[..., 3] == 0
+                    if clear.any() and (~clear).any():
+                        arr = arr.copy()
+                        arr[clear] = float(np.median(arr[~clear]))
+        except Exception:
+            pass
         mode = getattr(pil, "mode", "L")
         max_val = 65535.0 if (mode.startswith("I") or arr.max() > 255) else 255.0
         H, W = arr.shape
@@ -2528,6 +2701,19 @@ class AIBridge(QObject):
                              "ethidium-bromide DNA gel / fluorescent blot)?")
         else:
             advice.append("Bands are dark on a light background — correct polarity for analysis.")
+        tilt = None
+        try:
+            if not a.get("region"):
+                gray = self.gui(lambda: self._analysis_region(None), timeout=60)[0]
+                tilt = GEL.estimate_rotation(gray)
+                res["tilt_deg"] = tilt["angle_deg"]
+        except Exception:
+            tilt = None
+        if tilt and abs(tilt["angle_deg"]) >= 0.5 and tilt.get("confidence", 1.0) >= 1.05:
+            advice.append("The gel is tilted by about %+.2f° (bands and gel edges are not level). "
+                          "Call image_operation(operation='straighten') BEFORE cropping and "
+                          "labelling, then inspect_gel again: lanes and bands are measured along "
+                          "the image axes." % tilt["angle_deg"])
         if gel_type in ("dna", "rna", "agarose") and pol == "dark_bands":
             advice.append("DNA/RNA gel already shows dark bands on white — it has already been "
                           "inverted; do NOT invert again.")
@@ -2580,16 +2766,15 @@ class AIBridge(QObject):
         res["advice"] = advice
         res["questions_for_user"] = questions
         # One concrete call for small models to make next.
-        if pol == "light_bands":
-            nxt = {"tool": "fix_band_polarity", "arguments": {"mode": "auto"}}
-        elif lad:
-            nxt = {"tool": "label_mw_ladder", "arguments": {"lane": lad[0]}}
-        else:
-            nxt = {"tool": "auto_analyze_gel", "arguments": {"densitometry": True}}
+        # auto_analyze_gel straightens, crops to the gel, fixes polarity and asks for the lane
+        # count itself, so it is always a safe next call ("analyze this gel").
+        nxt = {"tool": "auto_analyze_gel", "arguments": {"densitometry": True}}
+        if a.get("expected_lanes"):
+            nxt["arguments"]["expected_lanes"] = int(a["expected_lanes"])
         res["recommended_next_call"] = nxt
         bits = ["%d lanes (%s)." % (res["n_lanes"], res["lane_detection"])]
         bits.append({"dark_bands": "Bands are DARK on a LIGHT background: correct for analysis, do not invert.",
-                     "light_bands": "Bands are LIGHT on a DARK background: call fix_band_polarity first.",
+                     "light_bands": "Bands are LIGHT on a DARK background: auto_analyze_gel / label_mw_ladder invert it for you (or call fix_band_polarity).",
                      "ambiguous": "Band polarity is unclear."}[pol])
         bits.append("Ladder lane(s): %s." % (", ".join(map(str, lad)) if lad else "not found"))
         bits.append("Bands per lane: %s." % ", ".join("L%d=%d" % (ln["lane"], ln["n_bands"]) for ln in res["lanes"]))
@@ -2599,9 +2784,9 @@ class AIBridge(QObject):
         res = dict([("summary", " ".join(bits))] + list(res.items()))
         res["next_steps"] = [
             "1. If questions_for_user is not empty, ASK THE USER those questions before quantifying.",
-            "2. fix_band_polarity (only if polarity is light_bands).",
-            "3. label_mw_ladder for MW labels only, OR auto_analyze_gel(densitometry=true) for "
-            "lanes + ladder labels + band quantification in one go.",
+            "2. auto_analyze_gel(densitometry=true): straightens, crops to the gel, fixes polarity, finds "
+            "lanes, labels the ladder and measures every band (label_mw_ladder only for MW labels).",
+            "3. If the user uses their own ladder, pass ladder_values=[sizes, top to bottom].",
             "4. quantify_with_standards if the user confirms standards and gives their amounts.",
             "5. screenshot(target='image') to check, then save_image / export_pptx.",
         ]
@@ -2710,6 +2895,86 @@ class AIBridge(QObject):
             ok &= h >= abs_floor
         return [int(p) for p in peaks[ok]], {int(p): float(v) for p, v in zip(peaks, h)}
 
+    # Min Prominence values tried by _tune_prominence: exact slider positions (the dialog's
+    # slider works in 0.001 steps), log-spaced from very permissive to very strict.
+    _PROMINENCE_GRID = (0.002, 0.003, 0.005, 0.008, 0.012, 0.018, 0.025, 0.035, 0.05,
+                        0.07, 0.10, 0.14, 0.20, 0.28)
+
+    def _tune_prominence(self, dlg, snr, rel, mw, floor):
+        """IMPORTANT SETTINGS FIRST: choose the dialog's Min Prominence (one gel-wide value --
+        the dialog shares it between lanes) so that the detector ITSELF finds the real bands,
+        instead of detecting with whatever was set and then deleting / adding peaks by hand.
+
+        Every candidate value is scored over all lanes:
+          noise  = detected peaks that are not real bands (would need deleting),
+          missed = real bands a lane shows at its most permissive setting but not here
+                   (for a ladder lane: preset values without a band),
+          extra  = ladder bands beyond the preset's count.
+        cost = noise + 2*missed + extra; ties go to the value closest to the current one.
+        The winner is set on the slider (visible to the user) and every lane re-detected.
+        Returns a report dict."""
+        lanes = list(getattr(dlg, "lanes_data", []) or [])
+        if not lanes or not hasattr(dlg, "peak_prominence_factor"):
+            return {"tuned": False, "reason": "no lanes"}
+        ladders = getattr(dlg, "mwm_lane_ids", set()) or set()
+        orig = float(dlg.peak_prominence_factor)
+        cands = sorted(set([round(orig, 3)] + list(self._PROMINENCE_GRID)))
+        per = {}                                   # p -> {lane: (n_detected, n_true)}
+        for p in cands:
+            per[p] = {}
+            for lane in lanes:
+                lid = lane["id"]
+                try:
+                    dlg._load_lane_state(lid)
+                    dlg.peak_prominence_factor = p
+                    dlg.detect_peaks()
+                    is_lad = lid in ladders
+                    keep, _h = self._true_peaks(dlg, snr, rel, mw, is_lad, 0.0 if is_lad else floor)
+                    per[p][lid] = (int(len(dlg.peaks)), int(len(keep)))
+                except Exception:
+                    per[p][lid] = None
+        best_true = {}
+        for lane in lanes:
+            lid = lane["id"]
+            vals = [per[p][lid][1] for p in cands if per[p].get(lid)]
+            best_true[lid] = max(vals) if vals else 0
+        n_lab = {lid: len([v for v in (getattr(dlg, "lane_mw_labels", {}) or {}).get(lid, [])])
+                 for lid in ladders}
+
+        def cost(p):
+            c = 0.0
+            for lane in lanes:
+                lid = lane["id"]
+                r = per[p].get(lid)
+                if r is None:
+                    c += 1000.0
+                    continue
+                det, tru = r
+                noise = max(0, det - tru)
+                if lid in ladders and n_lab.get(lid):
+                    missed = max(0, min(n_lab[lid], best_true[lid]) - tru)
+                    extra = max(0, tru - n_lab[lid])
+                else:
+                    missed = max(0, best_true[lid] - tru)
+                    extra = 0
+                c += noise + 2.0 * missed + extra
+            return c
+
+        scored = sorted(cands, key=lambda p: (cost(p), abs(math.log(max(p, 1e-4) / max(orig, 1e-4)))))
+        best = scored[0]
+        report = {"tuned": True, "setting": "Min Prominence", "from": round(orig, 3),
+                  "to": round(best, 3), "cost_before": cost(round(orig, 3)), "cost_after": cost(best)}
+        # Apply the winner to every lane (shared setting) and show it on the slider.
+        for lane in lanes:
+            try:
+                dlg._load_lane_state(lane["id"])
+                dlg.peak_prominence_factor = best
+                dlg.detect_peaks()
+                dlg._save_current_lane_state()
+            except Exception:
+                pass
+        return report
+
     def _clean_peak_dialog(self, dlg, opts):
         """Noise gate + ladder-count check on every lane of an open PeakAreaDialog, using the
         dialog's own profiles. Removed peaks are deleted the same way the dialog's
@@ -2738,6 +3003,15 @@ class AIBridge(QObject):
             except Exception:
                 pass
         floor = rel * gel_max if len(dlg.lanes_data) > 1 else 0.0
+        # 1) Use the dialog's IMPORTANT SETTINGS (Min Prominence) to fit the bands; only what
+        #    the slider cannot fix is corrected peak-by-peak below.
+        if opts.get("tune_settings", True):
+            try:
+                rep_t = self._tune_prominence(dlg, snr, rel, mw, floor)
+                report.append({"important_settings": rep_t})
+            except Exception as e:  # noqa: BLE001
+                report.append({"important_settings": {"tuned": False,
+                                                      "error": "%s: %s" % (type(e).__name__, e)}})
         for lane in list(getattr(dlg, "lanes_data", [])):
             lid = lane["id"]
             try:
@@ -2796,6 +3070,8 @@ class AIBridge(QObject):
         try:
             if cur is not None:
                 dlg._load_lane_state(cur)
+            if hasattr(dlg, "_update_gui_controls_from_loaded_state"):
+                dlg._update_gui_controls_from_loaded_state()   # show the tuned slider value
             dlg.update_plot()
             if hasattr(dlg, "_update_quality_readout"):
                 dlg._update_quality_readout()
@@ -2838,6 +3114,43 @@ class AIBridge(QObject):
         ln = lanes[n - 1]
         return float(ln["x0"]), float(ln["x1"]), n
 
+    @staticmethod
+    def _parse_ladder_values(v):
+        """User ladder values -> list of numbers, largest first. Accepts a list or a text such as
+        '180, 130, 95 kDa'. Raises ToolError with a plain explanation otherwise."""
+        if v is None:
+            return None
+        parts = re.split(r"[,;\s]+", v.strip().strip("[]()")) if isinstance(v, str) else list(v)
+        vals = []
+        for p_ in parts:
+            t = re.sub(r"(?i)\s*(kda|kd|bp|kb|nt|da)$", "", str(p_).strip())
+            if not t:
+                continue
+            try:
+                f = float(t)
+            except ValueError:
+                raise ToolError("ladder_values must be numbers, e.g. [180, 130, 95, 72, 55]; got '%s'." % p_)
+            vals.append(int(f) if f == int(f) else f)
+        if len(vals) < 3:
+            raise ToolError("ladder_values needs at least 3 numbers (the sizes of the ladder bands, "
+                            "top to bottom), e.g. [180, 130, 95, 72, 55, 43, 34, 26, 17, 10].")
+        return sorted(vals, reverse=True)
+
+    def _apply_ladder_values(self, vals):
+        """Use the user's own ladder: preset 'Custom' with these values (GUI thread), exactly as a
+        user would type them into the MW values box and press Update labels."""
+        win = self.win
+        cb = win.combo_box
+        if cb.findText("Custom") >= 0 and cb.currentText() != "Custom":
+            cb.setCurrentText("Custom")
+        box = getattr(win, "marker_values_textbox", None)
+        if box is not None:
+            self.reveal(box, "AI: ladder values")
+            box.setEnabled(True)
+            box.setText(", ".join(str(v) for v in vals))
+        win.update_all_labels()
+        return [str(v) for v in getattr(win, "marker_values", vals)]
+
     def _apply_preset(self, preset, strict=False):
         """Select a ladder preset by (partial / word) match. Unknown names keep the current
         preset (small models invent names) unless strict."""
@@ -2860,6 +3173,9 @@ class AIBridge(QObject):
         return m[0]
 
     def t_label_mw_ladder(self, a):
+        vals = self._parse_ladder_values(a.get("ladder_values"))
+        if vals:
+            self.action(lambda: self._apply_ladder_values(vals), "set_marker_preset")
         if a.get("fix_polarity", True):
             self.action(lambda: self._ensure_dark_bands("auto"), "fix_band_polarity", timeout=90)
         insp = self._cached_inspection({"region": a.get("region")})
@@ -2873,7 +3189,8 @@ class AIBridge(QObject):
         if side not in ("left", "right"):
             raise ToolError("side must be left, right or auto.")
         opts = {"review": bool(a.get("review")), "snr_min": a.get("min_snr", GEL.DEFAULT_SNR_MIN),
-                "rel_min": 0.0, "fix_ladder": True}
+                "rel_min": 0.0, "fix_ladder": True,
+                "tune_settings": bool(a.get("tune_settings", True))}
         holder = {}
         self._preset_warning = None
 
@@ -2930,21 +3247,117 @@ class AIBridge(QObject):
         return self._with_status(out)
 
     # ...................................................................... Auto Gel wizard
+    def _auto_prepare(self, a):
+        """Before the wizard, make a raw imager file analyzable, as a careful user would:
+        (1) crop to the gel body when the gel fills only part of the image, (2) straighten it once
+        when the tilt is clear, (3) once the lane count is known, crop to the lanes between the two
+        ladders, from above the top ladder band to above the dye front. All are ordinary, undoable
+        edits; each runs at most once per opened image. Skipped when the caller gave a region or
+        lanes, or with auto_prepare=false."""
+        rep = {}
+        if a.get("region") or a.get("lanes") or a.get("auto_prepare") is False:
+            return rep
+        serial = self.gui(lambda: getattr(self.win, "_image_load_serial", 0))
+        memo = getattr(self, "_prep_memo", None)
+        if not memo or memo.get("serial") != serial:
+            memo = self._prep_memo = {"serial": serial}
+
+        def region_now():
+            return self.gui(lambda: self._analysis_region(None), timeout=60)
+
+        def crop_to(box, origin, why, key):
+            box = {"x": box["x"] + origin[0], "y": box["y"] + origin[1], "width": box["width"], "height": box["height"]}
+            self.t_crop(dict(box))
+            memo[key] = True
+            rep.setdefault("cropped", []).append({"to": box, "why": why})
+
+        labelled = self.gui(lambda: bool(self.win.left_markers or self.win.right_markers or self.win.top_markers))
+        try:
+            if "raw" not in memo:
+                # only raw imager files (16-bit, gel inside a uniform surround) are prepared; a figure
+                # that was already cropped, padded or exported (8-bit, RGB) is analysed as it is
+                gray0, mv0 = region_now()[:2]
+                memo["raw"] = bool(mv0 >= 65535 and not labelled)
+            if not memo["raw"]:
+                return rep
+            if not memo.get("body"):
+                gray, mv, origin, cbx, size = region_now()
+                body = GEL.find_gel_body(gray)
+                memo["body"] = True
+                if (body and body.get("fill", 0) >= 0.6
+                        and body["width"] * body["height"] < 0.85 * gray.shape[0] * gray.shape[1]):
+                    crop_to(body, origin, "kept the gel, removed the empty surround", "body_cropped")
+            if not memo.get("straightened") and not labelled:
+                gray = region_now()[0]
+                est = GEL.estimate_rotation(gray)
+                memo["straightened"] = True
+                if abs(est["angle_deg"]) >= 0.5 and est.get("confidence", 1.0) >= 1.3:
+                    self._rotate_image("rotate", {"angle_deg": est["angle_deg"]})
+                    rep["straightened_deg"] = est["angle_deg"]
+                    gray, mv, origin, cbx, size = region_now()        # remove the new corners
+                    body = GEL.find_gel_body(gray)
+                    if body and body["width"] * body["height"] < 0.95 * gray.shape[0] * gray.shape[1]:
+                        crop_to(body, origin, "removed the corners left by straightening", "body_cropped2")
+            expected = a.get("expected_lanes") or (getattr(self, "_expected_lanes_memo", None) or (None, None))[1]
+            if not memo.get("lanes_cropped") and memo.get("body_cropped") and expected:   # raw files, lane count known
+                gray, mv, origin, cbx, size = region_now()
+                ana = GEL.analyze(gray, mv, gel_type="auto", expected_lanes=int(expected))
+                sug = GEL.suggest_gel_region(gray, mv, analysis=ana, dark_bands=True, n_lanes=int(expected))
+                if sug and sug["width"] * sug["height"] < 0.8 * gray.shape[0] * gray.shape[1]:
+                    memo["ladders_at_ends"] = True        # the crop was built from the two end ladders
+                    # lane grid implied by the two ladders: lane k is centred at left ladder + (k-1) * pitch
+                    memo["lane_grid"] = {"n": int(expected), "pitch": float(sug["pitch"]),
+                                         "first": float(sug["ladder_x"][0] - sug["x"])}
+                    crop_to(sug, origin, "lanes between the two ladders, from above the top ladder band to %s"
+                            % ("just above the dye front" if sug.get("dye_front_y") else "below the bottom ladder band"),
+                            "lanes_cropped")
+        except ToolError as e:
+            rep["note"] = str(e)
+        return rep
+
     def t_auto_analyze_gel(self, a):
+        if a.get("path"):                       # small models skip open_image: open it here
+            cur = self.gui(lambda: str(getattr(self.win, "image_path", "") or ""))
+            if os.path.abspath(str(a["path"])) != os.path.abspath(cur or "-"):
+                r = self.t_open_image({"path": a["path"]})
+                if isinstance(r, dict) and r.get("status") == "dialog_open":
+                    return r
+        vals = self._parse_ladder_values(a.get("ladder_values"))
+        if vals:
+            self.action(lambda: self._apply_ladder_values(vals), "set_marker_preset")
         if a.get("fix_polarity", True):
             pol = self.action(lambda: self._ensure_dark_bands("auto"), "fix_band_polarity", timeout=90)
         else:
             pol = None
+        prep = self._auto_prepare(a)
         self._preset_warning = None
-        if a.get("preset"):
+        if a.get("preset") and not vals:
             self.action(lambda: self._apply_preset(a["preset"]), "set_marker_preset")
         insp = self._inspect({"region": a.get("region"), "expected_lanes": a.get("expected_lanes")},
                              remember_lanes=True)
+        raw_file = bool((getattr(self, "_prep_memo", None) or {}).get("raw"))
+        lanes_doubtful = bool(insp.get("lane_warning") or insp.get("lane_count_estimated") or not insp.get("ladder_lanes"))
+        # raw imager files (comb, edges, dye front) give garbage when the lanes are guessed, so the
+        # tool asks; an already prepared figure keeps the wizard's own lane finding (note added below)
+        if (not a.get("expected_lanes") and not a.get("lanes") and not insp.get("expected_lanes_used")
+                and ((raw_file and lanes_doubtful) or insp["n_lanes"] < 3)):
+            n_est = insp.get("lane_count_estimated") or insp["n_lanes"]
+            return self._with_status({
+                "status": "needs_user_input",
+                "summary": ("STOP AND ASK THE USER (do not answer it yourself): how many lanes does this gel "
+                            "have, counting the ladder lanes? (I found about %d, but the spacing is uneven.) "
+                            "When the user answers, call auto_analyze_gel(expected_lanes=<that number>) with "
+                            "the same other arguments." % n_est),
+                "question_for_user": "How many lanes does this gel have, counting the ladder lanes?",
+                "next_call": {"tool": "auto_analyze_gel", "arguments": {"expected_lanes": "<number from the user>"}},
+                "prepared": prep, "polarity": (pol or {}).get("result")})
         reg = insp["region"]
         n_insp = insp["n_lanes"]
         # Ladder lanes (1-based, in inspect_gel numbering)
         if a.get("ladder_lanes") is not None:
             ladders = [int(x) for x in a["ladder_lanes"]]
+        elif (getattr(self, "_prep_memo", None) or {}).get("ladders_at_ends") and insp["n_lanes"] >= 3:
+            ladders = [1, int(insp["n_lanes"])]       # region was cut from ladder to ladder
         else:
             ladders = list(insp["ladder_lanes"])
         dens = bool(a.get("densitometry", True))
@@ -2955,6 +3368,14 @@ class AIBridge(QObject):
         rename_lanes = bool(a.get("label_lanes", True)) or bool(labels)
         markers = bool(a.get("label_lanes", True)) or bool(ladders)
         explicit = a.get("lanes")
+        grid = (getattr(self, "_prep_memo", None) or {}).get("lane_grid")
+        if (not explicit and grid and not a.get("region")
+                and int(a.get("expected_lanes") or insp.get("expected_lanes_used") or 0) == grid["n"]):
+            ox = insp["region"]["x"]                  # analysis-region origin (padding) in image pixels
+            p_ = grid["pitch"]
+            explicit = [[ox + grid["first"] + (k - 0.5) * p_, ox + grid["first"] + (k + 0.5) * p_]
+                        for k in range(grid["n"])]
+            explicit[0][0] = max(ox, explicit[0][0]); explicit[-1][1] = min(ox + insp["region"]["width"], explicit[-1][1])
         if explicit:
             try:
                 lanes_img = [[float(l[0]), float(l[1])] for l in explicit]
@@ -2971,7 +3392,8 @@ class AIBridge(QObject):
         opts = {"review": bool(a.get("review")),
                 "snr_min": a.get("min_snr", GEL.DEFAULT_SNR_MIN),
                 "rel_min": a.get("min_relative_intensity", GEL.DEFAULT_REL_MIN),
-                "clean": bool(a.get("remove_noise_bands", True)), "fix_ladder": True}
+                "clean": bool(a.get("remove_noise_bands", True)), "fix_ladder": True,
+                "tune_settings": bool(a.get("tune_settings", True))}
         holder = {}
 
         def drive_wizard(pilot):
@@ -3112,6 +3534,8 @@ class AIBridge(QObject):
         out = {"status": res.get("status"),
                "method": "Auto Analyze Gel wizard (app) + noise-gated band cleanup",
                "polarity": (pol or {}).get("result")}
+        if prep:
+            out["prepared"] = prep
         out.update({k: v for k, v in res.items() if k != "status"})
         if pilot is not None:
             out.update(pilot.report)
@@ -3141,12 +3565,21 @@ class AIBridge(QObject):
         if res.get("status") == "done":
             lanes = out["results"]["lanes"]
             wz = out.get("wizard") or {}
-            bits = ["Densitometry done on %d lanes (%s)." % (len(lanes), wz.get("lanes_source", "?")),
+            pre = []
+            if prep.get("straightened_deg") is not None:
+                pre.append("straightened by %+.2f°" % prep["straightened_deg"])
+            for c in prep.get("cropped", []):
+                pre.append("cropped (%s)" % c["why"])
+            bits = (["Prepared the image: %s." % ", ".join(pre)] if pre else []) + [
+                    "Densitometry done on %d lanes (%s)." % (len(lanes), wz.get("lanes_source", "?")),
                     "Ladder lanes: %s." % (", ".join(map(str, wz.get("ladder_lanes") or [])) or "none"),
-                    "Bands per lane: %s." % ", ".join("L%s=%d" % (k, v["bands"]) for k, v in lanes.items())]
+                    "Number of bands found per lane: %s." % ", ".join("lane %s: %d" % (k, v["bands"]) for k, v in lanes.items())]
             chk = [c for c in out.get("band_cleanup", []) if c.get("warning")]
             if chk:
                 bits.append("CHECK: " + chk[0]["warning"])
+            if lanes_doubtful and not a.get("expected_lanes") and not insp.get("expected_lanes_used") and not explicit:
+                bits.append("CHECK: the lane spacing looked uneven; ASK THE USER how many lanes the gel has and, if "
+                            "it differs from %d, re-run auto_analyze_gel(expected_lanes=<number>)." % len(lanes))
             if out.get("question_for_user"):
                 bits.append("ASK THE USER: " + out["question_for_user"])
             if self._preset_warning:
@@ -3194,6 +3627,9 @@ class AIBridge(QObject):
                     lid, q = str(int(s["lane"])), float(s["quantity"])
                 except (KeyError, TypeError, ValueError):
                     raise ToolError("Each standard needs lane (number) and quantity (number).")
+                if int(lid) in (getattr(self, "_last_ladder_lanes", None) or set()):
+                    raise ToolError("Lane %s is a molecular-weight ladder, not a standard. Ask the user which "
+                                    "lanes hold standards and the amount loaded in each; never guess amounts." % lid)
                 if lid not in keyed or not keyed[lid][1]:
                     with_bands = sorted((k for k, (_, v) in keyed.items() if v), key=lambda x: (len(x), x))
                     raise ToolError("Lane %s has no measured bands%s. Lanes with at least one band: %s. "
@@ -3217,6 +3653,14 @@ class AIBridge(QObject):
             std = {q: float(np.mean(v)) for q, v in pairs.items()}
             if len(std) < 2:
                 raise ToolError("Need at least 2 DIFFERENT quantities.")
+            # a model needs more standards than parameters; otherwise it cannot be fitted (4PL
+            # used to return 0 for every band) or passes exactly through every point (R² = 1).
+            need = {"Linear": 2, "Power (Log-Log)": 2, "Polynomial (Deg 2)": 3,
+                    "Polynomial (Deg 3)": 4, "4-PL Sigmoidal": 5}.get(model, 2)
+            if len(std) < need:
+                raise ToolError("The %s model needs at least %d different standard amounts; %d were given. "
+                                "Use 'Power (Log-Log)' or 'Linear', or add standards." % (model, need, len(std)))
+            exact = {"Polynomial (Deg 2)": 3, "Polynomial (Deg 3)": 4, "4-PL Sigmoidal": 4}.get(model) == len(std)
             if not a.get("replace", True):
                 merged = dict(getattr(win, "quantities_peak_area_dict", {}) or {})
                 merged.update(std)
@@ -3250,6 +3694,10 @@ class AIBridge(QObject):
                                                               if x < qmin or x > qmax]}
             out = {"standards_used": used, "model": model, "unit": a.get("unit") or "",
                    "lanes": lanes}
+            if exact:
+                out["warning_exact_fit"] = ("%s with %d standards passes exactly through every standard, so its "
+                                            "R² is 1 by construction and says nothing about the fit. Prefer a "
+                                            "model with fewer parameters." % (model, len(std)))
             if fit:
                 out["fit"] = {"equation": fit.get("equation"), "r_squared": round(float(fit["r_squared"]), 5)}
                 if fit["r_squared"] < 0.95:
@@ -3380,6 +3828,825 @@ class AIBridge(QObject):
                        "add_text / add_shape (its y-range is in 'position' + 'size_on_canvas').")
         return self._with_status(res)
 
+    # ...................................................................... results files
+    # Densitometry numbers for the AI come from the SAME files a person exports: the results
+    # window's "Export All Lanes to Excel" workbook (or CSV made from it) is written, read back
+    # and returned, so what the AI reports always matches what the user can open.
+    def _results_window(self):
+        """The app's Analysis Results window for the current analysis (opened if needed).
+        GUI thread only."""
+        win = self.win
+        has = bool(getattr(win, "latest_multi_lane_peak_areas", None)) or bool(getattr(win, "latest_peak_areas", None))
+        if not has:
+            raise ToolError("There are no densitometry results yet. Run auto_analyze_gel (or "
+                            "define_lane_regions + analyze_lanes) first.")
+        tw = getattr(win, "table_window_instance", None)
+        try:
+            alive = tw is not None and _is_valid(tw) and tw.isVisible()
+        except RuntimeError:
+            alive = False
+        if not alive:
+            win.open_table_window()
+            tw = getattr(win, "table_window_instance", None)
+        if tw is None or not getattr(tw, "current_results_data", None):
+            raise ToolError("The results window has no current analysis to export.")
+        self._pin = tw
+        return tw
+
+    @staticmethod
+    def _closure_obj(func, name):
+        """A class defined in the app's closure (e.g. BandComparisonDialog), found through a
+        method that uses it."""
+        f = getattr(func, "__func__", func)
+        for n, cell in zip(f.__code__.co_freevars, f.__closure__ or ()):
+            if n == name:
+                return cell.cell_contents
+        obj = getattr(f, "__globals__", {}).get(name)
+        if obj is not None:
+            return obj
+        raise ToolError("Internal: %s is not reachable." % name)
+
+    def _results_name(self, tw, a):
+        name = str(a.get("name") or "").strip()
+        w = getattr(tw, "analysis_name_input_widget", None)
+        if name and w is not None:
+            w.setText(name)
+        return name or ((w.text().strip() if w is not None else "") or tw.source_image_name_current)
+
+    @staticmethod
+    def _parse_results_workbook(path):
+        """Read an Excel workbook exported by the results window into plain data:
+        bands (one record per band), lane totals, standard curve points, band comparisons
+        (per measure) and the raw cell values of every sheet. Percentages are returned as
+        percent (0-100), the way the window shows them."""
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        out = {"file": path, "sheets": {}, "bands": [], "lane_totals": [],
+               "standard_curve": [], "band_comparisons": {}}
+
+        def pct(v):
+            return None if v is None else round(float(v) * 100.0, 4)
+
+        def num(v):
+            try:
+                return None if v is None or v == "" else float(v)
+            except (TypeError, ValueError):
+                return v
+        for ws in wb.worksheets:
+            rows = []
+            for r in ws.iter_rows(values_only=True):
+                vals = list(r)
+                while vals and vals[-1] in (None, ""):
+                    vals.pop()
+                rows.append(vals)
+            while rows and not rows[-1]:
+                rows.pop()
+            out["sheets"][ws.title] = rows
+            if ws.title == "Summary":
+                for vals in rows:
+                    if len(vals) < 3 or vals[0] in (None, "Lane ID"):
+                        continue
+                    lane = vals[0]
+                    if isinstance(lane, float) and lane.is_integer():
+                        lane = int(lane)
+                    lane = str(lane).replace("Lane ", "", 1)
+                    label = str(vals[1] or "")
+                    v = (vals + [None] * 6)[:6]
+                    if label.startswith("Band "):
+                        out["bands"].append({"lane": lane, "band": int(label.split()[1]),
+                                             "intensity": num(v[2]), "band_pct": pct(v[3]),
+                                             "lane_pct": pct(v[4]), "quantity": num(v[5])})
+                    elif label in ("All bands", "Whole lane"):
+                        out["lane_totals"].append({"lane": lane, "row": label, "intensity": num(v[2]),
+                                                   "band_pct": pct(v[3]), "lane_pct": pct(v[4]),
+                                                   "quantity": num(v[5])})
+            elif ws.title == "Standard Curve Data":
+                for vals in rows[1:]:
+                    if len(vals) >= 2 and vals[0] is not None:
+                        out["standard_curve"].append({"quantity": num(vals[0]), "total_peak_area": num(vals[1])})
+            elif ws.title == "Band Comparisons":
+                measure = None
+                for vals in rows:
+                    if not vals:
+                        continue
+                    first = str(vals[0] or "")
+                    if first.startswith("Compared by:"):
+                        measure = first.split(":", 1)[1].strip()
+                        out["band_comparisons"][measure] = []
+                        continue
+                    if measure is None or first == "Lane A" or not first.startswith("Lane "):
+                        continue
+                    v = (vals + [None] * 10)[:10]
+                    is_pct = measure in ("Band %", "Lane %")
+                    out["band_comparisons"][measure].append({
+                        "lane_a": first[5:], "band_a": int(str(v[1]).split()[-1]),
+                        "lane_b": str(v[2])[5:], "band_b": int(str(v[3]).split()[-1]),
+                        "a": pct(v[4]) if is_pct else num(v[4]), "b": pct(v[5]) if is_pct else num(v[5]),
+                        "a_over_b": num(v[6]), "a_minus_b": num(v[7]),
+                        "percent_change": pct(v[8]), "log2_a_over_b": num(v[9])})
+        wb.close()
+        return out
+
+    @staticmethod
+    def _write_results_csvs(data, csv_path):
+        """CSV files from parsed workbook data: <csv_path> = one row per band; plus
+        <base>_band_comparisons.csv and <base>_standard_curve.csv when present."""
+        import csv
+        base = os.path.splitext(csv_path)[0]
+        files = []
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["Lane", "Band", "Band Intensity", "Band %", "Lane %", "Quantity"])
+            for b in data["bands"]:
+                w.writerow([b["lane"], b["band"], b["intensity"], b["band_pct"], b["lane_pct"],
+                            "" if b["quantity"] is None else b["quantity"]])
+        files.append(csv_path)
+        if any(data["band_comparisons"].values()):
+            p = base + "_band_comparisons.csv"
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["Compared by", "Lane A", "Band A", "Lane B", "Band B", "A", "B",
+                            "A / B", "A - B", "% change (A vs B)", "log2(A / B)"])
+                for m, rows in data["band_comparisons"].items():
+                    for r in rows:
+                        w.writerow([m, r["lane_a"], r["band_a"], r["lane_b"], r["band_b"], r["a"], r["b"],
+                                    r["a_over_b"], r["a_minus_b"], r["percent_change"], r["log2_a_over_b"]])
+            files.append(p)
+        if data["standard_curve"]:
+            p = base + "_standard_curve.csv"
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["Known Quantity", "Total Peak Area"])
+                for r in data["standard_curve"]:
+                    w.writerow([r["quantity"], r["total_peak_area"]])
+            files.append(p)
+        return files
+
+    @staticmethod
+    def _read_results_csv(path):
+        import csv
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+        out = {"file": path, "header": rows[0] if rows else [], "rows": rows[1:]}
+        hdr = [h.strip().lower() for h in out["header"]]
+        if hdr[:2] == ["lane", "band"]:
+            def num(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return None
+            out["bands"] = [{"lane": r[0], "band": int(float(r[1])), "intensity": num(r[2]),
+                             "band_pct": num(r[3]), "lane_pct": num(r[4]),
+                             "quantity": num(r[5]) if len(r) > 5 else None}
+                            for r in out["rows"] if len(r) >= 5 and r[1]]
+        return out
+
+    def _export_path(self, a, exts, default_ext):
+        path = os.path.abspath(os.path.expanduser(str(a.get("path") or "")))
+        if not a.get("path"):
+            raise ToolError("path is required (where to write the file).")
+        if os.path.splitext(path)[1].lower() not in exts:
+            path += default_ext
+        if not os.path.isdir(os.path.dirname(path)):
+            raise ToolError("Folder does not exist: %s" % os.path.dirname(path))
+        if os.path.exists(path) and not a.get("overwrite"):
+            raise ToolError("%s already exists. Pass overwrite=true to replace it." % path)
+        return path
+
+    def t_export_results(self, a):
+        fmt = (a.get("format") or "").lower()
+        raw = str(a.get("path") or "")
+        if not fmt:
+            fmt = "csv" if raw.lower().endswith(".csv") else "xlsx"
+        if fmt not in ("xlsx", "csv"):
+            raise ToolError("format must be 'xlsx' or 'csv'.")
+        path = self._export_path(a, (".xlsx",) if fmt == "xlsx" else (".csv",), "." + fmt)
+        if fmt == "xlsx":
+            xlsx = path
+        else:
+            import tempfile
+            fd, xlsx = tempfile.mkstemp(suffix=".xlsx", prefix="gba_results_")
+            os.close(fd)
+            os.remove(xlsx)
+        include_cmp = a.get("include_comparisons", True)
+        state = {}
+
+        def run():
+            tw = self._results_window()
+            name = self._results_name(tw, a)
+            state["name"] = name
+            self.file_answers = [(xlsx, "Excel Files (*.xlsx)")]
+            tw._export_to_excel_generic(
+                tw.current_results_data, name, tw.current_standard_dictionary,
+                is_multi_lane_data=tw.is_current_data_multi_lane,
+                lane_pil_images=tw.current_lane_pil_images,
+                band_comparisons=(tw.current_band_comparisons if include_cmp else None))
+            return {"written": os.path.exists(xlsx)}
+        res = self.action(run, "export_results", timeout=180,
+                          auto_answers=[(r"exported to|Export Error|Could not save", ["OK"])])
+        self.file_answers = []
+        if res.get("status") != "done":
+            return res
+        if not os.path.exists(xlsx):
+            raise ToolError("The app did not write the Excel file (see the app's message).")
+        data = self._parse_results_workbook(xlsx)
+        files = [xlsx]
+        if fmt == "csv":
+            try:
+                files = self._write_results_csvs(data, path)
+            finally:
+                try:
+                    os.remove(xlsx)
+                except OSError:
+                    pass
+            data["file"] = path
+        lanes = sorted({str(b["lane"]) for b in data["bands"]}, key=lambda s: (len(s), s))
+        out = {"status": "done", "format": fmt, "files": files, "analysis_name": state.get("name"),
+               "lanes": lanes, "band_count": len(data["bands"]),
+               "bands": data["bands"], "lane_totals": data["lane_totals"],
+               "standard_curve": data["standard_curve"],
+               "band_comparisons": data["band_comparisons"],
+               "how_to_read": ("intensity = background-subtracted band volume; band_pct = band / all "
+                               "bands of its lane (%); lane_pct = band / whole lane (%); quantity = "
+                               "from the standard curve (only when standards were used). Quote these "
+                               "numbers from the exported file; use compare_bands for ratios.")}
+        if fmt == "xlsx":
+            out["sheets"] = list(data["sheets"].keys())
+        return out
+
+    def t_read_results_file(self, a):
+        path = os.path.abspath(os.path.expanduser(str(a.get("path") or "")))
+        if not os.path.isfile(path):
+            raise ToolError("File not found: %s" % path)
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".xlsx":
+            data = self._parse_results_workbook(path)
+            if not a.get("include_raw_sheets"):
+                data["sheets"] = {k: "%d rows" % len(v) for k, v in data["sheets"].items()}
+            return data
+        if ext == ".csv":
+            return self._read_results_csv(path)
+        raise ToolError("Only .xlsx and .csv files exported by Gel Blot Analyzer can be read.")
+
+    # ...................................................................... compare bands
+    _MEASURE_KEYS = {"intensity": "intensity", "band_intensity": "intensity", "band_pct": "band_pct",
+                     "band%": "band_pct", "lane_pct": "lane_pct", "lane%": "lane_pct",
+                     "quantity": "quantity"}
+
+    def t_compare_bands(self, a):
+        """Fill the results window's Compare Bands list (the same list the Excel export and
+        the Compare Bands window use) and return the computed comparisons."""
+        def run():
+            tw = self._results_window()
+            BCD = self._closure_obj(type(tw)._open_current_band_comparison, "BandComparisonDialog")
+            rd = tw.current_results_data
+            keys = {str(k): k for k in rd.keys() if (rd.get(k) or {}).get("areas")}
+            if not keys:
+                raise ToolError("The analysis has no bands to compare.")
+
+            def lane_key(v, what):
+                k = keys.get(str(v).replace("Lane", "").strip())
+                if k is None:
+                    raise ToolError("%s: lane %r is not in the results (lanes: %s)."
+                                    % (what, v, ", ".join(sorted(keys, key=lambda s: (len(s), s)))))
+                return k
+
+            def band_idx(lk, b, what):
+                n = len(rd[lk].get("areas") or [])
+                try:
+                    b = int(b)
+                except (TypeError, ValueError):
+                    raise ToolError("%s: band must be a number (1 = top band)." % what)
+                if not 1 <= b <= n:
+                    raise ToolError("%s: lane %s has %d band(s); band %d does not exist." % (what, lk, n, b))
+                return b - 1
+
+            comps = tw.current_band_comparisons
+            if a.get("clear"):
+                del comps[:]
+            added = []
+
+            def add(la, ba, lb, bb):
+                key = (str(la), int(ba), str(lb), int(bb))
+                if str(la) == str(lb) and ba == bb:
+                    return
+                if any((str(c[0]), int(c[1]), str(c[2]), int(c[3])) == key for c in comps):
+                    return
+                comps.append([la, int(ba), lb, int(bb)])
+                added.append(key)
+            for i, p in enumerate(a.get("pairs") or []):
+                if not isinstance(p, dict):
+                    raise ToolError("pairs[%d] must be {lane_a, band_a, lane_b, band_b}." % i)
+                la = lane_key(p.get("lane_a"), "pairs[%d].lane_a" % i)
+                lb = lane_key(p.get("lane_b"), "pairs[%d].lane_b" % i)
+                add(la, band_idx(la, p.get("band_a"), "pairs[%d]" % i),
+                    lb, band_idx(lb, p.get("band_b"), "pairs[%d]" % i))
+            ref = a.get("reference")
+            if ref:
+                rl = lane_key(ref.get("lane"), "reference.lane")
+                rb = band_idx(rl, ref.get("band"), "reference")
+                only = {str(x) for x in (a.get("lanes") or [])}
+                for lk in keys.values():
+                    if only and str(lk) not in only:
+                        continue
+                    for i in range(len(rd[lk].get("areas") or [])):
+                        add(lk, i, rl, rb)
+            wl = a.get("within_lane")
+            if wl:
+                only = {str(x) for x in (a.get("lanes") or [])}
+                for lk in keys.values():
+                    if only and str(lk) not in only:
+                        continue
+                    n = len(rd[lk].get("areas") or [])
+                    t, r = int(wl.get("target_band", 0)), int(wl.get("reference_band", 0))
+                    if 1 <= t <= n and 1 <= r <= n:
+                        add(lk, t - 1, lk, r - 1)
+            if not comps:
+                raise ToolError("No comparisons: give pairs, reference={lane, band} (every band vs "
+                                "one band, e.g. a loading control) or within_lane={target_band, "
+                                "reference_band}.")
+            m = str(a.get("measure") or "all").lower().replace(" ", "_")
+            has_q = any((rd[k].get("quantities") or []) for k in keys.values())
+            if m == "all":
+                measures = ["intensity", "band_pct", "lane_pct"] + (["quantity"] if has_q else [])
+            else:
+                if m not in self._MEASURE_KEYS:
+                    raise ToolError("measure must be intensity, band_pct, lane_pct, quantity or all.")
+                measures = [self._MEASURE_KEYS[m]]
+                if measures == ["quantity"] and not has_q:
+                    raise ToolError("No quantities: run quantify_with_standards first, or compare by "
+                                    "intensity / band_pct / lane_pct.")
+
+            def vf(lid, bi, ms):
+                return BCD.band_value(rd, lid, bi, ms)
+            rows = []
+            for c in comps:
+                la, ba, lb, bb = c
+                row = {"lane_a": str(la), "band_a": int(ba) + 1, "lane_b": str(lb), "band_b": int(bb) + 1}
+                for ms in measures:
+                    va, vb, ratio, diff, change, log2 = BCD.compute_values(vf, c, ms)
+                    row[ms] = {"a": _r4(va), "b": _r4(vb), "a_over_b": _r4(ratio), "a_minus_b": _r4(diff),
+                               "percent_change": _r4(change), "log2_a_over_b": _r4(log2)}
+                rows.append(row)
+            if getattr(tw.parent_app, "latest_band_comparisons", None) is not comps and tw.parent_app is not None:
+                tw.parent_app.latest_band_comparisons = comps
+            shown = False
+            if a.get("show", True):
+                old = getattr(self, "_cmp_dialog", None)
+                try:
+                    if old is not None and _is_valid(old):
+                        old.close()
+                except RuntimeError:
+                    pass
+                dlg = BCD(rd, comps, parent=tw, title_suffix=self._results_name(tw, {}))
+                if len(measures) == 1:
+                    i = dlg.measure_combo.findData(measures[0])
+                    if i >= 0:
+                        dlg.measure_combo.setCurrentIndex(i)
+                dlg.setModal(False)
+                dlg.show()
+                self._cmp_dialog = dlg
+                shown = True
+            return {"comparisons": rows, "added": len(added), "total": len(comps),
+                    "measures": measures, "shown_in_compare_bands_window": shown,
+                    "note": ("Bands are numbered from the top of each lane (1 = top). A/B > 1 means A "
+                             "is stronger. These comparisons are also written to the 'Band "
+                             "Comparisons' sheet by export_results and listed in the app's Compare "
+                             "Bands window.")}
+        return self._with_status(self.action(run, "compare_bands", timeout=60))
+
+    # ...................................................................... PDF report
+    def t_export_pdf_report(self, a):
+        path = self._export_path(a, (".pdf",), ".pdf")
+
+        def run():
+            tw = self._results_window()
+            self._results_name(tw, a)
+            model = a.get("standard_curve_model")
+            if model:
+                cb = getattr(tw, "model_combo_current", None)
+                if cb is None or cb.findText(str(model)) < 0:
+                    opts = [cb.itemText(i) for i in range(cb.count())] if cb is not None else []
+                    raise ToolError("standard_curve_model must be one of: %s" % ", ".join(opts))
+                cb.setCurrentText(str(model))
+            self.file_answers = [(path, "PDF Files (*.pdf)")]
+            tw._export_current_to_pdf()
+            return {"written": os.path.exists(path)}
+        res = self.action(run, "export_pdf_report", timeout=300,
+                          auto_answers=[(r"report exported to|Report Not Protected|Could not create PDF",
+                                         ["OK"])])
+        self.file_answers = []
+        if res.get("status") != "done":
+            return res
+        if not os.path.exists(path):
+            raise ToolError("The app did not write the PDF report (see the app's message).")
+        out = {"status": "done", "path": path, "size_kb": round(os.path.getsize(path) / 1024.0, 1)}
+        try:
+            import pypdf
+            r = pypdf.PdfReader(path)
+            out["pages"] = len(r.pages)
+            out["protected_against_editing"] = bool(r.is_encrypted)
+            if a.get("include_text"):
+                if r.is_encrypted:
+                    try:
+                        r.decrypt("")
+                    except Exception:
+                        pass
+                out["text"] = "\n".join((p.extract_text() or "") for p in r.pages)[:20000]
+        except Exception:
+            pass
+        out["contents"] = ("Analysis parameters, standard curve and fit (when standards were used), "
+                           "per-lane band tables with lane images, saturation flags and the annotated "
+                           "gel with the densitometry boxes.")
+        return out
+
+    # ...................................................................... overlap images
+    def _layer_info(self, idx):
+        win = self.win
+        src = getattr(win, "image%d_original" % idx, None)
+        loaded = src is not None and not src.isNull()
+        d = {"slot": idx, "loaded": loaded}
+        if not loaded:
+            return d
+        s = float(win._overlay_scale_factor(idx))
+        g = win._layer_geom(idx) if hasattr(win, "_layer_geom") else {}
+        d.update({"size": [src.width(), src.height()],
+                  "placed": hasattr(win, "image%d_position" % idx),
+                  "scale_percent": round(s * 100.0, 2),
+                  "size_on_canvas": [round(src.width() * s, 1), round(src.height() * s, 1)],
+                  "rotation_deg": round(win._layer_rotation_deg(idx), 2),
+                  "opacity_percent": getattr(win, "image%d_blend_slider" % idx).value(),
+                  "inverted": bool((getattr(win, "image%d_adjustments" % idx, {}) or {}).get("is_inverted")),
+                  "crop": list(g.get("crop")) if g.get("crop") else None,
+                  "flipped_horizontal": bool(g.get("flip_h")), "flipped_vertical": bool(g.get("flip_v"))})
+        if d["placed"]:
+            d["position"] = list(getattr(win, "image%d_position" % idx))
+            poly = win._layer_polygon_image(idx)
+            if poly is not None:
+                br = poly.boundingRect()
+                d["outline_on_canvas"] = {"x": round(br.x(), 1), "y": round(br.y(), 1),
+                                          "width": round(br.width(), 1), "height": round(br.height(), 1)}
+        return d
+
+    def _overlay_status(self):
+        win = self.win
+        out = {"image_1": self._layer_info(1), "image_2": self._layer_info(2),
+               "canvas": [win.image.width(), win.image.height()] if win._has_image() else None}
+        bs = getattr(win, "blend_slider", None)
+        if bs is not None:
+            out["global_mixing_percent"] = bs.value()
+        return out
+
+    def _layer_canvas_to_layer_rect(self, idx, x, y, w, h):
+        """Canvas (image px) rectangle -> bounding rectangle in the layer's own pixels."""
+        from PySide6.QtGui import QTransform, QPolygonF
+        win = self.win
+        src = getattr(win, "image%d_original" % idx)
+        s = float(win._overlay_scale_factor(idx))
+        pos = getattr(win, "image%d_position" % idx)
+        cx = pos[0] + src.width() * s / 2.0
+        cy = pos[1] + src.height() * s / 2.0
+        t = QTransform()
+        t.translate(cx, cy); t.rotate(win._layer_rotation_deg(idx)); t.translate(-cx, -cy)
+        t.translate(pos[0], pos[1]); t.scale(s, s)
+        inv, ok = t.inverted()
+        if not ok:
+            raise ToolError("Image %d cannot be mapped (zero size)." % idx)
+        r = inv.map(QPolygonF(QRectF(float(x), float(y), float(w), float(h)))).boundingRect()
+        return r.x(), r.y(), r.width(), r.height()
+
+    def t_overlay_image(self, a):
+        act = str(a.get("action") or "status").lower()
+        idx = int(a.get("slot") or (2 if act == "load_file" else 1))
+        if idx not in (1, 2):
+            raise ToolError("slot must be 1 (Image 1, base) or 2 (Image 2, overlay).")
+        path = None
+        if act == "load_file":
+            path = os.path.abspath(os.path.expanduser(str(a.get("path") or "")))
+            if not os.path.isfile(path):
+                raise ToolError("File not found: %s" % path)
+            if idx != 2:
+                raise ToolError("Files load into Image 2. To use a file as Image 1: open_image(it), "
+                                "overlay_image(action='copy_current', slot=1), then open the other image.")
+
+        def need_loaded():
+            src = getattr(self.win, "image%d_original" % idx, None)
+            if src is None or src.isNull():
+                raise ToolError("Image %d is empty: use action='copy_current' (or 'load_file' for "
+                                "slot 2) first." % idx)
+
+        def need_placed():
+            need_loaded()
+            if not hasattr(self.win, "image%d_position" % idx):
+                raise ToolError("Image %d is not placed on the canvas: use action='place' first." % idx)
+
+        def run():
+            win = self.win
+            if act != "status" and not win._has_image():
+                raise ToolError("Open an image first.")
+            msg = None
+            if act == "status":
+                return self._overlay_status()
+            if act == "copy_current":
+                getattr(win, "save_image%d" % idx)()
+                msg = "The current image is now held in Image %d. Open the other image, then place it." % idx
+            elif act == "load_file":
+                self.file_answers = [(path, _IMAGE_EXT_FILTERS.get(os.path.splitext(path)[1].lower(), ""))]
+                win.load_overlay_image()
+                self.file_answers = []
+                cbx = getattr(win, "adjustment_context_combo", None)
+                if cbx is not None:
+                    cbx.setCurrentText("Main Image")
+                win.is_in_dedicated_edit_mode = False
+            elif act == "place":
+                need_loaded()
+                ann = getattr(win, "image%d_annotations" % idx, None)
+                if isinstance(ann, dict):
+                    inc = a.get("include_labels") or []
+                    valid = {"custom", "shapes", "lr", "top"}
+                    bad = [x for x in inc if x not in valid]
+                    if bad:
+                        raise ToolError("include_labels may contain: custom, shapes, lr, top.")
+                    ann["include"] = set(inc)
+                    ann["serial"] = getattr(win, "_image_load_serial", 0)   # no question dialog
+                win._update_overlay_slider_ranges()
+                x = a.get("x"); y = a.get("y")
+                lx = getattr(win, "image%d_left_slider" % idx).value() if x is None else x
+                ly = getattr(win, "image%d_top_slider" % idx).value() if y is None else y
+                win.save_state()
+                setattr(win, "image%d_position" % idx, (int(lx), int(ly)))
+                win._set_layer_position(idx, (lx, ly))
+                if idx == 1 and getattr(win, "_image1_shadows_master", False):
+                    msg = ("Image 1 is a copy of the image that is open now, so it REPLACES it on the "
+                           "canvas (the original is not drawn twice). To put two different images "
+                           "together: copy_current, then open_image(the other image), then place.")
+                win._update_overlay_size_labels()
+            elif act == "set":
+                need_loaded()
+                win.save_state()
+                if a.get("scale_percent") is not None:
+                    sp = max(1.0, min(1000.0, float(a["scale_percent"])))
+                    sl = getattr(win, "image%d_resize_slider" % idx)
+                    v = int(round(sp * win.OVERLAY_RESIZE_STEPS_PER_PERCENT))
+                    if v > sl.maximum() or v < sl.minimum():
+                        sl.setRange(min(sl.minimum(), v), max(sl.maximum(), v))
+                    sl.setValue(v)
+                    win._update_overlay_slider_ranges()
+                if a.get("rotation_deg") is not None:
+                    rv = int(round(max(-180.0, min(180.0, float(a["rotation_deg"]))) * 10))
+                    getattr(win, "image%d_rotation_slider" % idx).setValue(rv)
+                if a.get("opacity_percent") is not None:
+                    getattr(win, "image%d_blend_slider" % idx).setValue(int(max(0, min(100, float(a["opacity_percent"])))))
+                if a.get("global_mixing_percent") is not None and getattr(win, "blend_slider", None) is not None:
+                    win.blend_slider.setValue(int(max(0, min(100, float(a["global_mixing_percent"])))))
+                if a.get("invert") is not None:
+                    adj = getattr(win, "image%d_adjustments" % idx)
+                    adj["is_inverted"] = bool(a["invert"])
+                    try:
+                        win._update_overlay_preview(idx)
+                    except Exception:
+                        pass
+                if a.get("x") is not None or a.get("y") is not None:
+                    need_placed()
+                    cur = getattr(win, "image%d_position" % idx)
+                    win._set_layer_position(idx, (cur[0] if a.get("x") is None else float(a["x"]),
+                                                  cur[1] if a.get("y") is None else float(a["y"])))
+                win.is_modified = True
+            elif act == "crop":
+                need_placed()
+                try:
+                    x, y, w, h = (float(a[k]) for k in ("x", "y", "width", "height"))
+                except (KeyError, TypeError, ValueError):
+                    raise ToolError("crop needs x, y, width, height (canvas IMAGE coordinates).")
+                lx, ly, lw, lh = self._layer_canvas_to_layer_rect(idx, x, y, w, h)
+                if not win.crop_layer_to_rect(idx, lx, ly, lw, lh):
+                    raise ToolError("Nothing to crop: the rectangle must overlap Image %d (see "
+                                    "overlay_image action='status' -> outline_on_canvas)." % idx)
+                msg = "Only the visible part changed; 'uncrop' brings the whole copied image back."
+            elif act == "uncrop":
+                need_loaded()
+                if not win.reset_layer_crop(idx):
+                    msg = "Image %d was not cropped." % idx
+            elif act in ("flip_horizontal", "flip_vertical"):
+                need_loaded()
+                win.flip_layer(idx, act == "flip_horizontal")
+            elif act == "remove":
+                getattr(win, "remove_image%d" % idx)()
+                msg = "Taken off the canvas but kept in the slot: action='place' puts it back."
+            elif act == "reset":
+                getattr(win, "clear_image%d" % idx)()
+            elif act == "rasterize":
+                win.finalize_combined_image()
+                msg = ("Placed images are now merged into one image (one Undo reverts it). Not needed "
+                       "for saving, exporting or analysis.")
+            else:
+                raise ToolError("action must be status, copy_current, load_file, place, set, crop, "
+                                "uncrop, flip_horizontal, flip_vertical, remove, reset or rasterize.")
+            win.update_live_view()
+            out = self._overlay_status()
+            out["action"] = act
+            if msg:
+                out["note"] = msg
+            return out
+        if act == "status":
+            return self.gui(run)
+        res = self.action(run, "overlay_image", timeout=120, auto_ok_info=True)
+        self.file_answers = []
+        return self._with_status(res)
+
+    # ...................................................................... tables
+    def t_edit_table(self, a):
+        def run():
+            win = self.win
+            shapes = getattr(win, "custom_shapes", []) or []
+            try:
+                index = int(a.get("index"))
+            except (TypeError, ValueError):
+                index = None
+            if index is None:
+                tables = [i for i, s in enumerate(shapes) if s.get("table")]
+                if len(tables) == 1:
+                    index = tables[0]
+                else:
+                    raise ToolError("index is required (the table's shape index from get_annotations; "
+                                    "tables found: %s)." % (tables or "none"))
+            if not (0 <= index < len(shapes)) or not shapes[index].get("table"):
+                raise ToolError("Shape %s is not a table (see get_annotations -> shapes with 'table')." % index)
+            base = shapes[index]
+            st = win._table_settings_from_shape(base)
+            if a.get("cells") is not None:
+                cells = a["cells"]
+                if not isinstance(cells, list) or not cells or not all(isinstance(r, list) for r in cells):
+                    raise ToolError("cells must be a list of rows, each a list of strings.")
+                st["cells"] = [["" if c is None else str(c) for c in r] for r in cells]
+            for upd in (a.get("set_cells") or []):
+                try:
+                    r, c = int(upd["row"]) - 1, int(upd["col"]) - 1
+                    while len(st["cells"]) <= r:
+                        st["cells"].append([""] * len(st["cells"][0]))
+                    row = st["cells"][r]
+                    while len(row) <= c:
+                        row.append("")
+                    row[c] = "" if upd.get("text") is None else str(upd["text"])
+                except (KeyError, TypeError, ValueError):
+                    raise ToolError("set_cells entries need row, col (1-based) and text.")
+            nc = max(len(r) for r in st["cells"])
+            st["cells"] = [r + [""] * (nc - len(r)) for r in st["cells"]]
+            if a.get("cells") is not None:
+                # New grid: let the columns/rows be laid out again unless sizes are given.
+                for k in ("col_w", "row_h"):
+                    st.pop(k, None)
+                if a.get("merge") is None:
+                    st.pop("spans", None)
+                if st.get("width_mode") == "keep":
+                    st["width_mode"] = None
+            fmt_keys = ("bold", "italic", "bold_rows", "bold_columns", "underline_rows", "italic_rows",
+                        "bold_first_row", "bold_first_col")
+            new = self._table_settings_from_args(a, st["cells"], keep_fmt=not any(k in a for k in fmt_keys),
+                                                 base=st)
+            shape = win._table_build_shape(new, base)
+            ox, oy, ow, oh = (float(v) for v in base["rect"])
+            x, y, w, h = (float(v) for v in shape["rect"])
+            if a.get("y") is None:
+                # A table ABOVE the gel (the default place) grows upward, away from the lane
+                # labels under it: keep its bottom edge. Elsewhere the top edge is kept.
+                try:
+                    _cl, _cr, ct, _cb = win._measure_transparent_margins()
+                except Exception:
+                    ct = 0
+                if oy + oh <= float(ct) + 1.0 and abs(h - oh) > 0.5:
+                    y = oy + oh - h
+            else:
+                y = float(a["y"])
+            if a.get("x") is not None:
+                x = float(a["x"])
+            shape["rect"] = (x, y, w, h)
+            pad_top = int(math.ceil(2.0 - y)) if y < 2.0 else 0
+            pad_left = int(math.ceil(2.0 - x)) if x < 2.0 else 0
+            if a.get("convert_to_items"):
+                t_markers, t_shapes = win._table_expand(shape)
+                del win.custom_shapes[index]
+                m0 = len(win.custom_markers); s0 = len(win.custom_shapes)
+                win.custom_markers.extend(t_markers); win.custom_shapes.extend(t_shapes)
+                info = {"converted": True, "text_indices": list(range(m0, m0 + len(t_markers))),
+                        "shape_indices": list(range(s0, s0 + len(t_shapes)))}
+            else:
+                win.custom_shapes[index] = shape
+                info = {"shape_index": index, "rows": len(shape["table"]["cells"]),
+                        "columns": len(shape["table"]["cells"][0])}
+            if pad_top or pad_left:
+                # Make room instead of leaving the table off the canvas (same as Transform ▸
+                # Padding: every label and shape moves with the gel). Part of this undo step.
+                cl, cr, ct, cb = (int(v) for v in win._measure_transparent_margins())
+                prev = getattr(win, "_suppress_state_save", False)
+                win._suppress_state_save = True
+                try:
+                    for wdg, v in ((win.left_padding_input, cl + pad_left), (win.right_padding_input, cr),
+                                   (win.top_padding_input, ct + pad_top), (win.bottom_padding_input, cb)):
+                        wdg.setText(str(int(v)))
+                    win.finalize_image()
+                finally:
+                    win._suppress_state_save = prev
+                info["padding_added"] = {"top": pad_top, "left": pad_left}
+            if not a.get("convert_to_items"):
+                x, y, w, h = win.custom_shapes[index]["rect"]
+                info["rect"] = {"x": round(x, 1), "y": round(y, 1), "width": round(w, 1), "height": round(h, 1)}
+            win.save_state()
+            win.is_modified = True
+            win.update_live_view()
+            return info
+        return self._with_status(self.action(run, "edit_table"))
+
+    def t_add_results_table(self, a):
+        """A table of densitometry numbers drawn on the figure (e.g. under the gel)."""
+        measure = self._MEASURE_KEYS.get(str(a.get("measure") or "band_pct").lower().replace(" ", "_"))
+        if measure is None:
+            raise ToolError("measure must be intensity, band_pct, lane_pct or quantity.")
+        decimals = int(a.get("decimals") if a.get("decimals") is not None else (1 if measure != "intensity" else 0))
+
+        def build():
+            win = self.win
+            areas = getattr(win, "latest_multi_lane_peak_areas", {}) or {}
+            if not areas:
+                raise ToolError("There are no densitometry results yet (auto_analyze_gel first).")
+            qty = getattr(win, "latest_multi_lane_calculated_quantities", {}) or {}
+            lanes = [k for k in sorted(areas, key=lambda k: (len(str(k)), str(k))) if areas.get(k)]
+            if a.get("lanes"):
+                want = {str(x) for x in a["lanes"]}
+                lanes = [k for k in lanes if str(k) in want]
+            nb = max(len(areas[k]) for k in lanes) if lanes else 0
+            if a.get("bands"):
+                band_rows = [int(b) for b in a["bands"] if 1 <= int(b) <= nb]
+            else:
+                band_rows = list(range(1, nb + 1))
+            unit = {"intensity": "", "band_pct": "%", "lane_pct": "%", "quantity": ""}[measure]
+            header = [str(a.get("corner_label") or {"intensity": "Intensity", "band_pct": "Band %",
+                                                      "lane_pct": "Lane %", "quantity": "Quantity"}[measure])]
+            header += [str(k) for k in lanes]
+            rows = [header]
+            for b in band_rows:
+                row = ["Band %d" % b]
+                for k in lanes:
+                    ar = areas[k]
+                    if b > len(ar):
+                        row.append("")
+                        continue
+                    if measure == "intensity":
+                        v = ar[b - 1]
+                    elif measure == "band_pct":
+                        tot = float(sum(ar)); v = 100.0 * ar[b - 1] / tot if tot else None
+                    elif measure == "lane_pct":
+                        tw = getattr(win, "table_window_instance", None)
+                        li = None
+                        try:
+                            TW = type(tw) if tw is not None else None
+                            if TW is not None:
+                                li = TW._lane_intensity_of(tw.current_results_data.get(k) or {})
+                        except Exception:
+                            li = None
+                        v = 100.0 * ar[b - 1] / li if li else None
+                    else:
+                        q = qty.get(k) or []
+                        v = q[b - 1] if b - 1 < len(q) else None
+                    row.append("" if v is None else ("%.*f%s" % (decimals, float(v), unit)))
+                rows.append(row)
+            return rows
+        if measure == "lane_pct":
+            self.gui(lambda: self._results_window())
+        rows = self.gui(build)
+        args = {k: v for k, v in a.items() if k not in ("measure", "decimals", "lanes", "bands", "corner_label")}
+        args["cells"] = rows
+        args.setdefault("bold_first_row", True)
+        args.setdefault("first_column_is_labels", True)
+        args.setdefault("column_widths_mode", "fit")
+        if args.get("y") is None and args.get("x") is None:
+            def below():
+                win = self.win
+                l, r, t, b = (int(v) for v in win._measure_transparent_margins())
+                return win.image.height() - b + 10
+            args["y"] = self.gui(below)
+            args["auto_pad"] = False
+        res = self.t_add_table(args)
+        if isinstance(res, dict):
+            res["table_cells"] = rows
+            rect = ((res.get("result") or {}).get("rect") or {})
+            if rect and a.get("y") is None:
+                def grow():
+                    win = self.win
+                    need = int(math.ceil(rect["y"] + rect["height"] + 6 - win.image.height()))
+                    if need <= 0:
+                        return 0
+                    cl, cr, ct, cb = (int(v) for v in win._measure_transparent_margins())
+                    for w, v in ((win.left_padding_input, cl), (win.right_padding_input, cr),
+                                 (win.top_padding_input, ct), (win.bottom_padding_input, cb + need)):
+                        w.setText(str(v))
+                    win.finalize_image()
+                    return need
+                added = self.action(grow, "add_results_table_padding", timeout=60).get("result")
+                if added:
+                    res["bottom_padding_added"] = added
+        return res
+
     # ...................................................................... guide
     def t_get_workflow_guide(self, a):
         topic = (a.get("task") or "overview").lower()
@@ -3434,31 +4701,163 @@ class AIBridge(QObject):
 _LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
 
 
-def openapi_spec(bridge):
-    """OpenAPI 3.1 description of every tool, for OpenAPI tool servers (Open WebUI and other
-    Ollama / OpenAI-function-calling front-ends that don't speak MCP)."""
+OPENAPI_VERSION = "3.2.1"           # served at /openapi.json; ?version=3.1 gives a 3.1.0 document
+OPENAPI_LEGACY_VERSION = "3.1.0"
+
+# Tool groups -> OpenAPI tags. 3.2 tags nest (parent) and carry a kind/summary, so tool
+# browsers (Swagger UI, Scalar, Open WebUI...) show the tools in the same groups as the guide.
+_TAG_TREE = [
+    ("Analysis", None, "Smart gel analysis, results, comparisons and reports"),
+    ("Smart analysis", "Analysis", "Inspect, fix polarity, label the ladder, analyse the gel, standards"),
+    ("Results & reports", "Analysis", "Exported Excel/CSV results, Compare Bands, PDF report"),
+    ("Manual quantification", "Analysis", "Lane regions and densitometry by hand"),
+    ("Figure", None, "Image, annotations, tables and overlapping images"),
+    ("Image", "Figure", "Open, save, export, adjust, crop, pad"),
+    ("Annotate", "Figure", "MW markers, text, shapes, tables"),
+    ("Overlap", "Figure", "Combine and overlay images (layers)"),
+    ("App control", None, "Status, screenshots and every control, menu and dialog"),
+    ("Look", "App control", "Status, annotations, results, screenshots, windows"),
+    ("Controls", "App control", "Buttons, sliders, tabs, menus, keys"),
+    ("Viewer", "App control", "Clicks, drags and zoom on the image viewer"),
+    ("Dialogs", "App control", "Answer dialogs and file choosers, wait"),
+]
+_TOOL_TAG = {}
+for _tag, _names in {
+    "Smart analysis": ("inspect_gel", "fix_band_polarity", "label_mw_ladder", "auto_analyze_gel",
+                       "quantify_with_standards", "get_workflow_guide"),
+    "Results & reports": ("export_results", "read_results_file", "compare_bands", "export_pdf_report",
+                          "get_analysis_results"),
+    "Manual quantification": ("define_lane_regions", "analyze_lanes", "read_table"),
+    "Image": ("open_image", "save_image", "export_pptx", "image_operation", "adjust_levels", "crop",
+              "set_padding", "history"),
+    "Annotate": ("set_marker_preset", "place_markers", "add_text", "add_shape", "add_table", "edit_table",
+                 "add_results_table", "remove_custom_items"),
+    "Overlap": ("combine_images", "overlay_image"),
+    "Look": ("get_status", "get_annotations", "screenshot", "list_windows"),
+    "Controls": ("list_controls", "set_control", "click_control", "select_tab", "list_menu_actions",
+                 "trigger_menu_action", "press_keys"),
+    "Viewer": ("viewer_click", "viewer_drag", "set_view"),
+    "Dialogs": ("respond_to_dialog", "close_window", "answer_file_dialog", "wait"),
+}.items():
+    for _n in _names:
+        _TOOL_TAG[_n] = _tag
+
+
+def _openapi_components():
+    return {
+        "securitySchemes": {"bearer": {
+            "type": "http", "scheme": "bearer",
+            "description": "The connection token from Settings ▸ AI Assistant Control "
+                           "(~/.gel_blot_analyzer/ai_control.json). Local connections only."}},
+        "schemas": {
+            "ToolResult": {
+                "type": "object",
+                "description": "Result of one tool call.",
+                "properties": {
+                    "ok": {"type": "boolean", "description": "false when the tool reported an error."},
+                    "result": {"description": "The tool's JSON result (or its error object)."},
+                    "image": {"type": "string",
+                              "description": "data: URL of a screenshot (only with _include_image=true)."},
+                    "image_saved_to": {"type": "string",
+                                       "description": "Where a screenshot was saved when not inlined."},
+                    "image_note": {"type": "string"}},
+                "required": ["ok"]},
+            "Error": {"type": "object", "properties": {"ok": {"type": "boolean", "const": False},
+                                                       "error": {"type": "string"}},
+                      "required": ["error"]},
+            "Health": {"type": "object", "properties": {
+                "app": {"type": "string"}, "ok": {"type": "boolean"}, "pid": {"type": "integer"},
+                "paused": {"type": "boolean"}}},
+        },
+        "responses": {
+            "Unauthorized": {"summary": "Missing or wrong token",
+                             "description": "The Bearer token is missing or wrong.",
+                             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+            "BadRequest": {"summary": "Body is not a JSON object",
+                           "description": "The request body must be a JSON object of arguments.",
+                           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+        },
+    }
+
+
+def openapi_spec(bridge, version=None):
+    """OpenAPI description of every tool (POST /tools/<name>), for OpenAPI tool servers
+    (Open WebUI and other Ollama / OpenAI-function-calling front-ends that don't speak MCP).
+    Default OpenAPI 3.2.1 (nested tags, $self, server name, response summaries);
+    version='3.1' returns the same API as an OpenAPI 3.1.0 document for older tools."""
+    v32 = not (version and str(version).startswith("3.1"))
+    port = bridge.port or S.DEFAULT_PORT
+    base = "http://127.0.0.1:%d" % port
     paths = {}
-    for t in S.TOOLS:
+    _offered = {x["name"] for x in S.public_tools()}          # follows the tool profile
+    for t in [x for x in S.TOOLS if x["name"] in _offered]:
         schema = dict(t["inputSchema"])
         schema.setdefault("type", "object")
-        paths["/tools/" + t["name"]] = {"post": {
+        schema = dict(schema)
+        schema["properties"] = dict(schema.get("properties") or {})
+        if t["name"] == "screenshot":
+            schema["properties"]["_include_image"] = {
+                "type": "boolean", "default": False,
+                "description": "Return the screenshot as a data: URL (otherwise it is saved to a file)."}
+        ok_resp = {"description": "Tool result (check ok).",
+                   "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ToolResult"}}}}
+        if v32:
+            ok_resp = dict(summary="Tool result", **ok_resp)
+        op = {
             "operationId": t["name"],
             "summary": t["description"].split(". ")[0][:120],
             "description": t["description"],
+            "tags": [_TOOL_TAG.get(t["name"], "Controls")],
             "requestBody": {"required": False,
                             "content": {"application/json": {"schema": schema}}},
-            "responses": {"200": {"description": "Tool result",
-                                  "content": {"application/json": {"schema": {"type": "object"}}}}},
-        }}
-    return {
-        "openapi": "3.1.0",
-        "info": {"title": S.SERVER_TITLE + " tools", "version": "1.0.0",
-                 "description": S.SERVER_INSTRUCTIONS},
-        "servers": [{"url": "http://127.0.0.1:%d" % (bridge.port or S.DEFAULT_PORT)}],
+            "responses": {"200": ok_resp,
+                          "400": {"$ref": "#/components/responses/BadRequest"},
+                          "401": {"$ref": "#/components/responses/Unauthorized"}},
+        }
+        if t.get("readOnly"):
+            op["x-read-only"] = True
+        paths["/tools/" + t["name"]] = {"post": op}
+    health_ok = {"description": "The app is running and AI control is on.",
+                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Health"}}}}
+    if v32:
+        health_ok = dict(summary="Running", **health_ok)
+    paths["/health"] = {"get": {"operationId": "health", "summary": "Is the app running?",
+                                "tags": ["Look"],
+                                "responses": {"200": health_ok,
+                                              "401": {"$ref": "#/components/responses/Unauthorized"}}}}
+    tags = []
+    for name, parent, summary in _TAG_TREE:
+        if v32:
+            tg = {"name": name, "summary": name, "description": summary, "kind": "nav"}
+            if parent:
+                tg["parent"] = parent
+        else:
+            tg = {"name": name, "description": summary}
+        tags.append(tg)
+    if not v32:                                   # 3.1 has no nesting: list only the leaf tags
+        used = set(_TOOL_TAG.values()) | {"Look"}
+        tags = [tg for tg in tags if tg["name"] in used]
+    server = {"url": base, "description": "Gel Blot Analyzer on this computer"}
+    if v32:
+        server["name"] = S.SERVER_NAME
+    doc = {"openapi": OPENAPI_VERSION if v32 else OPENAPI_LEGACY_VERSION}
+    if v32:
+        doc["$self"] = base + "/openapi.json"
+    doc.update({
+        "info": {"title": S.SERVER_TITLE + " tools", "version": S.SERVER_VERSION,
+                 "summary": "Operate Gel Blot Analyzer: gel/blot analysis, densitometry, figures.",
+                 "description": S.instructions(),
+                 "license": {"name": "Proprietary", "identifier": "LicenseRef-Proprietary"}},
+        "servers": [server],
+        "tags": tags,
         "paths": paths,
-        "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
+        "components": _openapi_components(),
         "security": [{"bearer": []}],
-    }
+    })
+    if not v32:                                   # Response.summary is new in 3.2
+        for r in doc["components"]["responses"].values():
+            r.pop("summary", None)
+    return doc
 
 
 def _openapi_result(content, is_err, include_image):
@@ -3509,7 +4908,8 @@ def _make_handler(bridge):
 
         def _send(self, code, body=None, ctype="application/json", extra=None):
             data = b"" if body is None else (body if isinstance(body, bytes) else
-                                              json.dumps(body).encode("utf-8"))
+                                              json.dumps(S.json_safe(_jsonable(body)),
+                                                         allow_nan=False).encode("utf-8"))
             self.send_response(code)
             if data:
                 self.send_header("Content-Type", ctype)
@@ -3542,7 +4942,7 @@ def _make_handler(bridge):
 
         def _read_json(self):
             n = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(n).decode("utf-8") if n else ""
+            raw = self.rfile.read(n).decode("utf-8-sig") if n else ""
             return json.loads(raw) if raw.strip() else None
 
         def do_OPTIONS(self):            # CORS preflight (browser-based tool servers)
@@ -3557,10 +4957,13 @@ def _make_handler(bridge):
                     return self._send(401, {"error": "unauthorized"})
                 return self._send(200, {"app": S.SERVER_TITLE, "ok": True, "pid": os.getpid(),
                                         "paused": bridge.paused})
-            if p == "/openapi.json":
+            if p in ("/openapi.json", "/openapi-3.1.json", "/openapi-3.2.json"):
                 if not self._origin_ok():
                     return self._send(403, {"error": "forbidden origin"})
-                return self._send(200, openapi_spec(bridge))
+                ver = (parse_qs(urlparse(self.path).query).get("version") or [""])[0]
+                if p == "/openapi-3.1.json":
+                    ver = "3.1"
+                return self._send(200, openapi_spec(bridge, ver or None))
             if p == "/mcp":
                 return self._send(405, {"error": "SSE stream not offered; POST JSON-RPC to /mcp."},
                                   extra={"Allow": "POST"})
@@ -3570,6 +4973,20 @@ def _make_handler(bridge):
             return self._send(200 if self._authorized() else 401)
 
         def do_POST(self):
+            try:
+                return self._do_post()
+            except (BrokenPipeError, ConnectionResetError):
+                return None                      # the client went away; nothing to answer
+            except Exception as e:  # noqa: BLE001 - a dropped connection looks like a crash
+                try:
+                    return self._send(500, {"jsonrpc": "2.0", "id": None,
+                                            "error": {"code": -32603,
+                                                      "message": "Internal error: %s: %s"
+                                                                 % (type(e).__name__, e)}})
+                except Exception:
+                    return None
+
+        def _do_post(self):
             path = urlparse(self.path).path
             if path.startswith("/tools/"):
                 return self._post_tool(path[len("/tools/"):])
@@ -3589,9 +5006,9 @@ def _make_handler(bridge):
             if ua:
                 bridge.last_client = ua[:80]
             if isinstance(msg, list):
-                out = [r for r in (handle_rpc(bridge, m) for m in msg) if r is not None]
+                out = [r for r in (_safe_rpc(bridge, m) for m in msg) if r is not None]
                 return self._send(200, out) if out else self._send(202)
-            resp = handle_rpc(bridge, msg)
+            resp = _safe_rpc(bridge, msg)
             if resp is None:
                 return self._send(202)
             return self._send(200, resp, extra={"Mcp-Session-Id": "gba-%d" % os.getpid()})
@@ -3609,9 +5026,24 @@ def _make_handler(bridge):
             include_image = bool(args.pop("_include_image", False))
             if not bridge.last_client:
                 bridge.last_client = "OpenAPI client"
-            content, is_err = bridge.call_tool(name, args)
+            try:
+                content, is_err = bridge.call_tool(name, args)
+            except Exception as e:  # noqa: BLE001
+                content, is_err = [_text({"error": "Internal error: %s: %s" % (type(e).__name__, e)})], True
             return self._send(200, _openapi_result(content, is_err, include_image))
     return Handler
+
+
+def _safe_rpc(bridge, msg):
+    """handle_rpc that turns any unexpected failure into a JSON-RPC error with the right id."""
+    try:
+        return handle_rpc(bridge, msg)
+    except Exception as e:  # noqa: BLE001
+        mid = msg.get("id") if isinstance(msg, dict) else None
+        if isinstance(msg, dict) and mid is None:
+            return None
+        return {"jsonrpc": "2.0", "id": mid,
+                "error": {"code": -32603, "message": "Internal error: %s: %s" % (type(e).__name__, e)}}
 
 
 def handle_rpc(bridge, msg):
@@ -3620,9 +5052,13 @@ def handle_rpc(bridge, msg):
         return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid request"}}
     mid = msg.get("id")
     method = msg.get("method")
-    params = msg.get("params") or {}
+    params = msg.get("params")
+    if not isinstance(params, dict):
+        params = {}
     if mid is None:                       # notification
         return None
+    if not isinstance(method, str):
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32600, "message": "Invalid request: no method"}}
 
     def ok(result):
         return {"jsonrpc": "2.0", "id": mid, "result": result}
@@ -3634,14 +5070,23 @@ def handle_rpc(bridge, msg):
             bridge.dispatcher.log.emit("info", "Client connected: %s" % bridge.last_client)
         return ok({"protocolVersion": pv if pv in S.SUPPORTED_PROTOCOL_VERSIONS else S.LATEST_PROTOCOL_VERSION,
                    "capabilities": {"tools": {"listChanged": False}},
-                   "serverInfo": {"name": S.SERVER_NAME, "title": S.SERVER_TITLE, "version": "1.0.0"},
-                   "instructions": S.SERVER_INSTRUCTIONS})
+                   "serverInfo": {"name": S.SERVER_NAME, "title": S.SERVER_TITLE,
+                                  "version": S.SERVER_VERSION},
+                   "instructions": S.instructions()})
     if method == "ping":
+        return ok({})
+    if method == "logging/setLevel":
         return ok({})
     if method == "tools/list":
         return ok({"tools": S.public_tools()})
     if method == "tools/call":
-        content, is_err = bridge.call_tool(params.get("name"), params.get("arguments") or {})
+        if not params.get("name"):
+            return {"jsonrpc": "2.0", "id": mid,
+                    "error": {"code": -32602, "message": "tools/call needs params.name"}}
+        try:
+            content, is_err = bridge.call_tool(params.get("name"), params.get("arguments"))
+        except Exception as e:  # noqa: BLE001 - never drop the request
+            content, is_err = [_text({"error": "Internal error: %s: %s" % (type(e).__name__, e)})], True
         return ok({"content": content, "isError": bool(is_err)})
     if method in ("resources/list",):
         return ok({"resources": []})
@@ -3760,7 +5205,7 @@ def other_clients_text(bridge):
         "   Header: Authorization: Bearer %s\n\n"
         "3) Ollama with Open WebUI (or any OpenAPI tool-server client):\n"
         "   Settings > Tools > Add tool server\n"
-        "   URL:    http://127.0.0.1:%d          (spec: /openapi.json)\n"
+        "   URL:    http://127.0.0.1:%d          (spec: /openapi.json = OpenAPI 3.2.1; /openapi-3.1.json for 3.1 tools)\n"
         "   Auth:   Bearer  %s\n"
         "   Use a model that supports tool calling (e.g. Qwen 3, Llama 3.1+, Mistral Small).\n"
         % (port, tok, port, tok))
@@ -3853,6 +5298,15 @@ def build_settings_group(bridge):
     w["perm"].addItems(["Full control", "View only (screenshots and reading results)"])
     w["perm"].setCurrentIndex(1 if st.get("permission") == "view" else 0)
     form.addRow("Permission:", w["perm"])
+    w["profile"] = QComboBox()
+    w["profile"].addItems(["All tools (Claude, ChatGPT and other large models)",
+                           "Essential tools (small local models: Ollama, LM Studio)"])
+    w["profile"].setCurrentIndex(1 if st.get("tool_profile") == "essential" else 0)
+    w["profile"].setToolTip(
+        "Small local models get confused by a long tool list and may not even see all of it.\n"
+        "'Essential' offers only the core tools (open, analyze, ladder, standards, export) with\n"
+        "short instructions. Reconnect the AI app after changing this.")
+    form.addRow("Tools offered:", w["profile"])
     w["delay"] = QSpinBox()
     w["delay"].setRange(0, 3000)
     w["delay"].setSingleStep(50)
@@ -3912,6 +5366,8 @@ def build_settings_group(bridge):
     w["perm"].currentIndexChanged.connect(
         lambda i: bridge.set_setting("permission", "view" if i == 1 else "full"))
     w["delay"].valueChanged.connect(lambda v: bridge.set_setting("step_delay_ms", int(v)))
+    w["profile"].currentIndexChanged.connect(
+        lambda i: bridge.set_setting("tool_profile", "essential" if i == 1 else "full"))
     w["overlays"].toggled.connect(lambda v: bridge.set_setting("show_overlays", bool(v)))
     w["pause"].toggled.connect(bridge.set_paused)
     bridge.settings_widgets = w
@@ -3991,8 +5447,8 @@ def _check_user_only(w):
 def _text(obj):
     # _jsonable first: default=str alone turned numpy arrays into truncated "[1 2 ... 9]"
     # strings and numpy dict keys into a TypeError.
-    return {"type": "text", "text": json.dumps(_jsonable(obj), indent=1, ensure_ascii=False,
-                                                default=str)}
+    return {"type": "text", "text": json.dumps(S.json_safe(_jsonable(obj)), indent=1,
+                                                ensure_ascii=False, default=str)}
 
 
 def _plain(s):
@@ -4012,6 +5468,13 @@ def _norm(s):
 
 def _act_name(act):
     return re.sub(r"\s*[▶…]+\s*$", "", (act.text() or "").replace("&", "")).replace("...", "").strip()
+
+
+def _r4(v):
+    try:
+        return None if v is None else round(float(v), 4)
+    except (TypeError, ValueError):
+        return v
 
 
 def _r(v):

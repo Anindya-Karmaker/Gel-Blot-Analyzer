@@ -17,6 +17,7 @@ if __name__ == "__main__" and "--mcp-stdio" in sys.argv[1:]:
 import re
 import os
 import math
+import copy
 import json
 import time
 import html
@@ -57,7 +58,7 @@ else:
 
 # Application metadata used by the splash screen.
 APP_NAME = "Gel Blot Analyzer"
-APP_VERSION = "9.8.3"
+APP_VERSION = "9.9.0"
 APP_DEVELOPER = "Anindya Karmaker"
 
 APP_GLOBAL_WINDOW_HEIGHT = 1000
@@ -149,6 +150,145 @@ def _atomic_write_text(path, text, retries=6, delay_s=0.15):
     raise last_err if last_err else OSError("Could not write %s" % path)
 
 
+# The exception behind the most recent failed _retry_file_op / _write_bytes_atomic, so
+# the error dialog can show the REAL reason (disk full, file too large, device gone ...)
+# instead of only a generic guess.
+_LAST_FILE_OP_ERROR = None
+
+# ---------------------------------------------------------------------------------------------
+# Program files replaced while running (update / rebuild). A packaged build loads Python modules
+# from its own compressed archive the FIRST time they are used. If the app is updated while it is
+# open, that archive changes underneath the running process and the first TIFF save, Excel export
+# or PDF report fails with "Error -3 while decompressing data: incorrect header check".
+# _prewarm_file_modules() loads everything the savers/exporters need shortly after startup, and
+# _app_files_replaced() lets error messages say what really happened.
+# ---------------------------------------------------------------------------------------------
+def _exe_signature():
+    try:
+        st = os.stat(sys.executable)
+        return (st.st_ino, int(st.st_mtime), st.st_size)
+    except Exception:
+        return None
+
+
+_EXE_SIGNATURE_AT_START = _exe_signature() if getattr(sys, "frozen", False) else None
+
+
+def _app_files_replaced():
+    """True when this packaged app's executable on disk is no longer the one that started."""
+    if _EXE_SIGNATURE_AT_START is None:
+        return False
+    now = _exe_signature()
+    return now is None or now != _EXE_SIGNATURE_AT_START
+
+
+def _is_module_load_error(err):
+    import zlib as _zlib
+    if isinstance(err, (_zlib.error, ImportError)):
+        return True
+    t = str(err)
+    return "while decompressing data" in t or "incorrect header check" in t or "No module named" in t
+
+
+_PREWARM_MODULES = (
+    "tifffile", "PIL.Image", "PIL.TiffImagePlugin", "PIL.PngImagePlugin", "PIL.JpegImagePlugin",
+    "PIL.BmpImagePlugin", "openpyxl", "openpyxl.styles", "openpyxl.utils", "openpyxl.drawing.image",
+    "openpyxl.reader.excel", "pptx", "pptx.util", "pptx.dml.color", "pptx.enum.text", "pypdf",
+    "matplotlib.backends.backend_pdf", "matplotlib.backends.backend_agg", "csv", "zipfile",
+    "tempfile", "xml.etree.ElementTree", "email.parser", "http.client", "urllib.request",
+    "scipy.signal", "scipy.ndimage", "scipy.optimize")
+
+
+def _module_load_hint(err):
+    """Extra sentence for an export error caused by the program files changing underneath it."""
+    try:
+        if _is_module_load_error(err):
+            return ("\n\nGel Blot Analyzer could not load one of its own components"
+                    + (" because it was updated while it was open" if _app_files_replaced() else "")
+                    + ". Quit and reopen it, then export again. This is not a folder problem.")
+    except Exception:
+        pass
+    return ""
+
+
+def _prewarm_file_modules():
+    """Import every module the save / export paths load lazily (background thread)."""
+    import importlib
+    for name in _PREWARM_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception:
+            pass
+
+
+def _write_bytes_atomic(path, data, retries=3, delay_s=0.3, chunk=8 << 20):
+    """Write `data` (bytes) to `path` robustly, for LARGE image files.
+
+    Written into a temp file in the same folder in 8 MB chunks, flushed + fsynced, its size
+    verified, then renamed over the target -- so the destination only ever receives a
+    COMPLETE file and a failed attempt never leaves a truncated one behind (a USB stick that
+    hiccuped mid-save used to leave an 8-byte "_modified.tif"). One huge single write() is
+    also what slow removable drives fail on most often. Retried with back-off (~9 s worst
+    case, together with the caller's own retries) because the device is usually only briefly busy. Falls back to a
+    plain chunked in-place write for filesystems that refuse rename-over-existing.
+    Raises the last error."""
+    global _LAST_FILE_OP_ERROR
+    import tempfile
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    mv = memoryview(data)
+    total = len(mv)
+    last_err = None
+
+    def _write_all(fh):
+        for i in range(0, total, chunk):
+            fh.write(mv[i:i + chunk])
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+
+    for attempt in range(max(1, retries)):
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".",
+                                            suffix=".tmp", dir=directory)
+            with os.fdopen(fd, "wb") as fh:
+                _write_all(fh)
+            if os.path.getsize(tmp_path) != total:
+                raise OSError("incomplete write (%d of %d bytes)" % (os.path.getsize(tmp_path), total))
+            os.replace(tmp_path, path)
+            _LAST_FILE_OP_ERROR = None
+            return True
+        except Exception as e:
+            last_err = e
+            if tmp_path:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+            if attempt < retries - 1:
+                time.sleep(delay_s * (attempt + 1))
+    # Last resort: direct chunked write (some network / virtual filesystems refuse renames).
+    try:
+        with open(path, "wb") as fh:
+            _write_all(fh)
+        if os.path.getsize(path) == total:
+            _LAST_FILE_OP_ERROR = None
+            return True
+        raise OSError("incomplete write (%d of %d bytes)" % (os.path.getsize(path), total))
+    except Exception as e:
+        last_err = e
+        try:
+            if os.path.exists(path) and os.path.getsize(path) < total:
+                os.remove(path)            # never leave a truncated image behind
+        except Exception:
+            pass
+    _LAST_FILE_OP_ERROR = last_err
+    raise last_err if last_err else OSError("Could not write %s" % path)
+
+
 def _retry_file_op(fn, retries=6, delay_s=0.15):
     """Run a file-writing callable, retrying briefly while it fails.
 
@@ -157,13 +297,16 @@ def _retry_file_op(fn, retries=6, delay_s=0.15):
     scan every new file — a write can fail simply because something else has the file open
     for a few hundred milliseconds. `fn` should return truthy on success (QImage.save does);
     exceptions are treated as failure. Returns the last result."""
+    global _LAST_FILE_OP_ERROR
     result = False
     for attempt in range(max(1, retries)):
         try:
             result = fn()
             if result:
+                _LAST_FILE_OP_ERROR = None
                 return result
-        except Exception:
+        except Exception as e:
+            _LAST_FILE_OP_ERROR = e
             result = False
         if attempt < retries - 1:
             time.sleep(delay_s * (attempt + 1))
@@ -926,7 +1069,7 @@ if __name__ == "__main__":
             QSlider, QComboBox, QColorDialog, QMessageBox, QLineEdit, QFontComboBox, QSpinBox, QDoubleSpinBox,
             QDialog, QHeaderView, QAbstractItemView, QMenu, QMenuBar, QFontDialog, QListWidget, QListWidgetItem,
             QStackedWidget, QProgressDialog, QSplitter, QSplitterHandle, QToolTip, QFormLayout, QLayout,
-            QAbstractSpinBox,
+            QAbstractSpinBox, QToolButton, QWidgetItem,
         )
         from PySide6.QtGui import (
             QPixmap, QIcon, QPalette,QKeySequence, QImage, QPolygonF,QPainter, QBrush, QColor, QFont, QClipboard, QFontMetricsF, QPainterPath,
@@ -1516,6 +1659,15 @@ if __name__ == "__main__":
                     "layout_right": '<rect x="15.2" y="5" width="4.8" height="14" fill="%s"/>',
                 }[name] % c
                 return ("0 0 24 24", base + reg)
+            if name == "window_snap":
+                # A screen split in two with the left half filled -- "snap the window".
+                return ("0 0 24 24",
+                        '<rect x="3" y="4.5" width="18" height="13" rx="1.5" fill="none" '
+                        'stroke="%s" stroke-width="%s"/>'
+                        '<rect x="4.6" y="6.1" width="6.6" height="9.8" fill="%s"/>'
+                        '<path d="M12 4.5v13" stroke="%s" stroke-width="1.2"/>'
+                        '<path d="M9 20.5h6" stroke="%s" stroke-width="%s" stroke-linecap="round"/>'
+                        % (c, sw, c, c, c, sw))
             if name == "copy_items":
                 return ("0 0 24 24",
                         '<path fill="%s" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>'
@@ -3335,9 +3487,65 @@ if __name__ == "__main__":
                     new_shape['thickness'] = max(0.5, orig_thickness * font_size_scale_factor)
                     self.shapes[i] = new_shape
 
-                self.populate_table()
-                self.global_markers_adjusted.emit(list(self.markers))
-                self.shapes_adjusted_preview.emit(list(self.shapes))
+                # Only the numbers change while a slider moves: update those cells in place.
+                # Rebuilding the whole table on every tick re-created a font list (every
+                # installed font) per row -- with many labels (e.g. two panels side by side)
+                # Shift X / Y crawled. The live preview is coalesced to one repaint per pass.
+                if not self._refresh_numeric_cells():
+                    self.populate_table()
+                if not getattr(self, '_preview_pending', False):
+                    self._preview_pending = True
+                    QTimer.singleShot(0, self._emit_adjustment_preview)
+
+            def _emit_adjustment_preview(self):
+                self._preview_pending = False
+                try:
+                    self.global_markers_adjusted.emit(list(self.markers))
+                    self.shapes_adjusted_preview.emit(list(self.shapes))
+                except RuntimeError:
+                    pass                      # dialog already closed
+
+            def _refresh_numeric_cells(self):
+                """Update the Coordinates / Size cells of every row without rebuilding the
+                table. Returns False when the rows no longer match (caller rebuilds)."""
+                tw = self.table_widget
+                nm, ns = len(self.markers), len(self.shapes)
+                if tw.rowCount() != nm + ns:
+                    return False
+                prev_block = self._block_signals
+                self._block_signals = True
+                tw.blockSignals(True)
+                try:
+                    def put(row, col, text):
+                        it = tw.item(row, col)
+                        if it is None:
+                            return False
+                        if it.text() != text:
+                            it.setText(text)
+                        return True
+                    for i, m in enumerate(self.markers):
+                        x, y = float(m[0]), float(m[1])
+                        if not (put(i, 2, f"{x:.1f},{y:.1f}") and put(i, 4, str(m[5]))):
+                            return False
+                    for i, sd in enumerate(self.shapes):
+                        row = nm + i
+                        t = sd.get('type')
+                        if t in ('line', 'arrow', 'leader'):
+                            (sx, sy), (ex, ey) = sd.get('start', (0, 0)), sd.get('end', (0, 0))
+                            txt = f"{sx:.1f},{sy:.1f},{ex:.1f},{ey:.1f}"
+                        elif t == 'rectangle':
+                            rx, ry, rw, rh = sd.get('rect', (0, 0, 0, 0))
+                            txt = f"{rx:.1f},{ry:.1f},{rw:.1f},{rh:.1f}"
+                        else:
+                            txt = None
+                        if txt is not None and not put(row, 2, txt):
+                            return False
+                        if not put(row, 4, str(int(sd.get('thickness', 1)))):
+                            return False
+                    return True
+                finally:
+                    tw.blockSignals(False)
+                    self._block_signals = prev_block
         
             def populate_table(self):
                 """Rebuilds the entire table from the current state of the data model."""
@@ -5362,7 +5570,7 @@ if __name__ == "__main__":
                     workbook.save(file_path)
                     QMessageBox.information(self, "Success", f"Table data exported to\n{file_path}")
                 except Exception as e:
-                    QMessageBox.critical(self, "Export Error", f"Could not save Excel file:\n{e}")
+                    QMessageBox.critical(self, "Export Error", f"Could not save Excel file:\n{e}" + _module_load_hint(e))
                 finally:
                     for p in temp_image_files:
                         try: os.remove(p)
@@ -6482,7 +6690,7 @@ if __name__ == "__main__":
                             "future reports.")
                 except Exception as e:
                     log_traceback()
-                    QMessageBox.critical(self, "Export Error", f"Could not create PDF report:\n{e}")
+                    QMessageBox.critical(self, "Export Error", f"Could not create PDF report:\n{e}" + _module_load_hint(e))
                 finally:
                     for pfig in pending_pages:      # only left over if the export failed
                         try: plt.close(pfig)
@@ -6591,7 +6799,9 @@ if __name__ == "__main__":
                 apply_dialog_geometry(self, self._geometry_key,
                                       max(800, int(APP_GLOBAL_WINDOW_WIDTH)),
                                       max(700, int(APP_GLOBAL_WINDOW_HEIGHT)),
-                                      min_w=700, min_h=520)
+                                      # 440 (was 700): the controls wrap now (v9.9.0), so the
+                                      # window can be snapped / tiled to half a laptop screen.
+                                      min_w=440, min_h=520)
 
                 if isinstance(cropped_data, list):
                     for item in cropped_data:
@@ -6813,14 +7023,21 @@ if __name__ == "__main__":
                 _mwm_grid.addLayout(_vis_btn_row, 3, 1)
 
                 left_controls_vbox.addWidget(self.mwm_group)
+                _make_combo_shrinkable(self.mwm_preset_combo, 18)
                 self.mwm_preset_combo.currentTextChanged.connect(self._on_mwm_preset_changed)
                 self.mwm_values_edit.textChanged.connect(self._on_mwm_values_changed)
                 self.mwm_group.setVisible(False)
 
-                # ================= GLOBAL SETTINGS & AREA METHOD ===================== #
-                global_settings_group = QGroupBox("Global Settings & Area Method")
+                # ======================= IMPORTANT SETTINGS ========================== #
+                # The controls that decide the result -- Min Prominence first -- sit at the
+                # TOP of the settings (above the ladder picker), so they are the first thing
+                # in reach. Everything else lives in Advanced Settings below.
+                global_settings_group = QGroupBox("Important Settings")
+                global_settings_group.setToolTip(
+                    "The settings that matter most. Tune Min Prominence first: it decides which "
+                    "bumps in the profile count as bands.")
                 global_settings_layout = QGridLayout(global_settings_group)
-                global_settings_layout.addWidget(QLabel("Profile Method:"), 0, 0)
+                global_settings_layout.addWidget(QLabel("Profile Method:"), 4, 0)
                 profile_method_label = QLabel("Sum of Pixel Intensities")
                 profile_method_label.setToolTip(
                     "Each row of the lane is summed across its width to build the 1D trace, and the band "
@@ -6828,8 +7045,8 @@ if __name__ == "__main__":
                     "Wider, well-aligned lanes give cleaner profiles."
                 )
                 font = profile_method_label.font(); font.setBold(True); profile_method_label.setFont(font)
-                global_settings_layout.addWidget(profile_method_label, 0, 1, 1, 2)
-                global_settings_layout.addWidget(QLabel("Area Method:"), 1, 0)
+                global_settings_layout.addWidget(profile_method_label, 4, 1, 1, 2)
+                global_settings_layout.addWidget(QLabel("Area Method:"), 2, 0)
 
                 self.method_combobox = QComboBox()
                 # Contents depend on Settings ▸ Experimental Features (Gaussian Deconvolution
@@ -6841,7 +7058,7 @@ if __name__ == "__main__":
                     "Hover each option for details."
                 )
                 self.method_combobox.currentIndexChanged.connect(self._on_method_changed)
-                global_settings_layout.addWidget(self.method_combobox, 1, 1, 1, 2)
+                global_settings_layout.addWidget(self.method_combobox, 2, 1, 1, 2)
 
                 # Rolling-ball radius: fractional, 0.01 – 200. The slider works in
                 # 1/100 units so it drags smoothly through sub-integer values, while
@@ -6851,7 +7068,6 @@ if __name__ == "__main__":
                 self._RB_MAX = 200.0
 
                 self.rolling_ball_label = QLabel("Rolling Ball Radius")
-                self.rolling_ball_label.setMinimumWidth(130)
                 self.rolling_ball_slider = QSlider(Qt.Horizontal)
                 self.rolling_ball_slider.setRange(int(self._RB_MIN * self._RB_SCALE),
                                                   int(self._RB_MAX * self._RB_SCALE))
@@ -6898,25 +7114,28 @@ if __name__ == "__main__":
                 self.rb_apply_all_checkbox.setChecked(bool(getattr(self, 'rb_apply_all_lanes', False)))
                 self.rb_apply_all_checkbox.toggled.connect(self._on_rb_apply_all_toggled)
 
-                rb_row = QHBoxLayout()
-                rb_row.setContentsMargins(0, 0, 0, 0)
-                rb_row.setSpacing(6)
-                rb_row.addWidget(self.rolling_ball_slider, 1)
-                rb_row.addWidget(self.rolling_ball_spinbox, 0)
-                rb_row.addWidget(self.rb_apply_all_checkbox, 0)
+                # Wrapping row (v9.9.0): the slider takes the spare width; the value box and
+                # the All lanes / Auto boxes move to the next line when the window is narrow.
+                _rb_box, rb_row = _make_flow_box(6, 4)
+                self.rolling_ball_slider.setMinimumWidth(120)
+                rb_row.addWidget(self.rolling_ball_slider)
+                rb_row.addWidget(self.rolling_ball_spinbox)
+                rb_row.addWidget(self.rb_apply_all_checkbox)
 
                 self.auto_adjust_checkbox = QCheckBox("Auto")
                 self.auto_adjust_checkbox.setToolTip("Estimate the rolling-ball radius automatically from detected band widths.")
                 self.auto_adjust_checkbox.setChecked(self.auto_adjust_rb_radius)
                 self.auto_adjust_checkbox.stateChanged.connect(self.toggle_auto_adjust_rb)
-                global_settings_layout.addWidget(self.rolling_ball_label, 2, 0)
-                global_settings_layout.addLayout(rb_row, 2, 1)
-                global_settings_layout.addWidget(self.auto_adjust_checkbox, 2, 2)
-                left_controls_vbox.addWidget(global_settings_group)
+                rb_row.addWidget(self.auto_adjust_checkbox)
+                global_settings_layout.addWidget(self.rolling_ball_label, 3, 0, Qt.AlignTop | Qt.AlignLeft)
+                global_settings_layout.addWidget(_rb_box, 3, 1, 1, 2)
+                # Top of the scrolling settings (the ladder picker was added first).
+                left_controls_vbox.insertWidget(0, global_settings_group)
 
                 # ===================== MANUAL PEAK ADJUSTMENT ======================== #
                 manual_actions_group = QGroupBox("Manual Peak Adjustment")
-                manual_actions_layout = QHBoxLayout(manual_actions_group)
+                # Wraps when the window is narrow (v9.9.0) instead of squeezing the buttons.
+                manual_actions_layout = _FlowLayout(manual_actions_group, 8, 6)
                 self.add_peak_manually_button = QPushButton("Add Peak")
                 self.add_peak_manually_button.setToolTip("Toggle, then click the profile plot to insert a peak the detector missed.")
                 self.add_peak_manually_button.setCheckable(True)
@@ -6929,7 +7148,7 @@ if __name__ == "__main__":
                 self.identify_peak_button.setToolTip("Toggle, then click a peak to highlight and edit its integration handles.")
                 self.identify_peak_button.setCheckable(True)
                 self.identify_peak_button.clicked.connect(self.toggle_manual_select_mode)
-                self.invert_display_button = QPushButton("Invert Profile & Image")
+                self.invert_display_button = QPushButton("Invert Profile && Image")
                 self.invert_display_button.setToolTip("Flip dark-on-light vs light-on-dark. Use whichever makes bands appear as upward peaks.")
                 self.invert_display_button.setCheckable(True)
                 self.invert_display_button.toggled.connect(self._toggle_inversion_display)
@@ -6942,20 +7161,23 @@ if __name__ == "__main__":
                 # peak-editing buttons are always next to the plot they act on.
                 main_layout.insertWidget(main_layout.indexOf(self.canvas) + 1, manual_actions_group)
 
-                # ================== PEAK DETECTION — BASIC =========================== #
-                basic_group = QGroupBox("Peak Detection — Basic")
-                basic_group.setToolTip("The three controls most people need. Tune these first.")
-                basic_layout = QGridLayout(basic_group)
-
-                basic_layout.addWidget(QLabel("Detected Peaks:"), 0, 0)
+                # ============ PEAK DETECTION (Important + Advanced rows) ============== #
+                # Min Prominence and Detected Peaks go into Important Settings; Min Distance
+                # and Band Position open the Advanced Settings group below.
+                basic_layout = global_settings_layout
+                basic_layout.addWidget(QLabel("Detected Peaks:"), 1, 0)
                 self.peak_number_input = QLineEdit()
                 self.peak_number_input.setPlaceholderText("#")
                 self.peak_number_input.setMaximumWidth(60)
                 self.peak_number_input.setToolTip("Type a target number of peaks and press Set to force exactly that many.")
                 self.update_peak_number_button = QPushButton("Set")
                 self.update_peak_number_button.clicked.connect(self.manual_peak_number_update)
-                basic_layout.addWidget(self.peak_number_input, 0, 1)
-                basic_layout.addWidget(self.update_peak_number_button, 0, 2)
+                _pn_row = QHBoxLayout()
+                _pn_row.setContentsMargins(0, 0, 0, 0)
+                _pn_row.addWidget(self.peak_number_input)
+                _pn_row.addWidget(self.update_peak_number_button)
+                _pn_row.addStretch(1)
+                basic_layout.addLayout(_pn_row, 1, 1, 1, 2)
 
                 self.peak_prominence_slider_label = QLabel(f"Min Prominence ({self.peak_prominence_factor:.3f})")
                 self.peak_prominence_slider = QSlider(Qt.Horizontal)
@@ -6973,8 +7195,8 @@ if __name__ == "__main__":
                     )
                 )
                 self.peak_prominence_slider.sliderReleased.connect(self.detect_peaks)
-                basic_layout.addWidget(self.peak_prominence_slider_label, 1, 0)
-                basic_layout.addWidget(self.peak_prominence_slider, 1, 1, 1, 2)
+                basic_layout.addWidget(self.peak_prominence_slider_label, 0, 0)
+                basic_layout.addWidget(self.peak_prominence_slider, 0, 1, 1, 2)
 
                 self.peak_distance_slider_label = QLabel(f"Min Distance ({self.peak_distance}) px")
                 self.peak_distance_slider = QSlider(Qt.Horizontal)
@@ -6991,8 +7213,7 @@ if __name__ == "__main__":
                     )
                 )
                 self.peak_distance_slider.sliderReleased.connect(self.detect_peaks)
-                basic_layout.addWidget(self.peak_distance_slider_label, 2, 0)
-                basic_layout.addWidget(self.peak_distance_slider, 2, 1, 1, 2)
+                _adv_first_rows = [(self.peak_distance_slider_label, self.peak_distance_slider)]
 
                 self.band_position_label = QLabel("Band Position")
                 self.band_position_combo = QComboBox()
@@ -7009,20 +7230,26 @@ if __name__ == "__main__":
                     "Hover each option for details. A magenta tick on the plot shows the position "
                     "when it differs from the peak maximum.")
                 self.band_position_label.setToolTip(self.band_position_combo.toolTip())
+                _make_combo_shrinkable(self.band_position_combo, 14)
                 self.band_position_combo.currentIndexChanged.connect(self._on_band_position_changed)
-                basic_layout.addWidget(self.band_position_label, 3, 0)
-                basic_layout.addWidget(self.band_position_combo, 3, 1, 1, 2)
-                left_controls_vbox.addWidget(basic_group)
+                _adv_first_rows.append((self.band_position_label, self.band_position_combo))
 
-                # ================== PEAK DETECTION — ADVANCED (collapsible) ========== #
-                self.advanced_group = QGroupBox("Advanced Detection")
-                self.advanced_group.setCheckable(True)
-                self.advanced_group.setChecked(False)
-                self.advanced_group.setToolTip("Noise handling and fine speck rejection. Expand only if Basic isn't enough.")
+                # ======================= ADVANCED SETTINGS =========================== #
+                # Always shown (it used to be a collapsed group with a checkbox).
+                self.advanced_group = QGroupBox("Advanced Settings")
+                self.advanced_group.setToolTip(
+                    "Band spacing, band position, noise handling and speck rejection. "
+                    "Change these only if Important Settings are not enough.")
                 advanced_outer = QVBoxLayout(self.advanced_group)
+                advanced_outer.setContentsMargins(0, 0, 0, 0)
                 self.advanced_container = QWidget()
-                advanced_layout = QGridLayout(self.advanced_container)
+                _adv_grid = QGridLayout(self.advanced_container)
                 advanced_outer.addWidget(self.advanced_container)
+                # Rows 0-1: Min Distance, Band Position; rows 2-6: the noise controls below.
+                for _r, (_lab, _wid) in enumerate(_adv_first_rows):
+                    _adv_grid.addWidget(_lab, _r, 0)
+                    _adv_grid.addWidget(_wid, _r, 1, 1, 2)
+                advanced_layout = _adv_grid
 
                 self.denoise_sigma_label = QLabel(f"Denoise Sigma ({self.denoise_sigma:.1f})")
                 self.denoise_sigma_slider = QSlider(Qt.Horizontal)
@@ -7040,8 +7267,8 @@ if __name__ == "__main__":
                     )
                 )
                 self.denoise_sigma_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                advanced_layout.addWidget(self.denoise_sigma_label, 0, 0)
-                advanced_layout.addWidget(self.denoise_sigma_slider, 0, 1, 1, 2)
+                advanced_layout.addWidget(self.denoise_sigma_label, 2, 0)
+                advanced_layout.addWidget(self.denoise_sigma_slider, 2, 1, 1, 2)
 
                 self.smoothing_label = QLabel(f"Smoothing Sigma ({self.smoothing_sigma:.1f})")
                 self.smoothing_slider = QSlider(Qt.Horizontal)
@@ -7058,8 +7285,8 @@ if __name__ == "__main__":
                     )
                 )
                 self.smoothing_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                advanced_layout.addWidget(self.smoothing_label, 1, 0)
-                advanced_layout.addWidget(self.smoothing_slider, 1, 1, 1, 2)
+                advanced_layout.addWidget(self.smoothing_label, 3, 0)
+                advanced_layout.addWidget(self.smoothing_slider, 3, 1, 1, 2)
 
                 self.peak_height_slider_label = QLabel(f"Min Height ({self.peak_height_factor:.2f})")
                 self.peak_height_slider = QSlider(Qt.Horizontal)
@@ -7076,8 +7303,8 @@ if __name__ == "__main__":
                     )
                 )
                 self.peak_height_slider.sliderReleased.connect(self.detect_peaks)
-                advanced_layout.addWidget(self.peak_height_slider_label, 2, 0)
-                advanced_layout.addWidget(self.peak_height_slider, 2, 1, 1, 2)
+                advanced_layout.addWidget(self.peak_height_slider_label, 4, 0)
+                advanced_layout.addWidget(self.peak_height_slider, 4, 1, 1, 2)
 
                 self.min_band_width_label = QLabel(f"Min Band Width ({self.min_band_width}) px")
                 self.min_band_width_label.setToolTip(
@@ -7095,8 +7322,8 @@ if __name__ == "__main__":
                     )
                 )
                 self.min_band_width_slider.sliderReleased.connect(self.detect_peaks)
-                advanced_layout.addWidget(self.min_band_width_label, 3, 0)
-                advanced_layout.addWidget(self.min_band_width_slider, 3, 1, 1, 2)
+                advanced_layout.addWidget(self.min_band_width_label, 5, 0)
+                advanced_layout.addWidget(self.min_band_width_slider, 5, 1, 1, 2)
 
                 # --- Speck/noise removal (2-D, before the trace is built) ---
                 self.speck_size_label = QLabel(f"Speck Removal ({int(getattr(self, 'speck_min_size', 0))}) px²")
@@ -7117,11 +7344,9 @@ if __name__ == "__main__":
                     )
                 )
                 self.speck_size_slider.sliderReleased.connect(self.regenerate_profile_and_detect)
-                advanced_layout.addWidget(self.speck_size_label, 4, 0)
-                advanced_layout.addWidget(self.speck_size_slider, 4, 1, 1, 2)
+                advanced_layout.addWidget(self.speck_size_label, 6, 0)
+                advanced_layout.addWidget(self.speck_size_slider, 6, 1, 1, 2)
 
-                self.advanced_container.setVisible(False)
-                self.advanced_group.toggled.connect(self.advanced_container.setVisible)
                 left_controls_vbox.addWidget(self.advanced_group)
 
                 # ===================== COPY / PASTE REGIONS ========================== #
@@ -7153,7 +7378,7 @@ if __name__ == "__main__":
                 _controls_scroll.setWidget(_controls_container)
                 main_layout.addWidget(_controls_scroll, stretch=2)
 
-                bottom_button_layout = QHBoxLayout()
+                _bottom_box, bottom_button_layout = _make_flow_box()
                 self.persist_settings_checkbox = QCheckBox("Persist Settings")
                 self.persist_settings_checkbox.setToolTip("Remember these settings the next time the dialog opens.")
                 self.persist_settings_checkbox.setChecked(persist_checked_initial)
@@ -7183,7 +7408,7 @@ if __name__ == "__main__":
                 self.cancel_button.clicked.connect(self.reject)
                 bottom_button_layout.addWidget(self.ok_button)
                 bottom_button_layout.addWidget(self.cancel_button)
-                main_layout.addLayout(bottom_button_layout)
+                main_layout.addWidget(_bottom_box)
                 self.setLayout(main_layout)
                 self.update_rb_controls_enabled_state()
 
@@ -10775,11 +11000,12 @@ if __name__ == "__main__":
             replace, with three safeguards so it can never get stuck:
 
               * `still_valid()` is polled every 60 ms; once it is False (pointer left the
-                target) the cursor is kept for LINGER_MS more and then restored;
+                target) the cursor is restored (after LINGER_MS, 0 = right away -- the
+                default since v9.9.0; it used to linger ~0.5 s, which felt like a pause);
               * a pressed mouse button keeps it (the drag in progress owns the cursor);
               * a modal dialog, or the app losing focus, restores it at once.
             """
-            LINGER_MS = 450
+            LINGER_MS = 0
 
             def __init__(self, parent=None):
                 super().__init__(parent)
@@ -11063,7 +11289,7 @@ if __name__ == "__main__":
                 # Interactive Alignment: the wheel over the SELECTED overlay resizes it (as the
                 # mode's instructions say) instead of zooming the view.
                 app = self.app_instance
-                if (getattr(app, 'overlay_mode_active', False) and getattr(app, 'selected_overlay_index', 0) > 0):
+                if app._layer_selection_visible():
                     try:
                         idx = app.selected_overlay_index
                         vis = app._get_overlay_rect_in_label_space(idx, content=True)
@@ -11174,7 +11400,9 @@ if __name__ == "__main__":
                 if self.preview_marker_enabled: 
                     snapped_label_pos = untransformed_label_pos
                     if self.app_instance:
-                        snapped_label_pos = self.app_instance.snap_point_to_grid(untransformed_label_pos)
+                        snapped_label_pos = self.app_instance._guided_placement_point(
+                            untransformed_label_pos, 'marker',
+                            event.modifiers() | QApplication.keyboardModifiers())
                     self.preview_marker_position = snapped_label_pos
                     self.update()
                     event.accept()
@@ -11483,8 +11711,7 @@ if __name__ == "__main__":
                         log_traceback()
 
                 # --- Selection Highlights ---
-                if self.app_instance.overlay_mode_active and self.app_instance.selected_overlay_index > 0:
-                    # (This block remains unchanged)
+                if self.app_instance._layer_selection_visible():
                     rect_ls = self.app_instance._get_overlay_rect_in_label_space(self.app_instance.selected_overlay_index, content=True)
                     if rect_ls:
                         highlight_pen = QPen(QColor(0, 255, 255, 200)); pen_width = max(0.5, 1.0 / self.zoom_level if self.zoom_level > 0 else 1.0)
@@ -11574,8 +11801,10 @@ if __name__ == "__main__":
                     log_traceback()
 
                 # --- Selection rectangle (marquee) and smart alignment guides ---
-                if self.app_instance and self.app_instance.current_selection_mode in (
-                        "select_custom_item", "dragging_custom_item"):
+                if self.app_instance and (self.app_instance.current_selection_mode in (
+                        "select_custom_item", "dragging_custom_item")
+                        or self.preview_marker_enabled
+                        or getattr(self.app_instance, 'drawing_mode', None) in ('line', 'rectangle', 'arrow')):
                     try:
                         app = self.app_instance
                         _z = self.zoom_level if self.zoom_level > 0 else 1.0
@@ -12026,6 +12255,12 @@ if __name__ == "__main__":
                                     painter.drawRect(rb_rect)
                                     painter.restore()
 
+                            # 3. Crop Image tool: layer outline + live crop rectangle.
+                            try:
+                                app._paint_layer_crop_overlay(painter, self.zoom_level)
+                            except Exception:
+                                log_traceback()
+
                 painter.restore()
             
             def leaveEvent(self, event):
@@ -12058,13 +12293,57 @@ if __name__ == "__main__":
             QHBoxLayout there let Qt squeeze the buttons below their text width, so the
             labels were clipped ("aysca", "ert to"). Here every widget keeps its full size
             hint and the row count grows instead (height-for-width), so text is never cut
-            and no scroll bar is needed. Buttons in a row are stretched to share the row
-            width evenly, so a wrapped layout still looks like a tidy grid."""
-            def __init__(self, parent=None, h_spacing=6, v_spacing=6):
+            and no scroll bar is needed. Spare width in a row is shared evenly among the
+            widgets that can grow, so a wrapped layout still looks like a tidy grid (fixed-size
+            icon buttons keep their size).
+
+            v9.9.0 options (defaults keep the original behaviour):
+              glue_labels -- a field label (text ending in ':') always wraps TOGETHER
+                             with the control after it ("Axis:" never ends a row with its
+                             box on the next one);
+              columns     -- for whole groups / page columns: side by side (equal widths)
+                             while each gets at least `min_col_width`, otherwise they move
+                             BELOW each other; a column may then shrink to its own minimum,
+                             so the page never needs a horizontal scroll bar.
+            Rows honour children whose height depends on their width (nested flows).
+            addLayout / addSpacing / addStretch / insertWidget are accepted so existing
+            QHBoxLayout-building code can switch to this layout unchanged."""
+            def __init__(self, parent=None, h_spacing=6, v_spacing=6, glue_labels=False,
+                         columns=False, min_col_width=0):
                 super().__init__(parent)
                 self._items = []
                 self._h = h_spacing
                 self._v = v_spacing
+                self._glue = bool(glue_labels)
+                self._columns = bool(columns)
+                self._min_col = int(min_col_width)
+                self._held = []          # containers made by addLayout (kept alive)
+
+            # --- QHBoxLayout-compatible helpers ---------------------------------------
+            def addWidget(self, widget, *args):
+                """QBoxLayout-style addWidget(w, stretch, alignment): the extra arguments are
+                accepted and ignored (every growable widget shares spare row width)."""
+                QLayout.addWidget(self, widget)
+
+            def addLayout(self, layout, *args):
+                """Wrap a nested layout in a plain container widget (it moves as one unit)."""
+                w = QWidget()
+                w.setLayout(layout)
+                layout.setContentsMargins(0, 0, 0, 0)
+                self._held.append(w)
+                self.addWidget(w)
+
+            def addSpacing(self, *args):
+                pass                     # rows wrap; fixed gaps would only add ragged edges
+
+            def addStretch(self, *args):
+                pass
+
+            def insertWidget(self, index, widget, *args):
+                self.addChildWidget(widget)
+                item = QWidgetItem(widget)
+                self._items.insert(max(0, min(int(index), len(self._items))), item)
+                self.invalidate()
 
             def addItem(self, item):
                 self._items.append(item)
@@ -12089,56 +12368,198 @@ if __name__ == "__main__":
 
             def setGeometry(self, rect):
                 super().setGeometry(rect)
-                self._do_layout(rect, apply=True)
+                h = self._do_layout(rect, apply=True)
+                # Dialog rows (see _make_flow_box): never let the parent layout squeeze the
+                # row below what its wrapped rows need (the OK / Cancel row was cut in half
+                # on short windows); the scrolling settings area gives way instead.
+                if getattr(self, "_pin_min_height", False):
+                    box = self.parentWidget()
+                    if box is not None and h > 0 and box.minimumHeight() != h:
+                        box.setMinimumHeight(h)
 
             def sizeHint(self):
+                if self._columns:
+                    # Preferred: all columns side by side at their comfortable width.
+                    vis = [it for it in self._items if not it.isEmpty()]
+                    w = sum(self._col_need(it) for it in vis) + self._h * max(0, len(vis) - 1)
+                    h = max([it.sizeHint().height() for it in vis] or [0])
+                    m = self.contentsMargins()
+                    return QSize(w + m.left() + m.right(), h + m.top() + m.bottom())
                 return self.minimumSize()
 
             def minimumSize(self):
-                # Narrowest useful width = the widest single widget (one per row).
                 size = QSize()
-                for it in self._items:
-                    size = size.expandedTo(it.minimumSize()).expandedTo(it.sizeHint())
-                m = self.contentsMargins()
-                return size + QSize(m.left() + m.right(), m.top() + m.bottom())
-
-            def _rows(self, avail_w):
-                rows, row, row_w = [], [], 0
                 for it in self._items:
                     if it.isEmpty():
                         continue
-                    w = it.sizeHint().width()
-                    need = w if not row else row_w + self._h + w
-                    if row and need > avail_w:
-                        rows.append(row); row, row_w = [it], w
+                    if self._columns:
+                        # A wrapped column may shrink to ITS minimum: no horizontal scroll.
+                        size = size.expandedTo(it.minimumSize())
                     else:
-                        row.append(it); row_w = need
+                        # Narrowest useful width = the widest single widget (one per row).
+                        size = size.expandedTo(it.minimumSize()).expandedTo(it.sizeHint())
+                if self._glue:
+                    for unit in self._units():
+                        if len(unit) > 1:
+                            w = sum(it.sizeHint().width() for it in unit) + self._h * (len(unit) - 1)
+                            size = size.expandedTo(QSize(w, 0))
+                m = self.contentsMargins()
+                return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+            def _col_need(self, it):
+                return max(it.sizeHint().width(), self._min_col, it.minimumSize().width())
+
+            def _units(self):
+                """Items grouped into units that must stay on one row (label + its control)."""
+                units, i = [], 0
+                vis = [it for it in self._items if not it.isEmpty()]
+                while i < len(vis):
+                    it = vis[i]
+                    w = it.widget()
+                    if (self._glue and isinstance(w, QLabel) and i + 1 < len(vis)
+                            and w.text().strip().rstrip('\u00a0').endswith(':')
+                            and not isinstance(vis[i + 1].widget(), QLabel)):
+                        units.append([it, vis[i + 1]]); i += 2
+                    else:
+                        units.append([it]); i += 1
+                return units
+
+            def _rows(self, avail_w):
+                rows, row, row_w = [], [], 0
+                for unit in self._units():
+                    if self._columns:
+                        uw = self._col_need(unit[0])
+                    else:
+                        uw = sum(it.sizeHint().width() for it in unit) + self._h * (len(unit) - 1)
+                    need = uw if not row else row_w + self._h + uw
+                    if row and need > avail_w:
+                        rows.append(row); row, row_w = list(unit), uw
+                    else:
+                        row.extend(unit); row_w = need
                 if row:
                     rows.append(row)
                 return rows
+
+            @staticmethod
+            def _item_h(it, w):
+                try:
+                    if it.hasHeightForWidth():
+                        return max(it.heightForWidth(w), it.minimumSize().height())
+                except Exception:
+                    pass
+                h = max(it.sizeHint().height(), it.minimumSize().height())
+                wd = it.widget()
+                if wd is not None:
+                    # A widget is never drawn shorter than its own minimum (auto-fit, platform
+                    # button metrics): a row shorter than that clipped buttons in half.
+                    h = max(h, wd.minimumHeight(), wd.minimumSizeHint().height())
+                return h
+
+            def _widths(self, row, avail):
+                n = len(row)
+                if self._columns:
+                    if n == 1:
+                        return [max(row[0].minimumSize().width(), avail)]
+                    share = (avail - self._h * (n - 1)) / float(n)
+                    if all(share >= self._col_need(it) for it in row):
+                        ws = [int(share)] * n                      # equal columns
+                        ws[-1] = avail - self._h * (n - 1) - int(share) * (n - 1)
+                        return ws
+                    base = [self._col_need(it) for it in row]
+                else:
+                    base = [it.sizeHint().width() for it in row]
+                natural = sum(base) + self._h * (n - 1)
+                extra = max(0, avail - natural)
+                # Share the spare width among the widgets that can actually grow.
+                cap = [max(0, min(it.maximumSize().width(), 16777215) - b) for it, b in zip(row, base)]
+                if not self._columns:
+                    # Labels and check boxes keep their natural width (a stretched label left
+                    # its check box stranded far to the right); buttons / inputs take the rest.
+                    for k, it in enumerate(row):
+                        w = it.widget()
+                        if isinstance(w, (QLabel, QCheckBox, QRadioButton)):
+                            cap[k] = 0
+                grow = [k for k in range(n) if cap[k] > 0]
+                ws = list(base)
+                while extra > 0 and grow:
+                    each = max(1, extra // len(grow))
+                    nxt = []
+                    for k in grow:
+                        add = min(each, cap[k], extra)
+                        ws[k] += add; cap[k] -= add; extra -= add
+                        if cap[k] > 0:
+                            nxt.append(k)
+                        if extra <= 0:
+                            break
+                    grow = nxt
+                return ws
 
             def _do_layout(self, rect, apply):
                 m = self.contentsMargins()
                 r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
                 y = r.y()
                 rows = self._rows(max(1, r.width()))
+                # Some platform styles (macOS push buttons) draw a widget a few pixels OUTSIDE
+                # the rectangle the layout gives it (focus ring / layout-item margins). Reserve
+                # that overhang above and below every row, or the parent clips the widgets
+                # (the densitometry OK / Cancel row was cut in half on the Mac).
+                pad_t = getattr(self, '_overhang_top', 0)
+                pad_b = getattr(self, '_overhang_bottom', 0)
+                grew = False
                 for row in rows:
-                    row_h = max(it.sizeHint().height() for it in row)
+                    ws = self._widths(row, max(1, r.width()))
+                    row_h = max(self._item_h(it, w) for it, w in zip(row, ws))
                     if apply:
-                        natural = sum(it.sizeHint().width() for it in row) + self._h * (len(row) - 1)
-                        extra = max(0, r.width() - natural)
                         x = r.x()
-                        for k, it in enumerate(row):
-                            # Share the spare width evenly so rows fill the group neatly.
-                            add = extra // len(row) + (1 if k < extra % len(row) else 0)
-                            w = it.sizeHint().width() + add
-                            it.setGeometry(QRect(x, y, w, row_h))
+                        for it, w in zip(row, ws):
+                            cell = QRect(x, y + pad_t, w, row_h)
+                            it.setGeometry(cell)
+                            wd = it.widget()
+                            if wd is not None and not wd.isHidden():
+                                g = wd.geometry()
+                                over_t = cell.top() - g.top()
+                                over_b = g.bottom() - cell.bottom()
+                                if over_t > pad_t and over_t < 24:
+                                    self._overhang_top = over_t; grew = True
+                                if over_b > pad_b and over_b < 24:
+                                    self._overhang_bottom = over_b; grew = True
                             x += w + self._h
-                    y += row_h + self._v
+                    y += pad_t + row_h + pad_b + self._v
                 if rows:
                     y -= self._v
+                if grew:
+                    # Re-measure on the next pass (never from inside setGeometry itself).
+                    QTimer.singleShot(0, self._overhang_changed)
                 return y - rect.y() + m.bottom()
 
+            def _overhang_changed(self):
+                try:
+                    self.invalidate()
+                    w = self.parentWidget()
+                    if w is not None:
+                        w.updateGeometry()
+                except RuntimeError:
+                    pass                      # widget already deleted
+
+
+        def _make_flow_box(h_spacing=8, v_spacing=6, glue_labels=True):
+            """(container, layout) for a wrapping row in a dialog (see _FlowLayout); add the
+            container to the parent layout. Same behaviour as the main window's tabs."""
+            box = QWidget()
+            lay = _FlowLayout(box, h_spacing, v_spacing, glue_labels=glue_labels)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay._pin_min_height = True
+            return box, lay
+
+        def _make_combo_shrinkable(combo, chars=14):
+            """A drop-down whose longest entry no longer sets the dialog's minimum width: the
+            closed box elides, the open list still shows every entry in full."""
+            try:
+                combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                combo.setMinimumContentsLength(int(chars))
+                combo.view().setMinimumWidth(combo.view().sizeHintForColumn(0) + 28)
+            except Exception:
+                pass
 
         class _ResponsiveCanvas(FigureCanvas):
             """FigureCanvas whose text keeps fitting when the window is resized.
@@ -12739,7 +13160,7 @@ if __name__ == "__main__":
                 self._prep_canvas.mpl_connect('button_release_event', self._on_prep_crop_release)
                 layout.addWidget(self._prep_canvas, stretch=3)
 
-                ctrl = QGroupBox("Image Adjustment — Straighten & Crop")
+                ctrl = QGroupBox("Image Adjustment — Straighten && Crop")
                 g = QGridLayout(ctrl)
                 g.setSpacing(5)
 
@@ -12797,30 +13218,30 @@ if __name__ == "__main__":
                 # Two short lines (L/R, then T/B + Reset) instead of one long row, which
                 # alone was ~650 px wide at larger font/DPI settings and forced the whole page
                 # to scroll sideways, cutting off the text and pushing the image off-centre.
-                crop_grid = QGridLayout()
-                crop_grid.setHorizontalSpacing(6)
-                crop_grid.addWidget(QLabel("Crop box (px):"), 0, 0, 2, 1, Qt.AlignVCenter)
+                # One wrapping row (v9.9.0): "Crop box (px):  L: [ ]  R: [ ]  T: [ ]  B: [ ]  [Reset]"
+                # moves onto as many lines as the window needs instead of scrolling sideways.
+                _crop_box, crop_row = _make_flow_box()
+                crop_row.addWidget(QLabel("Crop box (px):"))
                 self._prep_crop_l = QSpinBox(); self._prep_crop_l.setRange(0, max(0, W0 - 2))
                 self._prep_crop_r = QSpinBox(); self._prep_crop_r.setRange(0, max(0, W0 - 2))
                 self._prep_crop_t = QSpinBox(); self._prep_crop_t.setRange(0, max(0, H0 - 2))
                 self._prep_crop_b = QSpinBox(); self._prep_crop_b.setRange(0, max(0, H0 - 2))
-                for _r, _c, _txt, _sp, _tip in ((0, 1, "L:", self._prep_crop_l, "Pixels cropped from the LEFT edge."),
-                                                (0, 3, "R:", self._prep_crop_r, "Pixels cropped from the RIGHT edge."),
-                                                (1, 1, "T:", self._prep_crop_t, "Pixels cropped from the TOP edge."),
-                                                (1, 3, "B:", self._prep_crop_b, "Pixels cropped from the BOTTOM edge.")):
+                for _txt, _sp, _tip in (("L:", self._prep_crop_l, "Pixels cropped from the LEFT edge."),
+                                        ("R:", self._prep_crop_r, "Pixels cropped from the RIGHT edge."),
+                                        ("T:", self._prep_crop_t, "Pixels cropped from the TOP edge."),
+                                        ("B:", self._prep_crop_b, "Pixels cropped from the BOTTOM edge.")):
                     _sp.setToolTip(_tip)
                     _sp.valueChanged.connect(self._on_prep_geometry_changed)
-                    crop_grid.addWidget(QLabel(_txt), _r, _c, Qt.AlignRight)
-                    crop_grid.addWidget(_sp, _r, _c + 1)
+                    crop_row.addWidget(QLabel(_txt))
+                    crop_row.addWidget(_sp)
                 self._prep_crop_reset = QPushButton("Reset Crop")
                 self._prep_crop_reset.setToolTip("Remove the crop (use the whole image).")
                 self._prep_crop_reset.clicked.connect(self._reset_prep_crop)
-                crop_grid.addWidget(self._prep_crop_reset, 1, 5)
-                crop_grid.setColumnStretch(6, 1)
-                g.addLayout(crop_grid, 2, 0, 1, 3)
+                crop_row.addWidget(self._prep_crop_reset)
+                g.addWidget(_crop_box, 2, 0, 1, 3)
 
                 # Grid overlay controls (moved here to aid alignment)
-                grid_row = QHBoxLayout()
+                _grid_box, grid_row = _make_flow_box()
                 self._prep_grid_x_chk = QCheckBox("Line X")
                 self._prep_grid_x_chk.setMinimumWidth(70)
                 self._prep_grid_y_chk = QCheckBox("Line Y")
@@ -12837,7 +13258,7 @@ if __name__ == "__main__":
                 grid_row.addSpacing(8)
                 grid_row.addWidget(self._prep_grid_size_spin)
                 grid_row.addStretch()
-                g.addLayout(grid_row, 3, 0, 1, 3)
+                g.addWidget(_grid_box, 3, 0, 1, 3)
 
                 g.setColumnStretch(1, 1)
                 layout.addWidget(ctrl)
@@ -12847,7 +13268,7 @@ if __name__ == "__main__":
                 p1_back_btn.clicked.connect(self._go_to_phase0)
                 p1_cancel_btn = QPushButton("Cancel")
                 p1_cancel_btn.clicked.connect(self.reject)
-                p1_next_btn = QPushButton("Apply Adjustment & Detect Lanes →")
+                p1_next_btn = QPushButton("Apply Adjustment && Detect Lanes →")
                 p1_next_btn.setDefault(True)
                 p1_next_btn.clicked.connect(self._lock_geometry_and_go_to_lanes)
 
@@ -13478,12 +13899,12 @@ if __name__ == "__main__":
                 self._p1_reset_shape_btn.setEnabled(False)
                 self._p1_reset_shape_btn.clicked.connect(self._reset_selected_lane_shape)
 
-                btn_row = QHBoxLayout()
+                _btn_box, btn_row = _make_flow_box()
                 btn_row.addWidget(self._p1_inv_btn)
                 btn_row.addWidget(self._p1_add_btn)
                 btn_row.addWidget(self._p1_del_btn)
                 btn_row.addWidget(self._p1_reset_shape_btn)
-                g.addLayout(btn_row, 5, 0, 1, 2)
+                g.addWidget(_btn_box, 5, 0, 1, 2)
 
                 g.setColumnStretch(1, 1)
                 layout.addWidget(ctrl)
@@ -13599,9 +14020,14 @@ if __name__ == "__main__":
                 self._p3_scroll.setWidgetResizable(True)
                 self._p3_scroll
                 self._p3_inner = QWidget()
-                self._p3_inner.setMaximumHeight(250)
+                # No height cap: the inner widget used to be limited to 250 px, which
+                # squeezed 10+ lanes so the Top Label boxes overlapped ("MWM", "S1" ... cut
+                # in half). Rows keep their natural height and the scroll area scrolls when
+                # there are more lanes than fit.
                 self._p3_grid  = QGridLayout(self._p3_inner)
-                self._p3_grid.setSpacing(4)
+                self._p3_grid.setHorizontalSpacing(24)
+                self._p3_grid.setVerticalSpacing(6)
+                self._p3_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
                 self._p3_grid.addWidget(QLabel("<b>Lane</b>"), 0, 0)
                 self._p3_grid.addWidget(QLabel("<b>MWM Lane</b>"), 0, 1)
                 self._p3_grid.addWidget(QLabel("<b>Top Label</b>"), 0, 2)
@@ -13751,6 +14177,7 @@ if __name__ == "__main__":
                     "placed at this position, so it changes the standard curve and predicted molecular "
                     "weights. Areas are not affected. Hover each option for details.")
                 self._p2_lbl_pos.setToolTip(self._p2_pos_combo.toolTip())
+                _make_combo_shrinkable(self._p2_pos_combo, 14)
                 self._p2_pos_combo.currentIndexChanged.connect(self._on_p2_band_position_changed)
                 global_g.addWidget(self._p2_lbl_pos, 2, 0)
                 global_g.addWidget(self._p2_pos_combo, 2, 1, 1, 2)
@@ -13826,15 +14253,16 @@ if __name__ == "__main__":
                 self._p4_reset_fences_btn = QPushButton("↺ Reset Band Edges")
                 self._p4_reset_fences_btn.clicked.connect(self._p4_reset_fences)
                 
-                row_inv = QHBoxLayout()
+                _row_inv_box, row_inv = _make_flow_box()
                 row_inv.addWidget(self._p2_inv_btn)
                 row_inv.addWidget(self._p4_reset_fences_btn)
                 row_inv.addStretch()
                 row_inv.addWidget(QLabel("Preview Lane:"))
                 row_inv.addWidget(self._p2_lane_combo)
-                layout.addLayout(row_inv)
+                layout.addWidget(_row_inv_box)
 
                 hint_lbl = QLabel("💡 Drag the green dashed fence lines in the profile to manually modify analysis integration widths.")
+                hint_lbl.setWordWrap(True)
                 hint_lbl.setStyleSheet("color:#666; font-size:10px; padding:2px;")
                 layout.addWidget(hint_lbl)
 
@@ -13843,7 +14271,7 @@ if __name__ == "__main__":
                 p4_back_btn.clicked.connect(self._p4_go_back)
                 p4_cancel_btn = QPushButton("Cancel")
                 p4_cancel_btn.clicked.connect(self.reject)
-                self._p4_run_btn = QPushButton("▶ Run Analysis & Finish")
+                self._p4_run_btn = QPushButton("▶ Run Analysis && Finish")
                 self._p4_run_btn.setDefault(True)
                 f4 = self._p4_run_btn.font(); f4.setBold(True)
                 self._p4_run_btn.setFont(f4)
@@ -15056,7 +15484,14 @@ if __name__ == "__main__":
                     for col in range(self._p3_grid.columnCount()):
                         item = self._p3_grid.itemAtPosition(row, col)
                         if item and item.widget():
-                            item.widget().deleteLater()
+                            _w = item.widget()
+                            # Take it out of the layout NOW (deleteLater alone leaves it in
+                            # place until the event loop runs, so a rebuild with fewer lanes
+                            # kept the old rows' height as empty scroll space).
+                            self._p3_grid.removeWidget(_w)
+                            _w.hide()
+                            _w.deleteLater()
+                    self._p3_grid.setRowMinimumHeight(row, 0)
 
                 self._lane_label_edits = []
                 self._mwm_checkboxes   = []
@@ -15091,13 +15526,17 @@ if __name__ == "__main__":
                     chk.setChecked(default_mwm[i])
                     chk.setToolTip("Mark this lane as the Molecular Weight Marker lane")
                     edt = QLineEdit(default_labels[i])
-                    edt.setFixedWidth(120)
+                    edt.setMinimumWidth(160)
                     edt.setToolTip("Top label displayed above this lane")
                     chk.toggled.connect(lambda checked, e=edt, idx=i:
                                         self._on_p3_mwm_check(checked, e, idx))
-                    self._p3_grid.addWidget(lbl, i + 1, 0)
-                    self._p3_grid.addWidget(chk, i + 1, 1)
-                    self._p3_grid.addWidget(edt, i + 1, 2)
+                    self._p3_grid.addWidget(lbl, i + 1, 0, Qt.AlignVCenter)
+                    self._p3_grid.addWidget(chk, i + 1, 1, Qt.AlignVCenter)
+                    self._p3_grid.addWidget(edt, i + 1, 2, Qt.AlignVCenter)
+                    # Never let a row be squeezed below its text box (that is what made the
+                    # boxes overlap); the scroll area scrolls instead.
+                    self._p3_grid.setRowMinimumHeight(
+                        i + 1, max(edt.sizeHint().height(), chk.sizeHint().height()) + 2)
                     self._lane_label_edits.append(edt)
                     self._mwm_checkboxes.append(chk)
 
@@ -15780,6 +16219,21 @@ if __name__ == "__main__":
                                     applied_pl = pl
                     except Exception:
                         pass
+
+                # Translation of placed images from the old canvas to the committed one: the
+                # region origin moves to 0,0 (the padding above was already applied to them by
+                # adjust_elements_for_padding). Used by the app to keep placed images that lie
+                # OUTSIDE the analysed region where they were (CombinedSDSApp._aag_open_wizard).
+                try:
+                    _rg = self.gel_region_def
+                    if self.is_quad_warp:
+                        _rx0 = min(float(p_[0] if not hasattr(p_, 'x') else p_.x()) for p_ in _rg)
+                        _ry0 = min(float(p_[1] if not hasattr(p_, 'y') else p_.y()) for p_ in _rg)
+                    else:
+                        _rx0, _ry0 = float(_rg[0]), float(_rg[1])
+                    self._commit_offset = (-_rx0, -_ry0)
+                except Exception:
+                    self._commit_offset = None
 
                 # ── Re-anchor the user's custom markers/shapes to the committed gel ──
                 # Committing the gel moved the coordinate origin (drawn region -> 0,0) and
@@ -17075,6 +17529,91 @@ if __name__ == "__main__":
                 self.convert_requested = True
                 self.accept()
 
+        class _ToolbarOverflowHover(QObject):
+            """Toolbar overflow (the >> arrow shown when not every icon fits): hovering the
+            arrow opens the extra row(s) without a click, and the opened toolbar stays open
+            for LINGER_MS after the mouse leaves it (Qt alone collapses it ~0.5 s after the
+            pointer leaves, which made the second row hard to reach). It closes when the
+            pointer has been outside the toolbar for LINGER_MS and no menu is open."""
+            HOVER_OPEN_MS = 150
+            LINGER_MS = 2000
+
+            def __init__(self, toolbar):
+                super().__init__(toolbar)
+                self.tb = toolbar
+                self.ext = None
+                self._open_timer = QTimer(self)
+                self._open_timer.setSingleShot(True)
+                self._open_timer.timeout.connect(self._open_if_hovered)
+                self._close_timer = QTimer(self)
+                self._close_timer.setSingleShot(True)
+                self._close_timer.timeout.connect(self._close_if_outside)
+                toolbar.installEventFilter(self)
+                self._attach_ext()
+
+            def _attach_ext(self):
+                if self.ext is None:
+                    ext = self.tb.findChild(QToolButton, "qt_toolbar_ext_button")
+                    if ext is not None:
+                        self.ext = ext
+                        ext.installEventFilter(self)
+                        ext.setToolTip("More tools (opens when you point at it)")
+                return self.ext
+
+            def _expanded(self):
+                ext = self._attach_ext()
+                return bool(ext is not None and ext.isVisible() and ext.isChecked())
+
+            def _pointer_inside(self):
+                try:
+                    r = QRect(self.tb.mapToGlobal(QPoint(0, 0)), self.tb.size()).adjusted(-2, -2, 2, 2)
+                    return r.contains(QCursor.pos())
+                except Exception:
+                    return False
+
+            def _open_if_hovered(self):
+                try:
+                    ext = self._attach_ext()
+                    if ext is not None and ext.isVisible() and ext.underMouse() and not ext.isChecked():
+                        ext.click()
+                except Exception:
+                    pass
+
+            def _close_if_outside(self):
+                try:
+                    if not self._expanded():
+                        return
+                    if self._pointer_inside() or QApplication.activePopupWidget() is not None:
+                        self._close_timer.start(self.LINGER_MS)      # still in use: check again later
+                        return
+                    self.ext.click()                                  # collapse
+                except Exception:
+                    pass
+
+            def eventFilter(self, obj, ev):
+                # Never raise from an event filter (PySide aborts on exceptions here).
+                try:
+                    et = ev.type()
+                    if obj is self.ext:
+                        if et == QEvent.Enter:
+                            if not self.ext.isChecked():
+                                self._open_timer.start(self.HOVER_OPEN_MS)
+                        elif et == QEvent.Leave:
+                            self._open_timer.stop()
+                        return False
+                    if obj is self.tb:
+                        if et == QEvent.Enter:
+                            self._close_timer.stop()
+                        elif et == QEvent.Leave and self._expanded():
+                            # Swallow Qt's own quick collapse; ours waits LINGER_MS.
+                            self._close_timer.start(self.LINGER_MS)
+                            return True
+                        elif et in (QEvent.ChildAdded, QEvent.Show, QEvent.LayoutRequest):
+                            self._attach_ext()
+                except Exception:
+                    return False
+                return False
+
         class CombinedSDSApp(QMainWindow):
             # Thresholds for the adaptive live-view render quality (see _begin_render_timing).
             RENDER_INTERACTIVE_GAP_S = 0.12    # repaints closer than this read as "still dragging"
@@ -17124,9 +17663,9 @@ if __name__ == "__main__":
                 QPushButton:checked { background-color: #D4EDDA; border: 1px solid #74B882; }
                 QPushButton:disabled { background-color: #F0F2F5; color: #AAAAAA; }
                 
-                QLineEdit, QTextEdit, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; color: #333333; }
-                QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
-                QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
+                QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QFontComboBox { background-color: #FFFFFF; border: 1px solid #D0D5DB; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #5D98D4; selection-color: white; color: #333333; }
+                QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #5D98D4; }
+                QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #F0F2F5; color: #999999; }
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #D0D5DB; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
                 QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABt0lEQVR4nO2WPU7DMBiG38/GydQi6Bk6cgNEDtFYvUGOQZhBYoAjoGaxxJALwMIleocSIehAmuZjSfmRktZ2K3Wgr+Qhf5/9PIp/gEP+e2jL57bhHdXZfToJ0zQV0+n0dD6ff/Z6PS8Ts9kMg8EAk8nkHR0WWgtrrSUACeBRKXVelmXdXFuHiJiIqK7roizLszzP35v+/gxEdBUwxpQAbgEcE9GJlLIvhLBuzNwPw7DPzA95nn8kSaLaLHSq1VpLY8wyjuMnpVRUVdXSwQITETHzq1JqmGVZ0Ua/1sD3CImumo+tGzMvgyAgZr7Psqzoogc2TLOVhdFo9ByG4cVisbD5F5iIwMwFgKExpljdb3t5owEAEEKkzGw1E5i5aujvjDGvSZIcdXUOWCw0jhac6AFLA4CdBVd6wHKptbTgTA84GADWW/ChBxw2mw0WvOgBRwNAuwVfesBxu+2wIHzpAQ8DwF8L29ADHgeO3xaCIIiqqmIAXvSApwEAkFJeMnOtlIIvvXea8wLiOH4Zj8efWutj/GxGTvE2AICEEDd1XV8bY96iKJLYx9kvTdNtILbOXjs/5JCd5AvlTC7DFZrCJgAAAABJRU5ErkJggg==); width: 12px; height: 12px; }
@@ -17300,9 +17839,9 @@ if __name__ == "__main__":
                 QPushButton:checked { background-color: #3D984E; border: 1px solid #5DBB6F; color: white; }
                 QPushButton:disabled { background-color: #3A3A3D; color: #707070; border-color: #4A4A4F; }
                 
-                QLineEdit, QTextEdit, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
-                QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
-                QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
+                QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QFontComboBox { background-color: #3C3C3F; border: 1px solid #505055; border-radius: 4px; padding: 4px 6px; min-height: 20px; selection-background-color: #007ACC; selection-color: white; color: #F1F1F1; }
+                QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid #007ACC; }
+                QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled, QFontComboBox:disabled { background-color: #3A3A3D; color: #707070; }
                 
                 QComboBox::drop-down, QFontComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left-width: 1px; border-left-color: #505055; border-left-style: solid; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
                 QComboBox::down-arrow, QFontComboBox::down-arrow { image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACGElEQVR4nO2WsW7aUBSGz7HNUKU4CZGypaqiVgJEWVir5AG6ZPHzuFL3DMlTxEMfoSRDN48spBgwBdpCjEltNU2w/Xdo6YBsY7vQoeVf77XP9/2yri/RJv97OG4RQOx64iHMWMV71pJIQwBCczgs3HQ69/v7RSaaZJtQKNDzvT0nqoVQAE3TxHK5LD7K777d2nr80nGcgJnENHNBhJwk8cyb2d6d+6JUKjkAeBFECntYURRi5odW9+OpIAivBIFJEIQ088n3fezs7PJ4PDorFouurus5Zp4t7gsFYGZf0zTx2dODd03DvJRl+dh1XZ8ocQuQJIkty7LuHPuU+QAAvLCNkVqKohAxU475NUD8kytxfFneZiA4r1ar9i/70G8gEoCZfe3iQjw8fHLlOF+v8vm8AMBfqg5AFCVpOp1OvrvTcyLiWq0Wah8LsNCCGgTJzgRm9mRZZiA4q1QqE13XpbhzIBYgbQtp7ZcCEKVrIa19IoCkLWSxTwRAlKyFLPaJAZa1kNU+MQBRfAtZ7VMBRLXwJ/apA0AkZmq3e8fDkY1Wt++1uv0H6/YbWt2+SkSk63puLcPn0TRNJCJqGublp7ENwxwEhjm0Go1GgYh4VZeYyPxuoTc86n++8Ue2E1y3e3/Hfp55C9dG7705+HJvGMY2gPXbzwNABMAfOoMTwxy8ISKq1+uhv/a1R1XVdDeVf2b4JpusKj8AUsl45DVaq00AAAAASUVORK5CYII=); width: 12px; height: 12px; }
@@ -17933,6 +18472,10 @@ if __name__ == "__main__":
                 # 2. The tab widget for settings (created but not yet placed in a layout)
                 # 2. The tab widget for settings (created but not yet placed in a layout)
                 self.tab_widget = QTabWidget()
+                # Narrow windows (snapped to half the screen): scroll the tab bar, never
+                # truncate the tab names.
+                self.tab_widget.setUsesScrollButtons(True)
+                self.tab_widget.setElideMode(Qt.ElideNone)
                 # Center the tabs
                 self.tab_widget.setStyleSheet(
                     "QTabWidget::tab-bar { alignment: center; }"
@@ -17953,6 +18496,11 @@ if __name__ == "__main__":
                 self.tab_widget.currentChanged.connect(
                     lambda i: (self._sync_settings_tab_from_state(full=False)
                                if self.tab_widget.tabText(i) == "Settings" else None))
+                # The isolated single-layer view belongs to the Image and Contrast tab only
+                # (_isolated_layer_view_active), so re-render when the tab changes.
+                self.tab_widget.currentChanged.connect(
+                    lambda i: (self.update_live_view()
+                               if getattr(self, 'is_in_dedicated_edit_mode', False) else None))
 
                 
                 #self.load_shortcut = QShortcut(QKeySequence.Open, self) # Ctrl+O / Cmd+O
@@ -18019,6 +18567,7 @@ if __name__ == "__main__":
                 self.custom_marker_bottom_arrow_shortcut.activated.connect(self.enable_custom_marker_mode)
 
                 self.grid_shortcut_x = QShortcut(QKeySequence("Ctrl+Shift+X"), self)
+                # (also see _grid_shortcut_fallback: keyboard-layout-independent backup)
                 self.grid_shortcut_x.activated.connect(
                     lambda: self.show_grid_checkbox_x.setChecked(not self.show_grid_checkbox_x.isChecked())
                     if hasattr(self, 'show_grid_checkbox_x') else None
@@ -18029,6 +18578,10 @@ if __name__ == "__main__":
                     lambda: self.show_grid_checkbox_y.setChecked(not self.show_grid_checkbox_y.isChecked())
                     if hasattr(self, 'show_grid_checkbox_y') else None
                 )
+
+                # Transform > Show Grid (Line X + Line Y together), v9.9.0.
+                self.show_grid_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
+                self.show_grid_shortcut.activated.connect(self._toggle_show_grid)
 
                 self.snap_shortcut = QShortcut(QKeySequence("Ctrl+Shift+N"), self)
                 self.snap_shortcut.activated.connect(self.cycle_snap_grid)
@@ -18119,6 +18672,7 @@ if __name__ == "__main__":
                     APP_GLOBAL_WINDOW_HEIGHT = max(500, int(self.height()))
                 except Exception:
                     pass
+                self._schedule_snap_check()
                 super().resizeEvent(event)
 
             def moveEvent(self, event):
@@ -18129,6 +18683,7 @@ if __name__ == "__main__":
                 # place is already captured on close, so we skip the churn until then.
                 if getattr(self, '_app_started', False):
                     self.resize_timer.start()
+                self._schedule_snap_check()
                 super().moveEvent(event)
 
             def _render_indicator_png(self, kind, color_hex):
@@ -18546,7 +19101,7 @@ if __name__ == "__main__":
                 # already clamped at the screen edge). So on startup we persist the loaded values
                 # unchanged; only a genuine resize updates them.
                 ui = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
-                if getattr(self, '_app_started', False):
+                if getattr(self, '_app_started', False) and not self._is_window_snapped():
                     try:
                         lv = getattr(self, 'live_view_label', None)
                         if lv is not None and lv.width() > 0 and lv.height() > 0:
@@ -18563,6 +19118,19 @@ if __name__ == "__main__":
                 config_data["viewer_fixed_width"] = int(getattr(self, "viewer_fixed_width", 550))
                 config_data["viewer_fixed_height"] = int(getattr(self, "viewer_fixed_height", 350))
                 config_data["safe_content_width"] = int(getattr(self, "safe_content_width", 1000))
+                # While the window is snapped / maximized its size is NOT the user's chosen
+                # size: persist the pre-snap ("normal") geometry instead, so the next launch
+                # and every unsnap return to it (and the viewer / controls sizes it had).
+                if self._is_window_snapped():
+                    _ng = getattr(self, '_snap_normal_geom', None)
+                    if _ng:
+                        config_data["window_width"] = int(_ng['w'])
+                        config_data["window_height"] = int(_ng['h'])
+                        config_data["window_x"] = int(_ng['x'])
+                        config_data["window_y"] = int(_ng['y'])
+                        config_data["viewer_fixed_width"] = int(_ng.get('viewer_w', config_data["viewer_fixed_width"]))
+                        config_data["viewer_fixed_height"] = int(_ng.get('viewer_h', config_data["viewer_fixed_height"]))
+                        config_data["safe_content_width"] = int(_ng.get('content_w', config_data["safe_content_width"]))
 
                 # Persist UI scale, font sizes and GPU settings so they survive the
                 # resize-debounce rewrite (save_full_config writes them, but this method
@@ -18575,6 +19143,7 @@ if __name__ == "__main__":
                                                                  self.AUTOSAVE_DEFAULT_INTERVAL_S))
                 config_data["autosave_on_crash"] = bool(getattr(self, "autosave_on_crash", True))
                 config_data["densitometry_raw_data"] = bool(getattr(self, "densitometry_raw_data", True))
+                config_data["convert_layer_labels_on_save"] = self._layer_label_save_mode()
 
                 if hasattr(self, 'gpu_id_input'):
                     self.gpu_device_id = self.gpu_id_input.text().strip()
@@ -19006,7 +19575,8 @@ if __name__ == "__main__":
                 self.pan_down_action.setToolTip("Pan the view down (when zoomed) (Arrow key down or mouse right click")
                 self.draw_bounding_box_action.setToolTip("Draw a bounding rectangle on the image. Use the marker tab, custom marker options for color and size.\nDOUBLE-CLICK: draw a rectangle exactly around the gel/blot itself (not the padding or labels).")
                 self.draw_line_action.setToolTip("Draw a line on the image. Use the marker tab, custom marker options for color and size")
-                self.copy_custom_items_action.setToolTip("Copy all custom markers and shapes to the clipboard.")
+                self.copy_custom_items_action.setToolTip("Copy custom markers and shapes to the clipboard: the ones selected with "
+                                                        "Move/Resize, or all of them when nothing is selected.")
                 self.paste_custom_items_action.setToolTip("Paste custom markers and shapes from the clipboard.\nItems will be added to existing ones.")
                 self.move_resize_action.setToolTip(
                     "Move/Resize items (same tool as the Markers tab button).\n"
@@ -19080,6 +19650,38 @@ if __name__ == "__main__":
                 self.pan_right_action.setEnabled(False)
                 self.pan_up_action.setEnabled(False)
                 self.pan_down_action.setEnabled(False)
+
+            # ---- responsive tab layout (v9.9.0) ----------------------------------------------
+            # Every tab behaves like Image and Contrast > General Image Actions: when the
+            # controls get narrower, button rows WRAP onto new rows and side-by-side groups
+            # move BELOW each other, instead of being squeezed (clipped text) or needing a
+            # horizontal scroll bar. Built directly in the tab builders (no after-the-fact
+            # layout walking -- see the stale-wrapper note at the app eventFilter).
+            RESPONSIVE_MIN_COLUMN_PX = 380
+
+            def _make_columns(self, *widgets, spacing=15):
+                """Container laying `widgets` (page columns / group boxes) side by side with
+                equal widths while each gets RESPONSIVE_MIN_COLUMN_PX, else below each other."""
+                box = QWidget()
+                lay = _FlowLayout(box, spacing, 10, columns=True,
+                                  min_col_width=self.RESPONSIVE_MIN_COLUMN_PX)
+                lay.setContentsMargins(0, 0, 0, 0)
+                for w in widgets:
+                    if isinstance(w, QLayout):
+                        lay.addLayout(w)
+                    else:
+                        w.setSizePolicy(QSizePolicy.Preferred, w.sizePolicy().verticalPolicy())
+                        lay.addWidget(w)
+                return box
+
+            def _make_flow_row(self, h_spacing=8, v_spacing=6):
+                """(container, layout) for a wrapping row of buttons / small controls; a label
+                stays with the control after it. Use like a QHBoxLayout, then add the
+                container (not the layout) to the parent layout."""
+                box = QWidget()
+                lay = _FlowLayout(box, h_spacing, v_spacing, glue_labels=True)
+                lay.setContentsMargins(0, 0, 0, 0)
+                return box, lay
 
             def _scroll_wrap_tab(self, content):
                 """Wrap a tab page in its own QScrollArea so only the page content scrolls
@@ -19198,7 +19800,10 @@ if __name__ == "__main__":
                 MIN_VIEWER_H = max(160, int(160 * ui_scale_factor))
                 # Smallest controls width that still shows every tab in full — never larger
                 # than the user's Program UI Width preference.
-                MIN_UI_W = min(SAFE_CONTENT_WIDTH, max(600, int(600 * ui_scale_factor)))
+                # (v9.9.0: 420, was 600 -- small enough that the window can be snapped /
+                # tiled to half of a laptop screen. The tab bar scrolls instead of eliding
+                # and every tab's content already scrolls inside its own scroll area.)
+                MIN_UI_W = min(SAFE_CONTENT_WIDTH, max(420, int(420 * ui_scale_factor)))
                 MIN_UI_H = MIN_CONTROLS_H
                 # Never let the two floors together exceed the desktop, or the window's
                 # enforced minimum size would spill off-screen on very small displays.
@@ -19393,6 +19998,268 @@ if __name__ == "__main__":
                 else:
                     QTimer.singleShot(70, self._try_restore_saved_split)
 
+            # ---------------------------------------------------------------------------
+            # WINDOW SNAPPING (v9.9.0)
+            #
+            # The OS snaps / tiles the window (Windows Snap, macOS tiling, double-click the
+            # title bar, Maximize) and the app also offers View > Window Snap with keyboard
+            # shortcuts. While the window is snapped its size is NOT remembered as the
+            # user's chosen size (viewer size, Program UI Width, window size/position all
+            # keep their pre-snap values), and as soon as it is unsnapped it goes back to
+            # that size and viewer / controls split.
+            # ---------------------------------------------------------------------------
+            SNAP_TOLERANCE_PX = 16
+
+            def _current_qscreen(self):
+                """The QScreen the window is on. NOTE: `self.screen` is overwritten in
+                __init__ with the primary screen's QRect (screen_width / screen_height), which
+                shadows QWidget.screen() -- calling self.screen() raises TypeError. Always go
+                through this helper."""
+                try:
+                    scr = QWidget.screen(self)
+                except Exception:
+                    scr = None
+                return scr or QGuiApplication.primaryScreen()
+
+            def _snap_screen_rect(self):
+                try:
+                    scr = self._current_qscreen()
+                    return scr.availableGeometry() if scr is not None else None
+                except Exception:
+                    return None
+
+            def _snap_zone_rects(self, avail=None):
+                """Named snap zones (frame rectangles) of the current screen."""
+                a = avail or self._snap_screen_rect()
+                if a is None:
+                    return {}
+                x, y, w, h = a.x(), a.y(), a.width(), a.height()
+                hw, hh = w // 2, h // 2
+                return {
+                    'fill': QRect(x, y, w, h),
+                    'left': QRect(x, y, hw, h), 'right': QRect(x + hw, y, w - hw, h),
+                    'top': QRect(x, y, w, hh), 'bottom': QRect(x, y + hh, w, h - hh),
+                    'top_left': QRect(x, y, hw, hh), 'top_right': QRect(x + hw, y, w - hw, hh),
+                    'bottom_left': QRect(x, y + hh, hw, h - hh),
+                    'bottom_right': QRect(x + hw, y + hh, w - hw, h - hh),
+                }
+
+            def _snap_zone_of_frame(self, frame=None):
+                """Name of the snap zone the window frame currently fills, else None."""
+                fr = frame if frame is not None else self.frameGeometry()
+                tol = self.SNAP_TOLERANCE_PX
+                for name, r in self._snap_zone_rects().items():
+                    if (abs(fr.x() - r.x()) <= tol and abs(fr.y() - r.y()) <= tol
+                            and abs(fr.width() - r.width()) <= 2 * tol
+                            and abs(fr.height() - r.height()) <= 2 * tol):
+                        return name
+                return None
+
+            def _is_window_snapped(self):
+                """True while the window is maximized / full-screen / snapped to a screen zone
+                that differs from the user's own (normal) size."""
+                try:
+                    if self.isMaximized() or self.isFullScreen():
+                        return True
+                    zone = self._snap_zone_of_frame()
+                    if zone is None:
+                        return False
+                    ng = getattr(self, '_snap_normal_geom', None)
+                    if not ng:
+                        return False
+                    # The user's OWN size can legitimately fill the screen (small laptops):
+                    # a zone only counts as a snap when it differs from that size.
+                    tol = 2 * self.SNAP_TOLERANCE_PX
+                    return not (abs(self.width() - ng['w']) <= tol and abs(self.height() - ng['h']) <= tol)
+                except Exception:
+                    return False
+
+            def _capture_normal_window_geom(self):
+                try:
+                    sp = getattr(self, 'viewer_splitter', None)
+                    self._snap_normal_geom = {
+                        'x': int(self.x()), 'y': int(self.y()),
+                        'w': int(self.width()), 'h': int(self.height()),
+                        'split': list(sp.sizes()) if sp is not None else None,
+                        'viewer_w': int(getattr(self, 'viewer_fixed_width', 550)),
+                        'viewer_h': int(getattr(self, 'viewer_fixed_height', 350)),
+                        'content_w': int(getattr(self, 'safe_content_width', 1000)),
+                    }
+                except Exception:
+                    pass
+
+            def _schedule_snap_check(self):
+                t = getattr(self, '_snap_check_timer', None)
+                if t is None:
+                    t = self._snap_check_timer = QTimer(self)
+                    t.setSingleShot(True)
+                    t.setInterval(250)
+                    t.timeout.connect(self._check_window_snap_state)
+                t.start()
+
+            def _check_window_snap_state(self):
+                """Settled after a resize / move: remember the normal geometry, or restore it
+                when the window has just left a snapped state."""
+                if getattr(self, '_snap_restoring', False):
+                    return
+                # Startup sizing (before the user touches anything) IS the user's size --
+                # even when it happens to fill the screen.
+                if not getattr(self, '_app_started', False) and not (self.isMaximized() or self.isFullScreen()) \
+                        and not getattr(self, '_snap_active', False):
+                    self._capture_normal_window_geom()
+                    return
+                snapped = self._is_window_snapped()
+                was = bool(getattr(self, '_snap_active', False))
+                if snapped:
+                    if not was:
+                        self._snap_active = True
+                    return
+                if was:
+                    self._snap_active = False
+                    self._restore_normal_window_geom(keep_position=True)
+                    return
+                self._capture_normal_window_geom()
+
+            def _restore_normal_window_geom(self, keep_position=False):
+                ng = getattr(self, '_snap_normal_geom', None)
+                if not ng:
+                    return
+                self._snap_restoring = True
+                try:
+                    if self.isMaximized() or self.isFullScreen():
+                        self.showNormal()
+                    if abs(self.width() - ng['w']) > 2 or abs(self.height() - ng['h']) > 2:
+                        self.resize(ng['w'], ng['h'])
+                    if not keep_position:
+                        self.move(ng['x'], ng['y'])
+                    self._fit_window_to_screen()
+                    # The user's own preferences (the snapped size never replaced them).
+                    self.viewer_fixed_width = ng.get('viewer_w', getattr(self, 'viewer_fixed_width', 550))
+                    self.viewer_fixed_height = ng.get('viewer_h', getattr(self, 'viewer_fixed_height', 350))
+                    self.safe_content_width = ng.get('content_w', getattr(self, 'safe_content_width', 1000))
+                finally:
+                    QTimer.singleShot(0, self._finish_snap_restore)
+
+            def _finish_snap_restore(self):
+                ng = getattr(self, '_snap_normal_geom', None) or {}
+                try:
+                    sp = getattr(self, 'viewer_splitter', None)
+                    if sp is not None and ng.get('split') and len(ng['split']) == sp.count():
+                        sp.setSizes([int(v) for v in ng['split']])
+                except Exception:
+                    pass
+                self._snap_restoring = False
+                self._snap_active = False
+                try:
+                    self._viewer_render_timer.start()
+                except Exception:
+                    self.update_live_view()
+
+            def snap_window(self, zone):
+                """View > Window Snap: snap to `zone` ('left', 'right', 'top', 'bottom',
+                'top_left', ..., 'fill') or 'restore' to go back to the user's own size."""
+                if zone == 'restore':
+                    if self._is_window_snapped() or getattr(self, '_snap_active', False):
+                        self._snap_active = False
+                        self._restore_normal_window_geom(keep_position=False)
+                    return
+                rects = self._snap_zone_rects()
+                target = rects.get(zone)
+                if target is None:
+                    return
+                if not self._is_window_snapped():
+                    self._capture_normal_window_geom()
+                if self.isMaximized() or self.isFullScreen():
+                    self.showNormal()
+                # Frame -> client: the target is the OUTER frame; subtract the title bar and
+                # borders so the decorated window fills the zone exactly.
+                fr, geo = self.frameGeometry(), self.geometry()
+                ml, mt = geo.x() - fr.x(), geo.y() - fr.y()
+                mr, mb = fr.right() - geo.right(), fr.bottom() - geo.bottom()
+                w = max(1, target.width() - ml - mr)
+                h = max(1, target.height() - mt - mb)
+                self._snap_active = True
+                self.setGeometry(target.x() + ml, target.y() + mt, w, h)
+                try:
+                    self._viewer_render_timer.start()
+                except Exception:
+                    pass
+
+            def _install_window_snap_actions(self):
+                """Toolbar 'Window Snap' button (dropdown) and the keyboard shortcuts."""
+                if getattr(self, 'window_snap_action', None) is not None:
+                    return
+                menu = QMenu("Window Snap", self)
+                self._populate_window_snap_menu(menu)
+                act = QAction("Window Snap", self)
+                act.setToolTip("Window Snap: snap the window to half / a quarter of the screen or fill it "
+                               "(Ctrl+Alt+Arrow keys; Cmd+Option on macOS). 'Restore Previous Size' or "
+                               "dragging the window away returns it to your own size.")
+                act.setMenu(menu)
+                act.triggered.connect(lambda _=False: self.snap_window(
+                    'restore' if (self._is_window_snapped() or getattr(self, '_snap_active', False)) else 'left'))
+                self.window_snap_action = act
+                try:
+                    self.tool_bar.addAction(act)
+                    btn = self.tool_bar.widgetForAction(act)
+                    if isinstance(btn, QToolButton):
+                        btn.setPopupMode(QToolButton.InstantPopup)
+                        # No drop-down arrow on the icon (the menu still opens on click); the
+                        # arrow made it look different from every other toolbar button.
+                        btn.setObjectName("WindowSnapButton")
+                        btn.setStyleSheet("QToolButton#WindowSnapButton::menu-indicator "
+                                          "{ image: none; width: 0px; height: 0px; }")
+                except Exception:
+                    log_traceback()
+                try:
+                    self._update_toolbar_icons()
+                except Exception:
+                    pass
+
+            def _build_window_snap_menu(self, parent_menu):
+                m = parent_menu.addMenu("Window Snap")
+                self._populate_window_snap_menu(m)
+                return m
+
+            def _populate_window_snap_menu(self, m):
+                m.setToolTip("Snap the window to part of the screen. Restore (or dragging it away) "
+                             "returns it to your own size.")
+                entries = [
+                    ("Snap Left Half", 'left', "Ctrl+Alt+Left"),
+                    ("Snap Right Half", 'right', "Ctrl+Alt+Right"),
+                    ("Snap Top Half", 'top', None),
+                    ("Snap Bottom Half", 'bottom', None),
+                    (None, None, None),
+                    ("Snap Top-Left Quarter", 'top_left', None),
+                    ("Snap Top-Right Quarter", 'top_right', None),
+                    ("Snap Bottom-Left Quarter", 'bottom_left', None),
+                    ("Snap Bottom-Right Quarter", 'bottom_right', None),
+                    (None, None, None),
+                    ("Fill Screen", 'fill', "Ctrl+Alt+Up"),
+                    ("Restore Previous Size", 'restore', "Ctrl+Alt+Down"),
+                ]
+                existing = getattr(self, 'window_snap_actions', None)
+                if existing:
+                    for text, zone, sc in entries:
+                        if text is None:
+                            m.addSeparator()
+                        else:
+                            m.addAction(existing[zone])
+                    return m
+                self.window_snap_actions = {}
+                for text, zone, sc in entries:
+                    if text is None:
+                        m.addSeparator(); continue
+                    act = QAction(text, self)
+                    if sc:
+                        act.setShortcut(QKeySequence(sc))
+                        act.setShortcutContext(Qt.WindowShortcut)
+                    act.triggered.connect(lambda _=False, z=zone: self.snap_window(z))
+                    m.addAction(act)
+                    self.addAction(act)       # shortcut works without opening the menu
+                    self.window_snap_actions[zone] = act
+                return m
+
             def _fit_window_to_screen(self):
                 """Clamp the main window to the available screen area and move it fully
                 on-screen. Safety net for HighDPI / large-layout cases that would
@@ -19402,7 +20269,9 @@ if __name__ == "__main__":
                 client area plus its decorations never spill past the desktop edges — this
                 is what guarantees the bottom controls stay clickable at any DPI."""
                 try:
-                    screen = self.screen() or QGuiApplication.primaryScreen()
+                    # (self.screen is a QRect attribute -- see _current_qscreen; calling it
+                    # raised TypeError here, so this clamp silently never ran before v9.9.0.)
+                    screen = self._current_qscreen()
                     if screen is None:
                         return
                     avail = screen.availableGeometry()
@@ -19496,6 +20365,10 @@ if __name__ == "__main__":
                 _set(acb, lambda v: acb.setChecked(v), bool(getattr(self, 'autosave_on_crash', True)))
                 dcb = getattr(self, 'densitometry_raw_checkbox', None)
                 _set(dcb, lambda v: dcb.setChecked(v), bool(getattr(self, 'densitometry_raw_data', True)))
+                lcb = getattr(self, 'layer_label_save_combo', None)
+                if lcb is not None:
+                    _li = lcb.findData(self._layer_label_save_mode())
+                    _set(lcb, lambda v: lcb.setCurrentIndex(v), _li if _li >= 0 else 0)
 
                 use_gpu = bool(getattr(self, 'use_gpu', True))
                 gpu_r = getattr(self, 'gpu_radio', None); cpu_r = getattr(self, 'cpu_radio', None)
@@ -19626,11 +20499,27 @@ if __name__ == "__main__":
                     QMessageBox.information(self, "Nothing to Copy", "There are no custom markers or shapes to copy.")
                     return
 
+                # With items selected in Move/Resize (click, Shift+click or a selection
+                # rectangle) copy exactly THOSE -- every one of them; otherwise copy all.
+                src_markers, src_shapes = self.custom_markers, self.custom_shapes
+                try:
+                    if self.current_selection_mode in self._MOVE_RESIZE_MODES:
+                        _sel = [it for it in self._move_resize_selection()
+                                if it.get('type') in ('marker', 'shape')]
+                        if _sel:
+                            src_markers = [self.custom_markers[it['index']] for it in _sel
+                                           if it['type'] == 'marker' and 0 <= it['index'] < len(self.custom_markers)]
+                            src_shapes = [self.custom_shapes[it['index']] for it in _sel
+                                          if it['type'] == 'shape' and 0 <= it['index'] < len(self.custom_shapes)]
+                except Exception:
+                    log_traceback()
+                    src_markers, src_shapes = self.custom_markers, self.custom_shapes
+
                 # Serialize markers and shapes
                 # custom_markers are stored as lists, custom_shapes as dicts
                 # For markers, we need to convert QColor to string for JSON
                 serializable_markers = []
-                for marker_data in self.custom_markers:
+                for marker_data in src_markers:
                     try:
                         # marker_data is a list: [x, y, text, qcolor, font_family, font_size, is_bold, is_italic]
                         m_copy = list(marker_data)
@@ -19642,7 +20531,7 @@ if __name__ == "__main__":
                 
                 items_to_copy = {
                     "custom_markers": serializable_markers,
-                    "custom_shapes": self.custom_shapes # Already list of dicts
+                    "custom_shapes": [copy.deepcopy(sd) for sd in src_shapes]
                 }
 
                 try:
@@ -19655,7 +20544,7 @@ if __name__ == "__main__":
                     
                     QApplication.clipboard().setMimeData(mime_data)
                     QMessageBox.information(self, "Items Copied", 
-                                            f"{len(self.custom_markers)} markers and {len(self.custom_shapes)} shapes copied to clipboard.")
+                                            f"{len(src_markers)} markers and {len(src_shapes)} shapes copied to clipboard.")
                 except Exception as e:
                     QMessageBox.critical(self, "Copy Error", f"Could not copy custom items: {e}")
                     log_traceback()
@@ -19924,6 +20813,9 @@ if __name__ == "__main__":
                     if getattr(self, 'perspective_correction_active', False):
                         try: self._deactivate_perspective_mode()
                         except Exception: pass
+                    if exclude != 'layer_crop' and getattr(self, '_layer_crop_idx', 0):
+                        try: self._cancel_layer_crop_mode()
+                        except Exception: pass
                     if (exclude != 'region'
                             and getattr(self, 'select_region_button', None) is not None
                             and self.select_region_button.isChecked()):
@@ -19932,6 +20824,8 @@ if __name__ == "__main__":
                             self.activate_overlay_region_selection(False)
                         except Exception: pass
                     # Standard / custom marker placement + MW-predict previews
+                    self._smart_guides = []
+                    self._place_snap_cache = None
                     self.marker_mode = None
                     try:
                         self.live_view_label.preview_marker_enabled = False
@@ -20176,6 +21070,8 @@ if __name__ == "__main__":
                 mid-drag or while a modal tool is open could capture a half-finished edit."""
                 if getattr(self, '_is_restoring_state', False):
                     return "restoring"
+                if self._ann_preview_active():
+                    return "preview"
                 try:
                     if QApplication.mouseButtons() != Qt.NoButton:
                         return "mouse"
@@ -20259,7 +21155,24 @@ if __name__ == "__main__":
                         return None
                     return {"mode": "empty", "sig": None, "manifest": dict(base_manifest, mode="empty")}
 
-                cfg_text = _json_dumps_safe(self.get_current_config(), indent=1)
+                _cfg = self.get_current_config()
+                # Placed / copied Image 1 / Image 2 (v9.9.0): the untouched copy is kept in the
+                # recovery folder too (written once, reused until the copy changes), so a
+                # crash never loses an image copied with Copy Current or Load Overlay.
+                layer_payload = []
+                try:
+                    _info, _files = self._overlay_layers_config(
+                        lambda n, src: f"layer{n}_{int(src.cacheKey()) & 0xFFFFFFFFFFFF:x}.tif")
+                    if _info:
+                        _cfg['overlay_layers'] = _info
+                        _d = self._autosave_session_dir or ""
+                        for _n, _fname, _src in _files:
+                            layer_payload.append((_fname, None if os.path.isfile(os.path.join(_d, _fname))
+                                                  else QImage(_src)))
+                except Exception:
+                    log_traceback()
+                    layer_payload = []
+                cfg_text = _json_dumps_safe(_cfg, indent=1)
                 sig = self._autosave_state_signature(
                     json.dumps(json.loads(cfg_text), sort_keys=True))
                 if sig == self._autosave_last_sig and reason != "restored":
@@ -20309,7 +21222,7 @@ if __name__ == "__main__":
                 if reuse and not os.path.isfile(os.path.join(self._autosave_session_dir or "", reuse)):
                     reuse = None
                 return {"mode": "full", "sig": sig, "manifest": manifest, "thumb": thumb,
-                        "cfg_text": cfg_text, "image_key": key,
+                        "cfg_text": cfg_text, "image_key": key, "layers": layer_payload,
                         # QImage is implicitly shared: this "copy" is free, and the worker only
                         # reads it, so later edits on the UI thread detach instead of racing.
                         "image": None if reuse else QImage(img),
@@ -20353,6 +21266,17 @@ if __name__ == "__main__":
                         cfg_name = f"config_{n}.json"
                         _atomic_write_text(os.path.join(d, cfg_name), payload["cfg_text"])
                         man["config_file"] = cfg_name
+                        # Copied Image 1 / Image 2 (see _autosave_collect).
+                        man["layer_files"] = []
+                        for _fname, _qimg in payload.get("layers") or []:
+                            _dst = os.path.join(d, _fname)
+                            if _qimg is not None and not os.path.isfile(_dst):
+                                _tmp = _dst + ".tmp.tif"
+                                if not self._save_qimage_as_tiff(_qimg, _tmp):
+                                    raise OSError("a copied overlay image could not be written")
+                                os.replace(_tmp, _dst)
+                            if os.path.isfile(_dst):
+                                man["layer_files"].append(_fname)
                     if mode != "empty":
                         thumb = payload.get("thumb")
                         if thumb is not None and not thumb.isNull():
@@ -20369,6 +21293,7 @@ if __name__ == "__main__":
                         _atomic_write_text(man_path, _json_dumps_safe(man, indent=2))
                     keep = {self.AUTOSAVE_MANIFEST, man.get("image_file"),
                             man.get("config_file"), man.get("thumb_file")}
+                    keep.update(man.get("layer_files") or [])
                     for f in os.listdir(d):
                         if f in keep or f.startswith(self.AUTOSAVE_LOCK):
                             continue
@@ -20711,6 +21636,13 @@ if __name__ == "__main__":
                     staged_img = os.path.join(stage, stem + "_original" + img_ext)
                     shutil.copy2(os.path.join(d, man["image_file"]), staged_img)
                     shutil.copy2(os.path.join(d, man["config_file"]), os.path.join(stage, stem + "_config.txt"))
+                    # Copied overlay images: the config refers to them by these names, and the
+                    # open path restores them from the folder the image is opened from.
+                    for _lf in man.get("layer_files") or []:
+                        try:
+                            shutil.copy2(os.path.join(d, _lf), os.path.join(stage, _lf))
+                        except Exception:
+                            log_traceback()
                     self.open_image_from_path(staged_img)
                     if not (self.image and not self.image.isNull()):
                         QMessageBox.warning(self, "Recovery Failed",
@@ -20806,6 +21738,140 @@ if __name__ == "__main__":
                             self._set_box_height(key, int(h))
                     except Exception:
                         pass
+
+            def _layer_label_save_mode(self):
+                m = str(getattr(self, 'convert_layer_labels_on_save', 'ask') or 'ask')
+                return m if m in ('ask', 'always', 'never') else 'ask'
+
+            def _on_layer_label_save_mode_changed(self, *_args):
+                """Settings ▸ Saving: applies and persists immediately."""
+                cb = getattr(self, 'layer_label_save_combo', None)
+                if cb is not None and cb.currentData():
+                    self.convert_layer_labels_on_save = str(cb.currentData())
+                try:
+                    data = _gba_load_settings_dict()
+                    data["convert_layer_labels_on_save"] = self._layer_label_save_mode()
+                    os.makedirs(os.path.dirname(_gba_settings_filepath()), exist_ok=True)
+                    _atomic_write_json(_gba_settings_filepath(), data)
+                except Exception:
+                    log_traceback("persist layer-label save setting")
+
+            def _ask_convert_layer_labels(self):
+                """Save: should the labels of placed (Copy Current) panels become editable items?
+                Returns True / False. Honors Settings ▸ Saving; 'Ask' shows Yes / No with a
+                'Remember my choice' box that updates that setting."""
+                pending = self._layers_with_pending_annotations()
+                if not pending:
+                    return False
+                mode = self._layer_label_save_mode()
+                if mode in ('always', 'never'):
+                    return mode == 'always'
+                kinds = set()
+                for i in pending:
+                    ann = getattr(self, f'image{i}_annotations', None) or {}
+                    inc = ann.get('include') or set()
+                    if 'lr' in inc or 'custom' in inc:
+                        kinds.add("left / right MW labels and custom text → custom markers")
+                    if 'top' in inc:
+                        kinds.add("top labels → this image's top-label row")
+                    if 'shapes' in inc:
+                        shapes = ann.get('custom_shapes') or []
+                        if any(isinstance(sd.get('table'), dict) for sd in shapes):
+                            kinds.add("tables → editable tables")
+                        if any(sd.get('type') != 'leader' and not isinstance(sd.get('table'), dict)
+                               for sd in shapes):
+                            kinds.add("lines, arrows and boxes → editable shapes")
+                box = QMessageBox(self._modal_dialog_parent() if hasattr(self, '_modal_dialog_parent') else self)
+                box.setIcon(QMessageBox.Question)
+                box.setWindowTitle("Convert Labels of Placed Images?")
+                box.setText("The placed image(s) carry labels from the image they were copied from. "
+                            "After saving, convert them into normal editable items?")
+                box.setInformativeText("\n".join("• " + k for k in sorted(kinds)) +
+                                       "\n\nYes: they become ordinary markers / tables you can edit, "
+                                       "move and delete (Undo reverts it).\nNo: they stay with the "
+                                       "placed image (shown and saved, editable after Rasterize).")
+                box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                box.setDefaultButton(QMessageBox.Yes)
+                remember = QCheckBox("Remember my choice (Settings ▸ Saving)")
+                box.setCheckBox(remember)
+                yes = (box.exec() == QMessageBox.Yes)
+                if remember.isChecked():
+                    self.convert_layer_labels_on_save = 'always' if yes else 'never'
+                    cb = getattr(self, 'layer_label_save_combo', None)
+                    if cb is not None:
+                        cb.blockSignals(True)
+                        cb.setCurrentIndex(max(0, cb.findData(self.convert_layer_labels_on_save)))
+                        cb.blockSignals(False)
+                    self._on_layer_label_save_mode_changed()
+                return yes
+
+            def convert_layer_labels_to_items(self):
+                """Turn the labels of every placed (Copy Current) panel into ordinary editable
+                items, exactly where they are drawn: left / right MW labels and custom text ->
+                custom markers, tables -> editable tables, lines / arrows / boxes -> shapes, top
+                labels -> this image's top-label row (custom markers cannot be rotated). The
+                panels stay placed as layers. One undo step. Returns the number of items."""
+                pending = self._layers_with_pending_annotations()
+                if not pending:
+                    return 0
+                self.save_state()
+                # Import exactly as the live preview draws them (left / right labels that line
+                # up JOIN this image's sets there), so nothing on screen moves or resizes...
+                before = {sd: len(getattr(self, f'{sd}_markers', []) or []) for sd in ('left', 'right')}
+                keep = {
+                    'marker_values': list(getattr(self, 'marker_values', []) or []),
+                    'mwm_label_values': list(getattr(self, 'mwm_label_values', []) or []),
+                    'mwm_hidden_label_indices': list(getattr(self, 'mwm_hidden_label_indices', []) or []),
+                    'left_marker_shift_added': getattr(self, 'left_marker_shift_added', 0),
+                    'right_marker_shift_added': getattr(self, 'right_marker_shift_added', 0),
+                }
+                _tb = getattr(self, 'marker_values_textbox', None)
+                _cb = getattr(self, 'combo_box', None)
+                ui_keep = (_tb.text() if _tb is not None else None, _tb.isEnabled() if _tb is not None else None,
+                           _cb.currentIndex() if _cb is not None else None)
+                n = 0
+                for i in pending:
+                    try:
+                        n += self._import_overlay_annotations(i)
+                    except Exception:
+                        log_traceback()
+                # ...then turn every left / right label that came with a panel into a CUSTOM text
+                # marker at the very place, font and size it is drawn, and give this image's own
+                # left / right sets, L/R values and preset back exactly as they were.
+                try:
+                    rs = float(self.EXPORT_RENDER_SCALE)
+                    img = self.image if (self.image and not self.image.isNull()) else self.image_master
+                    fsf = self._export_font_scale_factor(rs, img.width(), img.height())
+                    customs = []
+                    for it in self._annotation_text_items(rs, fsf, kinds=('left_marker', 'right_marker')):
+                        side = 'left' if it['kind'] == 'left_marker' else 'right'
+                        if int(it.get('index', 0)) < before[side]:
+                            continue
+                        r = QFontMetrics(it['font']).boundingRect(it['text'])
+                        c = it['transform'].map(QPointF(r.center()))
+                        customs.append([c.x() / rs, c.y() / rs, it['text'], QColor(it['color']),
+                                        self.font_family, int(self.font_size),
+                                        bool(getattr(self, 'font_bold', False)),
+                                        bool(getattr(self, 'font_italic', False))])
+                    if customs:
+                        for sd in ('left', 'right'):
+                            setattr(self, f'{sd}_markers', list(getattr(self, f'{sd}_markers', []) or [])[:before[sd]])
+                        for k, v in keep.items():
+                            setattr(self, k, v)
+                        for sd in ('left', 'right'):
+                            sl = getattr(self, f'{sd}_padding_slider', None)
+                            if sl is not None:
+                                sl.blockSignals(True); sl.setValue(int(keep[f'{sd}_marker_shift_added'] or 0)); sl.blockSignals(False)
+                        if _tb is not None:
+                            _tb.blockSignals(True); _tb.setText(ui_keep[0]); _tb.setEnabled(ui_keep[1]); _tb.blockSignals(False)
+                        if _cb is not None and ui_keep[2] is not None:
+                            _cb.blockSignals(True); _cb.setCurrentIndex(ui_keep[2]); _cb.blockSignals(False)
+                        self.custom_markers.extend(customs)
+                except Exception:
+                    log_traceback()
+                self.is_modified = True
+                self.update_live_view()
+                return n
 
             def _on_densitometry_settings_changed(self, *_args):
                 cb = getattr(self, 'densitometry_raw_checkbox', None)
@@ -21027,6 +22093,8 @@ if __name__ == "__main__":
 
             def cancel_drawing_mode(self):
                 """Resets drawing mode and cursor."""
+                self._smart_guides = []
+                self._place_snap_cache = None
                 self.drawing_mode = None
                 self.live_view_label.mode = None # App-level mode for LiveViewLabel's paintEvent logic
                 self.current_drawing_shape_preview = None
@@ -21037,15 +22105,37 @@ if __name__ == "__main__":
             def start_shape_draw(self, event):
                 if self.drawing_mode in ['line', 'rectangle', 'arrow']:
                     start_point_transformed = self.live_view_label.transform_point(event.position())
-                    snapped_start_point = self.snap_point_to_grid(start_point_transformed) # Snap it
+                    # Grid snap + alignment guides (same as the hover preview showed)
+                    snapped_start_point = self._guided_placement_point(
+                        start_point_transformed, 'point',
+                        event.modifiers() | QApplication.keyboardModifiers())
                     
                     self.current_drawing_shape_preview = {'start': snapped_start_point, 'end': snapped_start_point}
                     self.update_live_view()
 
             def update_shape_draw(self, event):
+                if self.drawing_mode in ['line', 'rectangle', 'arrow'] and not self.current_drawing_shape_preview:
+                    # Hovering before the press: show where the start point would line up.
+                    try:
+                        if self.image is not None and not self.image.isNull():
+                            had = bool(getattr(self, '_smart_guides', None))
+                            self._guided_placement_point(
+                                self.live_view_label.transform_point(event.position()), 'point',
+                                event.modifiers() | QApplication.keyboardModifiers())
+                            if had or self._smart_guides:
+                                self.live_view_label.update()
+                    except Exception:
+                        log_traceback()
+                    return
                 if self.drawing_mode in ['line', 'rectangle', 'arrow'] and self.current_drawing_shape_preview:
                     end_point_transformed = self.live_view_label.transform_point(event.position())
-                    snapped_end_point = self.snap_point_to_grid(end_point_transformed) # Snap it
+                    _mods = event.modifiers() | QApplication.keyboardModifiers()
+                    # Shift constrains the angle / square: guides would fight it.
+                    snapped_end_point = (self.snap_point_to_grid(end_point_transformed)
+                                         if _mods & Qt.ShiftModifier else
+                                         self._guided_placement_point(end_point_transformed, 'point', _mods))
+                    if _mods & Qt.ShiftModifier:
+                        self._smart_guides = []
                     start_point = self.current_drawing_shape_preview['start']
 
                     # --- MODIFIED: Constrain movement if Shift is pressed ---
@@ -21519,6 +22609,8 @@ if __name__ == "__main__":
                 self.layout_bottom_action.setIcon(create_vector_icon("layout_bottom", icon_size, text_color))
                 self.layout_left_action.setIcon(create_vector_icon("layout_left", icon_size, text_color))
                 self.layout_right_action.setIcon(create_vector_icon("layout_right", icon_size, text_color))
+                if getattr(self, 'window_snap_action', None) is not None:
+                    self.window_snap_action.setIcon(create_vector_icon("window_snap", icon_size, text_color))
                 self.theme_action.setIcon(create_vector_icon("theme", icon_size, text_color))
                 self.info_action.setIcon(create_vector_icon("github", icon_size, text_color))
                 self.draw_bounding_box_action.setIcon(create_vector_icon("bounding_box", icon_size, text_color))
@@ -21579,6 +22671,21 @@ if __name__ == "__main__":
 
                 self.addToolBar(Qt.TopToolBarArea, self.tool_bar)
                 self.tool_bar.setContextMenuPolicy(Qt.PreventContextMenu)
+                # Overflow arrow opens on hover and the extra row stays 2 s after leaving.
+                try:
+                    self._toolbar_overflow_hover = _ToolbarOverflowHover(self.tool_bar)
+                except Exception:
+                    log_traceback()
+                # Window Snap (v9.9.0): dropdown on the toolbar + app-wide shortcuts.
+                try:
+                    self._install_window_snap_actions()
+                    # Load every saver/exporter module in the background now, so an app update
+                    # while this window is open cannot break saving later (see
+                    # _prewarm_file_modules).
+                    threading.Thread(target=_prewarm_file_modules, name="GBA-prewarm",
+                                     daemon=True).start()
+                except Exception:
+                    log_traceback()
 
                 # Must come after addAction: widgetForAction() has no button before that.
                 self._install_move_resize_longpress()
@@ -21656,7 +22763,9 @@ if __name__ == "__main__":
                 by_text = {
                     "Invert": "Invert the image (dark bands on light <-> light bands on dark). Shortcut: Ctrl+I.",
                     "Reset Image": "Undo every adjustment on this tab (levels, gamma, channels, sharpening, CLAHE, inversion).",
-                    "Rasterize Image": ("Bake the placed Image 1 / Image 2 into the image as ONE picture. Markers and "
+                    "Rasterize Image": ("OPTIONAL. Placed images are already included when you save, copy, export, "
+                                        "crop or analyse, and stay movable with Move/Resize. Rasterize "
+                                        "bakes the placed Image 1 / Image 2 into the image as ONE picture. Markers and "
                                         "labels are NOT burned in -- they stay editable (labels from a copied panel "
                                         "are added as markers if you ticked them when placing). Levels and other "
                                         "image settings are reset afterwards. Undo with Ctrl+Z."),
@@ -21836,7 +22945,58 @@ if __name__ == "__main__":
                     initial_band_settings = self.peak_dialog_settings,
                     gel_color_np      = color_np
                 )
+                _layers_were_live = self._overlay_layers_live()
+                # Where each placed image sits, and the analysed region, in image px.
+                _layer_boxes = {}
+                for _i in (1, 2):
+                    try:
+                        _poly = self._layer_polygon_image(_i)
+                        if _poly is not None:
+                            _layer_boxes[_i] = _poly.boundingRect()
+                    except Exception:
+                        pass
+                try:
+                    if is_quad:
+                        _xs = [float(p_.x() if hasattr(p_, 'x') else p_[0]) for p_ in region_def]
+                        _ys = [float(p_.y() if hasattr(p_, 'y') else p_[1]) for p_ in region_def]
+                        _region = QRectF(min(_xs), min(_ys), max(_xs) - min(_xs), max(_ys) - min(_ys))
+                    else:
+                        _region = QRectF(*[float(v) for v in region_def[:4]])
+                except Exception:
+                    _region = None
                 accepted = (wizard.exec() == QDialog.Accepted)
+                if accepted and _layers_were_live and self._overlay_layers_live():
+                    # The committed gel was cut from the composite: a placed image INSIDE the
+                    # analysed region is now part of it (take it off the canvas so it is not
+                    # drawn twice; it stays loaded). A placed image OUTSIDE the region -- e.g. a
+                    # second gel beside the analysed one -- stays a layer, moved exactly like the
+                    # custom labels (region origin -> new canvas origin). The padding pass that
+                    # follows makes room for it (Set Recommended Values counts placed images).
+                    off = getattr(wizard, '_commit_offset', None)
+                    kept, baked = [], []
+                    for _i, _box in _layer_boxes.items():
+                        if not self._overlay_layer_placed(_i):
+                            continue
+                        inter = _box.intersected(_region) if _region is not None else _box
+                        frac = ((inter.width() * inter.height()) / max(1.0, _box.width() * _box.height())
+                                if not inter.isEmpty() else 0.0)
+                        if off is not None and frac < 0.05:
+                            pos = getattr(self, f'image{_i}_position')
+                            self._set_layer_position(_i, (pos[0] + off[0], pos[1] + off[1]))
+                            kept.append(_i)
+                        else:
+                            getattr(self, f'remove_image{_i}')()
+                            baked.append(_i)
+                    if kept:
+                        self._make_room_for_layers(kept)
+                    self._update_overlay_size_labels()
+                    if baked:
+                        self.show_mode_status(
+                            "Auto Gel analysed the region with " + " and ".join(f"Image {i}" for i in baked)
+                            + " in it; " + ("it is" if len(baked) == 1 else "they are")
+                            + " now part of the analysed gel (still loaded on the Overlap Images tab)."
+                            + (" " + " and ".join(f"Image {i}" for i in kept) + " stays placed beside it."
+                               if kept else ""))
                 if accepted:
                     # Now that the wizard (and its densitometry dialog) have closed and the
                     # main viewer geometry has settled, apply the accurate recommended padding
@@ -21845,6 +23005,33 @@ if __name__ == "__main__":
                     # wizard was still modal misaligned the boxes against a transient size).
                     want_pad = bool(getattr(wizard, '_do_padding', False))
                     QTimer.singleShot(0, lambda wp=want_pad: self._auto_gel_settle_and_pad(wp))
+
+            def _make_room_for_layers(self, idxs):
+                """Extend the padding so the given placed images lie on the canvas (the same as
+                Transform > Padding: labels, shapes and layers move with the image)."""
+                try:
+                    if not (self.image and not self.image.isNull()):
+                        return
+                    W, H = float(self.image.width()), float(self.image.height())
+                    need = [0, 0, 0, 0]                      # left, right, top, bottom
+                    for i in idxs:
+                        poly = self._layer_polygon_image(i)
+                        if poly is None:
+                            continue
+                        b = poly.boundingRect()
+                        need[0] = max(need[0], int(math.ceil(-b.left())) + 10 if b.left() < 0 else 0)
+                        need[1] = max(need[1], int(math.ceil(b.right() - W)) + 10 if b.right() > W else 0)
+                        need[2] = max(need[2], int(math.ceil(-b.top())) + 10 if b.top() < 0 else 0)
+                        need[3] = max(need[3], int(math.ceil(b.bottom() - H)) + 10 if b.bottom() > H else 0)
+                    if not any(need):
+                        return
+                    cl, cr, ct, cb = (int(v) for v in self._measure_transparent_margins())
+                    for w, v in ((self.left_padding_input, cl + need[0]), (self.right_padding_input, cr + need[1]),
+                                 (self.top_padding_input, ct + need[2]), (self.bottom_padding_input, cb + need[3])):
+                        w.setText(str(int(v)))
+                    self.finalize_image()
+                except Exception:
+                    log_traceback()
 
             def _auto_gel_settle_and_pad(self, apply_padding):
                 """Post-wizard finishing pass (runs after the modal Auto Gel wizard closes).
@@ -22728,6 +23915,8 @@ if __name__ == "__main__":
                 # to be one undo step raise this flag after taking their own snapshot.
                 if getattr(self, '_suppress_state_save', False):
                     return
+                if self._ann_preview_active():
+                    return          # labels of placed panels are a temporary preview
 
                 # Every edit funnels through here, so it's the natural place to notice that
                 # the on-screen state has diverged from the analysis file — that's what makes
@@ -22775,7 +23964,8 @@ if __name__ == "__main__":
                     if not getattr(self, '_undo_commit_pending', False):
                         return
                     busy = (getattr(self, '_is_restoring_state', False)
-                            or getattr(self, '_suppress_state_save', False))
+                            or getattr(self, '_suppress_state_save', False)
+                            or self._ann_preview_active())
                     if not force and not busy:
                         # A modal editor previews its changes live in the model, and a drag is
                         # only complete on release: wait until neither is in progress.
@@ -22889,6 +24079,10 @@ if __name__ == "__main__":
                     # multiply the memory of a 20-deep undo stack.
                     "image1_position": tuple(self.image1_position) if hasattr(self, 'image1_position') else None,
                     "image2_position": tuple(self.image2_position) if hasattr(self, 'image2_position') else None,
+                    # Layer geometry (crop / flip / resize / rotation) -- pixel-free, see
+                    # _layer_state_for_undo -- so Crop Image, Uncrop and Flip are undoable.
+                    "image1_layer": self._layer_state_for_undo(1),
+                    "image2_layer": self._layer_state_for_undo(2),
 
                     # --- ANALYSIS REGIONS (THE FIX) ---
                     # Refresh each densitometry box's image-space anchor from its current
@@ -23054,6 +24248,13 @@ if __name__ == "__main__":
                         elif _pos is None and hasattr(self, f'image{_idx}_position'):
                             # The layer was not placed in this snapshot.
                             delattr(self, f'image{_idx}_position')
+                    for _idx in (1, 2):
+                        if state_dict.get(f'image{_idx}_layer'):
+                            self._restore_layer_state(_idx, state_dict.get(f'image{_idx}_layer'))
+                    try:
+                        self._overlay_content_cache = {}
+                    except Exception:
+                        pass
 
                     # Restore Analysis Regions
                     serialized_defs = state_dict.get("multi_lane_definitions", [])
@@ -23203,11 +24404,12 @@ if __name__ == "__main__":
                 mw_layout = QGridLayout(mw_group)
                 
                 # --- Row 1: MW Prediction ---
-                mw_layout.addWidget(QLabel("Regression Model:"), 0, 0)
+                _mw_row_box, _mw_row = self._make_flow_row()
+                _mw_row.addWidget(QLabel("Regression Model:"))
                 self.mw_regression_model_combo = QComboBox()
                 self.mw_regression_model_combo.addItems(["Log-Linear (Degree 1)", "Log-Polynomial (Degree 2)", "Log-Polynomial (Degree 3)","Log 4-PL"])
                 self.mw_regression_model_combo.setCurrentText("Log-Polynomial (Degree 2)")
-                mw_layout.addWidget(self.mw_regression_model_combo, 0, 1)
+                _mw_row.addWidget(self.mw_regression_model_combo)
                 self.mw_regression_model_combo.currentTextChanged.connect(
                     self._on_main_regression_model_changed)
                 
@@ -23216,18 +24418,20 @@ if __name__ == "__main__":
                 self.predict_button.setEnabled(False)
                 self.predict_button.clicked.connect(self.predict_molecular_weight)
                 self._register_action_button(self.predict_button)
-                mw_layout.addWidget(self.predict_button, 0, 2)
+                _mw_row.addWidget(self.predict_button)
 
                 # --- Row 2: Protein Analysis & Measurement Button ---
                 self.open_glyco_mapper_button = QPushButton("Protein Analysis")
                 self.open_glyco_mapper_button.setToolTip("Analyze a protein sequence for modifications and oligomerization.")
                 self.open_glyco_mapper_button.clicked.connect(self.open_protein_analyzer)
-                mw_layout.addWidget(self.open_glyco_mapper_button, 0, 3)
+                _mw_row.addWidget(self.open_glyco_mapper_button)
 
                 self.btn_open_measure_window = QPushButton("Measurement Tools")
                 self.btn_open_measure_window.setToolTip("Opens a separate window for image calibration, distance, and area measurements.")
                 self.btn_open_measure_window.clicked.connect(self.open_measurement_window)
-                mw_layout.addWidget(self.btn_open_measure_window, 0, 4) # Moved here
+                _mw_row.addWidget(self.btn_open_measure_window)
+                # Wraps when narrow (v9.9.0) instead of squeezing the button text.
+                mw_layout.addWidget(_mw_row_box, 0, 0, 1, 5)
 
                 mw_layout.setColumnStretch(1, 1)
                 self.show_oligomer_glyco_overlay_checkbox = QCheckBox("Show Oligomer/Glyco Overlay")
@@ -23296,14 +24500,14 @@ if __name__ == "__main__":
                 self.btn_sel_rec.clicked.connect(self.enable_move_selection_mode)
                 self.btn_sel_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self._register_action_button(self.btn_sel_rec, colorize=True)
-                step1_layout.addWidget(self.btn_auto_lane_click, 0, 0)
-                step1_layout.addWidget(self.btn_define_quad, 0, 1)
-                step1_layout.addWidget(self.btn_define_rec, 1, 0)
-                step1_layout.addWidget(self.btn_sel_rec, 1, 1)
+                _s1_box, _s1 = self._make_flow_row()
+                for _b in (self.btn_auto_lane_click, self.btn_define_quad, self.btn_define_rec, self.btn_sel_rec):
+                    _s1.addWidget(_b)
+                step1_layout.addWidget(_s1_box, 0, 0, 1, 2)
                 quant_workflow_layout.addWidget(step1_group,0)
                 step2_group = QGroupBox("Process Regions and View Results")
                 step2_layout = QGridLayout(step2_group)
-                process_buttons_layout = QHBoxLayout()
+                process_buttons_layout_box, process_buttons_layout = self._make_flow_row()
                 self.btn_process_std = QPushButton("Process Selected as Standard"); self.btn_process_std.setToolTip("Analyze a pre-defined and selected region as a single standard lane.")
                 self.btn_process_std.clicked.connect(self.process_standard)
                 self.btn_analyze_sample = QPushButton("Analyze as Sample(s)"); self.btn_analyze_sample.setToolTip("Analyze the defined region(s) as sample lane(s), using the standard curve if available.")
@@ -23312,7 +24516,7 @@ if __name__ == "__main__":
                 self.btn_analyze_sample.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 process_buttons_layout.addWidget(self.btn_process_std)
                 process_buttons_layout.addWidget(self.btn_analyze_sample)
-                step2_layout.addLayout(process_buttons_layout, 0, 0, 1, 3)
+                step2_layout.addWidget(process_buttons_layout_box, 0, 0, 1, 3)
                 step2_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 step2_layout.addWidget(QLabel("Std. Quantities:"), 2, 0); self.standard_protein_values = QLineEdit(); self.standard_protein_values.setPlaceholderText("Known quantities (comma-separated)")
                 step2_layout.addWidget(self.standard_protein_values, 2, 1)
@@ -23328,7 +24532,7 @@ if __name__ == "__main__":
                     "Calculated peak areas and quantities will appear here for each lane.")
                 step2_layout.addWidget(self.target_protein_areas_text, 4, 1, 1, 2)
                 self._attach_box_grip(self.target_protein_areas_text, "sample_results", min_h=60)
-                bottom_buttons_layout = QHBoxLayout()
+                bottom_buttons_layout_box, bottom_buttons_layout = self._make_flow_row()
                 self.table_export_button = QPushButton("View Full Results and History")
                 self.table_export_button.setToolTip("Open a new window to view, export, and manage current and past analysis results.")
                 self.table_export_button.clicked.connect(self.open_table_window)
@@ -23355,7 +24559,7 @@ if __name__ == "__main__":
                 bottom_buttons_layout.addWidget(self.load_analysis_button)
                 bottom_buttons_layout.addWidget(self.toggle_markers_button)
                 bottom_buttons_layout.addWidget(self.clear_predict_button)
-                step2_layout.addLayout(bottom_buttons_layout, 5, 0, 1, 3)
+                step2_layout.addWidget(bottom_buttons_layout_box, 5, 0, 1, 3)
                 quant_workflow_layout.addWidget(step2_group)
                 main_layout.addWidget(quant_workflow_group)
 
@@ -25163,12 +26367,16 @@ if __name__ == "__main__":
                 main_layout.setSpacing(10)
 
                 # --- Top Row: Side-by-Side Overlay Controls ---
-                top_row_layout = QHBoxLayout()
                 
                 # --- Image 1 (Base) Controls ---
                 image1_group = QGroupBox("Image 1 (Base)")
                 image1_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                image1_layout = QGridLayout(image1_group)
+                # Stack: [wrapping buttons] / [sliders grid] / [crop & flip row]. The wrapping rows
+                # live OUTSIDE the grid: a grid sizes a spanning height-for-width row with too
+                # narrow a width and left a big empty gap under the buttons.
+                _img1_vbox = QVBoxLayout(image1_group)
+                image1_layout = QGridLayout()
+                _img1_vbox.addLayout(image1_layout)
 
                 copy_image1_button = QPushButton("Copy Current"); copy_image1_button.clicked.connect(self.save_image1)
                 place_image1_button = QPushButton("Place"); place_image1_button.clicked.connect(self.place_image1)
@@ -25182,10 +26390,10 @@ if __name__ == "__main__":
                                                  "Use Remove to just take it off the canvas and keep it for re-Placing.")
                 reset_overlay1_button.clicked.connect(lambda: (self.clear_image1(), self.update_live_view()))
 
-                image1_layout.addWidget(copy_image1_button, 0, 0, 1, 1)
-                image1_layout.addWidget(place_image1_button, 0, 1, 1, 1)
-                image1_layout.addWidget(remove_image1_button, 1, 0, 1, 1)
-                image1_layout.addWidget(reset_overlay1_button, 1, 1, 1, 1)
+                _btns1_box, _btns1 = self._make_flow_row()
+                for _b in (copy_image1_button, place_image1_button, remove_image1_button, reset_overlay1_button):
+                    _btns1.addWidget(_b)
+                _img1_vbox.insertWidget(0, _btns1_box)
                 # Size info lives in the group-box TOOLTIP (see _update_overlay_size_labels)
                 # rather than an inline label, to keep the panel uncluttered.
                 self.image1_group = image1_group
@@ -25235,13 +26443,40 @@ if __name__ == "__main__":
                 self.image1_blend_slider.valueChanged.connect(lambda val, lbl=self.image1_blend_label: lbl.setText(f"{val}%"))
                 image1_layout.addWidget(self.image1_blend_label, 6, 2)
 
+                # Crop / flip THIS image only. Non-destructive: Uncrop shows all of it again.
+                _edit_row1_box, _edit_row1 = self._make_flow_row()
+                self.image1_crop_button = QPushButton("Crop")
+                self.image1_crop_button.setCheckable(True)
+                self.image1_crop_button.setToolTip(
+                    "Crop Image 1: drag a rectangle over it on the canvas and only the part inside stays "
+                    "visible.\nThe hidden part is kept, so 'Uncrop' brings it back. Esc finishes.")
+                self.image1_crop_button.clicked.connect(lambda checked, _i=1: self.activate_layer_crop_mode(_i, checked))
+                self._register_action_button(self.image1_crop_button)
+                _uncrop1 = QPushButton("Uncrop")
+                _uncrop1.setToolTip("Show the whole of Image 1 again (its position on the canvas is kept).")
+                _uncrop1.clicked.connect(lambda _=False, _i=1: self.reset_layer_crop(_i))
+                _fliph1 = QPushButton("Flip H")
+                _fliph1.setToolTip("Mirror Image 1 left-right (this layer only).")
+                _fliph1.clicked.connect(lambda _=False, _i=1: self.flip_layer(_i, True))
+                _flipv1 = QPushButton("Flip V")
+                _flipv1.setToolTip("Mirror Image 1 top-bottom (this layer only).")
+                _flipv1.clicked.connect(lambda _=False, _i=1: self.flip_layer(_i, False))
+                for _b in (self.image1_crop_button, _uncrop1, _fliph1, _flipv1):
+                    _edit_row1.addWidget(_b)
+                _img1_vbox.addWidget(_edit_row1_box)
+
                 image1_layout.setColumnStretch(1, 1)
-                top_row_layout.addWidget(image1_group)
+                # (Image 1 / Image 2 are added side by side -- or stacked -- below.)
 
                 # --- Image 2 (Overlay) Controls ---
                 image2_group = QGroupBox("Image 2 (Overlay)")
                 image2_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                image2_layout = QGridLayout(image2_group)
+                # Stack: [wrapping buttons] / [sliders grid] / [crop & flip row]. The wrapping rows
+                # live OUTSIDE the grid: a grid sizes a spanning height-for-width row with too
+                # narrow a width and left a big empty gap under the buttons.
+                _img2_vbox = QVBoxLayout(image2_group)
+                image2_layout = QGridLayout()
+                _img2_vbox.addLayout(image2_layout)
 
                 copy_image2_button = QPushButton("Copy Current"); copy_image2_button.clicked.connect(self.save_image2)
                 place_image2_button = QPushButton("Place"); place_image2_button.clicked.connect(self.place_image2)
@@ -25255,10 +26490,10 @@ if __name__ == "__main__":
                                                  "Use Remove to just take it off the canvas and keep it for re-Placing.")
                 reset_overlay2_button.clicked.connect(lambda: (self.clear_image2(), self.update_live_view()))
 
-                image2_layout.addWidget(copy_image2_button, 0, 0, 1, 1)
-                image2_layout.addWidget(place_image2_button, 0, 1, 1, 1)
-                image2_layout.addWidget(remove_image2_button, 1, 0, 1, 1)
-                image2_layout.addWidget(reset_overlay2_button, 1, 1, 1, 1)
+                _btns2_box, _btns2 = self._make_flow_row()
+                for _b in (copy_image2_button, place_image2_button, remove_image2_button, reset_overlay2_button):
+                    _btns2.addWidget(_b)
+                _img2_vbox.insertWidget(0, _btns2_box)
                 self.image2_group = image2_group
 
                 image2_layout.addWidget(QLabel("X:"), 2, 0)
@@ -25302,9 +26537,32 @@ if __name__ == "__main__":
                 self.image2_blend_slider.valueChanged.connect(lambda val, lbl=self.image2_blend_label: lbl.setText(f"{val}%"))
                 image2_layout.addWidget(self.image2_blend_label, 6, 2)
 
+                # Crop / flip THIS image only. Non-destructive: Uncrop shows all of it again.
+                _edit_row2_box, _edit_row2 = self._make_flow_row()
+                self.image2_crop_button = QPushButton("Crop")
+                self.image2_crop_button.setCheckable(True)
+                self.image2_crop_button.setToolTip(
+                    "Crop Image 2: drag a rectangle over it on the canvas and only the part inside stays "
+                    "visible.\nThe hidden part is kept, so 'Uncrop' brings it back. Esc finishes.")
+                self.image2_crop_button.clicked.connect(lambda checked, _i=2: self.activate_layer_crop_mode(_i, checked))
+                self._register_action_button(self.image2_crop_button)
+                _uncrop2 = QPushButton("Uncrop")
+                _uncrop2.setToolTip("Show the whole of Image 2 again (its position on the canvas is kept).")
+                _uncrop2.clicked.connect(lambda _=False, _i=2: self.reset_layer_crop(_i))
+                _fliph2 = QPushButton("Flip H")
+                _fliph2.setToolTip("Mirror Image 2 left-right (this layer only).")
+                _fliph2.clicked.connect(lambda _=False, _i=2: self.flip_layer(_i, True))
+                _flipv2 = QPushButton("Flip V")
+                _flipv2.setToolTip("Mirror Image 2 top-bottom (this layer only).")
+                _flipv2.clicked.connect(lambda _=False, _i=2: self.flip_layer(_i, False))
+                for _b in (self.image2_crop_button, _uncrop2, _fliph2, _flipv2):
+                    _edit_row2.addWidget(_b)
+                _img2_vbox.addWidget(_edit_row2_box)
+
                 image2_layout.setColumnStretch(1, 1)
-                top_row_layout.addWidget(image2_group)
-                main_layout.addLayout(top_row_layout)
+                # Image 1 | Image 2 side by side; Image 2 moves BELOW Image 1 when the controls
+                # are too narrow for both (v9.9.0, _make_columns).
+                main_layout.addWidget(self._make_columns(image1_group, image2_group))
 
                 # --- Middle Section: Global Controls ---
                 global_controls_group = QGroupBox("Global Overlay Controls")
@@ -25315,13 +26573,15 @@ if __name__ == "__main__":
                 set_base_button = QPushButton("Set Current as Base (Image 1)")
                 set_base_button.setToolTip("Copies the main image to the 'Image 1' buffer and places it as the bottom layer.")
                 set_base_button.clicked.connect(self.set_overlay_base)
-                global_controls_layout.addWidget(set_base_button, 0, 1, 1, 2)
+                _base_row_box, _base_row = self._make_flow_row()
+                _base_row.addWidget(set_base_button)
 
                 self.load_overlay_button = QPushButton("Load Overlay (Image 2)")
                 self.load_overlay_button.setToolTip("Loads a second image from a file into the 'Image 2' buffer and places it as the top layer.")
                 self.load_overlay_button.clicked.connect(self.load_overlay_image)
                 self.load_overlay_button.setEnabled(False)
-                global_controls_layout.addWidget(self.load_overlay_button, 0, 3, 1, 2)
+                _base_row.addWidget(self.load_overlay_button)
+                global_controls_layout.addWidget(_base_row_box, 0, 1, 1, 4)
                 
                 # --- Mixing Controls ---
                 global_controls_layout.addWidget(QLabel("Global Mixing % (Overlay):"), 1, 0)
@@ -25353,9 +26613,17 @@ if __name__ == "__main__":
                 global_controls_layout.addWidget(self.blend_value_label, 1, 4)     # fixed label in last col
 
                 self.interactive_overlay_button = QPushButton("Activate Interactive Alignment"); self.interactive_overlay_button.setCheckable(True); self.interactive_overlay_button.clicked.connect(self.toggle_interactive_overlay_mode); self._register_action_button(self.interactive_overlay_button)
-                finalize_button = QPushButton("Rasterize Image"); finalize_button.clicked.connect(self.finalize_combined_image)
-                global_controls_layout.addWidget(self.interactive_overlay_button, 2, 1, 1, 2)
-                global_controls_layout.addWidget(finalize_button, 2, 3, 1, 2)
+                finalize_button = QPushButton("Rasterize Image"); finalize_button.clicked.connect(lambda: self.finalize_combined_image())
+                finalize_button.setToolTip(
+                    "OPTIONAL: merge the placed images into one picture.\n"
+                    "Not needed to save, copy, export, crop or analyse -- placed images are included "
+                    "in all of those as they are, and stay movable with Move/Resize.\n"
+                    "Markers and labels are never burned in. Levels and other image settings are "
+                    "reset afterwards. Undo with Ctrl+Z.")
+                _act_row_box, _act_row = self._make_flow_row()
+                _act_row.addWidget(self.interactive_overlay_button)
+                _act_row.addWidget(finalize_button)
+                global_controls_layout.addWidget(_act_row_box, 2, 1, 1, 4)
                 global_controls_layout.addWidget(QLabel("Blend Region:"), 3, 0)
 
                 self.overlay_region_label = QLabel("No regions — full image")
@@ -25363,7 +26631,8 @@ if __name__ == "__main__":
                     "color: #555; font-style: italic; border: 1px solid #ccc; padding: 2px; border-radius: 3px;"
                 )
                 self.overlay_region_label.setAlignment(Qt.AlignCenter)
-                global_controls_layout.addWidget(self.overlay_region_label, 3, 1, 1, 2)
+                _reg_row_box, _reg_row = self._make_flow_row()
+                _reg_row.addWidget(self.overlay_region_label)
 
                 self.select_region_button = QPushButton("Select Regions to Keep")
                 self.select_region_button.setCheckable(True)
@@ -25374,12 +26643,13 @@ if __name__ == "__main__":
                 )
                 self.select_region_button.clicked.connect(self.activate_overlay_region_selection)
                 self._register_action_button(self.select_region_button)
-                global_controls_layout.addWidget(self.select_region_button, 3, 3, 1, 1)
+                _reg_row.addWidget(self.select_region_button)
 
                 clear_region_button = QPushButton("✖ Clear All")
                 clear_region_button.setToolTip("Remove all region restrictions — blend applies to the full image.")
                 clear_region_button.clicked.connect(self.clear_overlay_region)
-                global_controls_layout.addWidget(clear_region_button, 3, 4, 1, 1)
+                _reg_row.addWidget(clear_region_button)
+                global_controls_layout.addWidget(_reg_row_box, 3, 1, 1, 4)
 
                 # --- Region target selector: which layer(s) the kept regions clip ---
                 global_controls_layout.addWidget(QLabel("Apply Regions To:"), 4, 0)
@@ -25451,6 +26721,15 @@ if __name__ == "__main__":
 
                 self.image2_annotations = None   # a file has no editable annotations to carry
                 overlay_image = QImage(file_path)
+                # Same depth-preserving read as File > Open: a 16-bit TIFF keeps its TRUE
+                # recorded intensities (Qt's plugin can promote it to 64-bit RGBA or cut it to
+                # 8 bits), so densitometry on the placed overlay measures the raw values.
+                try:
+                    _dp = self._load_tiff_preserve_depth(file_path)
+                    if _dp is not None and not _dp.isNull():
+                        overlay_image = _dp
+                except Exception:
+                    log_traceback()
                 if overlay_image.isNull():
                     try:
                         pil_image = Image.open(file_path); np_array = np.array(pil_image)
@@ -25702,6 +26981,29 @@ if __name__ == "__main__":
                         f"{names[idx]}: {src.width()}×{src.height()} px → "
                         f"{int(round(src.width()*f))}×{int(round(src.height()*f))} on canvas"
                         f"{pos_txt}.  Main image: {ref_txt} px")
+                self._sync_adjustment_targets()
+
+            def _sync_adjustment_targets(self):
+                """Adjustment Target: 'Overlay 1 (Base)' / 'Overlay 2 (Overlay)' are selectable
+                exactly when that slot holds an image -- however it got there (Copy Current,
+                Load Overlay, Set Current as Base, reopening a project). Copy Current used to
+                leave Overlay 1 greyed out, so a copied panel could not be adjusted."""
+                cb = getattr(self, 'adjustment_context_combo', None)
+                if cb is None:
+                    return
+                try:
+                    model = cb.model()
+                    for idx in (1, 2):
+                        src = getattr(self, f'image{idx}_original', None)
+                        has = bool(src is not None and not src.isNull())
+                        item = model.item(idx)
+                        if item is not None and item.isEnabled() != has:
+                            item.setEnabled(has)
+                    cur = cb.currentIndex()
+                    if cur in (1, 2) and not model.item(cur).isEnabled():
+                        cb.setCurrentIndex(0)
+                except Exception:
+                    log_traceback()
 
             # Overlay "Resize:" slider precision — slider units per PERCENT.
             # 100 => one slider step is 0.01%, so a layer can be scaled to essentially any
@@ -25846,6 +27148,844 @@ if __name__ == "__main__":
                 # A master that is gone cannot be double-composited either way.
                 master = getattr(self, 'image_master', None)
                 return bool(master is not None and not master.isNull())
+
+            # ---------------------------------------------------------------------------
+            # LIVE LAYERS (v9.9.0)
+            #
+            # Placed Image 1 / Image 2 layers stay separate, editable objects. Nothing has
+            # to be rasterized for them to be displayed, saved, exported, cropped or
+            # analysed: every consumer of pixels reads the same composite that the screen
+            # shows (_render_layer_composite). Rasterize Image remains available as an
+            # explicit, optional "merge" step.
+            # ---------------------------------------------------------------------------
+            def _overlay_layer_placed(self, idx):
+                """True when layer `idx` holds an image AND is placed on the canvas."""
+                src = getattr(self, f'image{idx}_original', None)
+                return bool(hasattr(self, f'image{idx}_position')
+                            and src is not None and not src.isNull())
+
+            def _overlay_layers_live(self):
+                """True when at least one Image 1 / Image 2 layer is placed (not rasterized)."""
+                return self._overlay_layer_placed(1) or self._overlay_layer_placed(2)
+
+            @staticmethod
+            def _qimage_is_16bit(img):
+                try:
+                    return img.format() in (QImage.Format_Grayscale16, QImage.Format_RGBA64,
+                                            QImage.Format_RGBX64, QImage.Format_RGBA64_Premultiplied)
+                except Exception:
+                    return False
+
+            @staticmethod
+            def _qimage_is_gray(img):
+                try:
+                    return img.format() in (QImage.Format_Grayscale8, QImage.Format_Grayscale16)
+                except Exception:
+                    return False
+
+            def _main_layer_settings(self):
+                """Adjustment settings of the MAIN image, from the sliders when they edit the
+                main image, otherwise from the stored main levels (same rule as the live view
+                and the save path)."""
+                s = {}
+                if getattr(self, 'adjustment_context', "Main Image") == "Main Image":
+                    s['levels_gamma'] = {
+                        'black_point': self.black_point_slider.value(),
+                        'white_point': self.white_point_slider.value(),
+                        'gamma': self.gamma_slider.value()}
+                else:
+                    s['levels_gamma'] = getattr(
+                        self, 'main_levels_gamma',
+                        self._get_default_adjustments(for_image=self.image_master)['levels_gamma'])
+                s['is_inverted'] = self.main_image_is_inverted
+                d = self._get_default_adjustments()
+                s['channel_mixer'] = dict(getattr(self, 'channel_mixer_data', d['channel_mixer']))
+                s['unsharp_mask'] = dict(getattr(self, 'unsharp_mask_data', d['unsharp_mask']))
+                s['clahe'] = dict(getattr(self, 'clahe_data', d['clahe']))
+                return s
+
+            def _layer_pixels_for_composite(self, idx, raw):
+                """The pixels layer `idx` contributes to the composite. `raw`: the recorded
+                intensities with only the layer's polarity (inversion) applied -- the layer's
+                Levels / CLAHE / sharpening are DISPLAY adjustments and are left out, exactly
+                like Settings > Densitometry > Measure raw pixel data does for the main image."""
+                if raw:
+                    src = getattr(self, f'image{idx}_original', None)
+                    if src is None or src.isNull():
+                        return None
+                    out = QImage(src)
+                    adj = getattr(self, f'image{idx}_adjustments', None) or {}
+                    if adj.get('is_inverted', False):
+                        out = out.copy()
+                        out.invertPixels()
+                    return out
+                prev = getattr(self, f'image{idx}_adjusted_preview', None)
+                if prev is None or prev.isNull():
+                    try:
+                        self._update_overlay_preview(idx)
+                    except Exception:
+                        log_traceback()
+                    prev = getattr(self, f'image{idx}_adjusted_preview', None)
+                return prev if (prev is not None and not prev.isNull()) else None
+
+            def _render_layer_composite(self, raw=False, for_analysis=False):
+                """Composite of the main image and the placed layers at the master's native
+                size -- the single source every pixel consumer uses while layers are live
+                (Rasterize, densitometry, lane / gel analysis). Mirrors the live preview:
+                base-layer rule, per-layer Mixing %, rotation, resize and region clips.
+
+                for_analysis: keep the deepest bit depth present (16-bit data is never cut
+                to 8 bits for measurement), flatten onto white like the viewer does, and
+                return a GRAYSCALE image when every source is grayscale, so the numbers are
+                in the same units as analysing the base image alone."""
+                master = getattr(self, 'image_master', None)
+                if master is None or master.isNull():
+                    return None
+                layers = {}
+                for i in (1, 2):
+                    if self._overlay_layer_placed(i):
+                        px = self._layer_pixels_for_composite(i, raw)
+                        if px is not None:
+                            layers[i] = px
+                base_active = self._overlay_base_layer_active()
+
+                if for_analysis:
+                    srcs = [master] + [getattr(self, f'image{i}_original') for i in layers]
+                    target16 = any(self._qimage_is_16bit(q) for q in srcs)
+                    all_gray = all(self._qimage_is_gray(q) for q in srcs)
+                else:
+                    # Rasterize's long-standing rule: 16-bit only when every placed layer is.
+                    l16 = [self._qimage_is_16bit(q) for q in layers.values()]
+                    target16 = bool(l16) and all(l16)
+                    all_gray = False
+
+                W, H = master.width(), master.height()
+                canvas = QImage(W, H, QImage.Format_RGBA64 if target16 else QImage.Format_ARGB32_Premultiplied)
+                # White under everything when Image 1 (Base) replaces the master (layers at a
+                # partial Mixing % would otherwise bake out see-through) and for analysis
+                # (the viewer shows transparency as white). Otherwise transparent, which keeps
+                # a padded image's transparent margins.
+                canvas.fill(Qt.white if (base_active or for_analysis) else Qt.transparent)
+
+                p = QPainter(canvas)
+                p.setRenderHint(QPainter.SmoothPixmapTransform, False)
+                # Raw measurement: no anti-aliased edges either -- every pixel must be a value
+                # that one of the images actually recorded.
+                p.setRenderHint(QPainter.Antialiasing, not raw)
+                if not base_active:
+                    if raw:
+                        base = QImage(master)
+                        if self.main_image_is_inverted:
+                            base = base.copy(); base.invertPixels()
+                    else:
+                        base = self._apply_all_adjustments_to_image(master, self._main_layer_settings())
+                    p.setOpacity(1.0)
+                    p.drawImage(QRectF(0.0, 0.0, float(W), float(H)), base)
+
+                op = dict(zip((1, 2), self._overlay_effective_opacities()))
+                for i in (1, 2):
+                    img = layers.get(i)
+                    if img is None:
+                        continue
+                    sc = self._overlay_scale_factor(i)
+                    pos = getattr(self, f'image{i}_position')
+                    rect = QRectF(QPointF(float(pos[0]), float(pos[1])),
+                                  QSizeF(img.width() * sc, img.height() * sc))
+                    rs = getattr(self, f'image{i}_rotation_slider', None)
+                    rot = (rs.value() / 10.0) if rs is not None else 0.0
+                    clip = self._build_region_clip_path(W, H) if self._region_target_includes(i) else None
+                    if raw:
+                        # RAW INTENSITIES STAY INTACT. Mixing % is a display blend: a pixel
+                        # that is 50% blot + 50% gel is a value neither image recorded, so for
+                        # raw measurement a visible layer is painted OPAQUE (0% = hidden still
+                        # leaves it out), and a resized / rotated layer is sampled
+                        # nearest-neighbour (values are picked, never averaged).
+                        if op[i] <= 0.0:
+                            continue
+                        lop, smooth = 1.0, False
+                    else:
+                        lop, smooth = op[i], (abs(rot) > 0.01 or abs(sc - 1.0) > 1e-9)
+                    p.save()
+                    p.setOpacity(lop)
+                    p.setRenderHint(QPainter.SmoothPixmapTransform, smooth)
+                    if clip is not None:
+                        p.setClipPath(clip)
+                    if abs(rot) > 0.01:
+                        c = rect.center(); p.translate(c); p.rotate(rot); p.translate(-c)
+                    p.drawImage(rect, img)
+                    p.restore()
+                p.end()
+
+                if for_analysis and all_gray:
+                    # Every source is grayscale, so R == G == B on the canvas: take ONE
+                    # channel. (Qt's own RGBA64 -> Grayscale16 conversion is NOT exact -- it
+                    # shifted raw 16-bit values by up to ~100 counts.)
+                    try:
+                        arr = self.qimage_to_numpy(canvas)
+                        if arr is not None and arr.ndim == 3:
+                            gray = np.ascontiguousarray(arr[:, :, 0])
+                            gq = self.numpy_to_qimage(gray)
+                            if gq is not None and not gq.isNull():
+                                return gq
+                    except Exception:
+                        log_traceback()
+                    canvas = canvas.convertToFormat(
+                        QImage.Format_Grayscale16 if target16 else QImage.Format_Grayscale8)
+                return canvas
+
+            # ---- per-layer crop + flip (non-destructive) ----------------------------------
+            # A layer's displayed pixels (image{n}_original) are DERIVED from the untouched
+            # source it was loaded / copied from: flip first, then crop. The source and the
+            # geometry are kept, so a crop can be widened again or reset at any time, and
+            # undo only has to remember the small geometry dict.
+
+            def _layer_geom_default(self):
+                return {'crop': None, 'flip_h': False, 'flip_v': False}
+
+            def _layer_sync_source(self, idx):
+                """Adopt image{idx}_original as a NEW untouched source when it was replaced
+                (Copy Current, Load Overlay, Set Base, Reset) since we last derived it."""
+                cur = getattr(self, f'image{idx}_original', None)
+                if cur is None or cur.isNull():
+                    setattr(self, f'_layer{idx}_source', None)
+                    setattr(self, f'_layer{idx}_geom', self._layer_geom_default())
+                    setattr(self, f'_layer{idx}_built_key', None)
+                    return None
+                if getattr(self, f'_layer{idx}_built_key', None) != cur.cacheKey() \
+                        or getattr(self, f'_layer{idx}_source', None) is None:
+                    setattr(self, f'_layer{idx}_source', QImage(cur))
+                    setattr(self, f'_layer{idx}_geom', self._layer_geom_default())
+                    setattr(self, f'_layer{idx}_built_key', cur.cacheKey())
+                return getattr(self, f'_layer{idx}_source')
+
+            def _layer_geom(self, idx):
+                self._layer_sync_source(idx)
+                g = getattr(self, f'_layer{idx}_geom', None)
+                return dict(g) if g else self._layer_geom_default()
+
+            def _layer_is_cropped(self, idx):
+                return self._layer_geom(idx).get('crop') is not None
+
+            def _layer_build(self, idx, geom):
+                """Derive image{idx}_original from the source + geometry and refresh caches."""
+                src = getattr(self, f'_layer{idx}_source', None)
+                if src is None or src.isNull():
+                    return False
+                img = QImage(src)
+                if geom.get('flip_h') or geom.get('flip_v'):
+                    img = self._flip_qimage(img, bool(geom.get('flip_h')), bool(geom.get('flip_v')))
+                c = geom.get('crop')
+                if c is not None:
+                    x, y, w, h = [int(v) for v in c]
+                    x = max(0, min(x, img.width() - 1)); y = max(0, min(y, img.height() - 1))
+                    w = max(1, min(w, img.width() - x)); h = max(1, min(h, img.height() - y))
+                    img = img.copy(x, y, w, h)
+                    geom = dict(geom); geom['crop'] = (x, y, w, h)
+                setattr(self, f'image{idx}_original', img)
+                setattr(self, f'_layer{idx}_geom', dict(geom))
+                setattr(self, f'_layer{idx}_built_key', img.cacheKey())
+                try:
+                    self._overlay_content_cache = {}
+                except Exception:
+                    pass
+                self._update_overlay_preview(idx)
+                self._update_overlay_size_labels()
+                return True
+
+            @staticmethod
+            def _flip_qimage(img, horizontal, vertical):
+                return img.mirrored(bool(horizontal), bool(vertical))
+
+            def _layer_rotation_deg(self, idx):
+                rs = getattr(self, f'image{idx}_rotation_slider', None)
+                return (rs.value() / 10.0) if rs is not None else 0.0
+
+            def _layer_keep_in_place(self, idx, old_o, old_size, new_o, new_size):
+                """Return the new top-left position so that layer pixels common to the old
+                and new derived image stay EXACTLY where they were on the canvas (the layer
+                is rotated about its rectangle centre). old_o / new_o: the derived image's
+                origin in the un-cropped (flipped) source; sizes in source pixels."""
+                pos = getattr(self, f'image{idx}_position', (0, 0))
+                s = float(self._overlay_scale_factor(idx))
+                th = math.radians(self._layer_rotation_deg(idx))
+                cs, sn = math.cos(th), math.sin(th)
+                hAx, hAy = old_size[0] / 2.0, old_size[1] / 2.0
+                hBx, hBy = new_size[0] / 2.0, new_size[1] / 2.0
+                vx = s * (new_o[0] + hBx - old_o[0] - hAx)
+                vy = s * (new_o[1] + hBy - old_o[1] - hAy)
+                nx = pos[0] + s * (hAx - hBx) + (cs * vx - sn * vy)
+                ny = pos[1] + s * (hAy - hBy) + (sn * vx + cs * vy)
+                return (nx, ny)
+
+            def _set_layer_position(self, idx, xy):
+                new = (int(round(xy[0])), int(round(xy[1])))
+                setattr(self, f'image{idx}_position', new)
+                for name, val in ((f'image{idx}_left_slider', new[0]), (f'image{idx}_top_slider', new[1])):
+                    sl = getattr(self, name, None)
+                    if sl is not None:
+                        sl.blockSignals(True)
+                        if val < sl.minimum() or val > sl.maximum():
+                            sl.setRange(min(sl.minimum(), val), max(sl.maximum(), val))
+                        sl.setValue(val)
+                        sl.blockSignals(False)
+                for name, val in ((f'image{idx}_pos_x_label', new[0]), (f'image{idx}_pos_y_label', new[1])):
+                    lb = getattr(self, name, None)
+                    if lb is not None:
+                        lb.setText(str(val))
+
+            def crop_layer_to_rect(self, idx, x, y, w, h, record_undo=True):
+                """Crop layer `idx` to (x, y, w, h) given in its CURRENT displayed pixels.
+                The visible part stays exactly where it is on the canvas."""
+                if self._layer_sync_source(idx) is None:
+                    return False
+                cur = getattr(self, f'image{idx}_original')
+                x0 = max(0.0, min(float(x), float(cur.width()))); y0 = max(0.0, min(float(y), float(cur.height())))
+                x1 = max(0.0, min(float(x + w), float(cur.width()))); y1 = max(0.0, min(float(y + h), float(cur.height())))
+                x0, x1 = int(math.floor(min(x0, x1))), int(math.ceil(max(x0, x1)))
+                y0, y1 = int(math.floor(min(y0, y1))), int(math.ceil(max(y0, y1)))
+                if x1 - x0 < 2 or y1 - y0 < 2:
+                    return False
+                if (x0, y0, x1, y1) == (0, 0, cur.width(), cur.height()):
+                    return False
+                g = self._layer_geom(idx)
+                old_c = g.get('crop') or (0, 0, cur.width(), cur.height())
+                new_c = (old_c[0] + x0, old_c[1] + y0, x1 - x0, y1 - y0)
+                return self._set_layer_crop(idx, new_c, record_undo)
+
+            def _set_layer_crop(self, idx, new_c, record_undo=True):
+                src = self._layer_sync_source(idx)
+                if src is None:
+                    return False
+                g = self._layer_geom(idx)
+                cur = getattr(self, f'image{idx}_original')
+                old_c = g.get('crop') or (0, 0, cur.width(), cur.height())
+                full = (0, 0, src.width(), src.height())
+                if new_c is None:
+                    new_c = full
+                if record_undo:
+                    self.save_state()
+                placed = hasattr(self, f'image{idx}_position')
+                if placed:
+                    new_pos = self._layer_keep_in_place(idx, old_c[:2], old_c[2:], new_c[:2], new_c[2:])
+                g['crop'] = None if tuple(new_c) == full else tuple(int(v) for v in new_c)
+                self._layer_build(idx, g)
+                if placed:
+                    self._set_layer_position(idx, new_pos)
+                self.is_modified = True
+                self.update_live_view()
+                return True
+
+            def reset_layer_crop(self, idx):
+                """Show the whole layer again (undo-able). The visible part does not move."""
+                if not self._layer_is_cropped(idx):
+                    self.show_mode_status(f"Image {idx} is not cropped.")
+                    return False
+                return self._set_layer_crop(idx, None)
+
+            def flip_layer(self, idx, horizontal):
+                """Mirror one layer in place (its own pixels only)."""
+                src = self._layer_sync_source(idx)
+                if src is None:
+                    return False
+                self.save_state()
+                g = self._layer_geom(idx)
+                W, H = src.width(), src.height()
+                c = g.get('crop')
+                if c is not None:
+                    x, y, w, h = c
+                    c = ((W - x - w), y, w, h) if horizontal else (x, (H - y - h), w, h)
+                    g['crop'] = c
+                key = 'flip_h' if horizontal else 'flip_v'
+                g[key] = not g.get(key, False)
+                self._layer_build(idx, g)
+                rs = getattr(self, f'image{idx}_rotation_slider', None)
+                if rs is not None and rs.value() != 0:
+                    rs.blockSignals(True); rs.setValue(-rs.value()); rs.blockSignals(False)
+                    lb = getattr(self, f'image{idx}_rotation_label', None)
+                    if lb is not None:
+                        lb.setText(f"{rs.value() / 10.0:.1f}°")
+                self.is_modified = True
+                self.update_live_view()
+                return True
+
+            def _layer_state_for_undo(self, idx):
+                """Small, pixel-free description of a layer's geometry for the undo stack."""
+                try:
+                    cur = getattr(self, f'image{idx}_original', None)
+                    if cur is None or cur.isNull():
+                        return None
+                    rz = getattr(self, f'image{idx}_resize_slider', None)
+                    rt = getattr(self, f'image{idx}_rotation_slider', None)
+                    g = self._layer_geom(idx)
+                    _src = getattr(self, f'_layer{idx}_source', None)
+                    _ann = getattr(self, f'image{idx}_annotations', None)
+                    if _ann:
+                        _ann = copy.deepcopy(_ann)
+                        _ann['include'] = sorted(_ann.get('include') or [])
+                    return {'geom': g,
+                            'annotations': _ann,
+                            'src_key': _src.cacheKey() if _src is not None else None,
+                            'resize': rz.value() if rz is not None else None,
+                            'rotation': rt.value() if rt is not None else None}
+                except Exception:
+                    return None
+
+            def _restore_layer_state(self, idx, st):
+                if not st:
+                    return
+                try:
+                    cur = getattr(self, f'image{idx}_original', None)
+                    if cur is None or cur.isNull():
+                        return
+                    src = getattr(self, f'_layer{idx}_source', None)
+                    # Only when the buffer still holds the SAME source the snapshot described.
+                    if src is not None and st.get('src_key') == src.cacheKey() and 'annotations' in st:
+                        # Labels that came with the panel (pending until converted / rasterized).
+                        _ann = copy.deepcopy(st.get('annotations'))
+                        if _ann:
+                            _ann['include'] = set(_ann.get('include') or [])
+                        setattr(self, f'image{idx}_annotations', _ann or None)
+                    if (src is not None and st.get('geom') is not None
+                            and st.get('src_key') == src.cacheKey()):
+                        if dict(st['geom']) != self._layer_geom(idx) or \
+                                getattr(self, f'_layer{idx}_built_key', None) != cur.cacheKey():
+                            self._layer_build(idx, dict(st['geom']))
+                    for name, key in ((f'image{idx}_resize_slider', 'resize'),
+                                      (f'image{idx}_rotation_slider', 'rotation')):
+                        sl = getattr(self, name, None)
+                        v = st.get(key)
+                        if sl is not None and v is not None and sl.value() != int(v):
+                            sl.blockSignals(True); sl.setValue(int(v)); sl.blockSignals(False)
+                    rz = getattr(self, f'image{idx}_resize_slider', None)
+                    lb = getattr(self, f'image{idx}_resize_label', None)
+                    if rz is not None and lb is not None:
+                        lb.setText(self._fmt_resize_percent(rz.value()))
+                    rt = getattr(self, f'image{idx}_rotation_slider', None)
+                    lb = getattr(self, f'image{idx}_rotation_label', None)
+                    if rt is not None and lb is not None:
+                        lb.setText(f"{rt.value() / 10.0:.1f}°")
+                except Exception:
+                    log_traceback()
+
+            # ---- mapping between the viewer and a layer's own pixels ----------------------
+            def _layer_label_transform(self, idx):
+                """QTransform: layer pixel (u, v) -> unzoomed label point. None if unplaced."""
+                if not self._overlay_layer_placed(idx):
+                    return None
+                img = self.image if (self.image and not self.image.isNull()) else self.image_master
+                lw, lh = float(self.live_view_label.width()), float(self.live_view_label.height())
+                if img is None or img.isNull() or lw <= 0 or lh <= 0:
+                    return None
+                k = min(lw / img.width(), lh / img.height())
+                ox, oy = (lw - img.width() * k) / 2.0, (lh - img.height() * k) / 2.0
+                src = getattr(self, f'image{idx}_original')
+                s = float(self._overlay_scale_factor(idx))
+                pos = getattr(self, f'image{idx}_position')
+                cx = pos[0] + src.width() * s / 2.0; cy = pos[1] + src.height() * s / 2.0
+                t = QTransform()
+                t.translate(ox, oy); t.scale(k, k)                 # image px -> label
+                t.translate(cx, cy); t.rotate(self._layer_rotation_deg(idx)); t.translate(-cx, -cy)
+                t.translate(pos[0], pos[1]); t.scale(s, s)         # layer px -> image px
+                return t
+
+            def _layer_polygon_ls(self, idx):
+                t = self._layer_label_transform(idx)
+                if t is None:
+                    return None
+                src = getattr(self, f'image{idx}_original')
+                return t.map(QPolygonF(QRectF(0, 0, src.width(), src.height())))
+
+            def _layer_at_ls(self, pt_ls, include_base_copy=False):
+                """Topmost placed layer under a label point (Image 2 above Image 1). Image 1
+                is skipped while it is just a copy of the main image ('Set Current as Base')
+                -- it then IS the background, not an object you pick up."""
+                for i in (2, 1):
+                    if i == 1 and not include_base_copy and self._overlay_base_layer_active():
+                        continue
+                    t = self._layer_label_transform(i)
+                    if t is None:
+                        continue
+                    inv, ok = t.inverted()
+                    if not ok:
+                        continue
+                    q = inv.map(pt_ls)
+                    cb = self._overlay_content_box(i)
+                    src = getattr(self, f'image{i}_original')
+                    x, y, w, h = cb if cb else (0, 0, src.width(), src.height())
+                    if x <= q.x() <= x + w and y <= q.y() <= y + h:
+                        return i
+                return 0
+
+            # ---- interactive "Crop Layer" tool --------------------------------------------
+            def activate_layer_crop_mode(self, idx, checked=True):
+                """Arm/disarm the crop tool for layer `idx`: drag a rectangle over the layer
+                and only what is inside stays visible. Crops are non-destructive: 'Uncrop'
+                brings the hidden part back."""
+                btn = getattr(self, f'image{idx}_crop_button', None)
+                if not checked:
+                    self._cancel_layer_crop_mode()
+                    return
+                if not self._overlay_layer_placed(idx):
+                    if btn is not None:
+                        btn.setChecked(False)
+                    QMessageBox.information(self, "Crop Image",
+                                            f"Place Image {idx} on the canvas first, then crop it.")
+                    return
+                self._cancel_all_interaction_modes(exclude='layer_crop')
+                self._layer_crop_idx = idx
+                self._layer_crop_start = None
+                self._layer_crop_current = None
+                if btn is not None and not btn.isChecked():
+                    btn.blockSignals(True); btn.setChecked(True); btn.blockSignals(False)
+                self.show_mode_status(f"CROP IMAGE {idx} — drag a rectangle over the layer; only the part "
+                                      "inside is kept. 'Uncrop' shows it all again. Press Esc to finish.",
+                                      active_button=btn)
+                self.live_view_label.setCursor(Qt.CrossCursor)
+                self._reset_live_view_label_custom_handlers()
+                self.live_view_label._custom_left_click_handler_from_app = self._layer_crop_press
+                self.live_view_label._custom_mouseMoveEvent_from_app = self._layer_crop_move
+                self.live_view_label._custom_mouseReleaseEvent_from_app = self._layer_crop_release
+                self.update_live_view()
+
+            def _cancel_layer_crop_mode(self):
+                idx = getattr(self, '_layer_crop_idx', 0)
+                self._layer_crop_idx = 0
+                self._layer_crop_start = None
+                self._layer_crop_current = None
+                for i in (1, 2):
+                    b = getattr(self, f'image{i}_crop_button', None)
+                    if b is not None and b.isChecked():
+                        b.blockSignals(True); b.setChecked(False); b.blockSignals(False)
+                if idx:
+                    try:
+                        self._reset_live_view_label_custom_handlers()
+                    except Exception:
+                        pass
+                    self.live_view_label.setCursor(Qt.ArrowCursor)
+                    self.clear_mode_status()
+                    self.update_live_view()
+
+            def _layer_crop_press(self, event):
+                if event.button() != Qt.LeftButton or not getattr(self, '_layer_crop_idx', 0):
+                    return
+                p = QPointF(self.live_view_label.transform_point(event.position()))
+                self._layer_crop_start = p
+                self._layer_crop_current = QPointF(p)
+
+            def _layer_crop_move(self, event):
+                if getattr(self, '_layer_crop_start', None) is None:
+                    return
+                self._layer_crop_current = QPointF(self.live_view_label.transform_point(event.position()))
+                self.live_view_label.update()
+
+            def _layer_crop_release(self, event):
+                if event.button() != Qt.LeftButton or getattr(self, '_layer_crop_start', None) is None:
+                    return
+                idx = getattr(self, '_layer_crop_idx', 0)
+                a = self._layer_crop_start
+                b = QPointF(self.live_view_label.transform_point(event.position()))
+                self._layer_crop_start = None; self._layer_crop_current = None
+                if not idx or abs(a.x() - b.x()) < 4 or abs(a.y() - b.y()) < 4:
+                    self.live_view_label.update()
+                    return
+                self.crop_layer_from_label_rect(idx, QRectF(a, b).normalized())
+                # Stay armed so the crop can be refined; Esc / the button ends it.
+
+            def crop_layer_from_label_rect(self, idx, rect_ls):
+                """Crop layer `idx` to a rectangle drawn in (unzoomed) label space. For a
+                rotated layer the rectangle is taken in the layer's own axes (the bounding box
+                of the drawn rectangle's corners in layer pixels)."""
+                t = self._layer_label_transform(idx)
+                if t is None:
+                    return False
+                inv, ok = t.inverted()
+                if not ok:
+                    return False
+                pts = [inv.map(c) for c in (rect_ls.topLeft(), rect_ls.topRight(),
+                                             rect_ls.bottomRight(), rect_ls.bottomLeft())]
+                xs = [q.x() for q in pts]; ys = [q.y() for q in pts]
+                return self.crop_layer_to_rect(idx, min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+            def _paint_layer_crop_overlay(self, painter, zoom):
+                """Viewer feedback for the Crop Image tool: the layer outline and the live
+                crop rectangle (drawn by LiveViewLabel.paintEvent in unzoomed label space)."""
+                idx = getattr(self, '_layer_crop_idx', 0)
+                if not idx:
+                    return
+                poly = self._layer_polygon_ls(idx)
+                z = zoom if zoom > 0 else 1.0
+                painter.save()
+                if poly is not None:
+                    painter.setPen(QPen(QColor(255, 140, 0, 230), max(0.5, 1.5 / z), Qt.DashLine))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawPolygon(poly)
+                a = getattr(self, '_layer_crop_start', None); b = getattr(self, '_layer_crop_current', None)
+                if a is not None and b is not None:
+                    r = QRectF(a, b).normalized()
+                    painter.setPen(QPen(QColor(255, 140, 0, 255), max(0.5, 2.0 / z), Qt.SolidLine))
+                    painter.setBrush(QBrush(QColor(255, 160, 0, 40)))
+                    painter.drawRect(r)
+                painter.restore()
+
+            # ---- Move/Resize tool: placed layers are objects you can pick up -------------
+            def _layer_selection_visible(self):
+                """Show the selected layer's outline + handles (Interactive Alignment or the
+                Move/Resize tool)."""
+                if getattr(self, 'selected_overlay_index', 0) <= 0:
+                    return False
+                if getattr(self, 'overlay_mode_active', False):
+                    return True
+                return getattr(self, 'current_selection_mode', None) in (
+                    'select_custom_item', 'dragging_custom_item', 'resizing_custom_item')
+
+            def _move_resize_grab_layer(self, event, clicked_point_ls):
+                """Called by the Move/Resize tool when a press hit no marker / shape / label.
+                Grabs a placed layer (or a corner handle of the selected one) and drags it
+                through the same code Interactive Alignment uses. Returns True if handled."""
+                try:
+                    sel = getattr(self, 'selected_overlay_index', 0)
+                    hit = 0
+                    corner = -1
+                    if sel > 0 and self._overlay_layer_placed(sel):
+                        rect_ls = self._get_overlay_rect_in_label_space(sel, content=True)
+                        if rect_ls:
+                            corners = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
+                            rad = self.live_view_label.CORNER_HANDLE_BASE_RADIUS * 1.5 / max(1e-6, self.live_view_label.zoom_level)
+                            for i, c in enumerate(corners):
+                                if (clicked_point_ls - c).manhattanLength() < rad:
+                                    corner = i; hit = sel
+                                    break
+                    if not hit:
+                        hit = self._layer_at_ls(clicked_point_ls)
+                    if not hit:
+                        if sel:
+                            self.selected_overlay_index = 0
+                        return False
+                    self.moving_custom_item_info = None
+                    self.multi_selected_items = []
+                    self.selected_overlay_index = hit
+                    if corner >= 0:
+                        rect_ls = self._get_overlay_rect_in_label_space(hit, content=True)
+                        corners = [rect_ls.topLeft(), rect_ls.topRight(), rect_ls.bottomRight(), rect_ls.bottomLeft()]
+                        self.overlay_interaction_mode = 'resizing'
+                        self.resizing_overlay_corner_index = corner
+                        self.drag_start_overlay_state = {'rect_ls': rect_ls, 'mouse_pos_ls': clicked_point_ls,
+                                                         'opposite_corner_ls': corners[(corner + 2) % 4]}
+                        self.live_view_label.setCursor(Qt.SizeFDiagCursor if corner in (0, 2) else Qt.SizeBDiagCursor)
+                    else:
+                        self.overlay_interaction_mode = 'moving'
+                        self.drag_start_overlay_state = {
+                            'mouse_pos_ls': clicked_point_ls,
+                            'position_native': getattr(self, f'image{hit}_position', (0, 0))}
+                        self.live_view_label.setCursor(Qt.ClosedHandCursor)
+                    lbl = self.live_view_label
+                    prev_move = lbl._custom_mouseMoveEvent_from_app
+                    prev_release = lbl._custom_mouseReleaseEvent_from_app
+
+                    def _move(ev):
+                        self._handle_overlay_mouse_move(ev)
+
+                    def _release(ev):
+                        if ev.button() == Qt.LeftButton and self.overlay_interaction_mode:
+                            self.save_state()
+                            self.is_modified = True
+                        self.overlay_interaction_mode = None
+                        self.resizing_overlay_corner_index = -1
+                        self.drag_start_overlay_state = {}
+                        lbl._custom_mouseMoveEvent_from_app = prev_move
+                        lbl._custom_mouseReleaseEvent_from_app = prev_release
+                        lbl.setCursor(Qt.ArrowCursor)
+                        self.show_mode_status(
+                            f"Image {self.selected_overlay_index} selected — drag to move, drag a corner to "
+                            "resize, arrow keys nudge. Click elsewhere to deselect.")
+                        self.update_live_view()
+
+                    lbl._custom_mouseMoveEvent_from_app = _move
+                    lbl._custom_mouseReleaseEvent_from_app = _release
+                    self.update_live_view()
+                    return True
+                except Exception:
+                    log_traceback()
+                    return False
+
+            # ---- saving / reopening placed layers with the project (v9.9.0) ----------------
+            # Save writes <name>_original (the main image), <name>_modified (the finished
+            # figure) and <name>_config.txt. Placed layers used to be lost: only their pixels
+            # inside _modified survived, so reopening showed the bare main image and Image 1 /
+            # Image 2 were greyed out under Adjustment Target. Each loaded layer is now also
+            # written as <name>_layerN.tif (its untouched source, full bit depth) and its state
+            # goes into the config, so reopening restores the layers exactly -- still separate,
+            # still adjustable, still croppable.
+            def _overlay_layers_config(self, fname_for):
+                """Describe every loaded Image 1 / Image 2 for a config: returns (info, files)
+                where info is the config['overlay_layers'] dict (or None when no slot holds an
+                image) and files is [(slot, file name, untouched source QImage)]. The SOURCE is
+                what gets written: crop / flip are only recorded in 'geom', so the copied image
+                itself is never changed and Uncrop can always bring all of it back."""
+                layers, files = [], []
+                sl = lambda name: (getattr(self, name).value() if getattr(self, name, None) is not None else None)
+                for n in (1, 2):
+                    src = self._layer_sync_source(n)
+                    if src is None or src.isNull():
+                        continue
+                    fname = fname_for(n, src)
+                    files.append((n, fname, src))
+                    ann = getattr(self, f'image{n}_annotations', None)
+                    ann_out = None
+                    if ann:
+                        ann_out = dict(ann)
+                        ann_out['include'] = sorted(ann.get('include') or [])
+                        ann_out['same_image'] = (ann.get('serial') == getattr(self, '_image_load_serial', 0))
+                        ann_out.pop('serial', None)
+                    layers.append({
+                        'slot': n, 'file': fname,
+                        'placed': bool(hasattr(self, f'image{n}_position')),
+                        'position': list(getattr(self, f'image{n}_position', (0, 0))),
+                        'resize': sl(f'image{n}_resize_slider'),
+                        'rotation': sl(f'image{n}_rotation_slider'),
+                        'mixing': sl(f'image{n}_blend_slider'),
+                        'adjustments': dict(getattr(self, f'image{n}_adjustments', None) or {}),
+                        'geom': self._layer_geom(n),
+                        'shadows_master': bool(n == 1 and getattr(self, '_image1_shadows_master', False)),
+                        'annotations': ann_out,
+                    })
+                if not layers:
+                    return None, []
+                regions = [[r.x(), r.y(), r.width(), r.height()]
+                           for r in (getattr(self, 'overlay_blend_regions', []) or [])]
+                return ({'version': 1, 'layers': layers,
+                         'global_mixing': sl('blend_slider') if hasattr(self, 'blend_slider') else 50,
+                         'regions': regions,
+                         'region_target': getattr(self, 'overlay_region_target', "Image 2 (Overlay)")},
+                        files)
+
+            def _save_overlay_layers(self, base_path, config_data):
+                """Write the layer files next to the project and record their state in
+                `config_data['overlay_layers']`. Returns a list of problems (empty = OK)."""
+                problems = []
+                info, files = self._overlay_layers_config(
+                    lambda n, _src: f"{os.path.basename(base_path)}_layer{n}.tif")
+                written = set()
+                for n, fname, src in files:
+                    fpath = os.path.join(os.path.dirname(base_path) or ".", fname)
+                    try:
+                        ok = _retry_file_op(lambda s=src, p=fpath: self._save_qimage_as_tiff(s, p),
+                                            retries=3, delay_s=0.4)
+                    except Exception as e:
+                        ok = False
+                        problems.append(f"Image {n}: {e}")
+                    if not ok:
+                        problems.append(f"Image {n} could not be written to {fname}")
+                        continue
+                    written.add(n)
+                if info:
+                    info['layers'] = [r for r in info['layers'] if r['slot'] in written]
+                if info and info['layers']:
+                    config_data['overlay_layers'] = info
+                else:
+                    config_data.pop('overlay_layers', None)
+                return problems
+
+            def _restore_overlay_layers(self, config_data, folder):
+                """Reopen: bring back the layers saved by _save_overlay_layers. Missing layer
+                files are skipped (reported in the status bar); nothing else is touched."""
+                info = (config_data or {}).get('overlay_layers')
+                if not isinstance(info, dict) or not info.get('layers'):
+                    return 0
+                restored, missing = 0, []
+                for rec in info.get('layers', []):
+                    try:
+                        n = int(rec.get('slot'))
+                        if n not in (1, 2):
+                            continue
+                        fpath = os.path.join(folder, str(rec.get('file', '')))
+                        img = None
+                        if os.path.exists(fpath):
+                            img = self._load_tiff_preserve_depth(fpath)
+                            if img is None or img.isNull():
+                                img = QImage(fpath)
+                        if img is None or img.isNull():
+                            missing.append(str(rec.get('file')))
+                            continue
+                        # Source + adjustments first, then derive the cropped / flipped layer.
+                        setattr(self, f'image{n}_original', img)
+                        adj = rec.get('adjustments') or self._get_default_adjustments(for_image=img)
+                        setattr(self, f'image{n}_adjustments', dict(adj))
+                        setattr(self, f'_layer{n}_source', QImage(img))
+                        setattr(self, f'_layer{n}_built_key', img.cacheKey())
+                        g = self._layer_geom_default()
+                        g.update({k: rec.get('geom', {}).get(k, g[k]) for k in g})
+                        if g.get('crop') is not None:
+                            g['crop'] = tuple(int(v) for v in g['crop'])
+                        self._layer_build(n, g)
+                        for name, key in ((f'image{n}_resize_slider', 'resize'),
+                                          (f'image{n}_rotation_slider', 'rotation'),
+                                          (f'image{n}_blend_slider', 'mixing')):
+                            w = getattr(self, name, None)
+                            v = rec.get(key)
+                            if w is not None and v is not None:
+                                w.blockSignals(True); w.setValue(int(v)); w.blockSignals(False)
+                        for lbl, txt in ((f'image{n}_resize_label', self._fmt_resize_percent(
+                                            getattr(self, f'image{n}_resize_slider').value())),
+                                         (f'image{n}_rotation_label',
+                                          f"{getattr(self, f'image{n}_rotation_slider').value() / 10.0:.1f}°"),
+                                         (f'image{n}_blend_label',
+                                          f"{getattr(self, f'image{n}_blend_slider').value()}%")):
+                            w = getattr(self, lbl, None)
+                            if w is not None:
+                                w.setText(txt)
+                        if rec.get('placed'):
+                            self._set_layer_position(n, rec.get('position', (0, 0)))
+                        elif hasattr(self, f'image{n}_position'):
+                            delattr(self, f'image{n}_position')
+                        if n == 1:
+                            self._image1_shadows_master = bool(rec.get('shadows_master', False))
+                        ann = rec.get('annotations')
+                        if ann:
+                            ann = dict(ann)
+                            ann['include'] = set(ann.get('include') or [])
+                            # Labels of the image that is open are already on it; a panel's
+                            # labels from ANOTHER image stay pending (shown live, added on
+                            # Rasterize) -- serial -1 never matches an open image.
+                            ann['serial'] = (getattr(self, '_image_load_serial', 0)
+                                             if ann.pop('same_image', False) else -1)
+                        setattr(self, f'image{n}_annotations', ann or None)
+                        if hasattr(self, 'adjustment_context_combo'):
+                            self.adjustment_context_combo.model().item(n).setEnabled(True)
+                        if n == 1 and hasattr(self, 'load_overlay_button'):
+                            self.load_overlay_button.setEnabled(True)
+                        self._update_overlay_preview(n)
+                        restored += 1
+                    except Exception:
+                        log_traceback()
+                try:
+                    if hasattr(self, 'blend_slider') and info.get('global_mixing') is not None:
+                        self.blend_slider.blockSignals(True)
+                        self.blend_slider.setValue(int(info['global_mixing']))
+                        self.blend_slider.blockSignals(False)
+                        if hasattr(self, 'blend_value_label'):
+                            self.blend_value_label.setText(f"{self.blend_slider.value()}%")
+                    self.overlay_blend_regions = [QRectF(*[float(v) for v in r])
+                                                  for r in (info.get('regions') or [])]
+                    tgt = info.get('region_target')
+                    if tgt:
+                        self.overlay_region_target = tgt
+                        if hasattr(self, 'overlay_region_target_combo'):
+                            self.overlay_region_target_combo.blockSignals(True)
+                            self.overlay_region_target_combo.setCurrentText(tgt)
+                            self.overlay_region_target_combo.blockSignals(False)
+                    self._update_region_label()
+                except Exception:
+                    log_traceback()
+                try:
+                    self._overlay_content_cache = {}
+                    self._update_overlay_slider_ranges()
+                except Exception:
+                    pass
+                if missing:
+                    self.show_mode_status("Placed image file(s) not found next to the project, so "
+                                          "they were not restored: " + ", ".join(missing))
+                return restored
 
             def remove_image1(self):
                 """UNPLACE Image 1: take it off the canvas but KEEP it loaded in the buffer.
@@ -26074,6 +28214,8 @@ if __name__ == "__main__":
                 if joined:
                     self.marker_values = mv
                     self.mwm_label_values = list(mv); self.mwm_hidden_label_indices = []
+                    if self._ann_preview_active():
+                        return joined           # preview: data only, never touch the UI
                     if hasattr(self, 'marker_values_textbox'):
                         self.marker_values_textbox.blockSignals(True)
                         self.marker_values_textbox.setText(", ".join(mv))
@@ -26087,7 +28229,89 @@ if __name__ == "__main__":
                                 self.marker_values_textbox.setEnabled(True)
                 return joined
 
-            def _import_overlay_annotations(self, idx):
+            # ---- live preview of a placed panel's own labels (v9.9.0) ----------------------
+            # A Copy Current panel carries the labels of the image it came from (top labels,
+            # left/right MW labels, custom markers / shapes the user ticked when placing).
+            # They used to be added ONLY by Rasterize, so with the panel left as a live layer
+            # they were simply not drawn: the panel's top labels and MW markers were missing
+            # from the viewer, Save, Copy and the .pptx export. They are now drawn live, mapped
+            # through the panel's current position / size / rotation / crop / flip, by running
+            # the very same import Rasterize uses inside a sandbox that is fully undone after
+            # drawing -- so what you see is exactly what Rasterize will add (then as editable
+            # items), and nothing is ever written into the figure's real state.
+            _ANN_PREVIEW_ATTRS = (
+                'custom_markers', 'custom_shapes', 'left_markers', 'right_markers', 'top_markers',
+                'top_label', 'marker_values', 'mwm_label_values', 'mwm_hidden_label_indices',
+                'left_marker_shift_added', 'right_marker_shift_added', 'top_marker_shift_added',
+                'font_rotation', 'top_rotation_axis', '_last_import_skipped_tops',
+                'image1_annotations', 'image2_annotations')
+
+            def _layers_with_pending_annotations(self):
+                out = []
+                for i in (1, 2):
+                    ann = getattr(self, f'image{i}_annotations', None)
+                    if (ann and ann.get('include') and self._overlay_layer_placed(i)
+                            and ann.get('serial') != getattr(self, '_image_load_serial', 0)):
+                        out.append(i)
+                return out
+
+            def _begin_layer_annotation_preview(self):
+                """Temporarily add the placed panels' labels (see above). Nestable; every
+                call must be matched by _end_layer_annotation_preview()."""
+                depth = int(getattr(self, '_ann_preview_depth', 0) or 0)
+                self._ann_preview_depth = depth + 1
+                if depth > 0:
+                    return
+                self._ann_preview_saved = None
+                pending = self._layers_with_pending_annotations()
+                if not pending:
+                    return
+                saved = {}
+                for k in self._ANN_PREVIEW_ATTRS:
+                    if hasattr(self, k):
+                        v = getattr(self, k)
+                        saved[k] = (v, list(v) if isinstance(v, list) else None)
+                    else:
+                        saved[k] = None
+                self._ann_preview_saved = saved
+                for i in pending:
+                    try:
+                        # include is a set -> copy so the import's bookkeeping can't leak
+                        ann = dict(getattr(self, f'image{i}_annotations'))
+                        setattr(self, f'image{i}_annotations', ann)
+                        self._import_overlay_annotations(i)
+                    except Exception:
+                        log_traceback()
+
+            def _end_layer_annotation_preview(self):
+                depth = int(getattr(self, '_ann_preview_depth', 0) or 0)
+                if depth <= 0:
+                    self._ann_preview_depth = 0
+                    return
+                self._ann_preview_depth = depth - 1
+                if depth > 1:
+                    return
+                saved = getattr(self, '_ann_preview_saved', None)
+                self._ann_preview_saved = None
+                if not saved:
+                    return
+                for k, rec in saved.items():
+                    try:
+                        if rec is None:
+                            if hasattr(self, k):
+                                delattr(self, k)
+                            continue
+                        obj, elems = rec
+                        if elems is not None:
+                            obj[:] = elems          # same list object, original contents
+                        setattr(self, k, obj)
+                    except Exception:
+                        log_traceback()
+
+            def _ann_preview_active(self):
+                return int(getattr(self, '_ann_preview_depth', 0) or 0) > 0
+
+            def _import_overlay_annotations(self, idx, lr_as_custom=False):
                 """Rasterize: bring slot `idx`'s snapshotted annotations onto the canvas as
                 editable items, mapped through the layer's final position, scale and rotation.
                 Font sizes and line widths are rescaled so they keep their size relative to the
@@ -26109,8 +28333,22 @@ if __name__ == "__main__":
                 if abs(rot) > 0.01:
                     c = rect.center(); tf.translate(c.x(), c.y()); tf.rotate(rot); tf.translate(-c.x(), -c.y())
 
+                # A layer that was flipped / cropped with Crop Image shows a derived part of
+                # its source: map the snapshot coordinates through the same flip + crop.
+                _g = self._layer_geom(idx)
+                _lsrc = getattr(self, f'_layer{idx}_source', None)
+                _sw = float(_lsrc.width()) if _lsrc is not None else float(src.width())
+                _sh = float(_lsrc.height()) if _lsrc is not None else float(src.height())
+                _cx, _cy = (float(_g['crop'][0]), float(_g['crop'][1])) if _g.get('crop') else (0.0, 0.0)
+
                 def mp(x, y):
-                    q = tf.map(QPointF(rect.x() + (float(x) - ox) * sc, rect.y() + (float(y) - oy) * sc))
+                    u = float(x) - ox; v = float(y) - oy
+                    if _g.get('flip_h'):
+                        u = _sw - u
+                    if _g.get('flip_v'):
+                        v = _sh - v
+                    u -= _cx; v -= _cy
+                    q = tf.map(QPointF(rect.x() + u * sc, rect.y() + v * sc))
                     return q.x(), q.y()
 
                 img = self.image if (self.image and not self.image.isNull()) else self.image_master
@@ -26125,7 +28363,9 @@ if __name__ == "__main__":
                     setattr(self, f'image{idx}_annotations', None)
                     return 0
                 joined_sides = set()
-                if 'lr' in inc and abs(rot) <= 0.01:
+                # lr_as_custom (Save > convert labels): left / right MW labels become CUSTOM text
+                # markers at exactly the place they are drawn, never joined to this image's sets.
+                if 'lr' in inc and abs(rot) <= 0.01 and not lr_as_custom:
                     joined_sides = self._join_imported_lr_labels(ann, mp)
                     n += sum(len(ann.get(f'{sd}_raw', [])) for sd in joined_sides)
                 std_left_over = [m for m, sd in zip(ann.get('std_text', []), ann.get('std_side', []))
@@ -26146,7 +28386,18 @@ if __name__ == "__main__":
                     if ('custom' if sd.get('type') == 'leader' else 'shapes') not in inc:
                         continue
                     try:
-                        sd = dict(sd)
+                        sd = copy.deepcopy(sd)      # a table's spec must not be shared with the snapshot
+                        if isinstance(sd.get('table'), dict):
+                            # Table text and cell padding keep their size relative to the panel.
+                            _t = sd['table']
+                            try:
+                                _t['font_size'] = int(round(max(lo, min(hi, float(_t.get('font_size', 12)) * size_f))))
+                            except Exception:
+                                pass
+                            try:
+                                _t['pad_px'] = float(_t.get('pad_px', 0.0) or 0.0) * sc
+                            except Exception:
+                                pass
                         if sd.get('type') in ('line', 'arrow', 'leader'):
                             sd['start'] = mp(*sd['start']); sd['end'] = mp(*sd['end'])
                         elif sd.get('type') == 'rectangle':
@@ -26164,11 +28415,30 @@ if __name__ == "__main__":
                 self._last_import_skipped_tops = 0
                 if tops and getattr(self, 'top_markers', []):
                     # Top labels share ONE row: a panel whose row is somewhere else (e.g. stacked
-                    # below) cannot join it, and custom markers cannot be rotated -- skip, report.
+                    # below) cannot join it (custom markers cannot be rotated, so its labels
+                    # become straight custom text over their lanes instead).
                     _, row_y = mp(tops[0][0], ann.get('top_shift', 0.0))
                     tol = max(6.0, 0.02 * float(img.height()))
                     if abs(row_y - float(getattr(self, 'top_marker_shift_added', 0) or 0)) > tol:
-                        self._last_import_skipped_tops = len(tops)
+                        # Its row is elsewhere (e.g. a panel placed beside or below at another
+                        # height): keep the labels as custom text over their lanes at the
+                        # panel's row height, so they are shown and saved instead of dropped.
+                        try:
+                            _col = QColor(getattr(self, 'font_color', QColor("black")))
+                            _fam = str(getattr(self, 'font_family', 'Arial'))
+                            _fs = int(round(max(lo, min(hi, float(getattr(self, 'font_size', 12)) * size_f))))
+                        except Exception:
+                            _col, _fam, _fs = QColor("black"), "Arial", 12
+                        for x, t in tops:
+                            try:
+                                nx, ny = mp(x, ann.get('top_shift', 0.0))
+                                self.custom_markers.append([nx, ny, str(t), QColor(_col), _fam, _fs,
+                                                            bool(getattr(self, 'font_bold', False)),
+                                                            bool(getattr(self, 'font_italic', False))])
+                                n += 1
+                            except Exception:
+                                continue
+                        self._last_import_skipped_tops = 0
                         tops = []
                 if tops:
                     had_top = bool(getattr(self, 'top_markers', []))
@@ -26180,7 +28450,7 @@ if __name__ == "__main__":
                         self.top_markers.append((nx, t)); labels.append(t)
                         n += 1
                     self.top_label = labels
-                    if hasattr(self, 'top_marker_input'):
+                    if hasattr(self, 'top_marker_input') and not self._ann_preview_active():
                         self.top_marker_input.blockSignals(True)
                         self.top_marker_input.setText(", ".join(map(str, labels)))
                         self.top_marker_input.blockSignals(False)
@@ -26553,133 +28823,14 @@ if __name__ == "__main__":
                 # so a single undo returns to the composition exactly as it was placed.
                 self._suppress_state_save = True
 
-                # Get the adjusted previews (which contain the visual state including inversions)
-                adjusted_img1 = getattr(self, 'image1_adjusted_preview', None)
-                adjusted_img2 = getattr(self, 'image2_adjusted_preview', None)
-
-                # --- 1. Determine Output Bit Depth ---
-                # "If one image is 16 bit and another is 8 bit then final should be 8 bit but if both 16 bit then 16 bit"
-                
-                is_img1_16 = False
-                if has_img1 and adjusted_img1:
-                    is_img1_16 = adjusted_img1.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
-                
-                is_img2_16 = False
-                if has_img2 and adjusted_img2:
-                    is_img2_16 = adjusted_img2.format() in [QImage.Format_Grayscale16, QImage.Format_RGBA64, QImage.Format_RGBX64]
-
-                # Determine if we go high depth (16-bit)
-                # If only one image exists, respect its depth. If both exist, BOTH must be 16-bit.
-                target_16_bit = False
-                if has_img1 and has_img2:
-                    target_16_bit = is_img1_16 and is_img2_16
-                elif has_img1:
-                    target_16_bit = is_img1_16
-                elif has_img2:
-                    target_16_bit = is_img2_16
-
-                canvas_format = QImage.Format_RGBA64 if target_16_bit else QImage.Format_ARGB32_Premultiplied
-                
-                # --- 2. Setup Canvas ---
-                # Use master size, or if master is hidden/replaced by overlay flow, use Img1 size
-                canvas_w = self.image_master.width()
-                canvas_h = self.image_master.height()
-                
-                final_canvas = QImage(canvas_w, canvas_h, canvas_format)
-                # Transparent when the opaque master is painted underneath (it covers the
-                # canvas anyway, and this preserves an image's transparent padding margins).
-                # WHITE when Image 1 (Base) replaces the master: with nothing opaque below,
-                # layers drawn at a partial Mixing % would bake out semi-transparent, whereas
-                # the live view shows them composited over the white viewer background.
-                # Filling white here is what makes Rasterize match the preview.
-                final_canvas.fill(Qt.transparent if not self._overlay_base_layer_active() else Qt.white)
-
-                painter = QPainter(final_canvas)
-                painter.setRenderHint(QPainter.SmoothPixmapTransform, False) # Preserves pixel data better
-                painter.setRenderHint(QPainter.Antialiasing, True)
-
-                # Effective opacities = individual Mixing % x Global Mixing % for each image.
-                op1_blend, op2_blend = self._overlay_effective_opacities()
-
-                # --- 2. Draw Base Master Image (background, unless Image 1 replaces it) ---
-                # Skipped when Image 1 (Base) is placed: that layer is the bottom of the
-                # stack, so painting the master here as well double-composited the base and
-                # made region clips on Image 1 invisible. Matches the live preview exactly.
-                if (self.image_master and not self.image_master.isNull()
-                        and not self._overlay_base_layer_active()):
-                    # Determine Main Image Settings (Saved or Current)
-                    main_settings = {}
-                    if hasattr(self, 'main_levels_gamma'):
-                        main_settings['levels_gamma'] = self.main_levels_gamma
-                    else:
-                        # Fallback if no specific main levels saved (e.g. never switched context)
-                        main_settings['levels_gamma'] = {
-                            'black_point': self.black_point_slider.value(),
-                            'white_point': self.white_point_slider.value(),
-                            'gamma': self.gamma_slider.value()
-                        }
-                    
-                    main_settings['is_inverted'] = self.main_image_is_inverted
-                    main_settings['channel_mixer'] = getattr(self, 'channel_mixer_data', self._get_default_adjustments()['channel_mixer']).copy()
-                    main_settings['unsharp_mask'] = getattr(self, 'unsharp_mask_data', self._get_default_adjustments()['unsharp_mask']).copy()
-                    main_settings['clahe'] = getattr(self, 'clahe_data', self._get_default_adjustments()['clahe']).copy()
-
-                    base_img = self._apply_all_adjustments_to_image(self.image_master, main_settings)
-                    painter.setOpacity(1.0)
-                    rect_base = QRectF(0.0, 0.0, float(final_canvas.width()), float(final_canvas.height()))
-                    painter.drawImage(rect_base, base_img)
-
-                # --- 3. Draw Image 1 (Base/Overlay 1) ---
-                if has_img1 and adjusted_img1:
-                     # Image 1 layer
-                    painter.setOpacity(op1_blend)
-
-                    rect1_native = QRectF(
-                        QPointF(*self.image1_position),
-                        QSizeF(adjusted_img1.width() * (self._overlay_scale_factor(1)),
-                               adjusted_img1.height() * (self._overlay_scale_factor(1)))
-                    )
-                    rotation1 = self.image1_rotation_slider.value() / 10.0
-
-                    # Restrict Image 1 to the kept regions only when it is a chosen target.
-                    clip_path1 = self._build_region_clip_path(canvas_w, canvas_h) if self._region_target_includes(1) else None
-
-                    painter.save()
-                    if clip_path1 is not None:
-                        painter.setClipPath(clip_path1)
-                    if abs(rotation1) > 0.01:
-                        center_point = rect1_native.center()
-                        painter.translate(center_point); painter.rotate(rotation1); painter.translate(-center_point)
-                    painter.drawImage(rect1_native, adjusted_img1)
-                    painter.restore()
-
-                
-                # --- 4. Draw Image 2 (Overlay) ---
-                if has_img2 and adjusted_img2:
-                    painter.setOpacity(op2_blend)
-
-                    rect2_native = QRectF(
-                        QPointF(*self.image2_position),
-                        QSizeF(adjusted_img2.width()  * (self._overlay_scale_factor(2)),
-                            adjusted_img2.height() * (self._overlay_scale_factor(2)))
-                    )
-                    rotation2 = self.image2_rotation_slider.value() / 10.0
-
-                    # Build a single union clip path from all regions so Image 2 is painted
-                    # exactly once — preventing double/triple blending in overlaps. Only applied
-                    # when Image 2 is a chosen region target; otherwise it blends over the full canvas.
-                    clip_path2 = self._build_region_clip_path(canvas_w, canvas_h) if self._region_target_includes(2) else None
-
-                    painter.save()
-                    if clip_path2 is not None:
-                        painter.setClipPath(clip_path2)   # union of all rects, drawn through once
-                    if abs(rotation2) > 0.01:
-                        cp = rect2_native.center()
-                        painter.translate(cp); painter.rotate(rotation2); painter.translate(-cp)
-                    painter.drawImage(rect2_native, adjusted_img2)
-                    painter.restore()
-
-                painter.end()
+                # One compositor for Rasterize, analysis and the preview rules: the main image
+                # (unless Image 1 replaces it), then Image 1 and Image 2 with their Mixing %,
+                # resize, rotation and region clips (_render_layer_composite).
+                final_canvas = self._render_layer_composite(raw=False, for_analysis=False)
+                if final_canvas is None or final_canvas.isNull():
+                    self._suppress_state_save = False
+                    QMessageBox.warning(self, "Rasterize", "The layers could not be combined.")
+                    return
                 
                 # --- 5. Update App State ---
                 self.image_master = final_canvas.copy()
@@ -27153,7 +29304,7 @@ if __name__ == "__main__":
                 left_col_widget = QWidget()
                 left_col_widget.setLayout(left_column_layout)
                 left_col_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                main_layout.addWidget(left_col_widget, 1)
+                # (added together with the right column below, see _make_columns)
 
                 # --- RIGHT COLUMN ---
                 right_column_layout = QVBoxLayout()
@@ -27216,7 +29367,11 @@ if __name__ == "__main__":
                 right_col_widget = QWidget()
                 right_col_widget.setLayout(right_column_layout)
                 right_col_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                main_layout.addWidget(right_col_widget, 1)
+                # Equal-width columns side by side; the right column moves BELOW the left one
+                # when the controls are too narrow for both (v9.9.0, _make_columns).
+                left_column_layout.setContentsMargins(0, 0, 0, 0)
+                right_column_layout.setContentsMargins(0, 0, 0, 0)
+                main_layout.addWidget(self._make_columns(left_col_widget, right_col_widget))
 
                 # --- CONNECTIONS (Same as before, abridged for length but included in logic) ---
                 # Levels
@@ -28301,6 +30456,19 @@ if __name__ == "__main__":
                 if not self.image_master or self.image_master.isNull():
                     return None
 
+                # Placed Image 1 / Image 2 layers are part of what is on screen, so they are
+                # part of what is analysed -- no Rasterize needed. The composite applies each
+                # layer's own polarity (and, unless raw data is measured, its own display
+                # adjustments), so nothing below must be applied a second time.
+                if self._overlay_layers_live():
+                    try:
+                        comp = self._render_layer_composite(
+                            raw=bool(getattr(self, 'densitometry_raw_data', True)), for_analysis=True)
+                        if comp is not None and not comp.isNull():
+                            return comp
+                    except Exception:
+                        log_traceback()
+
                 # Create a temporary high-quality copy to work on
                 adjusted_master_copy = self.image_master.copy()
 
@@ -28698,18 +30866,29 @@ if __name__ == "__main__":
                 rotation_layout.addWidget(self.orientation_slider, 0, 1)
                 rotation_layout.addWidget(self.align_button, 0, 2)
                 rotation_layout.addWidget(self.reset_align_button, 0, 3)
-                guides_flip_layout = QHBoxLayout()
+                guides_flip_layout_box, guides_flip_layout = self._make_flow_row()
                 guides_flip_layout.addWidget(QLabel("Show Guide Lines: "))
                 self.show_guides_checkbox = QCheckBox(""); self.show_guides_checkbox.setChecked(False)
                 self.show_guides_checkbox.setToolTip("Show a center line to align/rotate the image. Shortcut: CTRL+G")
                 self.show_guides_checkbox.stateChanged.connect(self.update_live_view)
                 guides_flip_layout.addWidget(self.show_guides_checkbox)
+                guides_flip_layout.addSpacing(16)
+                # Show Grid = the Markers tab's Line X + Line Y grid, from here, so the image can
+                # be straightened against a grid while rotating. Kept in sync both ways.
+                guides_flip_layout.addWidget(QLabel("Show Grid: "))
+                self.show_grid_checkbox = QCheckBox("")
+                self.show_grid_checkbox.setToolTip(
+                    "Show the grid (Line X and Line Y) over the image, e.g. to straighten it.\n"
+                    "Shortcut: Ctrl+Shift+G (Cmd+Shift+G on macOS).\n"
+                    "Same grid as Markers ▸ Line X / Line Y; the grid size is set there (Grid px).")
+                self.show_grid_checkbox.toggled.connect(self._on_show_grid_toggled)
+                guides_flip_layout.addWidget(self.show_grid_checkbox)
                 guides_flip_layout.addStretch()
                 self.flip_vertical_button = QPushButton("Flip Vertical"); self.flip_vertical_button.clicked.connect(self.flip_vertical)
                 self.flip_horizontal_button = QPushButton("Flip Horizontal"); self.flip_horizontal_button.clicked.connect(self.flip_horizontal)
                 guides_flip_layout.addWidget(self.flip_vertical_button)
                 guides_flip_layout.addWidget(self.flip_horizontal_button)
-                rotation_layout.addLayout(guides_flip_layout, 1, 0, 1, 4)
+                rotation_layout.addWidget(guides_flip_layout_box, 1, 0, 1, 4)
                 rotation_layout.setColumnStretch(1, 1)
                 left_column_layout.addWidget(rotation_group)
 
@@ -28759,7 +30938,7 @@ if __name__ == "__main__":
                 perspective_ratio_layout.addStretch()
                 perspective_layout.addLayout(perspective_ratio_layout)
 
-                perspective_buttons_layout = QHBoxLayout()
+                perspective_buttons_layout_box, perspective_buttons_layout = self._make_flow_row()
                 self.perspective_edit_button = QPushButton("Edit Corners")
                 self.perspective_edit_button.setCheckable(True)
                 self.perspective_edit_button.setToolTip("Toggle 4-point perspective correction mode. Drag corners to adjust.")
@@ -28777,11 +30956,11 @@ if __name__ == "__main__":
                 perspective_buttons_layout.addStretch()
                 perspective_buttons_layout.addWidget(self.perspective_apply_button)
                 perspective_buttons_layout.addWidget(self.perspective_reset_button)
-                perspective_layout.addLayout(perspective_buttons_layout)
+                perspective_layout.addWidget(perspective_buttons_layout_box)
                 left_column_layout.addWidget(perspective_group)
                 left_column_layout.addStretch(1)
                 
-                main_layout.addLayout(left_column_layout,1) # Add the completed left column layout
+                # (added together with the right column at the end, see _make_columns)
 
                 # ======================================================================
                 # === RIGHT COLUMN: Destructive Edits (Crop & Pad) ===
@@ -28793,14 +30972,14 @@ if __name__ == "__main__":
                 cropping_group = QGroupBox("Crop Image")
                 cropping_group.setStyleSheet("QGroupBox { font-weight: bold; }")
                 cropping_layout = QVBoxLayout(cropping_group)
-                crop_actions_layout = QHBoxLayout()
+                crop_actions_layout_box, crop_actions_layout = self._make_flow_row()
                 self.draw_crop_rect_button = QPushButton("Draw Crop Area"); self.draw_crop_rect_button.setCheckable(True)
                 self.draw_crop_rect_button.clicked.connect(self.toggle_rectangle_crop_mode)
                 self._register_action_button(self.draw_crop_rect_button)
                 self.apply_crop_button = QPushButton("Apply Crop"); self.apply_crop_button.clicked.connect(self.update_crop)
                 crop_actions_layout.addWidget(self.draw_crop_rect_button, 1); crop_actions_layout.addStretch()
                 crop_actions_layout.addWidget(self.apply_crop_button)
-                cropping_layout.addLayout(crop_actions_layout)
+                cropping_layout.addWidget(crop_actions_layout_box)
                 # No separator here: the "Crop Image" group box already draws its own frame and
                 # title, so an extra rule under the Draw Crop Area row just added a stray line
                 # across the panel. (create_separator is still used where two genuinely distinct
@@ -28854,17 +31033,19 @@ if __name__ == "__main__":
                 padding_layout.addWidget(QLabel("Right (px):"), 0, 2); padding_layout.addWidget(self.right_padding_input, 0, 3)
                 padding_layout.addWidget(QLabel("Top (px):"), 1, 0); padding_layout.addWidget(self.top_padding_input, 1, 1)
                 padding_layout.addWidget(QLabel("Bottom (px):"), 1, 2); padding_layout.addWidget(self.bottom_padding_input, 1, 3)
-                padding_actions_layout = QHBoxLayout()
+                padding_actions_layout_box, padding_actions_layout = self._make_flow_row()
                 self.recommend_button = QPushButton("Set Recommended Values"); self.recommend_button.clicked.connect(self.recommended_values)
                 self.clear_padding_button = QPushButton("Clear"); self.clear_padding_button.clicked.connect(self.clear_padding_values)
                 self.finalize_button = QPushButton("Apply Padding"); self.finalize_button.clicked.connect(self.finalize_image)
                 padding_actions_layout.addWidget(self.recommend_button); padding_actions_layout.addWidget(self.clear_padding_button); padding_actions_layout.addStretch()
                 padding_actions_layout.addWidget(self.finalize_button)
-                padding_layout.addLayout(padding_actions_layout, 2, 0, 1, 4)
+                padding_layout.addWidget(padding_actions_layout_box, 2, 0, 1, 4)
                 right_column_layout.addWidget(padding_group)
                 right_column_layout.addStretch(1)
 
-                main_layout.addLayout(right_column_layout,1) # Add the completed right column layout
+                # Two equal columns side by side; the right one (Crop / Padding) moves BELOW the
+                # left one when the controls are too narrow for both (v9.9.0, _make_columns).
+                main_layout.addWidget(self._make_columns(left_column_layout, right_column_layout))
 
                 return tab
             
@@ -29201,7 +31382,34 @@ if __name__ == "__main__":
                 Nothing here depends on the viewer size or the UI Scale -- only on the image
                 and the fixed export reference, exactly like the exporters.
 
+                Placed Image 1 / Image 2 layers count too (v9.9.0): the visible outline of each
+                placed layer, and the labels that came with a Copy Current panel (drawn live,
+                see _begin_layer_annotation_preview). A panel placed BESIDE the gel therefore
+                gets room, instead of staying cut off at the canvas edge (shown white).
+
                 Returns (0, 0, 0, 0) on failure."""
+                self._begin_layer_annotation_preview()
+                try:
+                    return self._label_padding_needed_impl()
+                finally:
+                    self._end_layer_annotation_preview()
+
+            def _layer_polygon_image(self, idx):
+                """Visible outline (content box) of placed layer `idx` in IMAGE pixels, through
+                its position, Resize % and rotation. None if the layer is not placed."""
+                if not self._overlay_layer_placed(idx):
+                    return None
+                src = getattr(self, f'image{idx}_original')
+                s = float(self._overlay_scale_factor(idx))
+                pos = getattr(self, f'image{idx}_position')
+                cx = pos[0] + src.width() * s / 2.0; cy = pos[1] + src.height() * s / 2.0
+                t = QTransform()
+                t.translate(cx, cy); t.rotate(self._layer_rotation_deg(idx)); t.translate(-cx, -cy)
+                t.translate(pos[0], pos[1]); t.scale(s, s)
+                cb = self._overlay_content_box(idx) or (0, 0, src.width(), src.height())
+                return t.map(QPolygonF(QRectF(*[float(v) for v in cb])))
+
+            def _label_padding_needed_impl(self):
                 import math
                 try:
                     if not self.image or self.image.isNull():
@@ -29314,10 +31522,34 @@ if __name__ == "__main__":
                     # Never let one stray item (e.g. a label left far off-canvas by a crop, which
                     # now keeps such items) balloon the canvas: cap every side at the content's
                     # own size. Normal labels are far below this.
-                    cap = float(max(content_w, content_h))
+                    # 4. Placed layers: the whole visible picture must fit on the canvas. Not
+                    #    capped -- a panel placed beside the gel is deliberate and can be as
+                    #    large as the gel itself. (Its labels were measured in step 1.)
+                    lay = [0.0, 0.0, 0.0, 0.0]
+                    for _i in (1, 2):
+                        try:
+                            if _i == 1 and self._overlay_base_layer_active():
+                                continue            # a copy of the main image: it IS the content
+                            poly = self._layer_polygon_image(_i)
+                            if poly is None:
+                                continue
+                            r = poly.boundingRect()
+                            lay[0] = max(lay[0], -(r.left() - cl))
+                            lay[1] = max(lay[1], (r.right() - cl) - content_w)
+                            lay[2] = max(lay[2], -(r.top() - ct))
+                            lay[3] = max(lay[3], (r.bottom() - ct) - content_h)
+                        except Exception:
+                            log_traceback()
+
+                    # The stray-label cap grows by whatever a placed panel adds, so the panel's
+                    # own labels beyond it are not cut off by the cap.
+                    cap = float(max(content_w, content_h)) + max(0.0, max(lay))
                     def _fin(v):
                         return int(math.ceil(max(0.0, min(v, cap))))
-                    return _fin(need_l), _fin(need_r), _fin(need_t), _fin(need_b)
+                    out = [_fin(need_l), _fin(need_r), _fin(need_t), _fin(need_b)]
+                    for k in range(4):
+                        out[k] = max(out[k], int(math.ceil(max(0.0, lay[k]))))
+                    return tuple(out)
                 except Exception:
                     log_traceback()
                     return 0, 0, 0, 0
@@ -29373,33 +31605,47 @@ if __name__ == "__main__":
                 # --- Group 1: Marker Data (Presets and Labels) ---
                 presets_group = QGroupBox("Marker Presets and Labels")
                 presets_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-                presets_layout = QGridLayout(presets_group)
+                # Preset row (wrapping) above the grid -- see the note at the Overlap groups.
+                _presets_vbox = QVBoxLayout(presets_group)
+                presets_layout = QGridLayout()
+                _presets_vbox.addLayout(presets_layout)
                 
                 # Preset Row
-                presets_layout.addWidget(QLabel("Preset:"), 0, 0)
+                _preset_row_box, _preset_row = self._make_flow_row()
+                _preset_row.addWidget(QLabel("Preset:"))
                 self.combo_box = QComboBox(self)
                 self.combo_box.setToolTip("Select a saved marker configuration or 'Custom' to create your own.")
                 if hasattr(self, 'presets_data') and self.presets_data: 
                     self.combo_box.addItems(sorted(self.presets_data.keys()))
                 self.combo_box.addItem("Custom")
+                # Shrinkable: a long preset name no longer forces the whole tab wider than the
+                # window (horizontal scroll bar); the drop-down list still shows full names.
+                self.combo_box.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                self.combo_box.setMinimumContentsLength(16)
+                try:
+                    self.combo_box.view().setMinimumWidth(self.combo_box.view().sizeHintForColumn(0) + 28)
+                except Exception:
+                    pass
                 self.combo_box.currentTextChanged.connect(self.on_combobox_changed)
-                presets_layout.addWidget(self.combo_box, 0, 1)
+                _preset_row.addWidget(self.combo_box)
                 
                 self.rename_input = QLineEdit(self)
                 self.rename_input.setPlaceholderText("Enter new name...")
                 self.rename_input.setToolTip("Enter a name here to save the current 'Custom' configuration as a new preset.")
                 self.rename_input.setEnabled(False)
-                presets_layout.addWidget(self.rename_input, 0, 2)
+                _preset_row.addWidget(self.rename_input)
                 
                 self.save_button = QPushButton("Save")
                 self.save_button.setToolTip("Save the current configuration as a new preset.")
                 self.save_button.clicked.connect(self.save_config)
-                presets_layout.addWidget(self.save_button, 0, 3)
+                _preset_row.addWidget(self.save_button)
                 
                 self.remove_config_button = QPushButton("Remove")
                 self.remove_config_button.setToolTip("Delete the currently selected preset.")
                 self.remove_config_button.clicked.connect(self.remove_config)
-                presets_layout.addWidget(self.remove_config_button, 0, 4)
+                _preset_row.addWidget(self.remove_config_button)
+                # Preset row wraps when narrow (v9.9.0) instead of squeezing the buttons.
+                _presets_vbox.insertWidget(0, _preset_row_box)
                 
                 # Checkbox Row
                 # Both default to OFF: switching the molecular-weight ladder should change
@@ -29433,6 +31679,11 @@ if __name__ == "__main__":
                 self.top_marker_input.setFixedHeight(50)
                 presets_layout.addWidget(self.top_marker_input, 4, 1, 1, 3)
                 self._attach_box_grip(self.top_marker_input, "top_labels", min_h=30, default_fixed=50)
+                # Its height is set by the grip (fixed); an EXPANDING vertical policy only made
+                # the whole Marker Presets group swallow spare tab height, spreading its rows
+                # apart with big empty gaps when the controls pane is tall.
+                self.top_marker_input.setSizePolicy(self.top_marker_input.sizePolicy().horizontalPolicy(),
+                                                    QSizePolicy.Preferred)
                 
                 self.update_labels_button = QPushButton("Update Labels")
                 self.update_labels_button.setToolTip("Apply changes made to the text boxes above to the image immediately.")
@@ -29447,7 +31698,7 @@ if __name__ == "__main__":
                 standard_layout = QGridLayout(standard_group)
                 
                 # Font Options Row
-                font_options_layout = QHBoxLayout()
+                font_options_layout_box, font_options_layout = self._make_flow_row()
                 self.font_combo_box = QFontComboBox()
                 self.font_combo_box.setToolTip("Font family for Standard Markers (Left/Right/Top).")
                 self.font_combo_box.setCurrentFont(QFont(self.font_family))
@@ -29530,12 +31781,15 @@ if __name__ == "__main__":
                 font_options_layout.addWidget(QLabel("Axis:"))
                 font_options_layout.addWidget(self.top_rotation_axis_combo)
 
-                standard_layout.addLayout(font_options_layout, 0, 0, 1, 3)
+                standard_layout.addWidget(font_options_layout_box, 0, 0, 1, 3)
                 standard_layout.addWidget(self.create_separator(), 1, 0, 1, 3)
                 
                 # Sliders Rows
                 def add_marker_row(row_idx, label, mode, slider_attr, range_attr, val_attr, shortcut_key):
-                    btn_box = QHBoxLayout()
+                    # One wrapping row (v9.9.0): [Place][Remove Last][Reset All] [position slider]
+                    # [Copy]. When narrow the slider moves to the next line instead of the
+                    # buttons and slider squeezing each other side by side.
+                    btn_box_box, btn_box = self._make_flow_row()
                     btn_place = QPushButton(f"Place {label}")
                     btn_place.setToolTip(f"Click to place {label} markers on the image.\nShortcut: Ctrl+Shift+{shortcut_key}")
                     btn_place.clicked.connect(getattr(self, f"enable_{mode}_marker_mode"))
@@ -29550,9 +31804,12 @@ if __name__ == "__main__":
                     btn_rst.setToolTip(f"Remove ALL {label} markers.")
                     btn_rst.clicked.connect(lambda: self.reset_marker(mode, 'reset'))
                     
-                    btn_box.addWidget(btn_place); btn_box.addWidget(btn_rem); btn_box.addWidget(btn_rst)
+                    for _b in (btn_place, btn_rem, btn_rst):
+                        # Fixed width: spare row width goes to the slider, not the buttons.
+                        _b.setSizePolicy(QSizePolicy.Fixed, _b.sizePolicy().verticalPolicy())
+                        btn_box.addWidget(_b)
                     
-                    standard_layout.addLayout(btn_box, row_idx, 0)
+                    standard_layout.addWidget(btn_box_box, row_idx, 0, 1, 3)
                     
                     slider = QSlider(Qt.Horizontal)
                     axis = "Y" if mode == 'top' else "X"
@@ -29582,21 +31839,26 @@ if __name__ == "__main__":
                     val_lbl.setToolTip(slider.toolTip())
                     slider.valueChanged.connect(lambda v, l=val_lbl: l.setText(f"{v} px"))
                     setattr(self, f"{mode}_position_value_label", val_lbl)
-                    srow = QHBoxLayout()
+                    srow_w = QWidget()
+                    srow = QHBoxLayout(srow_w)
+                    srow.setContentsMargins(0, 0, 0, 0)
                     srow.addWidget(cap); srow.addWidget(slider, 1); srow.addWidget(val_lbl)
-                    standard_layout.addLayout(srow, row_idx, 1)
+                    srow_w.setMinimumWidth(srow_w.sizeHint().width())
+                    btn_box.addWidget(srow_w)
                     
                     # Copy buttons
                     if mode == 'left':
                         cp_btn = QPushButton("Copy →")
                         cp_btn.setToolTip("Copy Left Markers & Padding to the Right side.")
                         cp_btn.clicked.connect(lambda: self.duplicate_marker('left'))
-                        standard_layout.addWidget(cp_btn, row_idx, 2)
+                        cp_btn.setSizePolicy(QSizePolicy.Fixed, cp_btn.sizePolicy().verticalPolicy())
+                        btn_box.addWidget(cp_btn)
                     elif mode == 'right':
                         cp_btn = QPushButton("← Copy")
                         cp_btn.setToolTip("Copy Right Markers & Padding to the Left side.")
                         cp_btn.clicked.connect(lambda: self.duplicate_marker('right'))
-                        standard_layout.addWidget(cp_btn, row_idx, 2)
+                        cp_btn.setSizePolicy(QSizePolicy.Fixed, cp_btn.sizePolicy().verticalPolicy())
+                        btn_box.addWidget(cp_btn)
 
                 add_marker_row(2, "Left", 'left', 'left_padding_slider', 'left_slider_range', 'left_marker_shift_added', 'L')
                 add_marker_row(3, "Right", 'right', 'right_padding_slider', 'right_slider_range', 'right_marker_shift_added', 'R')
@@ -29611,7 +31873,7 @@ if __name__ == "__main__":
                 custom_layout.setSpacing(6)
                 
                 # Row 1: Creation Tools
-                row1_layout = QHBoxLayout()
+                row1_layout_box, row1_layout = self._make_flow_row()
                 self.custom_marker_button = QPushButton("Place Custom")
                 self.custom_marker_button.setToolTip("Activate tool to place text on image.\nText from the box on the right will be used.")
                 self.custom_marker_button.clicked.connect(self.enable_custom_marker_mode)
@@ -29679,10 +31941,10 @@ if __name__ == "__main__":
                 row1_layout.addWidget(self.custom_marker_color_button)
                 row1_layout.addWidget(self.custom_marker_align_combo)
                 row1_layout.addStretch(1)
-                custom_layout.addLayout(row1_layout)
+                custom_layout.addWidget(row1_layout_box)
 
                 # Row 2: Marker Reset + Shapes + Grid + Actions (Optimized for space)
-                row2_layout = QHBoxLayout()
+                row2_layout_box, row2_layout = self._make_flow_row()
                 
                 self.remove_custom_marker_button = QPushButton("Rem. Last")
                 self.remove_custom_marker_button.setToolTip("Remove the last placed Custom Marker.")
@@ -29722,6 +31984,9 @@ if __name__ == "__main__":
                 self.show_grid_checkbox_y = QCheckBox("Line Y")
                 self.show_grid_checkbox_y.setToolTip("Show horizontal lines.\nShortcut: Ctrl+Shift+Y")
                 self.show_grid_checkbox_y.stateChanged.connect(self.update_live_view)
+                # Keep Transform ▸ Show Grid in step with these two.
+                self.show_grid_checkbox_x.toggled.connect(lambda _c: self._sync_show_grid_checkbox())
+                self.show_grid_checkbox_y.toggled.connect(lambda _c: self._sync_show_grid_checkbox())
 
                 self.snap_enabled_checkbox = QCheckBox("Snap")
                 self.snap_enabled_checkbox.setToolTip(
@@ -29801,7 +32066,7 @@ if __name__ == "__main__":
                 row2_layout.addWidget(self.move_resize_button)
                 row2_layout.addWidget(self.modify_custom_marker_button)
                 
-                custom_layout.addLayout(row2_layout)
+                custom_layout.addWidget(row2_layout_box)
                 main_layout.addWidget(custom_group)
 
                 main_layout.addStretch()
@@ -29816,8 +32081,76 @@ if __name__ == "__main__":
                 like Downloads holding the file, or a folder the app is not permitted to
                 write to — so say that instead of only echoing the raw exception."""
                 lines = [f"Could not save {what}:", f"{path}", ""]
+                if err is None:
+                    err = globals().get('_LAST_FILE_OP_ERROR')
+                if err is not None and _is_module_load_error(err):
+                    # Not the folder: the program could not load the code that writes this format.
+                    try:
+                        log_traceback(f"file write failed (module load): {path}: {err!r}")
+                    except Exception:
+                        pass
+                    if _app_files_replaced():
+                        lines += ["Gel Blot Analyzer was updated (its program files were replaced) "
+                                  "while it was open, so it can no longer load the part that saves "
+                                  "this file format. The folder is fine and your work is not lost.", "",
+                                  "What to do:",
+                                  "  • Save as PNG now (choose a .png name) — that usually still works "
+                                  "and also writes the configuration file.",
+                                  "  • Then quit and reopen Gel Blot Analyzer and save again.",
+                                  "  • If you quit without saving, Recover Unsaved Work brings the "
+                                  "image and its work back when the app starts."]
+                    else:
+                        lines += [f"Reason: {err}", "",
+                                  "The program could not load one of its own components. This is not "
+                                  "a folder or permission problem. Quit and reopen Gel Blot Analyzer, "
+                                  "then save again (or save as PNG first)."]
+                    if extra:
+                        lines += ["", extra]
+                    return "\n".join(lines)
                 if err is not None:
-                    lines += [f"Reason: {err}", ""]
+                    _en = getattr(err, 'errno', None)
+                    _es = os.strerror(_en) if isinstance(_en, int) else ""
+                    lines += [f"Reason: {err}" + (f" ({_es})" if _es and _es not in str(err) else ""), ""]
+                    try:
+                        log_traceback(f"file write failed: {path}: {err!r}")
+                    except Exception:
+                        pass
+                # Disk full / file too large: say so plainly, wherever the folder is.
+                if getattr(err, 'errno', None) in (28, 27):
+                    lines += [
+                        ("The drive is full." if err.errno == 28 else
+                         "The file is too large for this drive's format (FAT32 drives cannot "
+                         "hold files over 4 GB)."),
+                        "Nothing was left half-written.",
+                        "",
+                        "Free some space or save to another drive / a local folder "
+                        "(e.g. Documents)."]
+                    if extra:
+                        lines += ["", extra]
+                    return "\n".join(lines)
+                # USB stick / external drive (macOS /Volumes/..., or a non-system drive letter
+                # on Windows): the cloud-folder advice below does not apply.
+                _ap = os.path.abspath(str(path))
+                _removable = _ap.startswith("/Volumes/") or (
+                    sys.platform.startswith("win")
+                    and os.path.splitdrive(_ap)[0].upper()
+                    not in ("", os.environ.get("SystemDrive", "C:").upper()))
+                if _removable and not (isinstance(err, (TypeError, ValueError))
+                                       and not isinstance(err, OSError)):
+                    lines += [
+                        "This is an external / USB drive. Nothing was left half-written: "
+                        "the file is only replaced once it has been written completely.",
+                        "",
+                        "Try one of these:",
+                        "  • Save again (the drive may have been briefly busy).",
+                        "  • Check the drive is still connected and has free space. "
+                        "FAT32 drives (often named \"NO NAME\") cannot hold files over 4 GB.",
+                        "  • Save to a local folder (e.g. Documents) and copy the files "
+                        "to the drive afterwards.",
+                    ]
+                    if extra:
+                        lines += ["", extra]
+                    return "\n".join(lines)
                 if isinstance(err, (TypeError, ValueError)) and not isinstance(err, OSError):
                     # A data problem, not the folder — don't send the user chasing Box/Drive.
                     lines += ["This is an internal data problem, not a folder or permission "
@@ -30183,8 +32516,7 @@ if __name__ == "__main__":
                 # --- Densitometry ---
                 dens_group = QGroupBox("Densitometry")
                 dens_layout = QVBoxLayout(dens_group)
-                self.densitometry_raw_checkbox = QCheckBox(
-                    "Measure raw pixel data (ignore Levels/Gamma, CLAHE, sharpening and channel mixer)")
+                self.densitometry_raw_checkbox = QCheckBox("Measure raw pixel data")
                 self.densitometry_raw_checkbox.setChecked(bool(getattr(self, 'densitometry_raw_data', True)))
                 self.densitometry_raw_checkbox.setToolTip(
                     "Recommended: band volumes are measured on the recorded intensities, so purity and quantities do not change when you adjust how "
@@ -30193,6 +32525,12 @@ if __name__ == "__main__":
                     "display-adjusted image.")
                 self.densitometry_raw_checkbox.toggled.connect(self._on_densitometry_settings_changed)
                 dens_layout.addWidget(self.densitometry_raw_checkbox)
+                # (Was part of the checkbox text, which cannot wrap and forced a wide window.)
+                dens_raw_note = QLabel("Ignores Levels/Gamma, CLAHE, sharpening and the channel mixer "
+                                       "when measuring bands.")
+                dens_raw_note.setWordWrap(True)
+                dens_raw_note.setStyleSheet("color: palette(mid);")
+                dens_layout.addWidget(dens_raw_note)
                 dens_note = QLabel(
                     "For accurate purity (Band %), use the <b>Rolling Ball</b> area method in the "
                     "densitometry window and analyse the imager's raw 16-bit export rather than an "
@@ -30201,6 +32539,34 @@ if __name__ == "__main__":
                 dens_note.setStyleSheet("color: palette(mid);")
                 dens_layout.addWidget(dens_note)
                 layout.addWidget(dens_group)
+
+                # --- Saving: labels that came with a placed (Copy Current) panel ---
+                save_group = QGroupBox("Saving")
+                save_layout = QVBoxLayout(save_group)
+                _sv_row_box, _sv_row = self._make_flow_row()
+                _sv_row.addWidget(QLabel("Labels of placed images:"))
+                self.layer_label_save_combo = QComboBox()
+                for _txt, _key in (("Ask when saving", "ask"),
+                                   ("Always convert to editable items", "always"),
+                                   ("Never convert (keep them with the image)", "never")):
+                    self.layer_label_save_combo.addItem(_txt, _key)
+                _li = self.layer_label_save_combo.findData(self._layer_label_save_mode())
+                self.layer_label_save_combo.setCurrentIndex(_li if _li >= 0 else 0)
+                self.layer_label_save_combo.setToolTip(
+                    "A panel placed with Copy Current (Overlap Images) brings the labels of the image it "
+                    "came from; they are shown with the panel. When you save without rasterizing they "
+                    "can be turned into normal editable items: left/right MW labels and text become "
+                    "custom markers, tables become editable tables, lines / arrows / boxes editable "
+                    "shapes, and top labels join this image's top-label row.")
+                self.layer_label_save_combo.currentIndexChanged.connect(self._on_layer_label_save_mode_changed)
+                _sv_row.addWidget(self.layer_label_save_combo)
+                save_layout.addWidget(_sv_row_box)
+                _sv_note = QLabel("When a placed image brings labels, saving can convert them into editable "
+                                  "custom markers and tables. 'Ask' shows a Yes / No question each time.")
+                _sv_note.setWordWrap(True)
+                _sv_note.setStyleSheet("color: palette(mid);")
+                save_layout.addWidget(_sv_note)
+                layout.addWidget(save_group)
 
                 # --- Experimental Features ---
                 exp_group = QGroupBox("Experimental Features")
@@ -30258,7 +32624,7 @@ if __name__ == "__main__":
                 layout.addWidget(dim_group)
                 
                 # --- Buttons ---
-                btn_layout = QHBoxLayout()
+                btn_layout_box, btn_layout = self._make_flow_row()
                 apply_btn = QPushButton("Apply and Save Settings")
                 apply_btn.setMinimumHeight(45)
                 apply_btn.setMinimumWidth(200)
@@ -30279,7 +32645,7 @@ if __name__ == "__main__":
                 btn_layout.addWidget(reset_btn)
                 btn_layout.addStretch()
 
-                layout.addLayout(btn_layout)
+                layout.addWidget(btn_layout_box)
                 layout.addStretch() 
                 
                 return tab
@@ -30774,6 +33140,7 @@ if __name__ == "__main__":
                     if getattr(self, 'drawing_mode', None): return True
                     if getattr(self, 'crop_rectangle_mode', False): return True
                     if getattr(self, 'overlay_mode_active', False): return True
+                    if getattr(self, '_layer_crop_idx', 0): return True
                     if getattr(self, 'multi_lane_mode_active', False): return True
                     if getattr(self, 'perspective_correction_active', False): return True
                     if getattr(self, 'current_selection_mode', None): return True
@@ -30832,6 +33199,11 @@ if __name__ == "__main__":
                             return True
                 except Exception:
                     pass
+                try:
+                    if event.type() == QEvent.KeyPress and self._grid_shortcut_fallback(event):
+                        return True
+                except Exception:
+                    pass
                 # NOT super().eventFilter(obj, event). This filter sees every event of every
                 # object in the program, and PySide can hand us `obj` as a STALE wrapper of a
                 # different type (a QSpacerItem / QWidgetItem whose C++ object was freed and
@@ -30841,6 +33213,53 @@ if __name__ == "__main__":
                 # editing/placing labels (it fired when the label editor dialog was built).
                 # QObject's default eventFilter just returns False, so do that directly.
                 return False
+
+            # Windows virtual-key codes of the physical X / Y / N keys (layout independent).
+            _GRID_SHORTCUT_VK = {0x58: 'x', 0x59: 'y', 0x4E: 'n', 0x47: 'g'}
+            _GRID_SHORTCUT_KEYS = {Qt.Key_X: 'x', Qt.Key_Y: 'y', Qt.Key_N: 'n', Qt.Key_G: 'g'}
+
+            def _grid_shortcut_fallback(self, event):
+                """Ctrl+Shift+X / Y / N (grid lines / snap) when the QShortcut did NOT fire.
+
+                On some Windows PCs these did nothing or worked only sometimes:
+                  * Ctrl+Shift is Windows' default "switch keyboard layout" hotkey; with a
+                    second layout (or a non-Latin one) installed the X arrives as another key,
+                    so the shortcut never matches;
+                  * the always-on-top Measurement Tools palette can hold focus, and a window
+                    shortcut does not fire there.
+                A key press only reaches this filter when no shortcut consumed it, so this
+                never doubles a toggle. The PHYSICAL key is used (Windows virtual-key code),
+                which does not change with the keyboard layout."""
+                mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier
+                                            | Qt.AltModifier | Qt.MetaModifier)
+                if mods != (Qt.ControlModifier | Qt.ShiftModifier):
+                    return False
+                which = None
+                if sys.platform.startswith("win"):
+                    try:
+                        which = self._GRID_SHORTCUT_VK.get(int(event.nativeVirtualKey()))
+                    except Exception:
+                        which = None
+                if which is None:
+                    which = self._GRID_SHORTCUT_KEYS.get(event.key())
+                if which is None:
+                    return False
+                if QApplication.activeModalWidget() is not None:
+                    return False
+                aw = QApplication.activeWindow()
+                if aw is not None and aw is not self and aw.parent() is not self:
+                    return False                # another top-level window: leave it alone
+                if which == 'n':
+                    self.cycle_snap_grid()
+                elif which == 'g':
+                    self._toggle_show_grid()
+                else:
+                    cb = getattr(self, f'show_grid_checkbox_{which}', None)
+                    if cb is None:
+                        return False
+                    cb.setChecked(not cb.isChecked())
+                event.accept()
+                return True
 
             def keyPressEvent(self, event):
                 key = event.key()
@@ -30911,6 +33330,8 @@ if __name__ == "__main__":
                         self.cancel_custom_item_interaction_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.overlay_mode_active:
                         self.cancel_interactive_overlay_mode(); a_mode_was_cancelled_or_view_reset = True
+                    elif getattr(self, '_layer_crop_idx', 0):
+                        self._cancel_layer_crop_mode(); a_mode_was_cancelled_or_view_reset = True
                     elif self.current_selection_mode in ["select_for_move", "dragging_shape", "resizing_corner", "skewing_edge"]:
                         # Esc fully EXITS the Move/Resize/Delete Area tool (clears its green
                         # armed state) rather than only deselecting the current lane and
@@ -31024,8 +33445,16 @@ if __name__ == "__main__":
                     if offset_changed: self.update_live_view(); event.accept(); return
                 
                 # --- Overlay Nudging (Unchanged) ---
-                if self.overlay_mode_active and self.selected_overlay_index > 0:
+                if self._layer_selection_visible():
                     pos_slider_x = getattr(self, f'image{self.selected_overlay_index}_left_slider'); pos_slider_y = getattr(self, f'image{self.selected_overlay_index}_top_slider')
+                    if key in (Qt.Key_Delete, Qt.Key_Backspace):
+                        # Delete takes the selected layer off the canvas. It stays loaded in its
+                        # slot, so Place puts it back (and Undo restores it too).
+                        _i = self.selected_overlay_index
+                        self.save_state()
+                        (self.remove_image1 if _i == 1 else self.remove_image2)()
+                        self.is_modified = True
+                        self.update_live_view(); event.accept(); return
                     if pos_slider_x and pos_slider_y:
                         if key == Qt.Key_Left: pos_slider_x.setValue(pos_slider_x.value() - 1); event.accept(); return
                         elif key == Qt.Key_Right: pos_slider_x.setValue(pos_slider_x.value() + 1); event.accept(); return
@@ -31152,7 +33581,10 @@ if __name__ == "__main__":
                         "• Drag a rectangle on empty space to select every custom marker and "
                         "shape inside it, or Shift+click (Ctrl/Cmd+click) items one by one; then "
                         "drag any of them to move them all together (arrow keys nudge them, "
-                        "Delete removes them).\n"
+                        "Delete removes them; Ctrl/Cmd+C duplicates them all).\n"
+                        "• Placed images (Overlap Images ▸ Image 1 / Image 2) are objects too: "
+                        "drag one to move it, drag a corner to resize it, arrow keys nudge it, "
+                        "Delete takes it off the canvas (Place puts it back).\n"
                         "• The cursor shows what a press will do: a cross on empty space (drag a "
                         "selection rectangle), four arrows over an item (move it), resize arrows "
                         "on a red handle. Handles belong to the selected item — click it first.\n"
@@ -31187,6 +33619,8 @@ if __name__ == "__main__":
                 self.live_view_label.mode = None
                 self.moving_custom_item_info = None
                 self.multi_selected_items = []
+                if not getattr(self, 'overlay_mode_active', False):
+                    self.selected_overlay_index = 0   # a layer picked with Move/Resize
                 self.resizing_corner_index = -1
                 self.shape_points_at_drag_start_label = []
                 self._marquee = None; self._pending_toggle = None
@@ -32153,6 +34587,141 @@ if __name__ == "__main__":
                 except Exception:
                     return None
 
+            # --- Alignment guides while PLACING custom text and drawing shapes -------------
+            # The same orange guides (and 5-screen-px snap) as dragging in Move/Resize, so a
+            # new label or shape can be lined up with what is already on the image. Targets
+            # are every custom marker (left / centre / right edge, its height, top, bottom)
+            # and every custom shape (rectangle edges + centre, line/arrow end points).
+            # Alt places freely; a grid snap that moved the point takes precedence.
+            def _placement_guide_targets(self):
+                img = getattr(self, 'image', None)
+                markers = getattr(self, 'custom_markers', []) or []
+                shapes = getattr(self, 'custom_shapes', []) or []
+                key = (len(markers), len(shapes),
+                       img.width() if img is not None else 0, img.height() if img is not None else 0,
+                       tuple(tuple(m[:2]) for m in markers[-3:]))
+                cached = getattr(self, '_place_snap_cache', None)
+                if cached is not None and cached[0] == key:
+                    return cached[1]
+                out = []                      # (xs[(kind, x)], ys[(kind, y)], box)
+                for m in markers:
+                    try:
+                        if not str(m[2]).strip():
+                            continue
+                        box = self._marker_box_img(m)
+                        if box is None:
+                            continue
+                        l, t, r, b = box
+                        out.append(([('L', l), ('C', (l + r) / 2.0), ('R', r)],
+                                    [('Y', float(m[1])), ('mT', t), ('mB', b)], (l, t, r, b)))
+                    except Exception:
+                        continue
+                for sh in shapes:
+                    try:
+                        if sh.get('type') == 'rectangle' and sh.get('rect'):
+                            x, y, w, h = [float(v) for v in sh['rect']]
+                            out.append(([('L', x), ('C', x + w / 2.0), ('R', x + w)],
+                                        [('T', y), ('M', y + h / 2.0), ('B', y + h)],
+                                        (x, y, x + w, y + h)))
+                        elif sh.get('type') in ('line', 'arrow') and sh.get('start') and sh.get('end'):
+                            (x0, y0), (x1, y1) = sh['start'], sh['end']
+                            x0, y0, x1, y1 = float(x0), float(y0), float(x1), float(y1)
+                            out.append(([('P', x0), ('P', x1)], [('P', y0), ('P', y1)],
+                                        (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))))
+                    except Exception:
+                        continue
+                self._place_snap_cache = (key, out)
+                return out
+
+            def _placement_guide_adjust(self, src_xs, src_ys, src_box, tol_img):
+                """Best (dx, dy) in image px that lines one of `src_xs` / `src_ys` up with a
+                target within `tol_img`; sets self._smart_guides. src_* are [(kind, value)],
+                a matching kind (left-left, centre-centre, ...) wins a near-tie."""
+                self._smart_guides = []
+                best_x = best_y = None
+                for xs, ys, box in self._placement_guide_targets():
+                    for sk, sv in src_xs:
+                        for tk, tv in xs:
+                            d = tv - sv
+                            score = abs(d) * (0.9 if sk == tk else 1.0)
+                            if abs(d) <= tol_img and (best_x is None or score < best_x[0]):
+                                best_x = (score, d, tv, box)
+                    for sk, sv in src_ys:
+                        for tk, tv in ys:
+                            if sk == 'Y' and tk in ('mT', 'mB'):
+                                continue     # text lines up with text by its height only
+                            d = tv - sv
+                            score = abs(d) * (0.9 if sk == tk else 1.0)
+                            if abs(d) <= tol_img and (best_y is None or score < best_y[0]):
+                                best_y = (score, d, tv, box)
+                if best_x is None and best_y is None:
+                    return 0.0, 0.0
+                dx = best_x[1] if best_x else 0.0
+                dy = best_y[1] if best_y else 0.0
+                l, t, r, b = src_box
+                guides = []
+                if best_x:
+                    tb = best_x[3]
+                    guides.append(('v', best_x[2], min(t + dy, tb[1]), max(b + dy, tb[3])))
+                if best_y:
+                    tb = best_y[3]
+                    guides.append(('h', best_y[2], min(l + dx, tb[0]), max(r + dx, tb[2])))
+                self._smart_guides = guides
+                return dx, dy
+
+            def _placement_view_geometry(self):
+                """(scale, x_offset, y_offset, zoom) of the fit-to-viewer image in unzoomed
+                label space -- the mapping place_custom_marker / finalize_shape_draw use."""
+                lv = self.live_view_label
+                img = self.image
+                if img is None or img.isNull() or lv.width() <= 0 or lv.height() <= 0:
+                    return None
+                iw, ih = float(img.width()), float(img.height())
+                scale = min(lv.width() / iw, lv.height() / ih)
+                if scale <= 0:
+                    return None
+                zoom = lv.zoom_level if getattr(lv, 'zoom_level', 0) > 0 else 1.0
+                return scale, (lv.width() - iw * scale) / 2.0, (lv.height() - ih * scale) / 2.0, zoom
+
+            def _guided_placement_point(self, raw_ls, kind, modifiers=None):
+                """Grid-snapped placement point (unzoomed label space) with the alignment-guide
+                snap applied. kind: 'marker' (the custom text about to be placed) or 'point'
+                (a shape corner / end point). Leaves the guides to draw in self._smart_guides."""
+                self._smart_guides = []
+                snapped = self.snap_point_to_grid(raw_ls)
+                try:
+                    mods = modifiers if modifiers is not None else QApplication.keyboardModifiers()
+                    if (mods & Qt.AltModifier) or snapped != raw_ls:
+                        return snapped
+                    geo = self._placement_view_geometry()
+                    if geo is None:
+                        return snapped
+                    scale, ox, oy, zoom = geo
+                    ix = (snapped.x() - ox) / scale; iy = (snapped.y() - oy) / scale
+                    tol = 5.0 / (scale * zoom)
+                    if kind == 'marker':
+                        lv = self.live_view_label
+                        rec = self._marker_with_align(
+                            [ix, iy, getattr(lv, 'preview_marker_text', '') or '', self.custom_marker_color,
+                             self.custom_font_type_dropdown.currentText(),
+                             self.custom_font_size_spinbox.value(), False, False],
+                            self._new_marker_align())
+                        box = self._marker_box_img(rec) if str(rec[2]).strip() else None
+                        if box is None:
+                            box = (ix, iy, ix, iy)
+                        l, t, r, b = box
+                        dx, dy = self._placement_guide_adjust(
+                            [('L', l), ('C', (l + r) / 2.0), ('R', r)], [('Y', iy)], box, tol)
+                    else:
+                        dx, dy = self._placement_guide_adjust(
+                            [('P', ix)], [('P', iy)], (ix, iy, ix, iy), tol)
+                    if dx or dy:
+                        return QPointF(snapped.x() + dx * scale, snapped.y() + dy * scale)
+                except Exception:
+                    self._smart_guides = []
+                    log_traceback()
+                return snapped
+
             def _translate_custom_items(self, items, dx, dy):
                 """Move several items by (dx, dy) image px, with the same rules as moving
                 one: left/right labels slide along their band and move their whole set
@@ -32397,6 +34966,7 @@ if __name__ == "__main__":
                         if item_selected: break
 
                 if item_selected:
+                    self.selected_overlay_index = 0     # a marker / shape wins over a layer
                     self.initial_mouse_pos_for_shape_drag_label = clicked_point_ls
                     # Where each L/R/top label SET sits when the drag starts: dragging a
                     # standard label across its own axis moves its whole set (= the slider).
@@ -32447,6 +35017,10 @@ if __name__ == "__main__":
                     else:
                         self.multi_selected_items = []
                 else:
+                    # A placed Image 1 / Image 2 layer is an object too: pressing on it (or on
+                    # a corner handle of the selected one) picks it up to move / resize it.
+                    if not toggle_mod and self._move_resize_grab_layer(event, clicked_point_ls):
+                        return
                     # Empty space: start a selection rectangle (marquee). Released without
                     # dragging it simply deselects, as a click on empty space always did.
                     self.resizing_corner_index = -1
@@ -32726,6 +35300,8 @@ if __name__ == "__main__":
                 its range) in step, so the slider and every label on that side agree."""
                 value = int(round(float(value)))
                 setattr(self, f'{side}_marker_shift_added', value)
+                if self._ann_preview_active():
+                    return                      # label preview: data only, never touch the UI
                 try:
                     self._update_marker_slider_ranges()   # grows the range to include value
                 except Exception:
@@ -33296,7 +35872,11 @@ if __name__ == "__main__":
                 self.save_state()
                 # Same zoom/pan + grid mapping as the placement preview, so the text lands
                 # exactly where the preview showed it.
-                snapped = self.snap_point_to_grid(self.live_view_label.transform_point(event.position()))
+                snapped = self._guided_placement_point(
+                    self.live_view_label.transform_point(event.position()), 'marker',
+                    event.modifiers() | QApplication.keyboardModifiers())
+                self._smart_guides = []
+                self._place_snap_cache = None
                 cursor_x, cursor_y = snapped.x(), snapped.y()
 
                 # Calculate scaling factors
@@ -33651,6 +36231,7 @@ if __name__ == "__main__":
                     "autosave_interval_s": int(getattr(self, "autosave_interval_s", self.AUTOSAVE_DEFAULT_INTERVAL_S)),
                     "autosave_on_crash": bool(getattr(self, "autosave_on_crash", True)),
                     "densitometry_raw_data": bool(getattr(self, "densitometry_raw_data", True)),
+                    "convert_layer_labels_on_save": self._layer_label_save_mode(),
                     "ui_scale_preference": getattr(self, "ui_scale_preference", 1.0),
                     "ui_font_size": int(getattr(self, "ui_font_size", self.DEFAULT_UI_FONT_SIZE)),
                     "plot_font_size": int(getattr(self, "plot_font_size", self.DEFAULT_PLOT_FONT_SIZE)),
@@ -33659,6 +36240,18 @@ if __name__ == "__main__":
                     "safe_content_width": getattr(self, "safe_content_width", 1000),
                     "presets": getattr(self, "presets_data", {})
                 }
+                # Snapped / maximized: keep the user's own (pre-snap) size, see save_app_settings.
+                try:
+                    _ng = getattr(self, '_snap_normal_geom', None)
+                    if _ng and self._is_window_snapped():
+                        config_data.update({
+                            "window_width": int(_ng['w']), "window_height": int(_ng['h']),
+                            "window_x": int(_ng['x']), "window_y": int(_ng['y']),
+                            "viewer_fixed_width": int(_ng.get('viewer_w', config_data["viewer_fixed_width"])),
+                            "viewer_fixed_height": int(_ng.get('viewer_h', config_data["viewer_fixed_height"])),
+                            "safe_content_width": int(_ng.get('content_w', config_data["safe_content_width"]))})
+                except Exception:
+                    pass
 
                 app_path = os.path.join(os.path.expanduser("~"), ".gel_blot_analyzer")
                 if not os.path.exists(app_path):
@@ -33842,6 +36435,7 @@ if __name__ == "__main__":
                             "autosave_interval_s", self.AUTOSAVE_DEFAULT_INTERVAL_S)
                         self.autosave_on_crash = bool(loaded_json.get("autosave_on_crash", True))
                         self.densitometry_raw_data = bool(loaded_json.get("densitometry_raw_data", True))
+                        self.convert_layer_labels_on_save = str(loaded_json.get("convert_layer_labels_on_save", "ask"))
                         self.ui_scale_preference = loaded_json.get("ui_scale_preference", 1.0)
                         try:
                             cv2.ocl.setUseOpenCL(self.use_gpu)
@@ -33907,6 +36501,7 @@ if __name__ == "__main__":
                     self.autosave_interval_s = self.AUTOSAVE_DEFAULT_INTERVAL_S
                     self.autosave_on_crash = True
                     self.densitometry_raw_data = True
+                    self.convert_layer_labels_on_save = "ask"
                     self.viewer_fixed_width, self.viewer_fixed_height = self._default_viewer_size()
                     self.safe_content_width = 1000
                     
@@ -34575,6 +37170,11 @@ if __name__ == "__main__":
                             # re-run. This used to need a manual Load Analysis click first.
                             self.apply_config(config_data, load_analysis=True)
                             self._apply_analysis_extras(config_data)
+                            # Placed Image 1 / Image 2 saved with the project (v9.9.0).
+                            try:
+                                self._restore_overlay_layers(config_data, os.path.dirname(file_path))
+                            except Exception:
+                                log_traceback()
                             loaded_config_data = config_data
                         except Exception as e:
                             QMessageBox.warning(self, "Config Load Error", f"Failed to load or apply config file '{config_name}': {e}")
@@ -35891,6 +38491,8 @@ if __name__ == "__main__":
                 nw = int(new_size.width()); nh = int(new_size.height())
                 if nw <= 0 or nh <= 0:
                     return
+                # Snapped / maximized: the viewer size is temporary, not a new preference.
+                _snapped = self._is_window_snapped() or getattr(self, '_snap_restoring', False)
 
                 # 1) Keep densitometry boxes glued to the image: snapshot their anchors under the
                 #    OLD size (boxes are still correct there), then arm a reprojection.
@@ -35919,18 +38521,19 @@ if __name__ == "__main__":
                 #    Both are synced because either can change: dragging the divider changes the
                 #    split axis, and resizing the window changes the cross axis (which is the real
                 #    viewer size the user sees), so the Settings fields always reflect reality.
+                ui = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
                 try:
-                    ui = float(getattr(self, 'ui_scale_factor', 1.0)) or 1.0
-                    self.viewer_fixed_width = max(50, int(round(nw / ui)))
-                    self.viewer_fixed_height = max(50, int(round(nh / ui)))
-                    if hasattr(self, 'spin_viewer_w'):
-                        self.spin_viewer_w.blockSignals(True)
-                        self.spin_viewer_w.setValue(self.viewer_fixed_width)
-                        self.spin_viewer_w.blockSignals(False)
-                    if hasattr(self, 'spin_viewer_h'):
-                        self.spin_viewer_h.blockSignals(True)
-                        self.spin_viewer_h.setValue(self.viewer_fixed_height)
-                        self.spin_viewer_h.blockSignals(False)
+                    if not _snapped:
+                        self.viewer_fixed_width = max(50, int(round(nw / ui)))
+                        self.viewer_fixed_height = max(50, int(round(nh / ui)))
+                        if hasattr(self, 'spin_viewer_w'):
+                            self.spin_viewer_w.blockSignals(True)
+                            self.spin_viewer_w.setValue(self.viewer_fixed_width)
+                            self.spin_viewer_w.blockSignals(False)
+                        if hasattr(self, 'spin_viewer_h'):
+                            self.spin_viewer_h.blockSignals(True)
+                            self.spin_viewer_h.setValue(self.viewer_fixed_height)
+                            self.spin_viewer_h.blockSignals(False)
                 except Exception:
                     pass
 
@@ -35942,7 +38545,7 @@ if __name__ == "__main__":
                 #     Top/Bottom window resize never updated Program UI Width and the stale
                 #     value got saved.
                 try:
-                    if hasattr(self, 'tab_widget'):
+                    if hasattr(self, 'tab_widget') and not _snapped:
                         cw = int(self.tab_widget.width())
                         if cw > 0:
                             self.safe_content_width = max(200, int(round(cw / ui)))
@@ -35963,6 +38566,22 @@ if __name__ == "__main__":
 
 
                 
+
+            def _isolated_layer_view_active(self):
+                """Show ONE layer on its own only while its adjustments are being edited on the
+                Image and Contrast tab. Everywhere else (Overlap Images, Markers, Analysis ...)
+                the viewer shows the whole composition. Loading an overlay switches the
+                adjustment context to it, which used to leave every tab showing the overlay
+                alone, as if the base image had vanished until something was rasterized."""
+                if not getattr(self, 'is_in_dedicated_edit_mode', False):
+                    return False
+                tw = getattr(self, 'tab_widget', None)
+                if tw is None:
+                    return True
+                try:
+                    return tw.tabText(tw.currentIndex()) == "Image and Contrast"
+                except Exception:
+                    return True
 
             def _compose_overlay_edit_view(self, overlay_index):
                 """Isolated-editor view of one overlay: the layer's adjusted preview painted
@@ -36015,7 +38634,7 @@ if __name__ == "__main__":
                 # --- START FIX: Context-aware rendering ---
                 image_for_view = None
 
-                if self.is_in_dedicated_edit_mode:
+                if self._isolated_layer_view_active():
                     # In an isolated editor view, show ONLY the selected overlay — but placed
                     # and sized exactly as it appears in the combined view, so switching
                     # contexts never changes the zoom or the apparent size of a layer.
@@ -36069,7 +38688,7 @@ if __name__ == "__main__":
                 # image-space anchor) has armed a reprojection. Ordinary renders never disturb
                 # the boxes — this avoids corrupting label-space boxes during transient
                 # geometry states (e.g. while a file is loading).
-                if not getattr(self, 'is_in_dedicated_edit_mode', False):
+                if not self._isolated_layer_view_active():
                     try:
                         self._reproject_multilane_if_pending()
                     except Exception:
@@ -36468,7 +39087,7 @@ if __name__ == "__main__":
 
                 # --- 1. Logic for Isolated Edit Mode ---
                 # (Viewing just one overlay while adjusting its settings)
-                if self.is_in_dedicated_edit_mode:
+                if self._isolated_layer_view_active():
                     # `scaled_image` here is the isolated-layer view built by
                     # _compose_overlay_edit_view(): the selected overlay drawn at its TRUE
                     # size, scale and position on a canvas the size of the main image. So it
@@ -36604,6 +39223,34 @@ if __name__ == "__main__":
 
             
             # Modify align_image and update_crop to preserve settings
+            def _on_show_grid_toggled(self, checked):
+                """Transform ▸ Show Grid: turn the Line X and Line Y grid on / off together."""
+                for name in ('show_grid_checkbox_x', 'show_grid_checkbox_y'):
+                    cb = getattr(self, name, None)
+                    if cb is not None and cb.isChecked() != bool(checked):
+                        cb.setChecked(bool(checked))
+                self.update_live_view()
+
+            def _toggle_show_grid(self):
+                """Ctrl/Cmd+Shift+G: Show Grid on / off (Line X and Line Y together)."""
+                sg = getattr(self, 'show_grid_checkbox', None)
+                if sg is not None:
+                    sg.setChecked(not sg.isChecked())     # -> _on_show_grid_toggled
+                else:
+                    on = not (getattr(self, 'show_grid_checkbox_x', None) and self.show_grid_checkbox_x.isChecked())
+                    self._on_show_grid_toggled(on)
+
+            def _sync_show_grid_checkbox(self):
+                """Show Grid is ticked exactly when BOTH Line X and Line Y are on."""
+                sg = getattr(self, 'show_grid_checkbox', None)
+                gx = getattr(self, 'show_grid_checkbox_x', None)
+                gy = getattr(self, 'show_grid_checkbox_y', None)
+                if sg is None or gx is None or gy is None:
+                    return
+                want = gx.isChecked() and gy.isChecked()
+                if sg.isChecked() != want:
+                    sg.blockSignals(True); sg.setChecked(want); sg.blockSignals(False)
+
             def reset_align_image(self):
                 self.orientation_slider.setValue(0)
                 self.update_live_view() # Final update with corrected markers and image
@@ -36805,6 +39452,12 @@ if __name__ == "__main__":
                     # rotations.
                     #
                     # Each layer has its own Rotate slider for turning it deliberately.
+                    # The canvas grows to the rotated bounding box, symmetrically about the
+                    # centre; keep placed layers where they were relative to the picture.
+                    try:
+                        self._shift_overlay_positions((new_w - w) / 2.0, (new_h - h) / 2.0)
+                    except Exception:
+                        log_traceback()
 
                     self.image_before_padding = None
                     self.image_padded = False
@@ -38179,6 +40832,14 @@ if __name__ == "__main__":
                     if _reply != QMessageBox.Yes:
                         return False
 
+                # Labels that came with a placed (Copy Current) panel: ask now (before anything
+                # is written) whether to turn them into editable items as part of this save.
+                _convert_layer_labels = False
+                try:
+                    _convert_layer_labels = self._ask_convert_layer_labels()
+                except Exception:
+                    log_traceback()
+
                 # --- Save _original image ---
                 if self.image_master and not self.image_master.isNull():
                     save_format = suffix.replace(".", "").upper()
@@ -38208,9 +40869,17 @@ if __name__ == "__main__":
                                     and self._save_qimage_as_tiff(self.image_master,
                                                                   original_save_path)))
 
-                    if not _retry_file_op(_write_original_image):
+                    if not _retry_file_op(_write_original_image, retries=3, delay_s=0.4):
                         QMessageBox.warning(self, "Error", self._file_write_error_text(
                             original_save_path, "the original image"))
+
+                # Convert them right before the finished figure is rendered, so the saved
+                # _modified image, the config and the screen all show the same, now editable items.
+                if _convert_layer_labels:
+                    try:
+                        self.convert_layer_labels_to_items()
+                    except Exception:
+                        log_traceback()
 
                 # --- Create and save _modified image ---
                 render_scale = 3
@@ -38344,13 +41013,26 @@ if __name__ == "__main__":
 
                 # Retried: a cloud sync client or antivirus scanner can hold the file open
                 # for a few hundred ms right after we wrote the _original next to it.
-                if not _retry_file_op(_write_modified_image):
+                if not _retry_file_op(_write_modified_image, retries=3, delay_s=0.4):
                     QMessageBox.warning(self, "Error", self._file_write_error_text(
                         modified_save_path, "the annotated image"))
                     return False
 
                 # --- Save Config File ---
                 config_data = self.get_current_config()
+                # Placed / loaded Image 1 / Image 2 are saved as separate files so reopening
+                # brings them back as layers (see _save_overlay_layers).
+                _layer_problems = []
+                try:
+                    _layer_problems = self._save_overlay_layers(final_clean_base, config_data)
+                except Exception as _e:
+                    log_traceback()
+                    _layer_problems = [str(_e)]
+                if _layer_problems:
+                    QMessageBox.warning(self, "Placed Images Not Saved",
+                                        "The figure was saved, but these placed images could not be "
+                                        "stored for reopening:\n\n" + "\n".join(_layer_problems)
+                                        + "\n\nRasterize first, or save to another folder.")
                 try:
                     _atomic_write_json(config_save_path, config_data)
                 except Exception as e:
@@ -38478,12 +41160,22 @@ if __name__ == "__main__":
                 res_kwargs = {'resolution': (_dpi, _dpi), 'resolutionunit': 'INCH'} if _dpi else {}
                 try:
                     import tifffile
+                    import io as _io
+                    # Encode in memory first, then write the bytes robustly (temp file, 8 MB
+                    # chunks, size check, rename -- _write_bytes_atomic). Writing straight to
+                    # the target left a truncated header-only file whenever a USB stick or a
+                    # synced folder failed the one huge write() tifffile issues.
+                    _bio = _io.BytesIO()
+                    _big = arr.nbytes > 3_900_000_000          # classic TIFF tops out at 4 GB
                     if has_alpha:
                         # UNASSALPHA = straight/unassociated alpha, matching Qt's RGBA8888/RGBA64.
-                        tifffile.imwrite(path, arr, photometric='rgb', extrasamples='UNASSALPHA', **res_kwargs)
+                        tifffile.imwrite(_bio, arr, photometric='rgb', extrasamples='UNASSALPHA',
+                                         bigtiff=_big, **res_kwargs)
                     else:
-                        tifffile.imwrite(path, arr, **res_kwargs)
-                    return True
+                        tifffile.imwrite(_bio, arr, bigtiff=_big, **res_kwargs)
+                    _data = _bio.getvalue()      # plain bytes: the buffer can be freed now
+                    _bio.close()
+                    return _write_bytes_atomic(path, _data)
                 except ImportError:
                     pass
                 try:
@@ -38862,7 +41554,15 @@ if __name__ == "__main__":
             def _paint_annotations(self, painter, render_scale, font_scale_factor):
                 """Draw MW markers, top labels, custom shapes and custom markers onto an
                 export-canvas-space painter. The ONE routine used by the live view, Save,
-                Copy and the PDF/report render."""
+                Copy and the PDF/report render. Labels that came with a placed (not yet
+                rasterized) panel are included -- see _begin_layer_annotation_preview."""
+                self._begin_layer_annotation_preview()
+                try:
+                    return self._paint_annotations_impl(painter, render_scale, font_scale_factor)
+                finally:
+                    self._end_layer_annotation_preview()
+
+            def _paint_annotations_impl(self, painter, render_scale, font_scale_factor):
                 rs = float(render_scale)
                 painter.save()
                 painter.setRenderHint(QPainter.Antialiasing, True)
@@ -39781,52 +42481,78 @@ if __name__ == "__main__":
                     return False
 
             def _clone_selected_custom_item_if_any(self):
-                """If a custom MARKER or SHAPE is currently selected in Move/Resize mode,
-                duplicate it (offset slightly so it's visible) and leave the clone selected.
-                Returns True if a clone was made (so Ctrl/Cmd+C should NOT also copy the image)."""
+                """Ctrl/Cmd+C in Move/Resize mode: duplicate EVERY selected custom marker and
+                shape (a marquee or Shift+click selection, or the single selected item), offset
+                slightly so the copies are visible, and leave the copies selected so they can be
+                dragged away together. Callout lines keep following their copied labels (they
+                are moved by the same offset). Left/right/top MW labels are not duplicated --
+                each image has one set of those. Returns True if anything was cloned (so the
+                shortcut does NOT also copy the image to the clipboard).
+
+                Previously only the 'primary' (last clicked) item was cloned, so copying a
+                group of boxes / markers produced a single element."""
                 try:
                     if self.current_selection_mode not in (
                             "select_custom_item", "dragging_custom_item", "resizing_custom_item"):
                         return False
-                    info = getattr(self, 'moving_custom_item_info', None)
-                    if not info:
+                    selection = [it for it in self._move_resize_selection()
+                                 if it.get('type') in ('marker', 'shape')]
+                    if not selection:
                         return False
-                    itype = info.get('type'); idx = info.get('index', -1)
-                    offset = 15.0  # image-space nudge so the clone sits next to the original
-                    def _snapshot():
-                        # Undo checkpoint — never let a serialization hiccup abort the clone.
-                        try: self.save_state()
-                        except Exception: pass
-                    if itype == 'marker' and 0 <= idx < len(self.custom_markers):
-                        _snapshot()
-                        clone = list(self.custom_markers[idx])
-                        clone[0] = float(clone[0]) + offset; clone[1] = float(clone[1]) + offset
-                        self.custom_markers.append(clone)
-                        self.moving_custom_item_info = {'type': 'marker', 'index': len(self.custom_markers) - 1}
-                    elif itype == 'shape' and 0 <= idx < len(self.custom_shapes):
-                        clone = dict(self.custom_shapes[idx])
+                    offset = 15.0  # image-space nudge so the clones sit next to the originals
+
+                    def _cloned_shape(src):
+                        clone = copy.deepcopy(src)
                         stype = clone.get('type')
-                        if stype in ('line', 'arrow'):
+                        if stype in ('line', 'arrow', 'leader'):
                             sx, sy = clone['start']; ex, ey = clone['end']
-                            clone['start'] = (sx + offset, sy + offset); clone['end'] = (ex + offset, ey + offset)
+                            clone['start'] = (float(sx) + offset, float(sy) + offset)
+                            clone['end'] = (float(ex) + offset, float(ey) + offset)
                         elif stype == 'rectangle':
                             x, y, w, h = clone['rect']
-                            clone['rect'] = (x + offset, y + offset, w, h)
+                            clone['rect'] = (float(x) + offset, float(y) + offset, w, h)
                         else:
-                            return False
-                        _snapshot()
-                        self.custom_shapes.append(clone)
-                        self.moving_custom_item_info = {'type': 'shape', 'index': len(self.custom_shapes) - 1}
-                    else:
+                            return None
+                        return clone
+
+                    new_markers, new_shapes = [], []
+                    for it in selection:
+                        idx = it.get('index', -1)
+                        if it['type'] == 'marker' and 0 <= idx < len(self.custom_markers):
+                            m = list(self.custom_markers[idx])
+                            m[0] = float(m[0]) + offset; m[1] = float(m[1]) + offset
+                            if len(m) > 3 and isinstance(m[3], QColor):
+                                m[3] = QColor(m[3])
+                            new_markers.append(m)
+                        elif it['type'] == 'shape' and 0 <= idx < len(self.custom_shapes):
+                            c = _cloned_shape(self.custom_shapes[idx])
+                            if c is not None:
+                                new_shapes.append(c)
+                    if not new_markers and not new_shapes:
                         return False
+                    # Undo checkpoint -- never let a serialization hiccup abort the clone.
+                    try: self.save_state()
+                    except Exception: pass
+                    new_sel = []
+                    for m in new_markers:
+                        self.custom_markers.append(m)
+                        new_sel.append({'type': 'marker', 'index': len(self.custom_markers) - 1})
+                    for sd in new_shapes:
+                        self.custom_shapes.append(sd)
+                        new_sel.append({'type': 'shape', 'index': len(self.custom_shapes) - 1})
+                    self.moving_custom_item_info = dict(new_sel[-1])
+                    self.multi_selected_items = [dict(x) for x in new_sel[:-1]]
                     self.resizing_corner_index = -1
                     self.shape_points_at_drag_start_label = []
                     self.is_modified = True
-                    self.show_mode_status("Cloned the selected item — the copy is offset and now "
-                                          "selected. Drag it to reposition, or press Esc to exit.")
+                    n = len(new_sel)
+                    self.show_mode_status(
+                        ("Cloned the selected item" if n == 1 else f"Cloned {n} selected items")
+                        + " — the copies are offset and now selected. Drag to reposition, or press Esc to exit.")
                     self.update_live_view()
                     return True
                 except Exception:
+                    log_traceback()
                     return False
 
             def copy_to_clipboard(self):
@@ -40820,6 +43546,8 @@ if __name__ == "__main__":
                 view_menu.addAction(self.zoom_in_action)
                 view_menu.addAction(self.zoom_out_action)
                 view_menu.addAction(self.reset_view_action)
+                view_menu.addSeparator()
+                self._build_window_snap_menu(view_menu)
                 
                 tools_menu = menubar.addMenu("&Tools")
                 tools_menu.addAction(self.auto_analyze_gel_action)
@@ -41180,6 +43908,16 @@ if __name__ == "__main__":
                 return base_canvas
 
             def save_image_pptx(self):
+                """Editable .pptx export (see _save_image_pptx_impl). Labels of placed panels
+                are included like on screen; the preview is always switched off again."""
+                _depth0 = int(getattr(self, '_ann_preview_depth', 0) or 0)
+                try:
+                    return self._save_image_pptx_impl()
+                finally:
+                    while int(getattr(self, '_ann_preview_depth', 0) or 0) > _depth0:
+                        self._end_layer_annotation_preview()
+
+            def _save_image_pptx_impl(self):
                 """Export the figure as an editable PowerPoint (.pptx).
 
                 The gel/blot pixels go in as a single high-resolution background picture, and
@@ -41218,6 +43956,8 @@ if __name__ == "__main__":
                     return
                 if not file_path.lower().endswith(".pptx"):
                     file_path += ".pptx"
+                # From here on the placed panels' labels are part of what is exported.
+                self._begin_layer_annotation_preview()
 
                 img_w = self.image_master.width()
                 img_h = self.image_master.height()

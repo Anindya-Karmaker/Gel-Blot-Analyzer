@@ -39,6 +39,266 @@ DEFAULT_MIN_WIDTH = 2.0        # FWHM in px; narrower peaks are specks / dust
 
 
 # ============================================================================ basics
+def _ladder_profile_bands(sig, x0, x1, half=35):
+    """Bands of a ladder lane measured in a narrow window centred on its sharpest column (lane
+    boxes on raw imager files are often too wide and dilute the ladder)."""
+    x0, x1 = int(max(0, x0)), int(min(sig.shape[1], x1))
+    if x1 - x0 < 4:
+        return []
+    col = np.std(sig[:, x0:x1], axis=0)
+    k = max(3, min(25, (x1 - x0) // 3))
+    c = x0 + int(np.argmax(np.convolve(col, np.ones(k) / k, "same")))
+    bands, _ = detect_bands(lane_profile(sig, max(0, c - half), min(sig.shape[1], c + half)), is_ladder=True)
+    return [b["y"] for b in bands]
+
+
+def find_ladder_columns(sig):
+    """x centres of ladder-like columns: a ladder has many sharp, separated bands, more than any
+    sample lane or background column. Scans narrow vertical strips, counts noise-gated bands and
+    returns the centres of clusters well above the typical count (gel edges excluded)."""
+    H, W = sig.shape
+    win = max(20, W // 70); step = max(4, W // 140)
+    xs = list(range(win, W - win, step))
+    if len(xs) < 10:
+        return []
+    cnt = np.array([len(detect_bands(lane_profile(sig, x - win // 2, x + win // 2), is_ladder=True)[0]) for x in xs], float)
+    sm = np.convolve(cnt, np.ones(3) / 3.0, "same")
+    edge = int(0.03 * W)
+    ok = np.array([edge <= x <= W - edge for x in xs])
+    base = float(np.median(sm[ok])) if ok.any() else float(np.median(sm))
+    thr = max(base + 3.0, 7.0)
+    hot = (sm >= thr) & ok
+    cols, i = [], 0
+    while i < len(xs):
+        if hot[i]:
+            j = i
+            while j + 1 < len(xs) and hot[j + 1]:
+                j += 1
+            seg = range(i, j + 1)
+            cols.append({"x": int(round(np.average([xs[k] for k in seg], weights=[sm[k] for k in seg]))),
+                         "bands": float(max(sm[k] for k in seg))})
+            i = j + 1
+        else:
+            i += 1
+    return cols
+
+
+def suggest_gel_region(gray, max_val, analysis=None, dark_bands=True, n_lanes=None):
+    """Where the lanes are on a raw imager file (gel + comb + edges + dye front).
+
+    x: the two outermost ladder columns (find_ladder_columns, or the ladder lanes of `analysis`)
+    bracket the sample lanes; the region runs half a lane pitch beyond each (pitch = ladder
+    distance / (n_lanes - 1) when the lane count is known). Only used when the ladders sit at the
+    two ends of the gel, so lanes outside them are never cut off.
+    y: ladder bands are those found at the same height in both ladders (narrow profiles); the dye
+    front is the band also present in most lanes between them; the region ends halfway between the
+    dye front and the last ladder band and starts two band steps above the top ladder band.
+    Returns {"x","y","width","height","pitch","ladder_x","dye_front_y","ladder_bands"} or None."""
+    g = np.asarray(gray, dtype=float)
+    sig = band_signal(g, max_val, dark_bands=dark_bands)
+    H, W = sig.shape
+    cols = find_ladder_columns(sig)
+    tol = max(10, int(0.012 * H))
+    def _bands(x, half):
+        bands, _ = detect_bands(lane_profile(sig, max(0, int(x) - half), min(W, int(x) + half)), is_ladder=True)
+        return [b["y"] for b in bands]
+    def _n_match(a, b):
+        return sum(1 for y in a if b and abs(min(b, key=lambda q: abs(q - y)) - y) <= tol)
+    pairs = []
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            if cols[j]["x"] - cols[i]["x"] >= 0.3 * W:
+                h0 = max(15, W // 60)
+                ba, bb = _bands(cols[i]["x"], h0), _bands(cols[j]["x"], h0)
+                m = _n_match(ba, bb)
+                # agreement as a FRACTION, so a noisy gel edge with many peaks cannot win on count
+                pairs.append((m / float(max(1, len(ba) + len(bb) - m)), m, cols[i]["x"], cols[j]["x"]))
+    pairs = [q for q in pairs if q[1] >= 5]
+    if pairs:                                  # the two columns whose bands agree best are the ladders
+        _, _, xl, xr = max(pairs)
+    else:
+        res = analysis or analyze(g, max_val, gel_type="auto")
+        lad = [ln for ln in (res.get("lanes") or []) if ln["lane"] in (res.get("ladder_lanes") or [])]
+        if len(lad) < 2:
+            return None
+        xl = min(l["center_x"] for l in lad); xr = max(l["center_x"] for l in lad)
+    if xr - xl < 0.3 * W or xl > 0.3 * W or xr < 0.7 * W:     # ladders not near the two ends of the gel
+        return None
+    pitch = (xr - xl) / float(n_lanes - 1) if n_lanes and n_lanes > 2 else max(30.0, (xr - xl) / 9.0)
+    half = max(15, W // 60)                      # the narrow strip the ladders were found with
+    def bands_at(x):
+        bands, _ = detect_bands(lane_profile(sig, max(0, x - half), min(W, x + half)), is_ladder=True)
+        return [b["y"] for b in bands]
+    pl, pr = bands_at(int(xl)), bands_at(int(xr))
+    matched = sorted({int(round((y + min(pr, key=lambda q: abs(q - y))) / 2.0))
+                      for y in pl if pr and abs(min(pr, key=lambda q: abs(q - y)) - y) <= tol})
+    if len(matched) < 5:
+        return None
+    inner = [int(xl + k * (xr - xl) / 6.0) for k in range(1, 6)]
+    inner_bands = [bands_at(x) for x in inner]
+    def n_lanes_with(y):
+        return sum(1 for bl in inner_bands if any(abs(b - y) <= 1.5 * tol for b in bl))
+    # dye front: a band row shared by (nearly) every lane between the ladders, in the lower part
+    # of the ladder (it may bend, so it is NOT required to match between the two ladders)
+    lad_all = sorted(pl + pr)
+    low_cut = float(np.percentile(lad_all, 70)) if lad_all else float(np.median(matched))
+    rows = sorted({y for bl in inner_bands for y in bl if y > low_cut and n_lanes_with(y) >= 4})
+    dye = None
+    if rows:
+        first = rows[0]
+        dye = int(round(np.median([y for y in rows if y - first <= 2 * tol])))
+    ladder = [y for y in matched if dye is None or y < dye - tol]
+    if len(ladder) < 4:
+        return None
+    st = np.diff(ladder); typ = float(np.median(st)); runs, cur = [], [ladder[0]]
+    for y, d in zip(ladder[1:], st):          # wells / comb artefacts sit far above the ladder run
+        if d > 3.0 * typ:
+            runs.append(cur); cur = []
+        cur.append(y)
+    runs.append(cur); ladder = max(runs, key=len)
+    if len(ladder) < 4:
+        return None
+    sp = float(np.median(np.diff(ladder)))
+    x0 = max(0, int(round(xl - 0.75 * pitch))); x1 = min(W, int(round(xr + 0.75 * pitch)))
+    y0 = max(0, int(round(ladder[0] - 2.0 * sp)))
+    if dye is not None:                          # the lowest band of EITHER ladder above the dye front
+        low = max([y for y in pl + pr if ladder[0] < y < dye - tol] or [ladder[-1]])
+        y1 = min(H, int(round((dye + low) / 2.0)))
+    else:
+        y1 = min(H, int(round(max([y for y in pl + pr if y <= ladder[-1] + 3 * sp] or [ladder[-1]]) + 0.5 * sp)))
+    if y1 - y0 < max(4 * sp, 0.45 * H) or len(ladder) < 5:
+        return None
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0, "pitch": round(pitch, 1),
+            "ladder_x": [int(xl), int(xr)], "dye_front_y": dye, "ladder_bands": ladder}
+
+
+def find_gel_body(gray):
+    """The gel itself on a raw imager file: the largest region that differs from the uniform
+    surround (border pixels). Returns {"x","y","width","height","angle_deg","fill"} (angle of the
+    gel's rectangle, Rotation-slider convention) or None when the gel fills the image or no
+    clear rectangle is found."""
+    import cv2
+    g = np.asarray(gray, dtype=np.float32)
+    H, W = g.shape
+    s = min(1.0, 800.0 / max(H, W))
+    small = cv2.resize(g, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else g.copy()
+    small = cv2.GaussianBlur(small, (0, 0), 3.0)
+    b = max(2, int(0.02 * min(small.shape)))
+    border = np.concatenate([small[:b].ravel(), small[-b:].ravel(), small[:, :b].ravel(), small[:, -b:].ravel()])
+    out = float(np.median(border))
+    dev = np.abs(small - out)
+    hi = float(np.percentile(dev, 99.5))
+    if hi <= 1e-6:
+        return None
+    d8 = np.clip(dev / hi * 255.0, 0, 255).astype(np.uint8)
+    _, m = cv2.threshold(d8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m)
+    if n < 2:
+        return None
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    area = float(stats[i, cv2.CC_STAT_AREA]); A = float(small.shape[0] * small.shape[1])
+    if not (0.08 * A <= area <= 0.9 * A):
+        return None
+    ys, xs = np.nonzero(lab == i)
+    (cx, cy), (rw, rh), ang = cv2.minAreaRect(np.column_stack([xs, ys]).astype(np.float32))
+    if rw < rh:                                        # make the angle that of the long (horizontal) side
+        ang = ang - 90.0 if ang > 0 else ang + 90.0
+        rw, rh = rh, rw
+    if ang > 45: ang -= 90
+    if ang < -45: ang += 90
+    fill = area / max(1.0, rw * rh)
+    x, y, w, h = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP], stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
+    return {"x": int(x / s), "y": int(y / s), "width": int(w / s), "height": int(h / s),
+            "angle_deg": float(np.round(-ang * 20.0) / 20.0), "fill": round(float(fill), 2)}
+
+
+def estimate_rotation_ladders(gray, max_val, analysis=None, max_deg=6.0):
+    """Tilt from the MW ladders: the vertical offset between the two outermost ladders (cross-
+    correlation of their narrow lane profiles) over their horizontal distance. This is the tilt
+    that biases MW calibration, and unlike whole-image edge methods it is not fooled by the gel
+    box, glow or vignetting. Same sign convention as the Rotation slider (+ = rotate clockwise).
+    Returns {"angle_deg", "confidence", "method": "ladders", "ladders"} or None."""
+    res = analysis or analyze(gray, max_val, gel_type="auto")
+    lanes = res.get("lanes") or []
+    lad = [ln for ln in lanes if ln["lane"] in (res.get("ladder_lanes") or [])]
+    if len(lad) < 2:
+        return None
+    left, right = min(lad, key=lambda l: l["center_x"]), max(lad, key=lambda l: l["center_x"])
+    dx = float(right["center_x"] - left["center_x"])
+    if dx < 0.2 * np.asarray(gray).shape[1]:
+        return None
+    dark = res.get("polarity", {}).get("polarity") != "light_bands"
+    sig = band_signal(np.asarray(gray, dtype=float), max_val, dark_bands=dark)
+
+    def prof(ln):
+        x0, x1 = int(max(0, ln["x0"])), int(min(sig.shape[1], ln["x1"]))
+        col = np.std(sig[:, x0:x1], axis=0)
+        k = max(3, min(25, (x1 - x0) // 3))
+        c = x0 + int(np.argmax(np.convolve(col, np.ones(k) / k, "same")))
+        p = lane_profile(sig, max(0, c - 30), min(sig.shape[1], c + 30))
+        p = p - gaussian_filter1d(p, 25.0)                # keep bands, drop slow background
+        return (p - p.mean()) / (p.std() + 1e-12), c
+    pl, cl = prof(left)
+    pr, cr = prof(right)
+    dx = float(cr - cl)
+    max_lag = int(np.ceil(abs(np.tan(np.radians(max_deg))) * dx))
+    n = len(pl)
+    best, best_c = 0, -1.0
+    for lag in range(-max_lag, max_lag + 1):          # pr[y + lag] ~ pl[y]
+        a = pl[max(0, -lag):n - max(0, lag)]
+        b = pr[max(0, lag):n - max(0, -lag)]
+        if len(a) < n // 3:
+            continue
+        c = float(np.dot(a, b) / len(a))
+        if c > best_c:
+            best, best_c = lag, c
+    ang = -float(np.degrees(np.arctan2(best, dx)))
+    return {"angle_deg": float(np.round(ang * 20.0) / 20.0), "confidence": round(best_c, 2),
+            "method": "ladders", "ladders": [left["lane"], right["lane"]], "offset_px": best}
+
+
+def estimate_rotation(gray, max_deg=6.0, width=600):
+    """Tilt of a gel or blot, in degrees, in the convention of the app's Transform > Rotation
+    slider (the angle that Apply must rotate by to make lanes vertical and bands horizontal).
+
+    Projection-profile method: horizontal structures (band edges, the dye front, the gel's top
+    and bottom edges) give the sharpest row projection when they are level. The image is
+    downsampled to `width` px, smoothed, reduced to its vertical gradient |d/dy|, rotated the
+    same way the app rotates (cv2 matrix with -angle), and the angle that maximises the energy
+    of the row-sum differences is kept: coarse search in 0.25 deg steps, then 0.05 deg (the
+    slider resolution). Returns {"angle_deg", "confidence", "scores"}; confidence compares the
+    best score with the score at 0 deg (1.0 = no gain, i.e. already level)."""
+    import cv2
+    g = np.asarray(gray, dtype=np.float32)
+    if g.ndim != 2 or min(g.shape) < 16:
+        return {"angle_deg": 0.0, "confidence": 1.0}
+    lo, hi = np.percentile(g, 1), np.percentile(g, 99.5)
+    g = np.clip((g - lo) / max(hi - lo, 1e-6), 0, 1)
+    s = min(1.0, float(width) / g.shape[1])
+    if s < 1.0:
+        g = cv2.resize(g, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    g = cv2.GaussianBlur(g, (0, 0), 1.0)
+    edge = np.abs(cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3))
+    h, w = edge.shape
+
+    def score(th):
+        m = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), -th, 1.0)
+        r = cv2.warpAffine(edge, m, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
+        rows = r.sum(axis=1)
+        return float(np.sum(np.diff(rows) ** 2))
+
+    coarse = np.arange(-max_deg, max_deg + 1e-9, 0.25)
+    sc = [score(t) for t in coarse]
+    best = float(coarse[int(np.argmax(sc))])
+    fine = np.arange(best - 0.3, best + 0.3 + 1e-9, 0.05)
+    sf = [score(t) for t in fine]
+    best = float(np.round(fine[int(np.argmax(sf))] * 20.0) / 20.0)
+    s0 = score(0.0)
+    return {"angle_deg": best, "confidence": float(max(sf) / s0) if s0 > 0 else 1.0}
+
+
 def robust_noise_sigma(profile):
     """Noise sigma of a 1-D trace from the MAD of its first differences (robust to bands)."""
     p = np.asarray(profile, dtype=float)
