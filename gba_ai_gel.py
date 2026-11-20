@@ -19,6 +19,7 @@ Conventions
 """
 
 import itertools
+import os
 import re
 
 import numpy as np
@@ -52,7 +53,7 @@ def _ladder_profile_bands(sig, x0, x1, half=35):
     return [b["y"] for b in bands]
 
 
-def find_ladder_columns(sig):
+def find_ladder_columns(sig, local_noise=False):
     """x centres of ladder-like columns: a ladder has many sharp, separated bands, more than any
     sample lane or background column. Scans narrow vertical strips, counts noise-gated bands and
     returns the centres of clusters well above the typical count (gel edges excluded)."""
@@ -61,7 +62,8 @@ def find_ladder_columns(sig):
     xs = list(range(win, W - win, step))
     if len(xs) < 10:
         return []
-    cnt = np.array([len(detect_bands(lane_profile(sig, x - win // 2, x + win // 2), is_ladder=True)[0]) for x in xs], float)
+    cnt = np.array([len(detect_bands(lane_profile(sig, x - win // 2, x + win // 2), is_ladder=True, local_noise=local_noise)[0])
+                    for x in xs], float)
     sm = np.convolve(cnt, np.ones(3) / 3.0, "same")
     edge = int(0.03 * W)
     ok = np.array([edge <= x <= W - edge for x in xs])
@@ -83,7 +85,125 @@ def find_ladder_columns(sig):
     return cols
 
 
-def suggest_gel_region(gray, max_val, analysis=None, dark_bands=True, n_lanes=None):
+def trim_slanted_edges(gray, keep=None, max_frac=0.15, surround=None, outside=None):
+    """Largest axis-aligned rectangle inside the gel: removes the wedges of surround (dark or light)
+    left at the borders when the gel's edges are slanted (a gel that is not a perfect rectangle, a
+    slight perspective, or the corners left by straightening). Only regions that touch the image
+    border and differ clearly from the gel background count as surround, so bands are never
+    mistaken for it. Border rows / columns are peeled off, worst first, until every edge is gel.
+    keep = (x0, y0, x1, y1) that must stay inside (ladders, band rows); at most max_frac of the
+    width / height is removed per side. surround = grey level of the surround measured on the image
+    border before the gel was cropped (more reliable for low-contrast wedges); outside = boolean mask
+    of pixels known to be outside the gel (transparent corners left by straightening). Returns {"x","y","width","height","trimmed": {...}} or None
+    when nothing needs trimming."""
+    import cv2
+    g = np.asarray(gray, dtype=np.float32)
+    H, W = g.shape[:2]
+    s = min(1.0, 600.0 / max(H, W))
+    sm = cv2.resize(g, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else g.copy()
+    sm = cv2.GaussianBlur(sm, (0, 0), 1.5)
+    h, w = sm.shape
+    core = sm[int(0.25 * h):int(0.75 * h), int(0.25 * w):int(0.75 * w)]
+    bg = float(np.median(core))
+    mad = float(np.median(np.abs(core - bg))) * 1.4826 + 1e-6
+    rng = float(np.percentile(sm, 99.5) - np.percentile(sm, 0.5)) + 1e-6
+    if surround is not None and abs(bg - float(surround)) > 6.0 * mad:
+        # closer to the surround's grey level than to the gel background
+        out = np.abs(sm - float(surround)) < 0.5 * np.abs(sm - bg)
+    else:
+        out = np.abs(sm - bg) > max(8.0 * mad, 0.18 * rng)
+    if outside is not None and np.shape(outside) == (H, W):
+        o_ = cv2.resize(np.asarray(outside, np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+        out = out | o_
+    out = cv2.morphologyEx(out.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(out)
+    sur = np.zeros_like(out, dtype=bool)
+    for i in range(1, n):
+        x_, y_, w_, h_, a_ = stats[i]
+        touches = x_ == 0 or y_ == 0 or x_ + w_ >= w or y_ + h_ >= h
+        if touches and a_ >= 0.001 * h * w:
+            sur |= lab == i
+    if not sur.any():
+        return None
+    gel = ~sur
+    if keep is not None:
+        kx0, ky0, kx1, ky1 = [int(round(v * s)) for v in keep]
+    else:
+        kx0, ky0, kx1, ky1 = w, h, 0, 0
+    lim_x, lim_y = int(max_frac * w), int(max_frac * h)
+    t, b, l, r = 0, h, 0, w
+    for _ in range(2 * (lim_x + lim_y)):
+        cov = {"top": gel[t, l:r].mean(), "bottom": gel[b - 1, l:r].mean(),
+               "left": gel[t:b, l].mean(), "right": gel[t:b, r - 1].mean()}
+        cand = [(v, k) for k, v in cov.items() if v < 0.98 and (
+            (k == "top" and t < lim_y and t + 1 <= ky0) or (k == "bottom" and h - b < lim_y and b - 1 >= ky1) or
+            (k == "left" and l < lim_x and l + 1 <= kx0) or (k == "right" and w - r < lim_x and r - 1 >= kx1))]
+        if not cand:
+            break
+        k = min(cand)[1]
+        if k == "top": t += 1
+        elif k == "bottom": b -= 1
+        elif k == "left": l += 1
+        else: r -= 1
+    if (t, b, l, r) == (0, h, 0, w):
+        return None
+    X0, Y0 = int(np.ceil(l / s)), int(np.ceil(t / s)); X1, Y1 = int(np.floor(r / s)), int(np.floor(b / s))
+    X0, Y0, X1, Y1 = min(X0, W - 2), min(Y0, H - 2), max(X1, X0 + 2), max(Y1, Y0 + 2)
+    return {"x": X0, "y": Y0, "width": min(W, X1) - X0, "height": min(H, Y1) - Y0,
+            "trimmed": {"left": X0, "top": Y0, "right": W - min(W, X1), "bottom": H - min(H, Y1)}}
+
+
+def fallback_lane_region(gray, max_val, n_lanes=None, analysis=None, dark_bands=True):
+    """Backup when suggest_gel_region finds no ladder pair (one ladder only, ladders not at the ends,
+    unusual gels): keep the full width, but cut away the comb wells above and the dye front below,
+    using the bands of the ladder lane(s) that analyze() identifies (comb artefacts removed as the
+    longest evenly spaced run). Returns {"x","y","width","height","method"} or None."""
+    g = np.asarray(gray, dtype=float)
+    H, W = g.shape[:2]
+    res = analysis or analyze(g, max_val, gel_type="auto", expected_lanes=n_lanes)
+    lanes = res.get("lanes") or []
+    lad = [ln for ln in lanes if ln["lane"] in (res.get("ladder_lanes") or [])] or \
+          sorted(lanes, key=lambda ln: -ln.get("n_bands", 0))[:1]
+    best, above = None, None
+    for ln in lad:
+        ys = sorted(int(b["y"]) for b in ln.get("bands") or [])
+        if len(ys) < 5:
+            continue
+        st = np.diff(ys); typ = float(np.median(st)); runs, cur = [], [ys[0]]
+        for y, d in zip(ys[1:], st):
+            if d > 3.0 * typ:
+                runs.append(cur); cur = []
+            cur.append(y)
+        runs.append(cur); k_ = max(range(len(runs)), key=lambda i: len(runs[i])); run = runs[k_]
+        if len(run) >= 5 and (best is None or len(run) > len(best)):
+            best = run
+            above = runs[k_ - 1][-1] if k_ > 0 else None      # last comb / well artefact above the ladder
+    if not best:
+        return None
+    # dye front: a band row present in most lanes below the ladder run's lower part
+    tol = max(10, int(0.012 * H))
+    others = [ln for ln in lanes if ln not in lad]
+    rows = sorted({int(b["y"]) for ln in others for b in ln.get("bands") or [] if b["y"] > best[len(best) // 2]})
+    need = max(3, int(0.6 * len(others))) if others else 10 ** 6
+    dye = next((y for y in rows if sum(1 for ln in others if any(abs(b["y"] - y) <= 1.5 * tol for b in ln.get("bands") or [])) >= need), None)
+    run = [y for y in best if dye is None or y < dye - tol] or best
+    sp = float(np.median(np.diff(run))) if len(run) > 1 else 0.05 * H
+    # Top: trimmed only when comb / well artefacts were seen above the ladder run (halfway between
+    # them and the first ladder band); otherwise the top is kept -- a backup must never cut bands.
+    y0 = max(0, int(round(min((above + run[0]) / 2.0, run[0] - 2.0 * sp)))) if above is not None else 0
+    if dye is not None:                          # halfway between the dye front and the lowest band of ANY lane above it
+        low = max([int(b["y"]) for ln in lanes for b in ln.get("bands") or [] if run[0] < b["y"] < dye - tol] or [run[-1]])
+        y1 = min(H, int(round((dye + low) / 2.0)))
+    else:
+        y1 = min(H, int(round(run[-1] + 1.0 * sp)))
+    if y1 - y0 < 0.35 * H or (y1 - y0) >= 0.97 * H:
+        return None
+    return {"x": 0, "y": y0, "width": W, "height": y1 - y0, "dye_front_y": dye, "ladder_bands": run,
+            "method": "backup: rows from above the top ladder band to %s (full width; ladders not found at both ends)"
+                      % ("just above the dye front" if dye is not None else "below the bottom ladder band")}
+
+
+def suggest_gel_region(gray, max_val, analysis=None, dark_bands=True, n_lanes=None, _local_noise=False):
     """Where the lanes are on a raw imager file (gel + comb + edges + dye front).
 
     x: the two outermost ladder columns (find_ladder_columns, or the ladder lanes of `analysis`)
@@ -97,10 +217,10 @@ def suggest_gel_region(gray, max_val, analysis=None, dark_bands=True, n_lanes=No
     g = np.asarray(gray, dtype=float)
     sig = band_signal(g, max_val, dark_bands=dark_bands)
     H, W = sig.shape
-    cols = find_ladder_columns(sig)
+    cols = find_ladder_columns(sig, local_noise=_local_noise)
     tol = max(10, int(0.012 * H))
     def _bands(x, half):
-        bands, _ = detect_bands(lane_profile(sig, max(0, int(x) - half), min(W, int(x) + half)), is_ladder=True)
+        bands, _ = detect_bands(lane_profile(sig, max(0, int(x) - half), min(W, int(x) + half)), is_ladder=True, local_noise=_local_noise)
         return [b["y"] for b in bands]
     def _n_match(a, b):
         return sum(1 for y in a if b and abs(min(b, key=lambda q: abs(q - y)) - y) <= tol)
@@ -113,63 +233,120 @@ def suggest_gel_region(gray, max_val, analysis=None, dark_bands=True, n_lanes=No
                 m = _n_match(ba, bb)
                 # agreement as a FRACTION, so a noisy gel edge with many peaks cannot win on count
                 pairs.append((m / float(max(1, len(ba) + len(bb) - m)), m, cols[i]["x"], cols[j]["x"]))
-    pairs = [q for q in pairs if q[1] >= 5]
-    if pairs:                                  # the two columns whose bands agree best are the ladders
-        _, _, xl, xr = max(pairs)
-    else:
+    pairs = sorted([q for q in pairs if q[1] >= 5], reverse=True)
+    # Candidate ladder pairs, best agreement first. A column beside a ladder (its wide bands spill
+    # over, or a well edge) can agree slightly better than the ladder itself, especially after an
+    # 8-bit export or on a dim image; so every pair is tried and the first that yields a valid
+    # lane region wins, instead of trusting the single best score.
+    cands = [(q[2], q[3]) for q in pairs]
+
+    def _from_analysis():
         res = analysis or analyze(g, max_val, gel_type="auto")
         lad = [ln for ln in (res.get("lanes") or []) if ln["lane"] in (res.get("ladder_lanes") or [])]
         if len(lad) < 2:
             return None
-        xl = min(l["center_x"] for l in lad); xr = max(l["center_x"] for l in lad)
-    if xr - xl < 0.3 * W or xl > 0.3 * W or xr < 0.7 * W:     # ladders not near the two ends of the gel
-        return None
-    pitch = (xr - xl) / float(n_lanes - 1) if n_lanes and n_lanes > 2 else max(30.0, (xr - xl) / 9.0)
-    half = max(15, W // 60)                      # the narrow strip the ladders were found with
-    def bands_at(x):
-        bands, _ = detect_bands(lane_profile(sig, max(0, x - half), min(W, x + half)), is_ladder=True)
-        return [b["y"] for b in bands]
-    pl, pr = bands_at(int(xl)), bands_at(int(xr))
-    matched = sorted({int(round((y + min(pr, key=lambda q: abs(q - y))) / 2.0))
-                      for y in pl if pr and abs(min(pr, key=lambda q: abs(q - y)) - y) <= tol})
-    if len(matched) < 5:
-        return None
-    inner = [int(xl + k * (xr - xl) / 6.0) for k in range(1, 6)]
-    inner_bands = [bands_at(x) for x in inner]
-    def n_lanes_with(y):
-        return sum(1 for bl in inner_bands if any(abs(b - y) <= 1.5 * tol for b in bl))
-    # dye front: a band row shared by (nearly) every lane between the ladders, in the lower part
-    # of the ladder (it may bend, so it is NOT required to match between the two ladders)
-    lad_all = sorted(pl + pr)
-    low_cut = float(np.percentile(lad_all, 70)) if lad_all else float(np.median(matched))
-    rows = sorted({y for bl in inner_bands for y in bl if y > low_cut and n_lanes_with(y) >= 4})
-    dye = None
-    if rows:
-        first = rows[0]
-        dye = int(round(np.median([y for y in rows if y - first <= 2 * tol])))
-    ladder = [y for y in matched if dye is None or y < dye - tol]
-    if len(ladder) < 4:
-        return None
-    st = np.diff(ladder); typ = float(np.median(st)); runs, cur = [], [ladder[0]]
-    for y, d in zip(ladder[1:], st):          # wells / comb artefacts sit far above the ladder run
-        if d > 3.0 * typ:
-            runs.append(cur); cur = []
-        cur.append(y)
-    runs.append(cur); ladder = max(runs, key=len)
-    if len(ladder) < 4:
-        return None
-    sp = float(np.median(np.diff(ladder)))
-    x0 = max(0, int(round(xl - 0.75 * pitch))); x1 = min(W, int(round(xr + 0.75 * pitch)))
-    y0 = max(0, int(round(ladder[0] - 2.0 * sp)))
-    if dye is not None:                          # the lowest band of EITHER ladder above the dye front
-        low = max([y for y in pl + pr if ladder[0] < y < dye - tol] or [ladder[-1]])
-        y1 = min(H, int(round((dye + low) / 2.0)))
-    else:
-        y1 = min(H, int(round(max([y for y in pl + pr if y <= ladder[-1] + 3 * sp] or [ladder[-1]]) + 0.5 * sp)))
-    if y1 - y0 < max(4 * sp, 0.45 * H) or len(ladder) < 5:
-        return None
-    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0, "pitch": round(pitch, 1),
-            "ladder_x": [int(xl), int(xr)], "dye_front_y": dye, "ladder_bands": ladder}
+        return (min(l["center_x"] for l in lad), max(l["center_x"] for l in lad))
+
+    _why = []
+    def _region(xl, xr):
+        if xr - xl < 0.3 * W or xl > 0.3 * W or xr < 0.7 * W:     # ladders not near the two ends of the gel
+            _why.append((int(xl), int(xr), 'if xr - xl < 0.3 * W or xl > 0.3 * W or xr < 0.7 * W:     # ')); return None
+        pitch = (xr - xl) / float(n_lanes - 1) if n_lanes and n_lanes > 2 else max(30.0, (xr - xl) / 9.0)
+        half = max(15, W // 60)                      # the narrow strip the ladders were found with
+        def bands_at(x):
+            bands, _ = detect_bands(lane_profile(sig, max(0, x - half), min(W, x + half)), is_ladder=True, local_noise=_local_noise)
+            return [b["y"] for b in bands]
+        pl, pr = bands_at(int(xl)), bands_at(int(xr))
+        matched = sorted({int(round((y + min(pr, key=lambda q: abs(q - y))) / 2.0))
+                          for y in pl if pr and abs(min(pr, key=lambda q: abs(q - y)) - y) <= tol})
+        if len(matched) < 5:
+            _why.append((int(xl), int(xr), 'if len(matched) < 5:')); return None
+        inner = [int(xl + k * (xr - xl) / 6.0) for k in range(1, 6)]
+        inner_bands = [bands_at(x) for x in inner]
+        def n_lanes_with(y):
+            return sum(1 for bl in inner_bands if any(abs(b - y) <= 1.5 * tol for b in bl))
+        # dye front: a band row shared by (nearly) every lane between the ladders, in the lower part
+        # of the ladder (it may bend, so it is NOT required to match between the two ladders)
+        lad_all = sorted(pl + pr)
+        low_cut = float(np.percentile(lad_all, 70)) if lad_all else float(np.median(matched))
+        rows = sorted({y for bl in inner_bands for y in bl if y > low_cut and n_lanes_with(y) >= 4})
+        dye = None
+        if rows:
+            first = rows[0]
+            dye = int(round(np.median([y for y in rows if y - first <= 2 * tol])))
+        ladder = [y for y in matched if dye is None or y < dye - tol]
+        if len(ladder) < 4:
+            _why.append((int(xl), int(xr), 'if len(ladder) < 4:')); return None
+        st = np.diff(ladder); typ = float(np.median(st)); runs, cur = [], [ladder[0]]
+        for y, d in zip(ladder[1:], st):          # wells / comb artefacts sit far above the ladder run
+            if d > 3.0 * typ:
+                runs.append(cur); cur = []
+            cur.append(y)
+        runs.append(cur); ladder = max(runs, key=len)
+        if len(ladder) < 4:
+            _why.append((int(xl), int(xr), 'if len(ladder) < 4:')); return None
+        sp = float(np.median(np.diff(ladder)))
+        x0 = max(0, int(round(xl - 0.75 * pitch))); x1 = min(W, int(round(xr + 0.75 * pitch)))
+        y0 = max(0, int(round(ladder[0] - 2.0 * sp)))
+        if dye is not None:                          # the lowest band of EITHER ladder above the dye front
+            low = max([y for y in pl + pr if ladder[0] < y < dye - tol] or [ladder[-1]])
+            y1 = min(H, int(round((dye + low) / 2.0)))
+        else:
+            y1 = min(H, int(round(max([y for y in pl + pr if y <= ladder[-1] + 3 * sp] or [ladder[-1]]) + 0.5 * sp)))
+        if y1 - y0 < max(4 * sp, 0.45 * H) or len(ladder) < 5:
+            _why.append((int(xl), int(xr), 'if y1 - y0 < max(4 * sp, 0.45 * H) or len(ladder) < 5:')); return None
+        return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0, "pitch": round(pitch, 1),
+                "ladder_x": [int(xl), int(xr)], "dye_front_y": dye, "ladder_bands": ladder}
+
+    tried = set()
+    for xl, xr in cands:
+        if (xl, xr) in tried:
+            continue
+        tried.add((xl, xr))
+        r = _region(xl, xr)
+        if r:
+            return r
+    fb = _from_analysis()
+    if fb and fb not in tried:
+        tried.add(fb)
+        r = _region(*fb)
+        if r:
+            return r
+    # A ladder can be missed as a column (its strip also crosses high-contrast comb wells), while
+    # the other ladder is found. Pair by pattern instead: for each ladder-like column, scan the
+    # opposite end of the gel for the strip whose bands line up best with it.
+    h0 = max(15, W // 60); stp = max(4, W // 140)
+    for c in sorted(cols, key=lambda c: -c["bands"]):
+        xa = int(c["x"]); ba = _bands(xa, h0)
+        if len(ba) < 5:
+            continue
+        rng = range(int(0.03 * W), int(0.3 * W), stp) if xa > 0.5 * W else range(int(0.7 * W), int(0.97 * W), stp)
+        scored = []
+        for x in rng:
+            bb = _bands(x, h0); m = _n_match(ba, bb)
+            if m >= 5:
+                scored.append((m / float(max(1, len(ba) + len(bb) - m)), m, x))
+        for _sc in sorted(scored, reverse=True)[:6]:
+            xb = _sc[2]
+            pr_ = (min(xa, xb), max(xa, xb))
+            if pr_ in tried:
+                continue
+            tried.add(pr_)
+            r = _region(*pr_)
+            if not r:
+                continue
+            r["ladder_scan"] = True       # one ladder found by pattern: x may be off by a fraction of a lane
+            return r
+
+    if os.environ.get("GBA_REGION_DEBUG"):
+        print("suggest_gel_region(local_noise=%s): cols=%s pairs=%s rejected=%s" % (_local_noise, [c["x"] for c in cols],
+              [(round(q[0], 2), q[1], q[2], q[3]) for q in pairs], _why))
+    if not _local_noise:
+        # Nothing found: retry with a local noise estimate (high-contrast comb wells in an 8-bit
+        # export can hide the fainter ladder bands). Raw files that already work are unaffected.
+        return suggest_gel_region(gray, max_val, analysis=analysis, dark_bands=dark_bands,
+                                  n_lanes=n_lanes, _local_noise=True)
+    return None
 
 
 def find_gel_body(gray):
@@ -812,7 +989,7 @@ def lane_profile(sig, x0, x1, y0=0, y1=None):
 
 
 def detect_bands(profile, snr_min=DEFAULT_SNR_MIN, rel_min=DEFAULT_REL_MIN,
-                 min_width=DEFAULT_MIN_WIDTH, is_ladder=False, abs_floor=0.0):
+                 min_width=DEFAULT_MIN_WIDTH, is_ladder=False, abs_floor=0.0, local_noise=False):
     """True bands in one lane profile (high = band). Returns (bands, noise_sigma).
 
     A peak is kept only if it is (1) >= snr_min x the lane's noise sigma above the local
@@ -827,6 +1004,13 @@ def detect_bands(profile, snr_min=DEFAULT_SNR_MIN, rel_min=DEFAULT_REL_MIN,
     bg = baseline(sm, size=max(15, int(n * 0.12)))
     net = sm - bg
     sigma = max(robust_noise_sigma(raw), background_sigma(net))
+    if local_noise and n >= 160:
+        # Median of the noise in 8 sections: one high-contrast artefact (comb wells clipped white in
+        # an 8-bit export, a gel edge) cannot raise the noise of the whole strip and hide faint
+        # bands. Used only to FIND the lanes region (suggest_gel_region), never for densitometry.
+        k = n // 8
+        parts = [max(robust_noise_sigma(raw[i:i + k]), background_sigma(net[i:i + k])) for i in range(0, 8 * k, k)]
+        sigma = min(sigma, float(np.median(parts)))
     prom = max(snr_min * sigma, 1e-12)
     pk, props = find_peaks(net, prominence=prom, height=max(prom, abs_floor),
                            distance=max(2, n // 200), width=max(1.0, min_width * 0.5))

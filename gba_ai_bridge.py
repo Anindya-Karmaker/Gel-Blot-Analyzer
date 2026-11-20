@@ -2142,6 +2142,22 @@ class AIBridge(QObject):
         return self._with_status(self.action(start, "adjust_levels", is_async=True, timeout=60))
 
     def t_crop(self, a):
+        if a.get("auto"):
+            # crop first, as a separate step (a backup / check before auto_analyze_gel): same logic as
+            # auto_analyze_gel's preparation, after making the bands dark on white
+            if not self.gui(lambda: self.win._has_image()):
+                raise ToolError("No image is loaded. Call open_image first.")
+            pol = self.action(lambda: self._ensure_dark_bands("auto"), "fix_band_polarity", timeout=90)
+            prep = self._auto_prepare({"expected_lanes": a.get("expected_lanes")}, force=True)
+            size = self.gui(lambda: [self.win.image.width(), self.win.image.height()])
+            return self._with_status({
+                "status": "ok", "image_size": size, "prepared": prep, "polarity": (pol or {}).get("result"),
+                "summary": ("Cropped automatically: " + "; ".join(c["why"] for c in prep.get("cropped", []))
+                            if prep.get("cropped") else "Nothing to crop: the image already shows only the lanes.")
+                           + " Check it with screenshot(target='image'), then call auto_analyze_gel(expected_lanes=...)."})
+        missing = [k for k in ("x", "y", "width", "height") if a.get(k) is None]
+        if missing:
+            raise ToolError("crop needs x, y, width and height (image pixels), or auto=true.")
         x, y, w, h = (float(a[k]) for k in ("x", "y", "width", "height"))
         if w < 2 or h < 2:
             raise ToolError("width and height must be at least 2 px.")
@@ -2597,6 +2613,7 @@ class AIBridge(QObject):
         arr = np.asarray(pil, dtype=np.float64)
         if arr.ndim == 3:
             arr = arr[..., :3].mean(axis=2)
+        clear = None
         try:                                   # rotation corners are transparent: fill them with the
             if adj.hasAlphaChannel():          # image's own median so they read as plain background
                 a4 = win.qimage_to_numpy(adj)  # (they used to look like a dark surround -> re-invert)
@@ -2627,6 +2644,9 @@ class AIBridge(QObject):
             x0, y0, x1, y1 = cb
         if x1 - x0 < 8 or y1 - y0 < 8:
             raise ToolError("The region is too small or outside the image (%dx%d)." % (W, H))
+        # transparent pixels of the returned region (corners left by straightening): read by the
+        # slanted-edge trim, which treats them as surround
+        self._analysis_clear = clear[y0:y1, x0:x1].copy() if (clear is not None and clear.any()) else None
         return arr[y0:y1, x0:x1].copy(), max_val, (x0, y0), cb, (W, H)
 
     def _image_key(self):
@@ -3247,14 +3267,27 @@ class AIBridge(QObject):
         return self._with_status(out)
 
     # ...................................................................... Auto Gel wizard
-    def _auto_prepare(self, a):
-        """Before the wizard, make a raw imager file analyzable, as a careful user would:
+    def _auto_prepare(self, a, force=False):
+        """Before the wizard, make a whole-gel image analyzable, as a careful user would:
         (1) crop to the gel body when the gel fills only part of the image, (2) straighten it once
         when the tilt is clear, (3) once the lane count is known, crop to the lanes between the two
         ladders, from above the top ladder band to above the dye front. All are ordinary, undoable
         edits; each runs at most once per opened image. Skipped when the caller gave a region or
         lanes, or with auto_prepare=false."""
         rep = {}
+        if force:                         # crop(auto=true): the caller asked for the crop explicitly
+            self._prep_memo = None
+        reg_ = a.get("region")
+        if isinstance(reg_, dict) and reg_:
+            # Models often pass the WHOLE image as region (x=0, y=0, full width/height), which used to
+            # switch the automatic crop off. A region covering (almost) the whole image is no choice.
+            try:
+                W_, H_ = self.gui(lambda: (self.win.image.width(), self.win.image.height()))
+                if float(reg_.get("width", 0)) * float(reg_.get("height", 0)) >= 0.9 * W_ * H_:
+                    a.pop("region", None)
+                    rep["ignored_region"] = "the region given covered the whole image; the lanes region is found automatically"
+            except Exception:
+                pass
         if a.get("region") or a.get("lanes") or a.get("auto_prepare") is False:
             return rep
         serial = self.gui(lambda: getattr(self.win, "_image_load_serial", 0))
@@ -3274,10 +3307,34 @@ class AIBridge(QObject):
         labelled = self.gui(lambda: bool(self.win.left_markers or self.win.right_markers or self.win.top_markers))
         try:
             if "raw" not in memo:
-                # only raw imager files (16-bit, gel inside a uniform surround) are prepared; a figure
-                # that was already cropped, padded or exported (8-bit, RGB) is analysed as it is
+                # Prepared: any UNLABELLED image of a whole gel -- a raw 16-bit imager file, or an 8-bit
+                # / RGB export or photo that still shows the surround, the comb wells or the dye front.
+                # Decided from the content, not the bit depth (8-bit exports used to be analysed whole,
+                # wells and edges included). A figure already cropped to its lanes is left as it is.
                 gray0, mv0 = region_now()[:2]
-                memo["raw"] = bool(mv0 >= 65535 and not labelled)
+                # grey level of the surround (image border), used later to trim slanted gel edges
+                _b = max(2, int(0.02 * min(gray0.shape)))
+                memo["surround"] = float(np.median(np.concatenate([gray0[:_b].ravel(), gray0[-_b:].ravel(),
+                                                                  gray0[:, :_b].ravel(), gray0[:, -_b:].ravel()])))
+                if force:
+                    memo["raw"], memo["whole_why"] = True, "crop requested"
+                elif labelled:
+                    memo["raw"], memo["whole_why"] = False, None
+                elif mv0 >= 65535:
+                    memo["raw"], memo["whole_why"] = True, "16-bit imager file"
+                else:
+                    why = None
+                    body0 = GEL.find_gel_body(gray0)
+                    if (body0 and body0.get("fill", 0) >= 0.6
+                            and body0["width"] * body0["height"] < 0.85 * gray0.shape[0] * gray0.shape[1]):
+                        why = "the gel fills only part of the image"
+                    else:
+                        sug0 = GEL.suggest_gel_region(gray0, mv0, dark_bands=True, n_lanes=None)
+                        if sug0 and sug0["width"] * sug0["height"] < 0.8 * gray0.shape[0] * gray0.shape[1]:
+                            why = "the image includes the comb wells, gel edges or dye front"
+                    memo["raw"], memo["whole_why"] = bool(why), why
+                if memo["raw"]:
+                    rep["whole_gel"] = memo["whole_why"]
             if not memo["raw"]:
                 return rep
             if not memo.get("body"):
@@ -3299,18 +3356,59 @@ class AIBridge(QObject):
                     if body and body["width"] * body["height"] < 0.95 * gray.shape[0] * gray.shape[1]:
                         crop_to(body, origin, "removed the corners left by straightening", "body_cropped2")
             expected = a.get("expected_lanes") or (getattr(self, "_expected_lanes_memo", None) or (None, None))[1]
-            if not memo.get("lanes_cropped") and memo.get("body_cropped") and expected:   # raw files, lane count known
+            if not memo.get("lanes_cropped") and (expected or force):     # whole-gel image, lane count known
                 gray, mv, origin, cbx, size = region_now()
-                ana = GEL.analyze(gray, mv, gel_type="auto", expected_lanes=int(expected))
-                sug = GEL.suggest_gel_region(gray, mv, analysis=ana, dark_bands=True, n_lanes=int(expected))
-                if sug and sug["width"] * sug["height"] < 0.8 * gray.shape[0] * gray.shape[1]:
+                n_ = int(expected) if expected else None
+                ana = GEL.analyze(gray, mv, gel_type="auto", expected_lanes=n_)
+                sug = GEL.suggest_gel_region(gray, mv, analysis=ana, dark_bands=True, n_lanes=n_)
+                A_ = gray.shape[0] * gray.shape[1]
+                keep = None
+                if sug and sug["width"] * sug["height"] < 0.8 * A_:
                     memo["ladders_at_ends"] = True        # the crop was built from the two end ladders
-                    # lane grid implied by the two ladders: lane k is centred at left ladder + (k-1) * pitch
-                    memo["lane_grid"] = {"n": int(expected), "pitch": float(sug["pitch"]),
-                                         "first": float(sug["ladder_x"][0] - sug["x"])}
+                    if n_ and not sug.get("ladder_scan"):
+                        # lane grid implied by the two ladders: lane k is centred at left ladder + (k-1) * pitch
+                        # (not when one ladder was only found by pattern: its x can be a fraction of a lane off,
+                        # so the lanes are then found inside the crop instead)
+                        memo["lane_grid"] = {"n": n_, "pitch": float(sug["pitch"]),
+                                             "first": float(sug["ladder_x"][0] - sug["x"])}
                     crop_to(sug, origin, "lanes between the two ladders, from above the top ladder band to %s"
                             % ("just above the dye front" if sug.get("dye_front_y") else "below the bottom ladder band"),
                             "lanes_cropped")
+                    sp_ = float(np.median(np.diff(sug["ladder_bands"]))) if len(sug.get("ladder_bands") or []) > 1 else 20.0
+                    keep = (sug["ladder_x"][0] - sug["x"] - 0.35 * sug["pitch"], sug["ladder_bands"][0] - sug["y"] - 0.8 * sp_,
+                            sug["ladder_x"][1] - sug["x"] + 0.35 * sug["pitch"], sug["height"] - 2)
+                    region_ = sug
+                else:
+                    # BACKUP: no ladder pair at the two ends -> still remove the comb wells above and the dye
+                    # front below (full width), from the ladder lane the analysis finds
+                    fb = GEL.fallback_lane_region(gray, mv, n_lanes=n_, analysis=ana)
+                    region_ = None
+                    if fb and fb["width"] * fb["height"] < 0.92 * A_:
+                        crop_to(fb, origin, fb["method"], "lanes_cropped")
+                        keep = (0, fb["ladder_bands"][0] - fb["y"] - 20, fb["width"], fb["height"] - 2)
+                        region_ = fb
+                    elif not sug:
+                        rep["check"] = ("No lanes region was found (no ladder at both ends and no clear ladder lane): the "
+                                        "whole gel is analyzed. Take a screenshot; if wells or the dye front are inside, "
+                                        "crop(x, y, width, height) to the lanes and call auto_analyze_gel again.")
+                if region_ is not None:
+                    dye = region_.get("dye_front_y")
+                    if dye is not None:
+                        # the dye front is a guide, not a band: it marks where migration ends and lies
+                        # below the crop, so it can never be labelled as the smallest ladder band
+                        rep["dye_front"] = {"y_before_crop": int(dye + origin[1]),
+                                            "use": "bottom limit of the crop (halfway between it and the lowest band); "
+                                                   "not a band -- excluded from ladder labels and densitometry"}
+                    # slanted gel edges: trim wedges of surround left at the borders of the crop
+                    g2, mv2, origin2 = region_now()[:3]
+                    clear2 = getattr(self, "_analysis_clear", None)
+                    tr = GEL.trim_slanted_edges(g2, keep=keep, surround=memo.get("surround"),
+                                                outside=clear2 if (clear2 is not None and clear2.shape == g2.shape) else None)
+                    if tr and tr["width"] * tr["height"] < 0.995 * g2.shape[0] * g2.shape[1]:
+                        crop_to(tr, origin2, "trimmed the slanted gel edges (%s px)"
+                                % ", ".join("%s %d" % (k, v) for k, v in tr["trimmed"].items() if v), "edges_trimmed")
+                        if memo.get("lane_grid"):
+                            memo["lane_grid"]["first"] -= tr["x"]
         except ToolError as e:
             rep["note"] = str(e)
         return rep

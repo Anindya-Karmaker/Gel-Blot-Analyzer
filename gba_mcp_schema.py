@@ -101,8 +101,9 @@ GOLDEN RULES
     and writes the preset's values top->bottom. Choose the preset first (set_marker_preset or
     preset=...). Do NOT click markers by hand unless the user asks.
  3. "Analyze / quantify / measure this gel" = auto_analyze_gel (the app's Auto Analyze Gel
-    wizard). It straightens a tilted gel, crops a raw imager file to the gel, finds lanes,
-    labels the ladder, measures every band and removes noise peaks. If it returns
+    wizard). It straightens a tilted gel, crops any whole-gel image (raw file, export or photo)
+    to the lanes between the ladders, finds lanes, labels the ladder, measures every band and
+    removes noise peaks. Do NOT crop first and do NOT pass region unless the user gave one. If it returns
     status='needs_user_input', ask the user its question and call it again with the answer.
     A user's own ladder: pass ladder_values=[band sizes, top to bottom]. It removes noise peaks
     (only bands >= 5x the noise and >= 1% of the lane's strongest band are kept).
@@ -707,11 +708,19 @@ TOOLS = [
     {
         "name": "crop",
         "description": "Crop the image to a rectangle in IMAGE coordinates (drawn with the real "
-                       "crop tool, then applied). Annotations are kept and re-positioned.",
+                       "crop tool, then applied). Annotations are kept and re-positioned. "
+                       "auto=true instead crops a whole gel to its lanes automatically: removes the surround, "
+                       "straightens it, keeps the lanes between the two ladders from above the top ladder band "
+                       "to above the dye front (backup: rows between the wells and the dye front), and trims "
+                       "slanted gel edges. Give expected_lanes when known. auto_analyze_gel already does this.",
         "inputSchema": {
             "type": "object",
-            "properties": {"x": _XY, "y": _XY, "width": _XY, "height": _XY},
-            "required": ["x", "y", "width", "height"],
+            "properties": {"x": _XY, "y": _XY, "width": _XY, "height": _XY,
+                           "auto": {"type": "boolean", "default": False,
+                                    "description": "Find and crop the lanes region automatically (no x/y/width/height)."},
+                           "expected_lanes": {"type": "integer", "minimum": 1,
+                                              "description": "Lane count, ladders included (auto only)."}},
+            "required": [],
         },
     },
     {
@@ -1072,8 +1081,10 @@ _OVR = {
         "USE THIS for 'analyze / quantify / measure this gel'. Give path=<image file> (it opens the image "
         "itself) or call it after open_image. No other arguments unless the user gave values. It does "
         "everything in order: straightens a tilted gel, "
-        "crops a raw imager file to the gel, makes bands dark on white, finds the lanes, labels the MW "
-        "ladder and measures every band (noise peaks removed). If it returns status='needs_user_input', "
+        "crops any whole-gel image (raw file, export or photo) to the lanes between the two ladders (above "
+        "the dye front, below the wells), makes bands dark on white, finds the lanes, labels the MW "
+        "ladder and measures every band (noise peaks removed). Do NOT crop the image yourself and do NOT "
+        "pass region unless the user asked for a specific area: the tool finds the lane region itself. If it returns status='needs_user_input', "
         "ask the user the question and call it again with the answer, e.g. expected_lanes=12. If the "
         "user names their own ladder sizes, pass ladder_values."),
     "label_mw_ladder": (
@@ -1105,7 +1116,8 @@ for _t in TOOLS:
         _t["inputSchema"]["properties"]["path"] = {
             "type": "string", "description": "Image file to open first (optional if an image is already open)."}
         _t["inputSchema"]["properties"]["auto_prepare"] = {
-            "type": "boolean", "description": "Straighten and crop to the gel automatically (default true)."}
+            "type": "boolean", "description": "Straighten and crop to the lanes automatically (default true). "
+                                                 "Leave it out."}
     if _t["name"] == "set_marker_preset":
         _t["inputSchema"]["required"] = []
 
@@ -1129,6 +1141,9 @@ Then:
   Then quantify_with_standards(standards=[{lane, quantity}, ...]).
 - export_results(path) and report the numbers it returns; export_pdf_report(path) for a report.
 Do not invert the image yourself: polarity is measured and fixed automatically.
+Do not crop the image yourself or pass region: auto_analyze_gel crops to the lanes itself.
+If a screenshot still shows wells, gel edges or the dye front: crop(auto=true, expected_lanes=N),
+check it with screenshot(target='image'), then auto_analyze_gel(expected_lanes=N) again.
 Use history(action='undo') to undo a step. Coordinates are image pixels.
 """
 TOOL_PROFILES = ("full", "essential")
@@ -1342,6 +1357,11 @@ def _coerce_object(args, sch, path, problems):
     return out
 
 
+# Tools whose arguments are all optional but that still cannot be called with stray text (crop needs
+# x/y/width/height or auto=true): a plain string is an error for them, not an empty call.
+OBJECT_ARGS_TOOLS = frozenset({"crop"})
+
+
 def normalize_arguments(name, args):
     """(clean_args, problem_text_or_None) for a tools/call.
 
@@ -1359,7 +1379,7 @@ def normalize_arguments(name, args):
             args = parsed
         elif tool is not None and len(req) == 1 and args.strip():
             args = {req[0]: args.strip()}        # open_image("/path.png") style call
-        elif tool is not None and not req:
+        elif tool is not None and not req and name not in OBJECT_ARGS_TOOLS:
             args = {}                            # nothing needed: ignore the stray text
         else:
             return {}, "'arguments' must be a JSON object, e.g. %s" % example_arguments(name)
