@@ -4,7 +4,8 @@
 
 From precise labeling and molecular weight prediction to powerful densitometric analysis, Gel Blot Analyzer combines essential imaging tools into a single, intuitive workflow.
 
-> 🤖 **New in v9.8.0 — AI Agent Control:** Starting from version 9.8.0, the full application can be automatically controlled by AI agents such as **Claude Code**, **Cursor**, **Ollama**, and others. Just describe what you want in plain language (e.g., *"crop the gel, label the lanes, add Precision Plus markers on both sides, and point an arrow at the band in lane 3"*) and the agent will operate Gel Blot Analyzer for you. Tested with Claude Opus, DeepSeek v4.1 Flash, llama3.2. Frontier models perform significantly better. Local models need very specific prompt to be more accurate and to prevent hallucination. 
+> 🤖 **New in v9.8.0 — AI Agent Control:** Starting from version 9.8.0, the full application can be automatically controlled by AI agents such as **Claude Code**, **Cursor**, **Ollama**, and others. Just describe what you want in plain language (e.g., *"crop the gel, label the lanes, add Precision Plus markers on both sides, and point an arrow at the band in lane 3"*) and the agent will operate Gel Blot Analyzer for you. Tested with Claude Opus, DeepSeek v4.1 Flash, llama3.2. Frontier models perform significantly better. Local models need very specific prompt to be more accurate and to prevent hallucination.
+
 > **Specific Prompt Example:** There are X number of lanes; rotate, crop and then use auto-gel-analysis with a target lane of X and use "Ladder Name e.g Precision Plus All Blue" on lanes 1 and 10 and label it MWM,a,b,c,d,e,f,g,h,MWM. Do densitometry analysis with a minimum prominence of >=0.01 but test to eliminate noise but carefully match the ladder bands. Give me the PDF report after analysis.
 
 <!-- Badges -->
